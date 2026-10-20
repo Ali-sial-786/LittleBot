@@ -9,6 +9,8 @@ const PROVIDERS = [
   { value: 'openai', label: 'OpenAI' },
 ];
 
+const PTT_ERRORS = { nothing_heard: "LittleBot didn't hear anything. Try again and speak close to it.", microphone_disabled: 'The microphone is turned off in Privacy.', no_audio: 'No speaker or microphone is available.' };
+
 function humanize(key) {
   const t = String(key).replace(/_usd$/, ' (USD)').replace(/_ms$/, ' (ms)').replace(/_/g, ' ');
   return t.charAt(0).toUpperCase() + t.slice(1);
@@ -47,7 +49,7 @@ export default {
         const r = await app.act(() => post('/ai/push-to-talk', {}, { timeout: 60000 }));
         clear(pttResult);
         if (!r) return;
-        if (r.error) { pttResult.append(banner('warn', 'mic', 'Nothing to answer', r.detail || r.error)); return; }
+        if (r.error) { pttResult.append(banner('warn', 'mic', 'Nothing to answer', r.detail || PTT_ERRORS[r.error] || r.error)); return; }
         pttResult.append(h('dl', { class: 'kv' },
           h('dt', { text: 'Heard' }), h('dd', { text: r.heard || '(nothing)' }),
           h('dt', { text: 'LittleBot said' }), h('dd', { text: r.reply || '(no reply)' }),

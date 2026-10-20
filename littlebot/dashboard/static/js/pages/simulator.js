@@ -3,6 +3,8 @@
 import { post } from '../api.js';
 import { button, clear, h, icon, pageHead, setText, titleCase } from '../ui.js';
 
+const PTT_ERRORS = { nothing_heard: "LittleBot didn't hear anything. Try again and speak close to it.", microphone_disabled: 'The microphone is turned off in Privacy.', no_audio: 'No speaker or microphone is available.' };
+
 const PHRASES = ['hello', 'ball', 'more', 'dog', 'again', 'what is that?', 'bye-bye'];
 
 export default {
@@ -44,7 +46,7 @@ export default {
         bubble('LittleBot', '(listening…)', 'bot');
         const r = await app.act(() => post('/ai/push-to-talk', {}, { timeout: 60000 }));
         if (!r) return;
-        if (r.error) { bubble('LittleBot', `(${r.detail || r.error})`, 'bot'); return; }
+        if (r.error) { bubble('LittleBot', `(${r.detail || PTT_ERRORS[r.error] || r.error})`, 'bot'); return; }
         if (r.heard) bubble('Child', r.heard, 'child');
         bubble(`LittleBot${r.provider ? ` · ${r.provider}` : ''}`, r.reply || '(no reply)', 'bot');
       },

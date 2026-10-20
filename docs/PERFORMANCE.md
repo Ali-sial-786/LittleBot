@@ -43,6 +43,25 @@ it will be used, room temperature noted. Record the summary lines in the table.
    (face module; headless, so it can run over SSH) to see the rendering headroom.
 7. **Thermal soak**: scenario 5 for 30 minutes in the closed enclosure; watch `temp_c` and `throttled_any`.
 
+## Desktop baseline (measured 2026-10-20, NOT the Pi)
+
+Measured in the development container (x86-64, 4 vCPU, Python 3.13, OpenCV 4.14) with
+`scripts/perf_monitor.py --pid <app> --interval 2 --samples 22` while running
+`python -m littlebot --mode simulation` (2x window + simulator panel on SDL's dummy display,
+mock camera frames through face detection at 6 Hz, simulated audio, dashboard listening):
+
+| Metric | Value |
+|---|---|
+| Process RSS | 146 MB average (136–149 MB) |
+| Process CPU | 13.6 % of one core average (startup spike 76 %, steady 9.5–12 %) |
+| Threads | 14 |
+| Face update + render | 1.2 ms/frame mean at scale 1 (`scripts/benchmark_face.py`) |
+| Face detection | YuNet 6.5–8.6 ms/frame at 320 px |
+
+The Pi 5 is roughly 2–3x slower per core than this machine, but runs at scale 1 without the
+simulator panel (the 2x scaling alone costs ~2 ms/frame here). Expect the app alone to stay
+well under 400 MB RSS on the Pi; Chromium during YouTube is the big unknown.
+
 ## Memory budget (2 GB)
 
 | Component | Budget *(estimate)* | Measured |
