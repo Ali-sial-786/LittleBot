@@ -13,7 +13,8 @@
 #      and closes the camera/microphone and its database cleanly.
 #   2. Verify it really exited. If it did not, DO NOT continue by default: a PCA9685
 #      keeps driving the servos after the Pi stops talking to it, so switch the servo
-#      supply off first (or re-run with --force).
+#      supply off first (or re-run with --force; after a forced kill the script runs
+#      `python -m littlebot.motion off` to switch every PCA9685 output off over I2C).
 #   3. sync, then `sudo shutdown -h now`. Unplug only after the green activity LED has
 #      stopped flashing (on the Pi 5 the power LED turns red when it is safe).
 #      Never pull the power while the SD card is being written: it can corrupt the card.
@@ -149,6 +150,12 @@ if ((DRY_RUN == 0)); then
     done
     if ((killed)); then
         say "LittleBot was killed: it could not make the servos safe itself."
+        # Best effort: switch every PCA9685 output off directly over I2C (only ever writes "off").
+        repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+        if [[ -x "$repo_dir/.venv/bin/python" ]]; then
+            run "$repo_dir/.venv/bin/python" -m littlebot.motion off ||
+                echo "Could not confirm the servos are off: switch the SERVO SUPPLY OFF now." >&2
+        fi
     elif ((stopped_any)); then
         say "LittleBot stopped (servos de-energised by the app on exit)."
     fi

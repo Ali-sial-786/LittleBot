@@ -40,8 +40,8 @@ Follow `HARDWARE_ARRIVAL_CHECKLIST.md` top to bottom. In short:
 2. `scripts/calibrate_servos.py --simulate`, then on hardware with horns removed.
 3. Set `motion.physical_enabled: true` (backend still `mock`), calibrate, then `backend: pca9685`.
 4. A parent arms motion from the dashboard each session.
-5. Add a stand-alone "all servos off" command for `scripts/safe_shutdown.sh` (so servos can be
-   de-energised even if the app had to be killed) – not written yet.
+5. `python -m littlebot.motion off` switches every PCA9685 output off directly (used by
+   `scripts/safe_shutdown.sh --force`); verify it on the real chip during calibration.
 
 ## P3 – software improvements
 
