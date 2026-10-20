@@ -85,6 +85,9 @@ PLAYER_ERRORS: dict[Any, tuple[str, str]] = {
     "player_create_failed": ("player_create_failed", "The YouTube player could not be created."),
 }
 
+# The dashboard's switch for ``media.allow_under_min_age`` (Videos page, with a confirmation).
+UNDER_AGE_SETTING_LABEL = "Allow videos before 18 months"
+
 UNEXPECTED_VIDEO_MESSAGE = PLAYER_ERRORS["unexpected_video"][1]
 UNVERIFIED_VIDEO_MESSAGE = ("The player didn't confirm which video it was showing, so it was stopped "
                             "(only approved videos may play).")
@@ -406,13 +409,16 @@ class MediaController(Service):
         base = self.cfg.player_base_url or f"http://127.0.0.1:{self.ctx.config.dashboard.port}"
         return base.rstrip("/") + self.player_path()
 
-    def player_state(self) -> dict[str, Any]:
-        """Desired state for the player page (called by its 2 Hz poll; marks it connected)."""
-        self.bridge.touch()
+    def player_state(self, page_id: str | None = None, visible: bool = True) -> dict[str, Any]:
+        """Desired state for the player page (called by its 2 Hz poll; marks it connected).
+
+        ``page_id``: the polling page's random id; the first visible page to poll a new load claims
+        it (``owner`` in the result) and only that page may play it and report on it."""
+        self.bridge.touch(visible=bool(visible))
         sess = self._session
         if sess is not None and not sess.ever_connected:
             sess.ever_connected = True
-        return self.bridge.desired()
+        return self.bridge.desired(page_id=page_id, visible=bool(visible))
 
     async def handle_player_event(self, event: dict[str, Any]) -> dict[str, Any]:
         """Event from the player page (any thread / loop); processed on the controller's loop."""
@@ -492,10 +498,11 @@ class MediaController(Service):
             if policy.age_months is None:
                 raise PermissionError(
                     f"Videos are off until the child's age is set in the profile (they're off by default under "
-                    f"{min_age} months). A parent can still choose 'play anyway'.")
+                    f"{min_age} months). Set the age on the Profile page, or a parent can turn on "
+                    f"'{UNDER_AGE_SETTING_LABEL}' on the Videos page.")
             raise PermissionError(
                 f"Videos are off for children under {min_age} months (your child is {policy.age_months} months). "
-                "A parent can allow them in settings or choose 'play anyway'.")
+                f"A parent can turn on '{UNDER_AGE_SETTING_LABEL}' on the Videos page (it asks you to confirm).")
         if self._session_limit_seconds() <= 0 or self._daily_limit_seconds() <= 0:
             raise PermissionError("The video time limit is set to 0 minutes in settings.")
         if self._daily_remaining() < MIN_REMAINING_SECONDS:
@@ -623,7 +630,9 @@ class MediaController(Service):
         running = self.backend.is_running()
         if running is not None:
             return running
-        return self.bridge.connected
+        # Desktop browser: only a visible page can claim and play the load (a hidden tab left
+        # over from an earlier session doesn't count, so a new window is opened).
+        return self.bridge.visible_connected
 
     def _ensure_watchdog(self) -> None:
         sess = self._session

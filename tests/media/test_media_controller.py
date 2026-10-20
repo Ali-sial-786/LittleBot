@@ -96,6 +96,18 @@ async def test_unknown_age_blocked_by_default(make_env):
     await e.media.close()
 
 
+async def test_age_gate_message_points_to_the_real_dashboard_setting(make_env):
+    for age in (10, None):
+        e = make_env(age=age)
+        item = e.add()
+        with pytest.raises(PermissionError) as info:
+            await e.media.play(item["id"])
+        msg = str(info.value)
+        assert "'Allow videos before 18 months' on the Videos page" in msg  # the switch that exists
+        assert "play anyway" not in msg  # the dashboard has no such button
+        await e.media.close()
+
+
 async def test_under_18_months_blocked_unless_parent_allows(make_env):
     e = make_env(age=10)
     item = e.add()
@@ -456,6 +468,90 @@ async def test_desktop_backend_not_reopened_while_page_connected(make_env, fake_
     await e.media.stop()
     await e.media.play(item["id"])
     assert len(e.backend.opened) == 1 and e.backend.closed == 0
+    await e.media.close()
+
+
+async def test_desktop_backend_reopened_when_only_hidden_tabs_poll(make_env, fake_backend_cls):
+    e = make_env(backend=fake_backend_cls(name="browser", can_close=False))
+    await e.media.start()
+    item = e.add()
+    await e.media.play(item["id"])
+    e.media.player_state(page_id=PAGE_A, visible=True)
+    await e.media.stop()
+    e.clock.advance(7)
+    e.media.player_state(page_id=PAGE_A, visible=False)  # the old tab is in the background now
+    await e.media.play(item["id"])
+    assert len(e.backend.opened) == 2  # a new, visible window that can claim the video
+    await e.media.close()
+
+
+# ------------------------------------------------------------------ one player page at a time
+PAGE_A = "pageAAAA0001"
+PAGE_B = "pageBBBB0002"
+
+
+async def _event_from(env, page_id, type_, **extra):
+    load_id = env.media.bridge.load_id
+    return await env.media.handle_player_event({"type": type_, "load_id": load_id, "page_id": page_id, **extra})
+
+
+async def test_first_visible_page_claims_the_load(env):
+    item = env.add(VID_A, "A")
+    await env.media.play(item["id"])
+    hidden = env.media.player_state(page_id=PAGE_A, visible=False)  # a background tab: no claim
+    assert hidden["owner"] is None and hidden["action"] == "play"
+    claimed = env.media.player_state(page_id=PAGE_B, visible=True)
+    assert claimed["owner"] == PAGE_B and claimed["seq"] > hidden["seq"]  # every page re-reads it
+    assert env.media.player_state(page_id=PAGE_A, visible=True)["owner"] == PAGE_B  # first one wins
+    assert env.poll()["owner"] == PAGE_B
+
+    # events of the claimed load from any other page (or none) are recorded but ignored
+    assert (await _event_from(env, PAGE_A, "hidden"))["current"] is False
+    assert (await _event_from(env, None, "ended"))["current"] is False
+    assert (await _event_from(env, PAGE_A, "playing", video_id="ZZZZZZZZZZZ"))["current"] is False
+    assert env.ctx.state.state == RobotState.PLAYING_MEDIA and env.last(Topics.MEDIA_ERROR) is None
+    assert (await _event_from(env, PAGE_B, "playing", video_id=VID_A))["current"] is True
+    assert env.media.status()["state"] == "playing"
+    await _event_from(env, PAGE_B, "ended")
+    assert env.last(Topics.MEDIA_STOPPED).data["reason"] == "ended"
+
+
+async def test_each_load_is_claimed_afresh(env):
+    a, b = env.add(VID_A, "A"), env.add(VID_B, "B")
+    await env.media.play(a["id"])
+    env.media.player_state(page_id=PAGE_A)
+    await env.media.skip()
+    assert env.poll()["owner"] is None  # the new load isn't anyone's yet
+    assert env.media.player_state(page_id=PAGE_B)["owner"] == PAGE_B
+    assert (await _event_from(env, PAGE_A, "error", code=150))["current"] is False
+    assert env.media.status()["item"]["id"] == b["id"] and env.last(Topics.MEDIA_ERROR) is None
+    await env.media.stop()
+    assert env.media.player_state(page_id=PAGE_A)["owner"] == PAGE_B  # nothing to claim after a stop
+    env.media.bridge.command("idle")
+    assert env.media.player_state(page_id=PAGE_A)["owner"] == PAGE_B
+
+
+@pytest.mark.parametrize("bad", ["short", "bad page id!", "x" * 65, 12345678, ""])
+async def test_malformed_page_ids_never_claim(env, bad):
+    item = env.add()
+    await env.media.play(item["id"])
+    assert env.media.player_state(page_id=bad)["owner"] is None
+
+
+async def test_heartbeat_timeout_follows_the_page_that_plays(make_env):
+    e = make_env(media_cfg={"heartbeat_timeout_seconds": 15, "connect_timeout_seconds": 60})
+    await e.media.start()
+    item = e.add()
+    await e.media.play(item["id"])
+    e.media.player_state(page_id=PAGE_B)  # B claims and plays ...
+    await _event_from(e, PAGE_B, "playing", video_id=VID_A)
+    for _ in range(4):  # ... then goes silent, while a leftover tab A keeps polling
+        e.clock.advance(4)
+        e.media.player_state(page_id=PAGE_A, visible=False)
+        await _event_from(e, PAGE_A, "heartbeat")
+        await e.media.tick()
+    assert "stopped responding" in e.last(Topics.MEDIA_ERROR).data["error"]
+    assert e.ctx.state.state == RobotState.IDLE
     await e.media.close()
 
 

@@ -201,7 +201,29 @@ async def test_playlist_ids_reach_the_controller(env, client):
     assert env.ctx.state.state == RobotState.IDLE
 
 
+async def test_page_id_claims_through_the_routes(env, client):
+    item = env.add(VID_A, "A")
+    await env.media.play(item["id"])
+    s = (await client.get("/player/api/state", headers=_h(env),
+                          params={"page_id": "backgroundtab1", "visible": "0"})).json()
+    assert s["owner"] is None
+    s = (await client.get("/player/api/state", headers=_h(env), params={"page_id": "bad id!"})).json()
+    assert s["owner"] is None  # malformed ids are ignored
+    s = (await client.get("/player/api/state", headers=_h(env), params={"page_id": "frontpage001"})).json()
+    assert s["owner"] == "frontpage001"
+    load_id = s["load_id"]
+    r = await client.post("/player/api/event", headers=_h(env), json={
+        "type": "hidden", "load_id": load_id, "page_id": "backgroundtab1"})
+    assert r.json() == {"ok": True, "current": False}  # not the page that plays: ignored
+    assert env.ctx.state.state == RobotState.PLAYING_MEDIA
+    r = await client.post("/player/api/event", headers=_h(env), json={
+        "type": "playing", "load_id": load_id, "page_id": "frontpage001", "video_id": VID_A})
+    assert r.json() == {"ok": True, "current": True} and env.media.status()["state"] == "playing"
+
+
 @pytest.mark.parametrize("body", [
+    {"type": "heartbeat", "page_id": "short"},
+    {"type": "heartbeat", "page_id": "has spaces in it"},
     {"type": "heartbeat", "playlist_ids": ["short"]},
     {"type": "heartbeat", "playlist_ids": ["<script>xx>"]},
     {"type": "heartbeat", "playlist_ids": "dQw4w9WgXcQ"},

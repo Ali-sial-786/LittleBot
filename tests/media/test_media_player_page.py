@@ -31,6 +31,19 @@ from littlebot.media.display import NoneBackend  # noqa: E402
 
 pytestmark = pytest.mark.slow
 
+# Lets a test make a page hidden / visible again (headless pages are always "visible").
+VISIBILITY_SHIM = r"""
+(function () {
+  window.__hiddenFlag = false;
+  Object.defineProperty(document, 'visibilityState', {
+    configurable: true, get: function () { return window.__hiddenFlag ? 'hidden' : 'visible'; } });
+  window.__setHidden = function (hidden) {
+    window.__hiddenFlag = !!hidden;
+    document.dispatchEvent(new Event('visibilitychange'));
+  };
+})();
+"""
+
 YT_STUB = r"""
 (function () {
   var rec = window.__ytStub = { players: [], created: 0, destroyed: 0, blockAutoplay: false };
@@ -95,7 +108,8 @@ YT_STUB = r"""
   };
   window.YT = { Player: Player, loaded: 1,
                 PlayerState: { UNSTARTED: -1, ENDED: 0, PLAYING: 1, PAUSED: 2, BUFFERING: 3, CUED: 5 } };
-  setTimeout(function () { if (typeof window.onYouTubeIframeAPIReady === 'function') { window.onYouTubeIframeAPIReady(); } }, 0);
+  setTimeout(function () { if (typeof window.onYouTubeIframeAPIReady === 'function') { window.onYouTubeIframeAPIReady(); } },
+             window.__ytStubApiDelay || 0);
 })();
 """
 
@@ -170,21 +184,30 @@ class Harness:
             route.abort()
 
     # -- helpers ------------------------------------------------------------
-    def open(self) -> None:
-        self.page.goto(f"http://127.0.0.1:{self.port}{self.media.player_path()}")
-        self.page.wait_for_function("window.__littlebotPlayer !== undefined")
+    def open(self, page: Any = None) -> None:
+        page = page or self.page
+        page.goto(f"http://127.0.0.1:{self.port}{self.media.player_path()}")
+        page.wait_for_function("window.__littlebotPlayer !== undefined")
+
+    def new_page(self, init_script: str = "") -> Any:
+        """Another tab/window on the same player link (same YouTube stub routing)."""
+        page = self.context.new_page()
+        page.on("console", lambda m: self.console.append(f"{m.type}: {m.text}"))
+        page.add_init_script(VISIBILITY_SHIM + init_script)
+        return page
 
     def run(self, coro: Any) -> Any:
         return self.runtime.run(coro, timeout=10)
 
-    def stub(self) -> dict[str, Any]:
-        return self.page.evaluate("window.__ytStub ? window.__ytStub.summary() : {created: 0, calls: []}")
+    def stub(self, page: Any = None) -> dict[str, Any]:
+        return (page or self.page).evaluate(
+            "window.__ytStub ? window.__ytStub.summary() : {created: 0, destroyed: 0, calls: []}")
 
-    def snap(self) -> dict[str, Any]:
-        return self.page.evaluate("window.__littlebotPlayer.snapshot()")
+    def snap(self, page: Any = None) -> dict[str, Any]:
+        return (page or self.page).evaluate("window.__littlebotPlayer.snapshot()")
 
-    def visible_screen(self) -> str | None:
-        return self.page.evaluate(
+    def visible_screen(self, page: Any = None) -> str | None:
+        return (page or self.page).evaluate(
             "(() => { const v = document.querySelector('.screen.visible'); return v ? v.id : null; })()")
 
     def wait(self, cond: Callable[[], bool], what: str, timeout: float = 6.0) -> None:
@@ -413,6 +436,88 @@ def test_single_video_with_unknown_id_is_stopped_after_grace(h):
     h.wait(lambda: h.env.last(Topics.MEDIA_ERROR) is not None, "media.error after the grace period", timeout=5)
     assert h.env.last(Topics.MEDIA_ERROR).data["code"] == "unexpected_video"
     assert "playing" not in h.snap()["events"] and h.stub()["destroyed"] == 1
+
+
+# ------------------------------------------------------------------ one player page at a time
+def test_leftover_background_tab_never_plays_along(h):
+    # QA: desktop browser backend. After STOP the old tab stays open and keeps polling; the next
+    # play must not create a second player there, and its "hidden" report must not kill the session.
+    a_item, b_item = h.env.add(VID_A, "A"), h.env.add(VID_B, "B")
+    old = h.new_page()
+    h.open(old)
+    h.run(h.media.play(a_item["id"]))
+    h.wait(lambda: h.media.status()["state"] == "playing", "first session playing in the old tab")
+    h.run(h.media.stop())
+    h.wait(lambda: h.stub(old)["destroyed"] == 1, "old tab's player destroyed after stop")
+    old.evaluate("window.__setHidden(true)")  # the parent switched to another tab
+    new = h.new_page()
+    h.open(new)
+    h.run(h.media.play(b_item["id"]))
+    h.wait(lambda: h.media.status()["state"] == "playing", "second session playing in the new tab")
+    assert h.stub(new)["created"] == 1 and h.stub(new)["videoId"] == VID_B
+    assert h.snap(new)["owner"] == h.snap(new)["pageId"]
+    h.pause(0.8)  # several polls in both tabs
+    assert h.stub(old)["created"] == 1  # still only the first session's (destroyed) player
+    assert h.snap(old)["hasPlayer"] is False and h.snap(old)["owner"] == h.snap(new)["pageId"]
+    old.evaluate("window.__setHidden(false)")
+    old.evaluate("window.__setHidden(true)")  # visibility changes in the old tab change nothing
+    h.pause(0.6)
+    assert h.stub(old)["created"] == 1 and h.media.status()["state"] == "playing"
+    assert h.env.last(Topics.MEDIA_ERROR) is None and h.env.ctx.state.state == RobotState.PLAYING_MEDIA
+
+
+def test_two_visible_tabs_only_one_creates_a_player(h):
+    item = h.env.add(VID_A, "A")
+    one, two = h.new_page(), h.new_page()
+    h.open(one)
+    h.open(two)
+    h.run(h.media.play(item["id"]))
+    h.wait(lambda: h.media.status()["state"] == "playing", "playing")
+    h.pause(0.8)
+    created = [h.stub(one)["created"], h.stub(two)["created"]]
+    assert sorted(created) == [0, 1]  # exactly one player, in the tab that claimed the video
+    idle = one if created[0] == 0 else two
+    assert h.visible_screen(idle) == "screen-idle" and h.snap(idle)["hasPlayer"] is False
+
+
+def test_hidden_page_waits_until_visible(h):
+    item = h.env.add(VID_A, "A")
+    page = h.new_page()
+    h.open(page)
+    page.evaluate("window.__setHidden(true)")
+    h.run(h.media.play(item["id"]))
+    h.pause(0.8)
+    assert h.stub(page)["created"] == 0 and h.media.bridge.owner is None  # a hidden page never claims
+    assert h.media.status()["state"] == "loading"
+    page.evaluate("window.__setHidden(false)")
+    h.wait(lambda: h.media.status()["state"] == "playing", "playing once the page is visible")
+    assert h.stub(page)["created"] == 1 and h.media.bridge.owner == h.snap(page)["pageId"]
+
+
+def test_claimed_page_hidden_before_its_player_exists_creates_it_when_visible(h):
+    item = h.env.add(VID_A, "A")
+    page = h.new_page("window.__ytStubApiDelay = 900;")  # the YouTube API takes a moment to load
+    h.open(page)
+    h.run(h.media.play(item["id"]))
+    h.wait(lambda: h.media.bridge.owner is not None, "the page to claim the video")
+    page.evaluate("window.__setHidden(true)")
+    h.wait(lambda: h.snap(page)["deferred"] is True, "player creation deferred while hidden", timeout=4)
+    assert h.stub(page)["created"] == 0
+    page.evaluate("window.__setHidden(false)")
+    h.wait(lambda: h.media.status()["state"] == "playing", "playing once visible again")
+    assert h.stub(page)["created"] == 1 and h.env.last(Topics.MEDIA_ERROR) is None
+
+
+def test_page_that_loses_the_claim_tears_its_player_down(h):
+    item = h.env.add(VID_A, "A")
+    h.open()
+    _play(h, item)
+    bridge = h.media.bridge
+    with bridge._lock:  # e.g. another page took over this load
+        bridge._owner = "someotherpage01"
+        bridge._seq += 1
+    h.wait(lambda: h.stub()["destroyed"] == 1, "player torn down")
+    assert h.visible_screen() == "screen-idle" and h.snap()["hasPlayer"] is False
 
 
 def test_stale_token_page_shows_calm_message(h):

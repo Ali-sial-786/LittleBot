@@ -15,6 +15,11 @@
  *    page stops with unexpected_video. A missing id never counts as approval.
  *  - reports when the page is hidden (e.g. a YouTube link opened a new tab/window over it) or
  *    navigated away; the robot then stops and closes the whole kiosk browser
+ *  - only one page plays: every page instance has a random page_id; the first page that polls a
+ *    new load while visible claims it (state.owner). Other pages (e.g. a desktop tab left open
+ *    after a stop) never create a player for it and stay on the calm idle screen; a page that
+ *    loses the claim tears its player down. A hidden page never creates a player (it waits
+ *    until it is visible again).
  *  - never draws anything over a live player and never blocks player functionality
  *    (YouTube Required Minimum Functionality / Developer Policies III.I.6): the calm screens
  *    below are only shown while no player exists
@@ -35,6 +40,17 @@
   var LIST_ID_RE = /^[A-Za-z0-9_-]{2,64}$/;
   var VERIFY_CHECK_MS = 250;   // re-check this often while a playing video can't be confirmed yet
   var MAX_PLAYLIST_IDS = 200;  // ids of one playlist we remember/report (the robot's cap too)
+  var PAGE_ID = makePageId();  // this page instance (a reload is a new page)
+
+  function makePageId() {
+    var bytes = new Uint8Array(12);
+    var c = window.crypto;
+    if (c && typeof c.getRandomValues === 'function') { c.getRandomValues(bytes); }
+    else { for (var i = 0; i < bytes.length; i++) { bytes[i] = Math.floor(Math.random() * 256); } }
+    var hex = '';
+    for (var j = 0; j < bytes.length; j++) { hex += (bytes[j] < 16 ? '0' : '') + bytes[j].toString(16); }
+    return hex;
+  }
 
   var st = {
     appliedSeq: null,
@@ -59,6 +75,8 @@
     verifyTimer: null,
     playlistIds: null,    // video ids of the approved playlist, as read from the official player
     idsAcked: 0,          // how many of them the robot has confirmed receiving for this load
+    deferred: null,       // {loadId, item}: player creation waiting for the page to become visible
+    owner: null,          // page_id that owns the robot's current load (from the state)
     screen: 'idle',
     authFailed: false,
     events: [] // last few events sent (debug / tests)
@@ -77,8 +95,10 @@
     });
   }
 
+  function isHidden() { return document.visibilityState === 'hidden'; }
+
   function post(type, extra) {
-    var body = { type: type, load_id: st.loadId };
+    var body = { type: type, load_id: st.loadId, page_id: PAGE_ID };
     if (extra) { Object.keys(extra).forEach(function (k) { if (extra[k] !== undefined) { body[k] = extra[k]; } }); }
     if (type !== 'heartbeat') {
       st.events.push(type + (body.code !== undefined && body.code !== null ? ':' + body.code : ''));
@@ -243,6 +263,7 @@
     st.fadeTimer = null;
     clearTimeout(st.verifyTimer);
     st.verifyTimer = null;
+    st.deferred = null;
     st.started = false;
     st.confirmed = false;
     st.pendingSince = null;
@@ -274,6 +295,8 @@
   }
 
   function createPlayer(loadId, item) {
+    if (isHidden()) { st.deferred = { loadId: loadId, item: item }; return; } // wait until visible
+    st.deferred = null;
     var host = $('yt-host');
     host.innerHTML = '';
     var el = document.createElement('div');
@@ -425,17 +448,26 @@
       st.host = s.youtube_host;
     }
     if (typeof s.volume === 'number' && s.volume !== st.volume) { st.volume = s.volume; applyVolume(); }
+    st.owner = typeof s.owner === 'string' ? s.owner : null;
+    // (a robot that doesn't send "owner" at all predates page claims: its single page plays)
+    var mine = st.owner === PAGE_ID || !Object.prototype.hasOwnProperty.call(s, 'owner');
+    // Another page claimed the load this page holds: never keep a second player.
+    if (st.owner && !mine && st.loadId !== null && s.load_id === st.loadId) { dropLoad(); }
     if (s.seq === st.appliedSeq) { return; }
     var first = st.appliedSeq === null;
     st.appliedSeq = s.seq;
     var prevAction = st.action;
     st.action = s.action;
-    if (s.action === 'play') {
-      if (s.load_id && s.load_id !== st.loadId) { loadItem(s.load_id, s.item); }
-      else if (st.player && st.playerReady && prevAction !== 'play') { safe(function () { st.player.playVideo(); }); }
-    } else if (s.action === 'pause') {
-      if (s.load_id && s.load_id !== st.loadId) { loadItem(s.load_id, s.item); }
-      else if (st.player && st.playerReady) { safe(function () { st.player.pauseVideo(); }); }
+    if (s.action === 'play' || s.action === 'pause') {
+      if (s.load_id && s.load_id !== st.loadId) {
+        // Only the page that claimed the load plays it (another page does, or this page is hidden
+        // and hasn't claimed it yet - its next visible poll will).
+        if (mine) { loadItem(s.load_id, s.item); } else { dropLoad(); }
+      } else if (s.action === 'play') {
+        if (st.player && st.playerReady && prevAction !== 'play') { safe(function () { st.player.playVideo(); }); }
+      } else if (st.player && st.playerReady) {
+        safe(function () { st.player.pauseVideo(); });
+      }
     } else if (s.action === 'stop') {
       // A stop we see on first load belongs to an earlier session: just stay calm and blank.
       var hadItem = !first && st.loadId !== null && s.load_id === st.loadId;
@@ -447,8 +479,18 @@
     }
   }
 
+  // Not (or no longer) this page's load: no player here, calm idle screen.
+  function dropLoad() {
+    var had = st.player || st.loadId !== null;
+    teardown();
+    st.loadId = null;
+    st.item = null;
+    if (had || st.screen === 'loading' || st.screen === 'video') { show('idle'); }
+  }
+
   function poll() {
-    fetch(STATE_URL, { headers: { 'X-Player-Token': TOKEN }, cache: 'no-store' })
+    var url = STATE_URL + '?page_id=' + PAGE_ID + '&visible=' + (isHidden() ? '0' : '1');
+    fetch(url, { headers: { 'X-Player-Token': TOKEN }, cache: 'no-store' })
       .then(function (r) {
         if (r.status === 401 || r.status === 403) { st.authFailed = true; throw new Error('auth'); }
         if (!r.ok) { throw new Error('http ' + r.status); }
@@ -493,7 +535,11 @@
     document.addEventListener('contextmenu', function (e) { e.preventDefault(); });
     document.addEventListener('keydown', function (e) { e.preventDefault(); }, true);
     document.addEventListener('visibilitychange', function () {
-      if (document.visibilityState === 'hidden') { onHidden('hidden'); }
+      if (isHidden()) { onHidden('hidden'); return; }
+      var d = st.deferred; // a claimed load whose player waited for the page to become visible
+      if (d && d.loadId === st.loadId && !st.player && (st.action === 'play' || st.action === 'pause')) {
+        createPlayer(d.loadId, d.item);
+      }
     });
     window.addEventListener('pagehide', function () { onHidden('navigated_away'); });
     show('idle');
@@ -508,7 +554,8 @@
         appliedSeq: st.appliedSeq, action: st.action, loadId: st.loadId, screen: st.screen,
         hasPlayer: !!st.player, playerReady: st.playerReady, volume: st.volume, apiState: st.apiState,
         verifying: st.pendingSince !== null, playlistIds: st.playlistIds ? st.playlistIds.length : 0,
-        idsAcked: st.idsAcked, events: st.events.slice()
+        idsAcked: st.idsAcked, pageId: PAGE_ID, owner: st.owner, deferred: !!st.deferred,
+        events: st.events.slice()
       };
     }
   };

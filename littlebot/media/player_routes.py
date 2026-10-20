@@ -9,7 +9,8 @@ Routes
 ------
 GET  /player?token=...        the page (strict Content-Security-Policy for the IFrame API)
 GET  /player/static/<file>    player.js / player.css (no secrets, whitelisted names only)
-GET  /player/api/state        desired state: {seq, action, load_id, item, volume, ...}
+GET  /player/api/state        desired state: {seq, action, load_id, item, volume, owner, ...}
+                              (``?page_id=..&visible=1|0``: the first visible page claims a new load)
 POST /player/api/event        {type: ready|playing|paused|buffering|ended|error|heartbeat|hidden|..., load_id, code, ...}
                               (``video_id`` + for playlists ``playlist_ids``: checked by the controller)
 
@@ -19,6 +20,7 @@ middleware *before* anything is read (``Content-Length`` -> 413, chunked bodies 
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Annotated, Any, Literal, Protocol
 
@@ -67,12 +69,13 @@ class PlayerMedia(Protocol):
 
     def check_player_token(self, token: str | None) -> bool: ...
 
-    def player_state(self) -> dict[str, Any]: ...
+    def player_state(self, page_id: str | None = None, visible: bool = True) -> dict[str, Any]: ...
 
     async def handle_player_event(self, event: dict[str, Any]) -> dict[str, Any]: ...
 
 
 ShortStr = Annotated[str, StringConstraints(max_length=64)]
+_PAGE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{8,64}$")
 EventType = Literal["ready", "playing", "paused", "buffering", "cued", "ended", "track_ended", "error",
                     "heartbeat", "autoplay_blocked", "hidden", "navigated_away"]
 
@@ -89,6 +92,7 @@ class PlayerEvent(BaseModel):
     video_id: ShortStr | None = None
     playlist_ids: list[Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9_-]{11}$")]] | None = Field(
         default=None, max_length=500)
+    page_id: Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9_-]{8,64}$")] | None = None
     detail: Annotated[str, StringConstraints(max_length=200)] | None = None
 
 
@@ -116,8 +120,13 @@ def create_player_router(media: PlayerMedia) -> APIRouter:
                         headers={"Cache-Control": "no-cache", "X-Content-Type-Options": "nosniff"})
 
     @router.get("/player/api/state", dependencies=[Depends(require_token)])
-    async def player_state() -> JSONResponse:
-        return JSONResponse(media.player_state(), headers=API_HEADERS)
+    async def player_state(request: Request) -> JSONResponse:
+        # ?page_id=<the page's random id>&visible=1|0: the first visible page claims a new load.
+        page_id = request.query_params.get("page_id")
+        if not (page_id and _PAGE_ID_RE.match(page_id)):
+            page_id = None
+        visible = request.query_params.get("visible") != "0"
+        return JSONResponse(media.player_state(page_id=page_id, visible=visible), headers=API_HEADERS)
 
     @router.post("/player/api/event", dependencies=[Depends(require_token)])
     async def player_event(event: PlayerEvent) -> JSONResponse:

@@ -121,6 +121,13 @@ gate for sessions that were not started with an explicit parent override), `syst
 5. **Page hidden or left** (a YouTube link opened a new tab/window, tab switched, page
    closed) -> the page reports `hidden` / `navigated_away`; the controller stops with
    `error` and the kiosk backend kills Chromium's whole process group (popups included).
+   **One player page at a time:** every page instance has a random `page_id`; the first page
+   that polls a new load *while visible* claims it (`owner`). Only the owner creates a player;
+   events of a claimed load from other pages (or without a page id) are ignored, so a desktop
+   tab left open after a stop neither plays along nor ends the new session with its `hidden`
+   report. A page never creates a player while hidden (it waits for `visibilitychange`), and a
+   page that sees another owner for its load tears its player down. The heartbeat timeout
+   follows the owner.
 6. **Leases and state.** `screen + audio_out + face` at `Priority.MEDIA`. A higher priority
    (parent / system) preempts: the page is told to stop immediately and the session ends.
    `system.stop_all` ends it too. Activities (lower priority) can't interrupt a video.
@@ -144,17 +151,20 @@ confirmed which video).
 All requests need the token: `?token=` or header `X-Player-Token` (constant-time compare,
 missing -> 401, wrong -> 403). The token is random per process (`secrets.token_urlsafe(32)`).
 
-* `GET /player/api/state` ->
+* `GET /player/api/state?page_id=<random id>&visible=1|0` ->
   `{seq, action: idle|play|pause|stop, reason, load_id, item: {id, kind, video_id, list_id,
-  start_seconds, title} | null, volume, youtube_host, poll_ms, heartbeat_ms, verify_grace_ms}`. Each poll marks
+  start_seconds, title} | null, volume, youtube_host, poll_ms, heartbeat_ms, verify_grace_ms,
+  owner}`. A visible poll with a well-formed `page_id` (8-64 of `A-Z a-z 0-9 _ -`) claims an
+  unclaimed load that is to play (`owner`, bumps `seq`); polls without one never claim. Each poll marks
   the page connected. The page applies a command once per `seq`; a new `load_id` means
   "tear down and load this item".
-* `POST /player/api/event` `{type, load_id, code?, player_state?, current_time?, duration?,
-  video_id?, playlist_ids?, detail?}` with `type` in `ready playing paused buffering cued ended
+* `POST /player/api/event` `{type, load_id, page_id?, code?, player_state?, current_time?,
+  duration?, video_id?, playlist_ids?, detail?}` with `type` in `ready playing paused buffering cued ended
   track_ended error heartbeat autoplay_blocked hidden navigated_away`; `playlist_ids` is a list of
   at most 500 valid 11-character ids (the controller keeps up to 200 per load). Response
-  `{ok, current}`. Events whose `load_id` is not the current one are recorded but ignored (e.g.
-  an `ended` arriving after a skip). `video_id` checks: see safety rule 4.
+  `{ok, current}`. Events whose `load_id` is not the current one - or, once the load is claimed,
+  whose `page_id` isn't the owner's - are recorded but ignored (e.g. an `ended` arriving after a
+  skip, or a background tab's `hidden`). `video_id` checks: see safety rule 4.
 * `GET /player` sends `Content-Security-Policy: default-src 'none'; script-src 'self'
   https://www.youtube.com https://s.ytimg.com; frame-src https://www.youtube-nocookie.com
   https://www.youtube.com; connect-src 'self'; ...; frame-ancestors 'none'`,
@@ -173,7 +183,7 @@ Player variables: `autoplay=1` (only the parent's choice), `controls=0`, `disabl
 |------|------|
 | `auto` | offline or headless -> `none`; Raspberry Pi -> `kiosk` if Chromium is found, else `none` (warning); desktop -> `browser` |
 | `kiosk` | `chromium(-browser) --kiosk --app=<url> --window-size=W,H --force-device-scale-factor=1 --autoplay-policy=no-user-gesture-required --noerrdialogs --disable-session-crashed-bubble --incognito --disable-extensions --user-data-dir=data/media/chromium-profile ...` (+ `media.kiosk_extra_args`), started with an asyncio subprocess in its own session; on stop: SIGTERM to the process group, SIGKILL after 3 s. Reused while a session continues; closed `kiosk_close_delay_seconds` (1.5 s) after `ended` and 1.5 s + the 1.5 s fade after `limit` (the child sees "All done!"), at once after a parent stop or error |
-| `browser` | `webbrowser.open(url)` in a worker thread; only when no page is polling. Can't be closed: the page shows "All done!" / a calm blank screen and keeps polling |
+| `browser` | `webbrowser.open(url)` in a worker thread; only when no *visible* page is polling (a hidden leftover tab doesn't count). Can't be closed: the page shows "All done!" / a calm blank screen and keeps polling; it never plays a later load another (visible) tab claimed |
 | `none` | nothing launched; open `status()["player"]["url"]` (or `path` on the dashboard host) yourself |
 
 `media.browser_command` overrides autodetection. `media.player_base_url` overrides
@@ -182,7 +192,9 @@ Player variables: `autoplay=1` (only the parent's choice), `controls=0`, `disabl
 ## Parent workflow
 
 1. Set the child's age in the profile. Under 18 months (or no age), video stays off unless
-   the parent turns on "allow videos under 18 months" (or uses a one-off "play anyway").
+   the parent turns on "Allow videos before 18 months" on the dashboard's Videos page (it asks
+   for a confirmation). The refusal message points there. (`play(parent_override=True)` exists
+   in the API, but the dashboard has no one-off "play anyway" button.)
 2. In YouTube, open a video (or one of your playlists), *Share -> Copy link*, paste it in the
    dashboard's video list with a title you'll recognise. For a `watch?v=..&list=..` link
    choose whether you mean the single video (default) or the whole playlist. Playlists can
@@ -211,7 +223,9 @@ Real YouTube playback is not part of the suite (YOUTUBE_ON_PI.md section 9).
 * Only the first 200 video ids of a playlist are accepted: a longer playlist stops (as
   `unexpected_video`) when it reaches a later video. If the player never reports the playlist's
   list, the playlist stops after the 4 s grace period (fail closed). Unverified with real YouTube.
-* Desktop-browser tabs can't be closed by the robot.
+* Desktop-browser tabs can't be closed by the robot (left-over tabs stay idle: only the tab
+  that claimed a load plays it). A reloaded player page is a new page: it can't take over the
+  load it was playing, and that session ends after the heartbeat timeout (15 s).
 * If Python dies without running `stop()`, an `atexit` hook SIGTERMs any kiosk process group
   still running; under systemd (`KillMode=mixed`) the final SIGKILL of the unit's cgroup also
   covers Chromium. A hard SIGKILL of Python outside systemd can leave Chromium running.

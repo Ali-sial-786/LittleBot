@@ -9,7 +9,7 @@ older children, and a phone-friendly parent dashboard. Built for a Raspberry Pi 
 > a substitute for a caregiver. Software tests do not establish physical toy safety
 > (see `docs/MOTION_SAFETY.md` and `HARDWARE_ARRIVAL_CHECKLIST.md`).
 
-**Honest status:** everything runs in desktop simulation and offline-demo modes with 2,000+ passing
+**Honest status:** everything runs in desktop simulation and offline-demo modes with 2,500+ passing
 tests; nothing has run on the Pi or on real devices yet. See **`PROJECT_STATUS.md`**.
 
 ![LittleBot expressions](docs/images/expressions.png)
@@ -69,7 +69,7 @@ remove them.
 ## Testing
 
 ```bash
-.venv/bin/python -m pytest -q          # ~2½ minutes; no hardware, network or keys needed
+.venv/bin/python -m pytest -q          # ~3½ minutes; no hardware, network or keys needed
 ```
 
 ## Documentation map
