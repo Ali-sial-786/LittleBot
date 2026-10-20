@@ -217,7 +217,8 @@ export default {
       setText(npDaily, dayLim ? `${fmtDuration(day)} of ${fmtDuration(dayLim)}` : fmtDuration(day));
       npSessionBar.style.width = sessLim ? `${Math.min(100, (sess / sessLim) * 100)}%` : '0%';
       npDailyBar.style.width = dayLim ? `${Math.min(100, (day / dayLim) * 100)}%` : '0%';
-      const href = playerHref(m.player && typeof m.player === 'object' ? m.player.url : null);
+      const pl = m.player && typeof m.player === 'object' ? m.player : {};
+      const href = typeof pl.path === 'string' && pl.path.startsWith('/') ? `${location.origin}${pl.path}` : playerHref(pl.url);
       playerLink.hidden = !href;
       if (href && playerLink.getAttribute('href') !== href) playerLink.setAttribute('href', href);
       if (key === npKey) return;

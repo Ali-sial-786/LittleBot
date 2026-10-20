@@ -56,6 +56,7 @@ class DashboardService(Service):
         import uvicorn
 
         self.set_status(ServiceStatus.STARTING)
+        self.dash.open()
         try:
             self._sock = _bind_socket(self.host, self.port)
         except OSError as e:
@@ -113,6 +114,7 @@ class DashboardService(Service):
             self._stop_sub.cancel()
             self._stop_sub = None
         await self.dash.cancel_all()
+        self.dash.close()
         task, server = self._task, self._server
         if task is not None and server is not None and not task.done():
             server.should_exit = True

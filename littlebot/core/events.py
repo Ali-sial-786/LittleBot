@@ -59,15 +59,16 @@ class Topics:
     AUDIO_SPEECH_FINISHED = "audio.speech_finished"  # {text, interrupted}
     AUDIO_VISEME = "audio.level"  # {level} 0..1 mouth/eye pulse while speaking
     AUDIO_SOUND_STARTED = "audio.sound_started"  # {name}
-    AUDIO_SOUND_FINISHED = "audio.sound_finished"  # {name}
+    AUDIO_SOUND_FINISHED = "audio.sound_finished"  # {name, interrupted}
     AUDIO_LISTENING_STARTED = "audio.listening_started"  # {}
     AUDIO_LISTENING_STOPPED = "audio.listening_stopped"  # {}
     AUDIO_UTTERANCE = "audio.utterance"  # {text, confidence, source: "stt"|"simulated"}
-    AUDIO_DEVICE_STATUS = "audio.device_status"  # {device: "microphone"|"speaker", status, detail}
+    AUDIO_DEVICE_STATUS = "audio.device_status"  # {device: "microphone"|"speaker", status: ok|simulated|disconnected|unavailable|disabled, detail, backend, name}
 
     # --- conversation ---
     BRAIN_REPLY = "brain.reply"  # {text, provider, filtered}
-    BRAIN_STATUS = "brain.status"  # {provider, status, detail}
+    BRAIN_STATUS = "brain.status"  # {provider, status: ready|ok|error|auth_error|attention, detail}
+    # (for "attention", detail is only a category label: hurt|emergency|scared|lost|safety - never the child's words)
 
     # --- activities ---
     ACTIVITY_STARTED = "activity.started"  # {id, name}

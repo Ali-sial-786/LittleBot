@@ -44,6 +44,8 @@ def build_defaults(cfg: LittleBotConfig) -> dict[str, Any]:
         "ai.max_requests_per_hour": cfg.ai.max_requests_per_hour,
         "ai.max_requests_per_day": cfg.ai.max_requests_per_day,
         "ai.daily_budget_usd": cfg.ai.daily_budget_usd,
+        "ai.share_child_name": cfg.ai.share_child_name,  # send nickname to cloud AI only with opt-in
+        "ai.share_interests": cfg.ai.share_interests,  # favourite animals / interests in cloud prompt
         # media
         "media.enabled": True,
         "media.volume": cfg.media.default_volume,

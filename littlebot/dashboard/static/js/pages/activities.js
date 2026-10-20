@@ -3,6 +3,8 @@
 import { get, post, put } from '../api.js';
 import { button, clear, fmtAge, fmtDuration, h, icon, pageHead, setText, titleCase } from '../ui.js';
 
+const STEP_KIND = { note: 'Tip for you', song: 'Sing along', sing: 'Sing along', say: 'LittleBot says', prompt: 'Your turn', wait: 'Waiting' };
+
 export default {
   mount(view, app) {
     let meta = null;
@@ -128,7 +130,7 @@ export default {
     function renderRunning(s) {
       const a = s.activities || {};
       const p = a.prompt;
-      const key = a.running ? `${a.id}|${a.paused}|${a.step_index}|${p?.prompt_id}|${p?.text}` : '';
+      const key = a.running ? `${a.id}|${a.paused}|${a.step_index}|${a.step_kind}|${a.step_text}|${p?.prompt_id}|${p?.text}` : '';
       if (key === runKey) return;
       runKey = key;
       running.hidden = !a.running;
@@ -143,7 +145,7 @@ export default {
               ? button('Resume', { kind: 'primary small', iconName: 'play', onClick: () => app.act(() => post('/activities/resume')) })
               : button('Pause', { kind: 'soft small', iconName: 'pause', onClick: () => app.act(() => post('/activities/pause')) }),
             button('Stop', { kind: 'danger-outline small', iconName: 'square', onClick: () => app.act(() => post('/activities/stop'), 'Activity stopped.') }))),
-        a.step_text ? h('p', { class: 'mt-1', text: `${total ? `Step ${Math.min((a.step_index || 0) + 1, total)} of ${total}: ` : ''}${a.step_text}` }) : null);
+        a.step_text ? h('p', { class: 'mt-1' }, h('span', { class: 'muted', text: `${total ? `Step ${Math.min((a.step_index || 0) + 1, total)} of ${total}` : ''}${STEP_KIND[a.step_kind] ? ` · ${STEP_KIND[a.step_kind]}` : ''}` }), h('br'), a.step_text) : null);
       if (p && p.text) {
         const opts = (p.options && p.options.length ? p.options : ['done', 'skip']).slice(0, 6);
         running.append(h('div', { class: 'card prompt mt-2' },

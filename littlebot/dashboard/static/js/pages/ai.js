@@ -27,6 +27,33 @@ export default {
         return r !== null;
       },
     });
+    const shareFlag = (key, title, text) => switchRow({
+      title, text,
+      onChange: async (v) => {
+        const r = await app.act(() => put('/ai/settings', { [key]: v }), v ? 'Will be shared with the cloud AI.' : 'No longer shared.');
+        if (r) fill(r);
+        return r !== null;
+      },
+    });
+    const shareName = shareFlag('share_child_name', "Share your child's nickname",
+      'Lets the cloud AI use the nickname from the child profile. Off: the name is replaced by “[name]” before anything is sent.');
+    const shareInterests = shareFlag('share_interests', 'Share favourite animals & interests',
+      'Sends the favourite animals and interests from the profile so answers can be more personal. Never sent when off.');
+    const pttResult = h('div', { class: 'stack-sm' });
+    const ptt = button('Push to talk', {
+      kind: 'primary', iconName: 'mic',
+      onClick: async () => {
+        clear(pttResult).append(h('p', { class: 'muted', text: 'Listening… speak to LittleBot now.' }));
+        const r = await app.act(() => post('/ai/push-to-talk', {}, { timeout: 60000 }));
+        clear(pttResult);
+        if (!r) return;
+        if (r.error) { pttResult.append(banner('warn', 'mic', 'Nothing to answer', r.detail || r.error)); return; }
+        pttResult.append(h('dl', { class: 'kv' },
+          h('dt', { text: 'Heard' }), h('dd', { text: r.heard || '(nothing)' }),
+          h('dt', { text: 'LittleBot said' }), h('dd', { text: r.reply || '(no reply)' }),
+          h('dt', { text: 'Answered by' }), h('dd', { text: r.provider || '–' })));
+      },
+    });
     const provider = h('select', { id: 'ai-provider' }, PROVIDERS.map((p) => h('option', { value: p.value, text: p.label })));
     const keys = h('div', { class: 'chips' });
     const num = (id, min, max, step = 1) => h('input', { type: 'number', id, min, max, step, inputmode: step < 1 ? 'decimal' : 'numeric' });
@@ -71,7 +98,9 @@ export default {
             enabled.el,
             h('div', { class: 'stack mt-1' },
               h('div', { class: 'field' }, h('label', { for: 'ai-provider', text: 'Provider' }), provider),
-              h('div', { class: 'stack-sm' }, h('span', { class: 'muted', text: 'API keys on this robot' }), keys))),
+              h('div', { class: 'stack-sm' }, h('span', { class: 'muted', text: 'API keys on this robot' }), keys)),
+            h('div', { class: 'divider mt-2' }),
+            h('div', { class: 'mt-1' }, h('h3', { text: 'What the cloud AI may know' }), shareName.el, shareInterests.el)),
           h('section', { class: 'card' },
             h('div', { class: 'card-head' }, h('h2', {}, icon('sliders'), 'Limits')),
             h('div', { class: 'form-grid two' },
@@ -86,6 +115,10 @@ export default {
             h('div', { class: 'inline-form mt-2' }, h('div', { class: 'field' }, testProvider),
               button('Test', { kind: 'soft', iconName: 'zap', onClick: runTest })),
             testResult),
+          h('section', { class: 'card' },
+            h('div', { class: 'card-head' }, h('h2', {}, icon('mic'), 'Talk to LittleBot')),
+            h('p', { class: 'muted', text: 'LittleBot listens once through its microphone, then answers out loud - like a walkie-talkie button. Works with scripted replies too.' }),
+            h('div', { class: 'btn-row mt-2' }, ptt), pttResult),
           h('section', { class: 'card' },
             h('div', { class: 'card-head' }, h('h2', {}, icon('history'), 'Usage today')),
             usage, h('div', { class: 'divider mt-2' }), h('div', { class: 'mt-2' }, brainState)))));
@@ -112,6 +145,8 @@ export default {
       data = d;
       const st = d.settings || {};
       enabled.set(st.enabled);
+      shareName.set(st.share_child_name);
+      shareInterests.set(st.share_interests);
       if (document.activeElement !== provider) provider.value = st.provider || 'mock';
       if (document.activeElement !== maxWords) maxWords.value = st.max_words ?? '';
       if (document.activeElement !== perHour) perHour.value = st.max_requests_per_hour ?? '';

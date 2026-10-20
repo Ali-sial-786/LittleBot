@@ -141,9 +141,9 @@ class FakeAudio(_Recorder):
         return {"ok": True, "backend": "fake", "device": None, "peak": 0.0, "rms": 0.0, "detail": "fake"}
 
     def status(self) -> dict[str, Any]:
-        return {"speaker": {"backend": "fake", "device": None, "status": "ok"},
-                "microphone": {"backend": "fake", "device": None, "status": "ok"},
-                "volume": self.volume, "speaking": self.speaking, "listening": False,
+        return {"speaker": {"backend": "fake", "device": None, "status": "ok", "detail": "fake"},
+                "microphone": {"backend": "fake", "device": None, "status": "ok", "detail": "fake"},
+                "volume": self.volume, "max_volume": 0.8, "speaking": self.speaking, "listening": False,
                 "tts_provider": "fake", "stt_provider": "fake"}
 
 

@@ -16,6 +16,8 @@ function device(name, iconName) {
   return { el, set(cls, label) { el.className = `device ${cls}`; setText(state, label); } };
 }
 
+const STEP_KIND = { note: 'Tip for you', song: 'Sing along', sing: 'Sing along', say: 'LittleBot says', prompt: 'Your turn', wait: 'Waiting' };
+
 export default {
   mount(view, app) {
     // ---------- prompt
@@ -100,7 +102,7 @@ export default {
     function renderActivity(s) {
       const a = s.activities || {};
       const unavailable = a.status === 'unavailable';
-      const key = unavailable ? 'na' : a.running ? `run|${a.id}|${a.paused}|${a.step_index}|${a.step_text}` : `idle|${suggestions ? 1 : 0}`;
+      const key = unavailable ? 'na' : a.running ? `run|${a.id}|${a.paused}|${a.step_index}|${a.step_kind}|${a.step_text}` : `idle|${suggestions ? 1 : 0}`;
       if (key === actKey) return;
       actKey = key;
       clear(actBody);
@@ -116,7 +118,7 @@ export default {
         actBody.append(
           h('div', { class: 'row between' }, h('h3', { text: a.name || 'Activity' }), a.paused ? h('span', { class: 'badge warn', text: 'Paused' }) : h('span', { class: 'badge ok', text: 'Playing' })),
           total ? h('div', { class: 'stack-sm' }, h('div', { class: 'progress' }, bar), h('span', { class: 'muted', text: `Step ${Math.min(idx + 1, total)} of ${total}` })) : null,
-          a.step_text ? h('p', { class: 'step', text: a.step_text }) : null,
+          a.step_text ? h('div', {}, STEP_KIND[a.step_kind] ? h('div', { class: 'muted', text: STEP_KIND[a.step_kind] }) : null, h('p', { class: 'step', text: a.step_text })) : null,
           h('div', { class: 'btn-row' },
             a.paused
               ? button('Resume', { kind: 'primary', iconName: 'play', onClick: () => app.act(() => post('/activities/resume')) })

@@ -218,13 +218,14 @@ function startShell(session) {
     stopBtn);
   const offline = h('div', { class: 'offline-bar', role: 'alert', hidden: true, text: "Can't reach LittleBot right now - retrying…" });
   const promptBar = h('a', { class: 'prompt-bar', hidden: true, href: '#/home' });
+  const alertsBox = h('div', { class: 'alerts', role: 'alert', 'aria-live': 'assertive', hidden: true });
   const side = h('nav', { class: 'sidenav', 'aria-label': 'Sections' },
     NAV.slice(0, 4).map(navLink), h('div', { class: 'nav-sep' }), NAV.slice(4).map(navLink));
   const view = h('main', { class: 'view', id: 'view', tabindex: '-1' });
   const tabs = h('nav', { class: 'tabbar', 'aria-label': 'Main' },
     [...NAV.filter((n) => n.tab), PAGES.more].map((n) => h('a', { class: 'tab', href: `#/${n.id}`, dataset: { id: n.id } }, icon(n.icon), h('span', { text: n.id === 'more' ? 'More' : n.label }))));
-  root.append(h('div', { class: 'shell' }, topbar, offline, promptBar, h('div', { class: 'layout' }, side, view), tabs));
-  shell = { face0, nameEl, dot, stateEl, view, side, tabs, offline, promptBar };
+  root.append(h('div', { class: 'shell' }, topbar, offline, promptBar, alertsBox, h('div', { class: 'layout' }, side, view), tabs));
+  shell = { face0, nameEl, dot, stateEl, view, side, tabs, offline, promptBar, alertsBox, alertsKey: '' };
   window.addEventListener('hashchange', route);
   document.addEventListener('visibilitychange', onVisibility);
   route();
@@ -324,9 +325,27 @@ function applyStatus(st) {
   shell.face0.update(asleep ? 'sleepy' : fs.expression || 'neutral', fs.gaze, !!fs.eyes_closed || asleep);
   setText(shell.nameEl, st.name || 'LittleBot');
   setText(shell.stateEl, stateLabel(st));
+  renderAlerts(st.alerts || []);
   if (current?.ctl?.update) safeUpdate(current.ctl, st);
   for (const fn of app.listeners) { try { fn(st); } catch { /* ignore */ } }
   updatePromptBar();
+}
+
+function renderAlerts(alerts) {
+  const key = alerts.map((a) => `${a.id}:${a.count}`).join(',');
+  if (key === shell.alertsKey) return;
+  shell.alertsKey = key;
+  const box = shell.alertsBox;
+  clear(box);
+  box.hidden = !alerts.length;
+  for (const a of alerts.slice(-3)) {
+    const attention = a.kind === 'attention';
+    const when = new Date(a.ts * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    box.append(h('div', { class: ['banner', attention ? 'danger' : 'warn', 'alert-item'] },
+      icon(attention ? 'heart' : 'alert'),
+      h('div', { class: 'grow' }, h('strong', { text: `${a.title}${a.count > 1 ? ` (×${a.count})` : ''}` }), h('span', { text: `${a.detail} · ${when}` })),
+      button('OK', { kind: 'soft small', ariaLabel: `Dismiss: ${a.title}`, onClick: () => app.act(() => post(`/alerts/${a.id}/dismiss`)) })));
+  }
 }
 
 function updatePromptBar() {

@@ -578,6 +578,11 @@ details.disclosure > summary { cursor: pointer; font-weight: 650; padding: 4px 0
 .prompt-bar { display: block; background: var(--prompt-border); color: #1b2130; text-align: center; font-weight: 700; font-size: .92rem; padding: 10px 12px; text-decoration: none; position: sticky; top: calc(var(--topbar-h) + env(safe-area-inset-top)); z-index: 25; }
 .prompt-bar:hover { color: #1b2130; filter: brightness(1.04); }
 
+.alerts { display: flex; flex-direction: column; gap: 8px; padding: 12px 16px 0; max-width: 1180px; margin: 0 auto; }
+.alert-item { align-items: center; box-shadow: var(--shadow); }
+.alert-item .btn { flex: none; }
+@media (min-width: 960px) { .alerts { padding: 14px 28px 0 calc(236px + 28px); max-width: none; } }
+
 /* mini face (LittleBot's eyes) */
 .mf-screen { fill: var(--face-bg); stroke: var(--face-stroke); stroke-width: 3; }
 .mf-bg { fill: var(--face-bg); }

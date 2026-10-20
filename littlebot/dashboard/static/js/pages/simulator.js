@@ -38,6 +38,17 @@ export default {
       else bubble(`LittleBot${r.provider ? ` · ${r.provider}` : ''}`, r.reply || (r.error ? `(${r.error})` : '(no reply)'), 'bot');
     }
     form.addEventListener('submit', (e) => { e.preventDefault(); say(speech.value); });
+    const ptt = button('Push to talk (real microphone)', {
+      kind: 'soft', iconName: 'mic',
+      onClick: async () => {
+        bubble('LittleBot', '(listening…)', 'bot');
+        const r = await app.act(() => post('/ai/push-to-talk', {}, { timeout: 60000 }));
+        if (!r) return;
+        if (r.error) { bubble('LittleBot', `(${r.detail || r.error})`, 'bot'); return; }
+        if (r.heard) bubble('Child', r.heard, 'child');
+        bubble(`LittleBot${r.provider ? ` · ${r.provider}` : ''}`, r.reply || '(no reply)', 'bot');
+      },
+    });
 
     // camera view
     const mark = h('div', { class: 'face-mark', hidden: true });
@@ -63,7 +74,7 @@ export default {
     view.append(
       pageHead('Simulator', 'Try LittleBot without a child or devices: pretend speech, faces and caregiver answers.'),
       h('div', { class: 'grid two' },
-        h('section', { class: 'card' }, h('div', { class: 'card-head' }, h('h2', {}, icon('mic'), 'Speech')), h('div', { class: 'stack' }, chat, form, quick)),
+        h('section', { class: 'card' }, h('div', { class: 'card-head' }, h('h2', {}, icon('mic'), 'Speech')), h('div', { class: 'stack' }, chat, form, quick, h('div', {}, ptt))),
         h('section', { class: 'card' }, h('div', { class: 'card-head' }, h('h2', {}, icon('camera'), 'Camera')),
           h('div', { class: 'stack' }, cam,
             h('div', { class: 'btn-row' },

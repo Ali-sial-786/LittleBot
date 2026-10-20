@@ -34,6 +34,11 @@ FACE_ANIMATIONS: tuple[str, ...] = (
     "bounce", "wiggle", "nod", "shake", "spin_eyes", "sparkle", "hearts", "zzz", "confetti", "peek",
 )
 
+# Motion gestures (motion/gestures.py implements them; activities may reference them).
+GESTURE_NAMES: tuple[str, ...] = (
+    "wave", "look_left", "look_right", "raise_arms", "celebrate", "dance", "shake", "neutral",
+)
+
 # Built-in sound effects (generated procedurally into assets/sounds/*.wav).
 SOUND_NAMES: tuple[str, ...] = (
     "chime", "pop", "boop", "boing", "peekaboo", "tada", "clap", "whoosh", "sparkle", "drum",
@@ -97,10 +102,13 @@ class FaceAPI(Protocol):
 class AudioAPI(Protocol):
     async def say(self, text: str, *, rate: float | None = None) -> bool:
         """Speak text (half-duplex: microphone muted). Publishes speech_started /
-        speech_finished (face animates). Returns False if interrupted or no output."""
+        speech_finished (face animates). ``rate`` overrides the audio.tts_rate setting
+        for this call. Returns False if interrupted or no real speaker (events are still
+        published so the face animates)."""
 
     async def play_sound(self, name: str, *, wait: bool = True, volume: float | None = None) -> bool:
-        """Play a named sound effect (SOUND_NAMES) or a path under assets/sounds."""
+        """Play a named sound effect (SOUND_NAMES) or a path under assets/sounds.
+        ``volume`` is relative to the master volume (never louder than the parent's setting)."""
 
     async def play_melody(self, notes: list[tuple[str, float]], *, tempo_bpm: float = 100, wait: bool = True) -> bool:
         """Play a simple synthesised melody, e.g. [("C4", 1), ("C4", 1), ("G4", 1)]. 'R' = rest."""
@@ -109,8 +117,8 @@ class AudioAPI(Protocol):
         """Interrupt any current speech / sound immediately."""
 
     async def listen(self, *, timeout: float | None = None) -> str | None:
-        """Capture one utterance and transcribe it. None if nothing heard,
-        microphone disabled/unavailable, or interrupted."""
+        """Capture one utterance and transcribe it. ``timeout``: how long to wait for
+        speech to *start*. None if nothing heard, microphone disabled/unavailable, or interrupted."""
 
     def inject_utterance(self, text: str) -> None:
         """Simulated microphone input (simulator / tests). Satisfies a pending listen()."""
@@ -128,8 +136,9 @@ class AudioAPI(Protocol):
         """Records briefly (never stored). {ok, backend, device, peak, rms, detail}"""
 
     def status(self) -> dict[str, Any]:
-        """{speaker: {backend, device, status}, microphone: {...}, volume, speaking,
-        listening, tts_provider, stt_provider}"""
+        """{speaker: {backend, device, status, detail}, microphone: {...}, volume, max_volume,
+        speaking, listening, playing, queued, mic_muted, half_duplex, tts_rate, tts_provider,
+        stt_provider, last_error}"""
 
 
 @runtime_checkable

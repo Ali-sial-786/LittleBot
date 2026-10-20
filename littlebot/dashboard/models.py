@@ -249,6 +249,8 @@ class AISettingsBody(Body):
     max_requests_per_hour: int | None = Field(default=None, ge=0, le=600)
     max_requests_per_day: int | None = Field(default=None, ge=0, le=5000)
     daily_budget_usd: float | None = Field(default=None, ge=0.0, le=20.0)
+    share_child_name: bool | None = None  # send the nickname to the cloud AI (opt-in)
+    share_interests: bool | None = None  # send favourite animals / interests to the cloud AI (opt-in)
 
 
 class ProviderTestBody(Body):

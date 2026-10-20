@@ -9,8 +9,11 @@ cancelled when the dashboard stops.
 from __future__ import annotations
 
 import asyncio
+import collections
+import itertools
 import logging
 import socket
+import threading
 import time
 from typing import Any, Coroutine
 
@@ -18,7 +21,7 @@ from fastapi import HTTPException, Request
 
 from littlebot import __version__
 from littlebot.core.context import RobotContext
-from littlebot.core.events import Topics
+from littlebot.core.events import Event, Subscription, Topics
 from littlebot.core.state import RobotState
 from littlebot.dashboard.auth import AuthManager, Session
 from littlebot.safety.policy import age_group_label
@@ -35,6 +38,9 @@ SUBSYSTEM_LABELS = {
     "brain": "The conversation system",
     "activities": "The activities engine",
 }
+
+# Alerts older than this are no longer shown.
+ALERT_TTL_SECONDS = 30 * 60
 
 # Subsystems included in the aggregated status, in display order.
 STATUS_SUBSYSTEMS = ("face", "audio", "vision", "motion", "media", "brain", "activities")
@@ -53,6 +59,63 @@ class DashState:
         self.bind_host: str | None = None
         self.port: int | None = None
         self.urls: list[str] = []
+        # Parent alerts (e.g. the brain heard "I'm hurt"): category labels only, never the child's words.
+        self._alerts: collections.deque[dict[str, Any]] = collections.deque(maxlen=20)
+        self._alert_ids = itertools.count(1)
+        self._alert_lock = threading.Lock()
+        self._subs: list[Subscription] = []
+        self.open()
+
+    def open(self) -> None:
+        """Subscribe to the bus events that become parent alerts (idempotent)."""
+        if not self._subs:
+            self._subs = [
+                self.ctx.bus.subscribe(Topics.BRAIN_STATUS, self._on_brain_status),
+                self.ctx.bus.subscribe(Topics.SYSTEM_ERROR, self._on_system_error),
+            ]
+
+    def close(self) -> None:
+        for sub in self._subs:
+            sub.cancel()
+        self._subs.clear()
+
+    # ------------------------------------------------------------ alerts
+    def _add_alert(self, kind: str, title: str, detail: str, key: str) -> None:
+        now = time.time()
+        with self._alert_lock:
+            for a in self._alerts:  # de-duplicate bursts of the same alert
+                if a["key"] == key and not a["dismissed"] and now - a["ts"] < 60:
+                    a["ts"], a["count"] = now, a["count"] + 1
+                    return
+            self._alerts.append({"id": next(self._alert_ids), "kind": kind, "title": title, "detail": detail[:160],
+                                 "key": key, "ts": now, "count": 1, "dismissed": False})
+
+    def _on_brain_status(self, event: Event) -> None:
+        if event.get("status") == "attention":
+            category = str(event.get("detail") or "safety")[:40]
+            self._add_alert("attention", "Your child may need you",
+                            f"LittleBot heard something that may need a grown-up ({category}) and suggested finding one. "
+                            "Please check on your child.",
+                            f"attention:{category}")
+
+    def _on_system_error(self, event: Event) -> None:
+        module = str(event.get("module") or "system")[:40]
+        self._add_alert("error", f"Problem with {module}", str(event.get("error") or "unknown error"), f"error:{module}")
+
+    def alerts(self) -> list[dict[str, Any]]:
+        cutoff = time.time() - ALERT_TTL_SECONDS
+        with self._alert_lock:
+            return [{k: a[k] for k in ("id", "kind", "title", "detail", "ts", "count")}
+                    for a in self._alerts if not a["dismissed"] and a["ts"] >= cutoff]
+
+    def dismiss_alert(self, alert_id: int | None = None) -> int:
+        n = 0
+        with self._alert_lock:
+            for a in self._alerts:
+                if not a["dismissed"] and (alert_id is None or a["id"] == alert_id):
+                    a["dismissed"] = True
+                    n += 1
+        return n
 
     # ------------------------------------------------------------ robot
     @property
@@ -143,6 +206,7 @@ class DashState:
             "motion_armed": settings.get("motion.physical_armed"),
         }
         out["dashboard"] = {"lan_access": ctx.config.dashboard.lan_access, "port": self.port or ctx.config.dashboard.port}
+        out["alerts"] = self.alerts()
         out["server_time"] = time.time()
         return out
 

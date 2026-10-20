@@ -282,7 +282,7 @@ def _protected_routes(app=None):
 
 
 def _fill(path: str) -> str:
-    return path.replace("{activity_id}", "peekaboo").replace("{item_id}", "1")
+    return path.replace("{activity_id}", "peekaboo").replace("{item_id}", "1").replace("{alert_id}", "1")
 
 
 async def test_every_protected_route_requires_auth(client, app):

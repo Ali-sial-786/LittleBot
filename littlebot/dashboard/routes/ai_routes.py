@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -12,7 +13,9 @@ from littlebot.dashboard.scrub import scrub
 
 router = APIRouter(prefix="/api/ai", tags=["ai"])
 
-_KEYS = ("enabled", "provider", "max_words", "max_requests_per_hour", "max_requests_per_day", "daily_budget_usd")
+_KEYS = ("enabled", "provider", "max_words", "max_requests_per_hour", "max_requests_per_day", "daily_budget_usd",
+         "share_child_name", "share_interests")
+PUSH_TO_TALK_TIMEOUT_SECONDS = 45.0
 
 
 def _view(dash: DashState) -> dict[str, Any]:
@@ -60,7 +63,7 @@ async def update_ai(body: AISettingsBody, dash: DashState = Depends(get_dash)) -
         raise PermissionError("Cloud AI is unavailable in offline mode.")
     for key, value in body.model_dump(exclude_unset=True).items():
         if value is not None:
-            ctx.settings.set(f"ai.{key}", value, source="dashboard")
+            ctx.settings.set(f"ai.{key}", value, source="dashboard")  # KeyError (unknown key) -> 404
     return {"ok": True, **_view(dash)}
 
 
@@ -78,3 +81,14 @@ async def test_provider(body: ProviderTestBody, dash: DashState = Depends(get_da
                             detail="Cloud communication is turned off in Privacy. Turn it on to test a cloud provider.")
     result = await brain.test_provider(body.provider)
     return {"ok": True, "result": scrub(dict(result or {}))}
+
+
+@router.post("/push-to-talk")
+async def push_to_talk(dash: DashState = Depends(get_dash)) -> dict[str, Any]:
+    """Listen once, think and answer out loud (like a walkie-talkie button)."""
+    brain = dash.need("brain")
+    try:
+        result = await asyncio.wait_for(brain.converse_once(), PUSH_TO_TALK_TIMEOUT_SECONDS)
+    except asyncio.TimeoutError as e:
+        raise HTTPException(status_code=504, detail="LittleBot took too long to listen and answer.") from e
+    return {"ok": True, **scrub(dict(result or {}))}

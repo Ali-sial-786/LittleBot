@@ -43,6 +43,18 @@ async def wake(dash: DashState = Depends(get_dash)) -> dict[str, Any]:
     return {"ok": bool(ok), "state": dash.ctx.state.snapshot()}
 
 
+@router.post("/alerts/{alert_id}/dismiss")
+async def dismiss_alert(alert_id: int, dash: DashState = Depends(get_dash)) -> dict[str, Any]:
+    if not dash.dismiss_alert(alert_id):
+        raise HTTPException(status_code=404, detail="That alert has already been dismissed.")
+    return {"ok": True, "alerts": dash.alerts()}
+
+
+@router.post("/alerts/dismiss-all")
+async def dismiss_all_alerts(dash: DashState = Depends(get_dash)) -> dict[str, Any]:
+    return {"ok": True, "dismissed": dash.dismiss_alert(None), "alerts": dash.alerts()}
+
+
 # ----------------------------------------------------------------- system
 @router.get("/system")
 async def system_info(dash: DashState = Depends(get_dash)) -> dict[str, Any]:

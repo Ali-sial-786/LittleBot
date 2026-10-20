@@ -589,3 +589,36 @@ async def test_player_router_mounted_without_parent_auth(dctx, monkeypatch):
         assert r.headers["x-content-type-options"] == "nosniff"
         assert (await c.get("/player/api/state")).json() == {"state": "idle"}
         assert (await c.get("/api/status")).status_code == 401  # parent API still protected
+
+
+# ------------------------------------------------------------------ parent alerts
+async def test_attention_alerts_reach_the_parent(authed, dctx):
+    dctx.bus.publish(Topics.BRAIN_STATUS, {"provider": "safety", "status": "attention", "detail": "hurt"}, source="brain")
+    dctx.bus.publish(Topics.BRAIN_STATUS, {"provider": "safety", "status": "attention", "detail": "hurt"}, source="brain")
+    dctx.bus.publish(Topics.BRAIN_STATUS, {"provider": "mock", "status": "ok", "detail": ""}, source="brain")
+    dctx.bus.publish(Topics.SYSTEM_ERROR, {"module": "audio", "error": "speaker unplugged", "recoverable": True})
+    alerts = (await authed.get("/api/status")).json()["alerts"]
+    assert [a["kind"] for a in alerts] == ["attention", "error"]
+    assert alerts[0]["count"] == 2 and "hurt" in alerts[0]["detail"]
+    r = await authed.post(f"/api/alerts/{alerts[0]['id']}/dismiss")
+    assert r.status_code == 200 and [a["kind"] for a in r.json()["alerts"]] == ["error"]
+    assert (await authed.post(f"/api/alerts/{alerts[0]['id']}/dismiss")).status_code == 404
+    assert (await authed.post("/api/alerts/dismiss-all")).json()["dismissed"] == 1
+    assert (await authed.get("/api/status")).json()["alerts"] == []
+
+
+async def test_ai_sharing_opt_ins(authed, dctx):
+    info = (await authed.get("/api/ai")).json()
+    assert info["settings"]["share_child_name"] is False and info["settings"]["share_interests"] is False
+    r = await authed.put("/api/ai/settings", json={"share_child_name": True, "share_interests": True})
+    assert r.status_code == 200
+    assert dctx.settings.get("ai.share_child_name") is True and dctx.settings.get("ai.share_interests") is True
+    assert (await authed.put("/api/ai/settings", json={"share_child_name": "maybe"})).status_code == 422
+
+
+async def test_push_to_talk(authed, fakes, dctx, app):
+    r = await authed.post("/api/ai/push-to-talk")
+    assert r.status_code == 200 and r.json()["ok"] and r.json()["provider"] == "mock"
+    assert fakes["brain"].called("converse_once") == [((), {})]
+    dctx.brain = None
+    assert (await authed.post("/api/ai/push-to-talk")).status_code == 503
