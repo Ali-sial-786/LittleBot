@@ -153,9 +153,10 @@ Subscribed: `system.stop_all`, `caregiver.response`, `state.changed`.
 * `Service.start()/stop()` vs `ActivityAPI.start(id)/stop(reason)`: `start()` without an id
   is the lifecycle start (returns `health()`); `stop()` always stops the current activity
   (exactly what shutdown needs).
-* `Service.__init__` assigns `self.status` (a `ServiceStatus`), which would shadow
-  `ActivityAPI.status()`. The engine therefore does not call `Service.__init__` and keeps
-  its service status in `_svc_status` (overriding `set_status` / `health`).
+* Lifecycle state is `Service.service_status`; `health()` adds `activities` (count) and
+  `script_errors`. `status()` is the ActivityAPI run snapshot.
+* Gestures are called as `motion.run_gesture(name)` without `owner`/`priority`: the engine
+  does not hold `Resource.MOTION`, so motion applies its own default (Priority.ACTIVITY).
 
 ## Tests
 

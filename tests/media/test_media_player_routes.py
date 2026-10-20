@@ -134,7 +134,7 @@ async def test_playing_then_ended_event(env, client):
     stopped = env.last(Topics.MEDIA_STOPPED)
     assert stopped is not None and stopped.data["reason"] == "ended"
     assert env.ctx.state.state == RobotState.IDLE
-    assert env.all(Topics.FACE_VISIBLE)[-1].data["visible"] is True
+    assert env.face_states()[-1] == "idle"
 
 
 async def test_error_150_event(env, client):

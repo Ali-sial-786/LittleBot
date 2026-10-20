@@ -101,11 +101,7 @@ class ConversationEngine(Service):
         usage: UsageTracker | None = None,
         now: Callable[[], float] = time.time,
     ) -> None:
-        super().__init__()
-        # core.service.Service keeps lifecycle state in ``self.status`` which would shadow the
-        # BrainAPI ``status()`` method; keep it in ``service_status`` (same pattern as vision).
-        self.__dict__.pop("status", None)
-        self.service_status = ServiceStatus.STOPPED
+        super().__init__()  # lifecycle state lives in self.service_status (status() is the BrainAPI dict)
         self.ctx = ctx
         self.cfg = ctx.config.ai
         self._providers: dict[str, BaseProvider] = providers or self._build_providers(http_transport)
@@ -159,14 +155,6 @@ class ConversationEngine(Service):
             )
 
     # -------------------------------------------------------------- lifecycle
-    def set_status(self, status: ServiceStatus, detail: str = "") -> None:  # type: ignore[override]
-        if status != self.service_status or detail != self.status_detail:
-            self.log.info("status %s%s", status.value, f" ({detail})" if detail else "")
-        self.service_status, self.status_detail = status, detail
-
-    def health(self) -> dict[str, Any]:
-        return {"name": self.name, "status": self.service_status.value, "detail": self.status_detail}
-
     async def start(self) -> None:
         self._loop = asyncio.get_running_loop()
         bus = self.ctx.bus

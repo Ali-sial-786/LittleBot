@@ -11,7 +11,7 @@ import pytest
 
 from littlebot.core.clock import ManualClock
 from littlebot.core.context import RobotContext
-from littlebot.core.events import Event, collect
+from littlebot.core.events import Event, Topics, collect
 from littlebot.media.controller import MediaController
 from littlebot.media.display import DisplayBackend, PlayerBackendError
 from littlebot.testing import make_test_context
@@ -69,6 +69,10 @@ class MediaEnv:
 
     def add(self, vid: str = VID_A, title: str | None = "Song", **kw: Any) -> dict[str, Any]:
         return self.media.add_item(f"https://www.youtube.com/watch?v={vid}", title, **kw)
+
+    def face_states(self) -> list[str]:
+        """Face state requested by each RobotState change (the face owns face.visible)."""
+        return [e.data["face_state"] for e in self.events if e.topic == Topics.STATE_CHANGED]
 
     def poll(self) -> dict[str, Any]:
         """Act like the player page polling the bridge."""

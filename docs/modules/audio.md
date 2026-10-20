@@ -39,7 +39,7 @@ Device `status` values: `ok`, `simulated` (mock), `disconnected` (failed mid-use
 `unavailable` (not found), `disabled` (config `none` or privacy). Every change is published as
 `audio.device_status {device: "speaker"|"microphone", status, detail, backend, name}`.
 
-Lifecycle state lives in `service_status` / `health()` (not `self.status`, which would shadow `status()`).
+Lifecycle state lives in `service_status` / `health()` (core `Service` base class).
 
 ## Output path
 

@@ -148,8 +148,6 @@ activities:
   record_history: false
   custom_dirs: [activities]   # your own YAML activities go in data/activities/ (see docs/ACTIVITY_GUIDE.md)
   random_seed: null           # set a number for reproducible random picks
-  custom_dirs: [activities]   # your own YAML activities go in data/activities/ (see docs/ACTIVITY_GUIDE.md)
-  random_seed: null           # set a number for reproducible random picks
 
 privacy:
   camera_enabled: true

@@ -90,7 +90,7 @@ export default {
       // mode banner
       clear(modeBox);
       if (!d.available) modeBox.append(banner('warn', 'alert', 'Motion system unavailable', 'Gestures and joints are disabled until it is running.'));
-      else if (d.simulation_only) modeBox.append(banner('info', 'info', 'Simulation only', `${sentence(d.reason || 'Physical motion is disabled')} No servo will move - the drawing shows what LittleBot would do.`));
+      else if (d.simulation_only) modeBox.append(banner('info', 'info', 'Simulation only', `${sentence(String(d.reason || 'Physical motion is disabled').replace(/^simulation only:?\s*/i, ''))} No servo will move - the drawing shows what LittleBot would do.`));
       else if (d.armed) modeBox.append(banner('danger', 'alert', 'Physical motors are ARMED', 'LittleBot\'s servos will really move. Keep fingers and faces clear and supervise closely.'));
       else modeBox.append(banner('warn', 'lock', 'Physical motors disarmed', d.reason || 'Motion is simulated until you arm the motors below.'));
       // gestures

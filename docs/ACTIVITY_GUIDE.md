@@ -444,7 +444,7 @@ Only use songs that are traditional / public domain (or that you wrote yourself)
 * **Sounds:** chime, pop, boop, boing, peekaboo, tada, clap, whoosh, sparkle, drum, bell,
   giggle, uhoh, yay, blip, notes, sleep, wake, click, success (or a `.wav` file under
   `assets/sounds/`)
-* **Gestures:** wave, look_left, look_right, raise_arms, celebrate, dance, neutral
+* **Gestures:** wave, look_left, look_right, raise_arms, celebrate, dance, shake (gentle head shake), neutral
 
 ### Troubleshooting
 

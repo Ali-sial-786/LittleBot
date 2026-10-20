@@ -17,12 +17,14 @@ from __future__ import annotations
 
 import abc
 import asyncio
+import atexit
 import logging
 import os
 import shutil
 import signal
 import subprocess
 import webbrowser
+import weakref
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Protocol, Sequence
 
@@ -35,6 +37,17 @@ BROWSER_CANDIDATES: tuple[str, ...] = ("chromium-browser", "chromium", "google-c
 
 class PlayerBackendError(RuntimeError):
     """The player window could not be opened (e.g. Chromium missing)."""
+
+
+# Safety net: kiosk browsers still running when the interpreter exits (crash, unhandled exit)
+# get SIGTERM to their whole process group. A clean stop() has already closed them.
+_LIVE_KIOSKS: "weakref.WeakSet[BrowserKioskBackend]" = weakref.WeakSet()
+
+
+@atexit.register
+def _terminate_live_kiosks() -> None:
+    for kiosk in list(_LIVE_KIOSKS):
+        kiosk.terminate_now()
 
 
 class ProcessHandle(Protocol):
@@ -212,7 +225,7 @@ class BrowserKioskBackend(DisplayBackend):
         height: int = 320,
         extra_args: Sequence[str] = (),
         launcher: Launcher | None = None,
-        terminate_timeout: float = 3.0,
+        terminate_timeout: float = 2.0,  # SIGTERM -> wait -> SIGKILL -> wait 1 s: < 5 s shutdown budget
     ) -> None:
         super().__init__()
         self.browser = browser
@@ -255,11 +268,22 @@ class BrowserKioskBackend(DisplayBackend):
             except (OSError, ValueError) as e:
                 self._proc = None
                 raise PlayerBackendError(f"could not start the player browser: {e}") from e
+            _LIVE_KIOSKS.add(self)
             log.info("player kiosk started (pid %s)", getattr(self._proc, "pid", "?"))
+
+    def terminate_now(self) -> None:
+        """Synchronous best-effort SIGTERM (no event loop needed; used at interpreter exit)."""
+        proc = self._proc
+        if proc is not None and proc.returncode is None:
+            try:
+                proc.terminate()
+            except Exception:  # noqa: BLE001
+                pass
 
     async def close(self) -> None:
         async with self._lock:
             proc, self._proc = self._proc, None
+            _LIVE_KIOSKS.discard(self)
             if proc is None or proc.returncode is not None:
                 return
             proc.terminate()
@@ -269,7 +293,7 @@ class BrowserKioskBackend(DisplayBackend):
                 log.warning("player kiosk did not exit after SIGTERM; killing it")
                 proc.kill()
                 try:
-                    await asyncio.wait_for(proc.wait(), self._terminate_timeout)
+                    await asyncio.wait_for(proc.wait(), 1.0)
                 except asyncio.TimeoutError:
                     log.error("player kiosk process %s did not exit", getattr(proc, "pid", "?"))
             log.info("player kiosk closed")

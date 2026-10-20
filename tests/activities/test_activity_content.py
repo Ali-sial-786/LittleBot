@@ -23,7 +23,7 @@ REPORT = load_directories([ACTIVITY_SCRIPTS_DIR])
 ACTIVITIES = REPORT.activities
 IDS = sorted(ACTIVITIES)
 
-GESTURES = {"wave", "look_left", "look_right", "raise_arms", "celebrate", "dance", "neutral"}
+GESTURES = set(m.GESTURES)
 
 REQUIRED_IDS = {
     # baby
@@ -80,6 +80,13 @@ def test_every_age_group_has_plenty_to_do():
         assert n >= 10, f"only {n} activities for {label}"
     for age in (6, 10, 14, 20, 30, 42, 59, 66):
         assert sum(1 for a in ACTIVITIES.values() if a.suitable_for(age)) >= 8, age
+
+
+def test_gesture_vocabulary_matches_the_motion_contract():
+    from littlebot.testing import FakeMotion
+
+    assert {"wave", "look_left", "look_right", "raise_arms", "celebrate", "dance", "neutral"} <= GESTURES
+    assert GESTURES <= set(FakeMotion().gestures())
 
 
 def test_categories_are_valid_and_varied():

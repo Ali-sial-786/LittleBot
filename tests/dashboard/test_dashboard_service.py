@@ -60,8 +60,10 @@ async def test_service_serves_on_real_port_and_stops(caplog):
         # The first-run setup code went to the console / log, nowhere else.
         log_text = "\n".join(r.getMessage() for r in caplog.records)
         assert "setup code" in log_text.lower() and svc.auth.setup_code_active
-        code = next(line.strip() for line in log_text.splitlines()
-                    if len(line.strip()) == 9 and line.strip()[4] == "-")
+        setup_lines = [line for line in log_text.splitlines() if "setup code:" in line]
+        assert len(setup_lines) == 1  # `grep setup` on the log shows the code
+        code = setup_lines[0].split("setup code:")[1].strip()
+        assert len(code) == 9 and code[4] == "-"
         async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{svc.port}", timeout=5, trust_env=False) as c:
             assert (await c.get("/api/health")).json() == {"ok": True}
             assert (await c.get("/api/status")).status_code == 401
@@ -135,3 +137,23 @@ async def test_stop_all_event_cancels_dashboard_demo():
     finally:
         await svc.stop()
         ctx.db.close()
+
+
+async def test_reset_password_cli(tmp_path, capsys):
+    from littlebot.core.storage import Database
+    from littlebot.dashboard.__main__ import main
+    from littlebot.dashboard.auth import AuthManager
+
+    db = Database(tmp_path / "littlebot.db")
+    auth = AuthManager(db)
+    await auth.complete_setup(auth.issue_setup_code(), PASSWORD)
+    auth.create_session()
+    db.close()
+    assert main(["reset-password", "--data-dir", str(tmp_path), "--yes"]) == 0
+    db = Database(tmp_path / "littlebot.db")
+    try:
+        fresh = AuthManager(db)
+        assert fresh.setup_required and fresh.active_sessions() == 0
+    finally:
+        db.close()
+    assert main(["reset-password", "--data-dir", str(tmp_path / "missing"), "--yes"]) == 1

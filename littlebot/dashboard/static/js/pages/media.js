@@ -199,6 +199,7 @@ export default {
         policyBox.append(banner('warn', 'alert', 'Videos authorised under 18 months', 'You chose to allow videos for a young child. Keep sessions short and watch together.'));
       }
       if (st.enabled === false) policyBox.append(banner('warn', 'alert', 'Videos are turned off', 'Turn on “Videos allowed” below to play videos.'));
+      if (data?.status?.offline) policyBox.append(banner('info', 'wifi', 'Offline mode', 'Videos stream from YouTube, so they need the internet. LittleBot is running in offline mode.'));
     }
 
     let npKey = '';

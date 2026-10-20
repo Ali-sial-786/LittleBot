@@ -352,9 +352,9 @@ def log_setup_code(code: str, url: str | None = None) -> None:
         "\n"
         "  ================================================================\n"
         "   LittleBot parent dashboard - first-run setup\n"
-        "   Open the dashboard%s and enter this one-time setup code:\n"
+        "   Open the dashboard%s and enter the one-time code below.\n"
         "\n"
-        "        %s\n"
+        "   Dashboard setup code: %s\n"
         "\n"
         "   (Only people who can see this console can claim the dashboard.)\n"
         "  ================================================================",

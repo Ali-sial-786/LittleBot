@@ -202,3 +202,85 @@ def test_select_backend():
     assert isinstance(select_backend(make_test_config(media={"player": "browser"})), DesktopBrowserBackend)
     missing = select_backend(make_test_config(media={"player": "kiosk"}), which={}.get)
     assert isinstance(missing, BrowserKioskBackend) and missing.available is False
+
+
+def _alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    try:  # an unreaped zombie counts as dead
+        with open(f"/proc/{pid}/stat") as fh:
+            return fh.read().rsplit(")", 1)[1].split()[0] != "Z"
+    except OSError:
+        return True
+
+
+def _fake_browser_with_child(tmp_path):
+    script = tmp_path / "fake-chromium"
+    script.write_text(f"#!/bin/sh\nsleep 30 &\necho $! > {tmp_path / 'child.pid'}\nexec sleep 30\n")
+    script.chmod(0o755)
+    return script
+
+
+async def _gone(pid: int, timeout: float = 2.0) -> bool:
+    """The main process is reaped by stop(); its orphaned child dies a moment later."""
+    for _ in range(int(timeout / 0.01)):
+        if not _alive(pid):
+            return True
+        await asyncio.sleep(0.01)
+    return False
+
+
+async def _child_pid(tmp_path) -> int:
+    for _ in range(200):
+        f = tmp_path / "child.pid"
+        if f.exists() and f.read_text().strip():
+            return int(f.read_text())
+        await asyncio.sleep(0.01)
+    raise AssertionError("fake browser did not start its child")
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX process groups")
+async def test_app_shutdown_stop_terminates_kiosk_process_group(make_env, tmp_path):
+    """systemd KillMode=mixed only signals the main process: MediaController.stop() must kill Chromium."""
+    kiosk = BrowserKioskBackend(str(_fake_browser_with_child(tmp_path)), user_data_dir=tmp_path / "profile")
+    e = make_env(backend=kiosk)
+    await e.media.start()
+    item = e.add()
+    await e.media.play(item["id"])
+    pid, child = kiosk.status()["pid"], await _child_pid(tmp_path)
+    assert _alive(pid) and _alive(child)
+    e.ctx.bus.publish(Topics.SYSTEM_SHUTDOWN, {"reason": "SIGTERM"})
+    await e.media.stop()  # exactly what app/robot.py calls on shutdown
+    assert not _alive(pid)  # the browser's main process is gone before stop() returned
+    assert await _gone(child)  # ... and the rest of its process group was signalled too
+    assert e.media.health()["status"] == "stopped"
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX process groups")
+async def test_parent_stop_terminates_kiosk_before_returning(make_env, tmp_path):
+    kiosk = BrowserKioskBackend(str(_fake_browser_with_child(tmp_path)), user_data_dir=tmp_path / "profile")
+    e = make_env(backend=kiosk, media_cfg={"kiosk_close_delay_seconds": 1.5})
+    await e.media.start()
+    item = e.add()
+    await e.media.play(item["id"])
+    pid = kiosk.status()["pid"]
+    await e.media.stop("stopped")
+    assert not _alive(pid) and kiosk.is_running() is False
+    await e.media.close()
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX process groups")
+async def test_atexit_safety_net_signals_running_kiosks(tmp_path):
+    from littlebot.media import display
+
+    kiosk = BrowserKioskBackend(str(_fake_browser_with_child(tmp_path)), user_data_dir=tmp_path / "profile")
+    await kiosk.open(URL)
+    child = await _child_pid(tmp_path)
+    assert kiosk in display._LIVE_KIOSKS
+    display._terminate_live_kiosks()  # what runs at interpreter exit
+    assert await _gone(child)
+    await asyncio.wait_for(kiosk._proc.wait(), 2)
+    await kiosk.close()
+    assert kiosk not in display._LIVE_KIOSKS

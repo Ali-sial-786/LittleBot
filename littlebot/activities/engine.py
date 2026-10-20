@@ -28,8 +28,7 @@ crash the app.
 Name clash note: ``Service.start()/stop()`` and ``ActivityAPI.start(id)/stop(reason)``
 share names. ``start()`` with no activity id is the service lifecycle start;
 ``stop()`` always stops the current activity (which is exactly what shutdown needs).
-``Service`` stores its status in ``self.status``, which would shadow
-``ActivityAPI.status()``; this class keeps it in ``_svc_status`` instead.
+Lifecycle state is ``Service.service_status``; ``status()`` is the ActivityAPI dict.
 """
 
 from __future__ import annotations
@@ -170,11 +169,7 @@ class ActivityEngine(Service):
     name = "activities"
 
     def __init__(self, ctx: Any, library: ActivityLibrary | None = None, *, seed: int | None = None) -> None:
-        # Deliberately not calling Service.__init__: it assigns ``self.status`` which
-        # would shadow the ActivityAPI ``status()`` method.
-        self._svc_status = ServiceStatus.STOPPED
-        self.status_detail = ""
-        self.log = log
+        super().__init__()  # lifecycle state lives in ``service_status``
         self.ctx = ctx
         if library is None:
             library = ActivityLibrary(default_script_dirs(ctx))
@@ -196,14 +191,8 @@ class ActivityEngine(Service):
         ]
 
     # ------------------------------------------------------------ Service
-    def set_status(self, status: ServiceStatus, detail: str = "") -> None:
-        if status != self._svc_status or detail != self.status_detail:
-            log.info("status %s%s", status.value, f" ({detail})" if detail else "")
-        self._svc_status, self.status_detail = status, detail
-
     def health(self) -> dict[str, Any]:
-        return {"name": self.name, "status": self._svc_status.value, "detail": self.status_detail,
-                "activities": len(self.library), "script_errors": len(self.library.errors)}
+        return {**super().health(), "activities": len(self.library), "script_errors": len(self.library.errors)}
 
     def close(self) -> None:
         """Drop bus subscriptions (tests / teardown)."""
@@ -263,7 +252,7 @@ class ActivityEngine(Service):
         errors = self.library.load()
         if errors:
             self.set_status(ServiceStatus.DEGRADED, f"{len(errors)} script problem(s)")
-        elif self._svc_status == ServiceStatus.DEGRADED:
+        elif self.service_status == ServiceStatus.DEGRADED:
             self.set_status(ServiceStatus.RUNNING)
         return errors
 

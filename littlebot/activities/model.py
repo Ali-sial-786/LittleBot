@@ -42,7 +42,7 @@ log = logging.getLogger("littlebot.activities.model")
 # ---------------------------------------------------------------------------
 
 #: Motion gestures an activity may request (optional: skipped without motion / during e-stop).
-GESTURES: tuple[str, ...] = ("wave", "look_left", "look_right", "raise_arms", "celebrate", "dance", "neutral")
+GESTURES: tuple[str, ...] = ("wave", "look_left", "look_right", "raise_arms", "celebrate", "dance", "shake", "neutral")
 
 #: How much an adult needs to take part.
 PARTICIPATION: tuple[str, ...] = ("required", "recommended", "optional")

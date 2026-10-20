@@ -540,9 +540,14 @@ async def test_eyes_follow_simulated_face_via_behaviours(make_ctx):
     await svc.start()
     try:
         svc.simulate_face(0.2, 0.5)
-        assert await wait_until(lambda: bool(ctx.face.called("look_at")), timeout=2.0)
-        (x, y), _ = ctx.face.called("look_at")[-1]
+
+        def gaze_calls():  # behaviours prefers the soft track_gaze() when the face offers it
+            return ctx.face.called("track_gaze") or ctx.face.called("look_at")
+
+        assert await wait_until(lambda: bool(gaze_calls()), timeout=2.0)
+        (x, y), _ = gaze_calls()[-1]
         assert x == pytest.approx(0.8) and 0.0 < y < 0.5  # robot looks to its right, at eye level
+        assert ctx.face.gaze == (x, y)
     finally:
         await svc.stop()
         await behaviours.stop()

@@ -260,7 +260,7 @@ def test_plays_approved_video_with_safe_player_vars_then_ends(h):
     h.wait(lambda: h.env.last(Topics.MEDIA_STOPPED) is not None, "media.stopped")
     assert h.env.last(Topics.MEDIA_STOPPED).data["reason"] == "ended"
     assert h.env.ctx.state.state == RobotState.IDLE
-    assert h.env.all(Topics.FACE_VISIBLE)[-1].data["visible"] is True
+    assert h.env.face_states()[-1] == "idle"
     assert h.visible_screen() == "screen-done"
     assert h.page.inner_text("#screen-done") == "All done!"
     assert h.stub()["destroyed"] == 1 and "destroy" in h.stub()["calls"]

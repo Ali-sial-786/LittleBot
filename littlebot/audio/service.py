@@ -117,11 +117,7 @@ class AudioService(Service):
     def __init__(self, ctx: Any, *, output: OutputBackend | None = None, input: InputBackend | None = None,  # noqa: A002
                  tts: TTSProvider | None = None, stt: STTProvider | None = None,
                  sound_bank: SoundBank | None = None) -> None:
-        super().__init__()
-        # core.service.Service keeps lifecycle state in ``self.status``, which would shadow the
-        # AudioAPI ``status()`` method: keep it in ``service_status`` (same pattern as vision/brain).
-        self.__dict__.pop("status", None)
-        self.service_status = ServiceStatus.STOPPED
+        super().__init__()  # lifecycle state lives in ``service_status`` / ``health()``
         self.ctx = ctx
         self.cfg = ctx.config.audio
         self._bus = ctx.bus
@@ -199,14 +195,6 @@ class AudioService(Service):
             ]
 
     # ================================================================ lifecycle
-    def set_status(self, status: ServiceStatus, detail: str = "") -> None:  # type: ignore[override]
-        if status != self.service_status or detail != self.status_detail:
-            self.log.info("status %s%s", status.value, f" ({detail})" if detail else "")
-        self.service_status, self.status_detail = status, detail
-
-    def health(self) -> dict[str, Any]:
-        return {"name": self.name, "status": self.service_status.value, "detail": self.status_detail}
-
     async def start(self) -> None:
         self._shutdown = False
         self._subscribe()

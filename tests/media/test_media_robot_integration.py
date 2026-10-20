@@ -15,19 +15,22 @@ def test_robot_builds_media_and_stop_all_returns_to_face():
     bot = LittleBot(ctx)
     bot.build_subsystems(only={"media"})
     assert isinstance(ctx.media, MediaController)
-    events = collect(ctx.bus, ["media.*", "face.visible"])
+    events = collect(ctx.bus, ["media.*", "state.changed"])
     bot.start()
     try:
         assert ctx.media.health()["status"] == "running"
         item = ctx.media.add_item("https://youtu.be/dQw4w9WgXcQ", "Song")
         bot.runtime.run(ctx.media.play(item["id"]))
         assert ctx.state.state == RobotState.PLAYING_MEDIA
+        assert ctx.face.state == "hidden"  # behaviours glue: PLAYING_MEDIA -> face state hidden
         assert bot.status()["media"]["state"] == "loading"
         bot.runtime.run(bot.stop_all("parent"))
         assert ctx.state.state == RobotState.IDLE
         stopped = [e for e in events if e.topic == Topics.MEDIA_STOPPED]
         assert len(stopped) == 1 and stopped[0].data["reason"] == "stopped"
-        assert [e.data["visible"] for e in events if e.topic == Topics.FACE_VISIBLE] == [False, True]
+        # the face hides for PLAYING_MEDIA and returns afterwards (FakeFace follows the state glue)
+        assert [e.data["face_state"] for e in events if e.topic == Topics.STATE_CHANGED] == ["hidden", "idle"]
+        assert ctx.face.state == "idle"
         assert all(v is None for v in ctx.arbiter.snapshot().values())
         bot.runtime.run(ctx.media.play(item["id"]))
     finally:

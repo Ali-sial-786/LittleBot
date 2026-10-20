@@ -172,7 +172,7 @@ async def test_play_stop_lease_state_and_face(env):
     started = env.last(Topics.MEDIA_STARTED)
     assert started.data["item_id"] == item["id"] and started.data["title"] == "Moon song"
     assert started.data["kind"] == "video"
-    assert env.all(Topics.FACE_VISIBLE)[-1].data == {"visible": False}
+    assert env.face_states() == ["hidden"]  # the face hides itself for PLAYING_MEDIA
     assert env.backend.opened == [env.media.player_url()]
     desired = env.poll()
     assert desired["action"] == "play" and desired["item"]["video_id"] == VID_A and desired["load_id"]
@@ -183,10 +183,10 @@ async def test_play_stop_lease_state_and_face(env):
     assert all(v is None for v in ctx.arbiter.snapshot().values())
     stopped = env.last(Topics.MEDIA_STOPPED)
     assert stopped.data["reason"] == "stopped" and stopped.data["item_id"] == item["id"]
-    assert env.all(Topics.FACE_VISIBLE)[-1].data == {"visible": True}
+    assert env.face_states() == ["hidden", "idle"]  # animated face returns
+    assert env.all(Topics.FACE_VISIBLE) == []  # single owner: the face module
     assert env.poll()["action"] == "stop"
-    await env.settle()
-    assert env.backend.closed == 1 and not env.backend.running
+    assert env.backend.closed == 1 and not env.backend.running  # closed before stop() returned
     # idempotent
     await env.media.stop()
     assert len(env.all(Topics.MEDIA_STOPPED)) == 1
@@ -201,7 +201,7 @@ async def test_player_ended_returns_to_face(env):
     await env.page_event("ended")
     assert env.ctx.state.state == RobotState.IDLE
     assert env.last(Topics.MEDIA_STOPPED).data["reason"] == "ended"
-    assert env.all(Topics.FACE_VISIBLE)[-1].data["visible"] is True
+    assert env.face_states()[-1] == "idle"
     states = [(e.data["old"], e.data["new"]) for e in env.all(Topics.STATE_CHANGED)]
     assert states == [("IDLE", "PLAYING_MEDIA"), ("PLAYING_MEDIA", "IDLE")]
     assert env.poll()["action"] == "stop" and env.poll()["reason"] == "ended"
@@ -263,7 +263,7 @@ async def test_play_other_item_during_session_switches(env):
     assert st["item"]["id"] == b["id"] and st["session_id"] == sid
     assert st["session_seconds"] == pytest.approx(30)
     assert len(env.backend.opened) == 1  # page already open: it loads the new item itself
-    assert len(env.all(Topics.MEDIA_STARTED)) == 2 and len(env.all(Topics.FACE_VISIBLE)) == 1
+    assert len(env.all(Topics.MEDIA_STARTED)) == 2 and env.face_states() == ["hidden"]
 
 
 # ------------------------------------------------------------------ pause / resume
@@ -314,7 +314,7 @@ async def test_session_limit(env):
     assert stopped.data["reason"] == "limit" and "session" in stopped.data["detail"]
     assert env.poll()["action"] == "stop" and env.poll()["reason"] == "limit"
     assert env.ctx.state.state == RobotState.IDLE
-    assert env.all(Topics.FACE_VISIBLE)[-1].data["visible"] is True
+    assert env.face_states()[-1] == "idle"
     # a new session may start (the daily limit is the hard cap)
     await env.media.play(item["id"])
     assert env.media.status()["session_seconds"] == 0
@@ -443,7 +443,7 @@ async def test_backend_failure_is_reported(make_env, fake_backend_cls):
     assert e.ctx.state.state == RobotState.IDLE and e.ctx.arbiter.is_free(Resource.SCREEN)
     assert e.last(Topics.MEDIA_ERROR) is not None
     assert e.last(Topics.MEDIA_STOPPED).data["reason"] == "error"
-    assert e.all(Topics.FACE_VISIBLE)[-1].data["visible"] is True
+    assert e.face_states() == ["hidden", "idle"]
     await e.media.close()
 
 

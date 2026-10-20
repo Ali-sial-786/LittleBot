@@ -8,7 +8,8 @@ Safety rules enforced here (not just in the UI):
 * Session and daily time limits (daily usage persisted per calendar day) with a gentle stop.
 * Offline mode refuses playback; ``media.enabled`` can switch video off entirely.
 * When a video ends, errors or is stopped, the player is torn down and the animated face returns
-  (``face.visible`` true) - YouTube's end screen / related videos never take over.
+  (``RobotState.PLAYING_MEDIA`` -> ``IDLE``; the face module owns ``face.visible`` and hides
+  itself for ``PLAYING_MEDIA``) - YouTube's end screen / related videos never take over.
 
 Playback itself happens in a web page (``player_routes``) shown by a display backend
 (``display``). The page polls the desired state from :class:`PlayerBridge` and reports
@@ -169,11 +170,21 @@ class MediaController(Service):
             self.set_status(ServiceStatus.RUNNING, f"player: {self.backend.name}")
 
     async def stop(self, reason: str = "stopped") -> None:
-        """End any playback (``MediaAPI.stop``). ``Service.stop`` shares this name: during app
-        shutdown (after ``system.shutdown``) it also releases subscriptions, tasks and the browser."""
+        """End any playback (``MediaAPI.stop``) and terminate the kiosk browser before returning.
+
+        ``Service.stop`` shares this name: during app shutdown (after ``system.shutdown``) it also
+        releases subscriptions and tasks. The kiosk is always terminated here, not in a delayed
+        task, so it is gone even if the loop stops right after (systemd ``KillMode=mixed`` only
+        signals the main process)."""
         self._bind_loop()
         async with self._op_lock:
             await self._end_session(reason)
+        if self.backend.can_close:
+            self._cancel_close_task()
+            try:
+                await self.backend.close()
+            except Exception:  # noqa: BLE001
+                log.exception("player backend close failed")
         if self._shutting_down:
             await self.close()
 
@@ -258,7 +269,7 @@ class MediaController(Service):
                                 load_started=now, last_accrual=now, override=bool(parent_override))
                 with self._lock:
                     self._session = sess
-                self.ctx.bus.publish(Topics.FACE_VISIBLE, {"visible": False}, source="media")
+                # The face hides itself for PLAYING_MEDIA (it owns face.visible).
             else:
                 with self._lock:
                     self._accrue()
@@ -522,7 +533,6 @@ class MediaController(Service):
         if detail:
             payload["detail"] = detail
         self.ctx.bus.publish(Topics.MEDIA_STOPPED, payload, source="media")
-        self.ctx.bus.publish(Topics.FACE_VISIBLE, {"visible": True}, source="media")
         log.info("media: stopped (%s%s) after %.0fs", reason, f": {detail}" if detail else "", sess.seconds)
         if self._watchdog is not None and self._watchdog is not asyncio.current_task():
             self._watchdog.cancel()
