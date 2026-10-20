@@ -561,7 +561,10 @@ class DisplayLoop:
             return
         if self.sim_mode and not shift:
             if vision is not None:
-                vision.simulate_face(nx, ny)
+                # (nx, ny) is where the pretend person is on LittleBot's screen, i.e. where the eyes
+                # should look; simulate_face() takes camera-image coordinates, which are mirrored.
+                mirror = getattr(getattr(self.ctx.config, "camera", None), "mirror", True)
+                vision.simulate_face(1.0 - nx if mirror else nx, ny)
             else:
                 self.face.look_at(nx, ny)
             return

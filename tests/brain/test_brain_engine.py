@@ -21,7 +21,7 @@ from littlebot.core.events import Topics, collect
 from littlebot.core.interfaces import BrainAPI
 from littlebot.core.service import Service
 from littlebot.core.state import RobotState
-from littlebot.safety.content import SAFE_FALLBACKS, SHORT_SAFE_FALLBACKS, word_count
+from littlebot.safety.content import GROWNUP_FALLBACK, SAFE_FALLBACKS, SHORT_SAFE_FALLBACKS, word_count
 from littlebot.testing import FakeAudio, make_test_context
 
 
@@ -497,6 +497,74 @@ async def test_concerning_input_alerts_parent_without_cloud_or_transcript(make_b
     alert = [e for e in events if e.topic == Topics.BRAIN_STATUS and e.get("status") == "attention"]
     assert len(alert) == 1 and alert[0].data == {"provider": "safety", "status": "attention", "detail": "hurt"}
     assert "swing" not in json.dumps([e.data for e in events])
+
+
+REVIEW_EMERGENCIES = [
+    ("I ate a battery", "swallowed"), ("I swallowed a coin", "swallowed"), ("I drank the soap", "swallowed"),
+    ("daddy hit me", "safety"), ("a man said come with me", "stranger"), ("the baby is in the pool", "water"),
+    ("help me", "help"), ("I can't breathe", "emergency"),
+]
+
+
+@pytest.mark.parametrize(("text", "category"), REVIEW_EMERGENCIES)
+@pytest.mark.parametrize("provider", ["mock", "anthropic"])
+async def test_emergencies_get_a_grownup_reply_and_a_parent_alert(make_brain, text, category, provider):
+    # Review finding: a 30-month-old saying "I ate a battery" got "Ooh, tell me more!" and no alert.
+    ctx = cloud_context(age_months=30, provider=provider)
+    events = collect(ctx.bus, [Topics.BRAIN_STATUS, Topics.BRAIN_REPLY])
+    api = FakeAPI()
+    brain = await make_brain(ctx, api)
+    r = await brain.handle_utterance(text)
+    assert api.calls == 0 and r["provider"] == "safety" and r["attention"] == category
+    assert "grown-up" in r["reply"] and r["expression"] == "affectionate"
+    for cheerful in ("fun", "wow", "ooh", "yay", "show me", "tell me more", "clap"):
+        assert cheerful not in r["reply"].lower()
+    assert ctx.audio.spoken == [r["reply"]]
+    alerts = [e.data for e in events if e.topic == Topics.BRAIN_STATUS and e.get("status") == "attention"]
+    assert alerts == [{"provider": "safety", "status": "attention", "detail": category}]
+    # Only the category label leaves the brain - never the child's words.
+    dumped = json.dumps([e.data for e in events]).lower()
+    for word in ("battery", "coin", "soap", "daddy", "man said", "pool", "help me", "breathe"):
+        assert word not in dumped
+
+
+async def test_concern_beyond_the_input_length_cap_is_still_caught(make_brain):
+    ctx = cloud_context(age_months=40, ai={"max_input_chars": 40})
+    api = FakeAPI()
+    brain = await make_brain(ctx, api)
+    r = await brain.handle_utterance("I like the red truck and the blue truck and also I swallowed a coin")
+    assert api.calls == 0 and r["attention"] == "swallowed" and "grown-up" in r["reply"]
+
+
+async def test_good_cloud_safety_advice_is_spoken_and_alerts_the_parent(make_brain):
+    # Review finding: this good reply used to be blocked as "unsafe" and replaced by "Can you clap your hands?".
+    advice = "Oh no! Swallowing a battery is not safe. Tell a grown-up right now!"
+    ctx = cloud_context(age_months=40)
+    events = collect(ctx.bus, [Topics.BRAIN_STATUS])
+    replies = iter(["It looks shiny and round!", advice])
+    api = FakeAPI(lambda req: anthropic_response(next(replies)))
+    brain = await make_brain(ctx, api)
+    await brain.handle_utterance("what is this shiny round thing")  # not itself flagged: the cloud answers
+    assert brain.status()["context_turns"] == 1
+    r = await brain.handle_utterance("it was in my tummy now")
+    assert api.calls == 2 and r["provider"] == "anthropic"
+    assert r["reply"] == advice and r["filtered"] is False and r["attention"] == "danger"
+    assert r["expression"] == "affectionate" and ctx.audio.spoken[-1] == advice
+    alerts = [e.data for e in events if e.get("status") == "attention"]
+    assert alerts == [{"provider": "anthropic", "status": "attention", "detail": "danger"}]
+    assert brain.status()["context_turns"] == 0  # a possible emergency is not carried into later turns
+
+
+@pytest.mark.parametrize("bad", ["Touch the stove and tell a grown-up right now!",
+                                 "The stove is hot, touch it, then tell a grown-up right now."])
+async def test_hazard_plus_grownup_reply_gets_a_gentle_line_not_a_game(make_brain, bad):
+    ctx = cloud_context(age_months=40)
+    events = collect(ctx.bus, [Topics.BRAIN_STATUS])
+    brain = await make_brain(ctx, FakeAPI(lambda req: anthropic_response(bad)))
+    r = await brain.handle_utterance("what is that")
+    assert r["filtered"] is True and r["reply"] == GROWNUP_FALLBACK and r["attention"] == "danger"
+    assert r["reply"] not in SAFE_FALLBACKS + SHORT_SAFE_FALLBACKS and r["expression"] == "affectionate"
+    assert [e.data["detail"] for e in events if e.get("status") == "attention"] == ["danger"]
 
 
 async def test_personal_info_is_scrubbed_before_cloud(make_brain):

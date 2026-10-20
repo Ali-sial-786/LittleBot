@@ -237,9 +237,14 @@ def test_openai_stt_refused_without_cloud():
 
 
 # ------------------------------------------------------------------ service-level gating / fallback
-def _cloud_ctx(actx, *, cloud: bool):
+def _cloud_ctx(actx, *, cloud: bool, age: int | None = 30, ai_enabled: bool = True, nickname: str = ""):
+    """Every cloud gate open (unless told otherwise): privacy cloud, key, age >= 24 months, ai.enabled."""
     actx.config.openai_api_key = SecretStr("sk-test-123")
     actx.privacy.set(cloud_enabled=cloud)
+    profile = dict(actx.settings.get("profile") or {})
+    profile.update({"age_months": age, "birth_month": "", "nickname": nickname})
+    actx.settings.set("profile", profile)
+    actx.settings.set("ai.enabled", ai_enabled)
     return actx
 
 
@@ -287,3 +292,129 @@ async def test_service_cloud_stt_gating_and_fallback(actx, make_service):
     assert await svc.listen(timeout=2) == "offline only"
     assert len(rec.requests) == 1  # no new cloud request once cloud is off
     assert "needs cloud" in svc.status()["stt_provider"]
+
+
+# ------------------------------------------------------------------ cloud speech: age gate + opt-ins
+def _stt_ok(req: httpx.Request) -> httpx.Response:
+    return httpx.Response(200, json={"text": "cloud words"})
+
+
+def _gated_stt_service(make_service, ctx, rec):
+    stt = OpenAISTT(api_key=lambda: "sk-test-123", cloud_allowed=lambda: True, transport=rec.transport)
+    mic = MockInput()
+    svc = make_service(ctx, stt=stt, input=mic)
+    return svc, mic
+
+
+@pytest.mark.parametrize("age, ai_enabled, why", [
+    (12, True, "under 24 months"),  # an infant's voice is never uploaded
+    (23, True, "under 24 months"),
+    (None, True, "age is not set"),
+    (30, False, "ai.enabled"),  # the parent hasn't opted in to cloud AI
+])
+async def test_cloud_stt_needs_age_and_ai_opt_in(actx, make_service, age, ai_enabled, why):
+    rec = Recorder(_stt_ok)
+    ctx = _cloud_ctx(actx, cloud=True, age=age, ai_enabled=ai_enabled)
+    svc, mic = _gated_stt_service(make_service, ctx, rec)
+    svc._stt_local.queue_text("local words")
+    mic.inject_speech(0.6)
+    assert await svc.listen(timeout=2) == "local words"
+    assert rec.requests == []  # nothing was uploaded
+    assert why in svc.status()["stt_provider"] and svc.status()["stt_provider"].startswith("mock")
+
+
+async def test_cloud_stt_used_once_every_gate_is_open(actx, make_service):
+    rec = Recorder(_stt_ok)
+    ctx = _cloud_ctx(actx, cloud=True, age=30, ai_enabled=True)
+    svc, mic = _gated_stt_service(make_service, ctx, rec)
+    mic.inject_speech(0.6)
+    assert await svc.listen(timeout=2) == "cloud words"
+    assert len(rec.requests) == 1 and svc.status()["stt_provider"] == "openai"
+    ctx.settings.set("ai.enabled", False)  # switched off again: next listen stays local
+    svc._stt_local.queue_text("local again")
+    mic.inject_speech(0.6)
+    assert await svc.listen(timeout=2) == "local again"
+    assert len(rec.requests) == 1
+
+
+async def test_cloud_stt_built_from_config_is_gated(actx, make_service):
+    # Provider created by the service itself (audio.stt.provider: openai), not injected.
+    rec = Recorder(_stt_ok)
+    ctx = _cloud_ctx(actx, cloud=True, age=10, ai_enabled=True)
+    ctx.config.audio.stt.provider = "openai"
+    mic = MockInput()
+    svc = make_service(ctx, stt=None, input=mic)
+    assert isinstance(svc._stt, OpenAISTT)
+    svc._stt._transport = rec.transport
+    assert not svc._stt.available()  # its own gate refuses too
+    with pytest.raises(CloudNotAllowed):
+        svc._stt.transcribe(_speech(), 16000)
+    mic.inject_speech(0.6)
+    await svc.listen(timeout=2)
+    assert rec.requests == []
+    profile = dict(ctx.settings.get("profile")); profile["age_months"] = 30
+    ctx.settings.set("profile", profile)
+    mic.inject_speech(0.6)
+    assert await svc.listen(timeout=2) == "cloud words" and len(rec.requests) == 1
+
+
+def _tts_service(make_service, ctx, rec):
+    tts = OpenAITTS(api_key=lambda: "sk-test-123", cloud_allowed=lambda: True, transport=rec.transport)
+    return make_service(ctx, tts=tts)
+
+
+@pytest.mark.parametrize("age, ai_enabled", [(12, True), (None, True), (30, False)])
+async def test_cloud_tts_needs_age_and_ai_opt_in(actx, make_service, age, ai_enabled):
+    rec = Recorder(lambda req: httpx.Response(200, content=_wav_bytes()))
+    ctx = _cloud_ctx(actx, cloud=True, age=age, ai_enabled=ai_enabled, nickname="Zara")
+    svc = _tts_service(make_service, ctx, rec)
+    assert await svc.say("Well done, Zara!") is True  # spoken by the local voice
+    assert rec.requests == []
+    assert "not allowed" in svc.status()["tts_provider"]
+
+
+def _sent_text(req: httpx.Request) -> str:
+    return json.loads(req.content)["input"]
+
+
+async def test_cloud_tts_never_sends_the_nickname_without_opt_in(actx, make_service):
+    rec = Recorder(lambda req: httpx.Response(200, content=_wav_bytes()))
+    ctx = _cloud_ctx(actx, cloud=True, nickname="Zara")
+    svc = _tts_service(make_service, ctx, rec)
+    assert await svc.say("Well done, Zara! ZARA's turn. zara, clap!") is True
+    assert len(rec.requests) == 1
+    body = rec.requests[0].content.decode("utf-8")
+    assert "zara" not in body.lower()
+    assert _sent_text(rec.requests[0]) == "Well done, friend! friend's turn. friend, clap!"
+    assert await svc.say("Zarah and Lazarus are other names") is True  # whole words only
+    assert _sent_text(rec.requests[1]) == "Zarah and Lazarus are other names"
+
+    ctx.settings.set("ai.share_child_name", True)  # the parent opted in
+    assert await svc.say("Well done, Zara!") is True
+    assert _sent_text(rec.requests[2]) == "Well done, Zara!"
+
+
+async def test_cloud_tts_multi_part_nickname_is_scrubbed(actx, make_service):
+    rec = Recorder(lambda req: httpx.Response(200, content=_wav_bytes()))
+    ctx = _cloud_ctx(actx, cloud=True, nickname="Mary-Jane Rose")
+    svc = _tts_service(make_service, ctx, rec)
+    assert await svc.say("Hi Mary-Jane! Rose, Mary-Jane Rose and mary, look!") is True
+    sent = _sent_text(rec.requests[0])
+    assert sent == "Hi friend! friend, friend and friend, look!"
+    for part in ("mary", "jane", "rose"):
+        assert part not in sent.lower()
+
+
+async def test_cloud_tts_built_from_config_is_gated(actx, make_service):
+    rec = Recorder(lambda req: httpx.Response(200, content=_wav_bytes()))
+    ctx = _cloud_ctx(actx, cloud=True, age=12, nickname="Zara")
+    ctx.config.audio.tts.provider = "openai"
+    svc = make_service(ctx, tts=None)
+    assert isinstance(svc._tts, OpenAITTS)
+    svc._tts._transport = rec.transport
+    assert await svc.say("Hello Zara") is True
+    assert rec.requests == []  # infant: local voice
+    profile = dict(ctx.settings.get("profile")); profile["age_months"] = 36
+    ctx.settings.set("profile", profile)
+    assert await svc.say("Hello Zara") is True
+    assert len(rec.requests) == 1 and _sent_text(rec.requests[0]) == "Hello friend"

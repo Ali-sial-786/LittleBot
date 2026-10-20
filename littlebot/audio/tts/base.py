@@ -72,6 +72,28 @@ def clean_text(text: Any, max_chars: int = MAX_CHARS) -> str:
     return s
 
 
+_NAME_PARTS = re.compile(r"[\s\-_.]+")
+
+
+def scrub_names(text: str, names: Any, replacement: str = "friend") -> str:
+    """Replace each name (case-insensitive, whole words only) with ``replacement``.
+
+    Used before text goes to a cloud voice without the parent's ``ai.share_child_name`` opt-in.
+    A multi-part name ("Mary-Jane Rose") is also matched part by part ("Mary", "Rose")."""
+    out = unicodedata.normalize("NFC", str(text or ""))
+    candidates: set[str] = set()
+    for name in names or ():
+        full = unicodedata.normalize("NFC", str(name or "")).strip()
+        if len(full) < 2:
+            continue
+        candidates.add(full)
+        for word in full.split():
+            candidates.update(part for part in [word, *_NAME_PARTS.split(word)] if len(part) >= 2)
+    for name in sorted(candidates, key=len, reverse=True):  # the full name before its parts
+        out = re.sub(r"(?<!\w)" + re.escape(name) + r"(?!\w)", replacement, out, flags=re.IGNORECASE)
+    return out
+
+
 def estimate_seconds(text: str, rate: float = 1.0) -> float:
     words = max(1, len(text.split()))
     return max(0.5, words / (WORDS_PER_SECOND * max(MIN_RATE, rate)))

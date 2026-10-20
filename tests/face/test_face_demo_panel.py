@@ -65,6 +65,24 @@ def test_arm_rotation_handles_mirrored_servos():
     assert arm_rotation({"angle": "bad"}) == pytest.approx(90)
 
 
+def test_panel_robot_faces_the_viewer(pygame_display):
+    """The robot's LEFT arm is drawn on the viewer's right, like its head yaw and the dashboard drawing."""
+    pygame = pygame_display
+    from littlebot.face.sim_panel import ACCENT, SimPanel
+
+    def accent_pixels(surf, xs, ys):
+        return sum(1 for x in xs for y in ys if tuple(surf.get_at((x, y)))[:3] == ACCENT)
+
+    surf = pygame.Surface((280, 178))
+    motion = {"moving": True, "joints": {
+        "left_arm": {"angle": 150, "target": 150, "min": 10, "max": 150, "neutral": 20},   # raised
+        "right_arm": {"angle": 160, "target": 160, "min": 30, "max": 170, "neutral": 160}}}  # hanging
+    SimPanel()._draw_robot(surf, surf.get_rect(), motion)  # noqa: SLF001
+    upper = range(40, 95)  # above the shoulders, beside the head
+    assert accent_pixels(surf, range(200, 240), upper) > 0  # raised hand: viewer's right
+    assert accent_pixels(surf, range(40, 80), upper) == 0
+
+
 def test_panel_draws_with_partial_or_odd_data(pygame_display):
     pygame = pygame_display
     from littlebot.face.sim_panel import SimPanel

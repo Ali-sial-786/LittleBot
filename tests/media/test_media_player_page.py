@@ -20,7 +20,7 @@ import pytest
 
 pytest.importorskip("playwright.sync_api")
 
-from conftest import VID_A, VID_B, LIST_A, _build  # type: ignore[import-not-found]  # noqa: E402
+from media_testkit import VID_A, VID_B, LIST_A, _build  # type: ignore[import-not-found]  # noqa: E402
 from playwright.sync_api import Error as PlaywrightError  # noqa: E402
 from playwright.sync_api import sync_playwright  # noqa: E402
 
@@ -45,6 +45,8 @@ YT_STUB = r"""
     this.videoId = opts.videoId || null;
     var vars = opts.playerVars || {};
     this.playlist = vars.listType === 'playlist' ? (window.__ytStubPlaylist || ['aaaaaaaaaaa', 'bbbbbbbbbbb']) : null;
+    this.listHidden = !!window.__ytStubHideList;  // getPlaylist() returns null (list "not loaded yet")
+    this.noVideoId = !!window.__ytStubNoVideoId;  // the player doesn't tell which video it shows
     this.index = 0;
     if (this.playlist && !this.videoId) { this.videoId = this.playlist[0]; }
     rec.players.push(this); rec.created++;
@@ -66,8 +68,10 @@ YT_STUB = r"""
   Player.prototype.getPlayerState = function () { return this.state; };
   Player.prototype.getCurrentTime = function () { return 1.5; };
   Player.prototype.getDuration = function () { return 60; };
-  Player.prototype.getVideoUrl = function () { return 'https://www.youtube.com/watch?v=' + this.videoId; };
-  Player.prototype.getPlaylist = function () { return this.playlist; };
+  Player.prototype.getVideoUrl = function () {
+    return this.noVideoId ? 'https://www.youtube.com/' : 'https://www.youtube.com/watch?v=' + this.videoId;
+  };
+  Player.prototype.getPlaylist = function () { return this.listHidden ? null : this.playlist; };
   Player.prototype.getPlaylistIndex = function () { return this.playlist ? this.index : -1; };
   Player.prototype.destroy = function () {
     this.calls.push('destroy'); this.destroyed = true; rec.destroyed++;
@@ -80,10 +84,12 @@ YT_STUB = r"""
     setTimeout(function () { p.opts.events.onError({ target: p, data: code }); }, 0);
   };
   rec.navigate = function (vid) { var p = rec.current(); p.videoId = vid; p._set(1); };
+  rec.revealList = function () { rec.current().listHidden = false; };
   rec.next = function () { var p = rec.current(); p.index++; p.videoId = p.playlist[p.index]; p._set(1); };
   rec.summary = function () {
     var p = rec.current();
     return p ? { created: rec.created, destroyed: rec.destroyed, calls: p.calls.slice(), videoId: p.videoId,
+                 state: p.state,
                  opts: { videoId: p.opts.videoId || null, host: p.opts.host, playerVars: p.opts.playerVars } }
              : { created: 0, destroyed: 0, calls: [] };
   };
@@ -335,10 +341,78 @@ def test_playlist_continues_only_within_the_approved_playlist(h):
     h.page.evaluate("window.__ytStub.next()")  # YouTube moves to track 2 (in the approved list)
     h.pause(0.3)
     assert h.env.last(Topics.MEDIA_ERROR) is None
+    assert h.snap()["playlistIds"] == 2 and h.snap()["idsAcked"] == 2  # the robot knows the list too
+    assert h.media.status()["player"]["info"]["video_id"] == VID_B
     h.page.evaluate("window.__ytStub.fire(0)")  # last track ended
     h.wait(lambda: h.env.last(Topics.MEDIA_STOPPED) is not None, "media.stopped")
     assert h.env.last(Topics.MEDIA_STOPPED).data["reason"] == "ended"
     assert h.visible_screen() == "screen-done"
+
+
+def test_unapproved_video_is_reported_with_its_id(h):
+    item = h.env.add(VID_A, "Approved")
+    h.open()
+    _play(h, item)
+    h.page.evaluate("window.__ytStub.navigate('zzzzzzzzzzz')")
+    h.wait(lambda: h.env.last(Topics.MEDIA_ERROR) is not None, "media.error")
+    last = h.media.status()["player"]["last_event"]
+    assert last["type"] == "error" and last["code"] == "unexpected_video" and last["video_id"] == "zzzzzzzzzzz"
+
+
+def _start_unconfirmed(h: Harness, item: dict[str, Any]) -> None:
+    """Play ``item`` and wait until the stub player is PLAYING (the page may not confirm it)."""
+    h.run(h.media.play(item["id"]))
+    h.wait(lambda: h.stub().get("state") == 1, "stub player to be playing")
+
+
+def test_playlist_whose_video_list_never_arrives_is_stopped_after_grace(h):
+    # The finding: getPlaylist() empty + an unapproved video in the player. Fail closed.
+    h.media.bridge.verify_grace_ms = 800
+    pl = h.media.add_item(f"https://www.youtube.com/playlist?list={LIST_A}", "Songs")
+    h.page.add_init_script(f"window.__ytStubPlaylist = ['{VID_A}', '{VID_B}']; window.__ytStubHideList = true;")
+    h.open()
+    _start_unconfirmed(h, pl)
+    h.page.evaluate("window.__ytStub.navigate('ZZZZZZZZZZZ')")
+    h.wait(lambda: h.snap()["verifying"] or h.env.last(Topics.MEDIA_ERROR) is not None, "grace period")
+    h.wait(lambda: h.env.last(Topics.MEDIA_ERROR) is not None, "media.error after the grace period", timeout=5)
+    assert h.env.last(Topics.MEDIA_ERROR).data["code"] == "unexpected_video"
+    assert h.env.last(Topics.MEDIA_STOPPED).data["reason"] == "error"
+    events = h.snap()["events"]
+    assert "playing" not in events and "error:unexpected_video" in events  # never reported as fine
+    assert h.stub()["destroyed"] == 1 and h.visible_screen() == "screen-error"
+    assert h.env.ctx.state.state == RobotState.IDLE
+
+
+def test_playlist_video_list_arriving_late_is_used(h):
+    h.media.bridge.verify_grace_ms = 3000
+    pl = h.media.add_item(f"https://www.youtube.com/playlist?list={LIST_A}", "Songs")
+    h.page.add_init_script(f"window.__ytStubPlaylist = ['{VID_A}', '{VID_B}']; window.__ytStubHideList = true;")
+    h.open()
+    _start_unconfirmed(h, pl)
+    h.pause(0.4)
+    assert h.snap()["verifying"] is True and h.media.status()["state"] == "loading"  # not confirmed yet
+    h.page.evaluate("window.__ytStub.revealList()")
+    h.wait(lambda: h.media.status()["state"] == "playing", "playing once the list is known")
+    h.wait(lambda: h.snap()["idsAcked"] == 2, "robot to acknowledge the playlist's ids")
+    assert h.snap()["playlistIds"] == 2 and h.snap()["verifying"] is False
+    h.page.evaluate("window.__ytStub.next()")  # track 2 of the approved list
+    h.pause(0.5)
+    assert h.env.last(Topics.MEDIA_ERROR) is None and h.media.status()["state"] == "playing"
+    h.page.evaluate("window.__ytStub.navigate('ZZZZZZZZZZZ')")  # not in the list: stopped at once
+    h.wait(lambda: h.env.last(Topics.MEDIA_ERROR) is not None, "media.error", timeout=1.5)
+    assert h.env.last(Topics.MEDIA_ERROR).data["code"] == "unexpected_video"
+    assert h.stub()["destroyed"] == 1 and h.env.ctx.state.state == RobotState.IDLE
+
+
+def test_single_video_with_unknown_id_is_stopped_after_grace(h):
+    h.media.bridge.verify_grace_ms = 800
+    item = h.env.add(VID_A, "Approved")
+    h.page.add_init_script("window.__ytStubNoVideoId = true;")
+    h.open()
+    _start_unconfirmed(h, item)
+    h.wait(lambda: h.env.last(Topics.MEDIA_ERROR) is not None, "media.error after the grace period", timeout=5)
+    assert h.env.last(Topics.MEDIA_ERROR).data["code"] == "unexpected_video"
+    assert "playing" not in h.snap()["events"] and h.stub()["destroyed"] == 1
 
 
 def test_stale_token_page_shows_calm_message(h):

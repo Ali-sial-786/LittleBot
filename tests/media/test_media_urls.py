@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from littlebot.media.allowlist import (
-    MAX_URL_LENGTH, InvalidMediaIdError, MalformedURLError, MediaURLError, NotYouTubeURLError,
+    MAX_URL_LENGTH, ChannelURLError, InvalidMediaIdError, MalformedURLError, MediaURLError, NotYouTubeURLError,
     UnsupportedURLError, URLTooLongError, parse_timestamp, parse_youtube_url, sanitize_title,
 )
 
@@ -143,6 +143,48 @@ def test_rejected_links(url, error, message):
     with pytest.raises(error, match=message) as info:
         parse_youtube_url(url)
     assert isinstance(info.value, ValueError) and isinstance(info.value, MediaURLError)
+
+
+CHANNEL_ID = "x5XG1OV2P6uZZ5FSM9Ttw"  # the 22 characters after "UC" in a channel id
+
+
+@pytest.mark.parametrize("list_id", [
+    "UU" + CHANNEL_ID,  # all uploads of a channel
+    "UULF" + CHANNEL_ID, "UUSH" + CHANNEL_ID, "UULV" + CHANNEL_ID,  # its videos / shorts / live streams
+    "UUMO" + CHANNEL_ID, "UUPV" + CHANNEL_ID, "UUPS" + CHANNEL_ID,  # member-only / popular variants
+    "FL" + CHANNEL_ID, "UL" + CHANNEL_ID, "UL" + V,
+])
+def test_channel_uploads_lists_are_rejected_like_channels(list_id):
+    for url in (f"https://www.youtube.com/playlist?list={list_id}",
+                f"https://www.youtube.com/embed/videoseries?list={list_id}",
+                f"https://m.youtube.com/playlist?list={list_id}&si=abc"):
+        with pytest.raises(ChannelURLError, match="whole channels can't be approved") as info:
+            parse_youtube_url(url)
+        assert isinstance(info.value, UnsupportedURLError) and isinstance(info.value, ValueError)
+        assert info.value.reason == "unsupported"
+    with pytest.raises(ChannelURLError, match="whole channels"):  # the parent explicitly picks "playlist"
+        parse_youtube_url(f"https://www.youtube.com/watch?v={V}&list={list_id}", kind="playlist")
+    # a video opened from a channel's uploads list: only that single video is added
+    p = parse_youtube_url(f"https://www.youtube.com/watch?v={V}&list={list_id}&index=2")
+    assert p.kind == "video" and p.video_id == V and p.list_id is None and p.has_playlist is False
+    assert p.canonical_url == f"https://www.youtube.com/watch?v={V}"
+
+
+def test_channel_pages_use_the_channel_error():
+    for url in ("https://www.youtube.com/@SomeChannel", "https://www.youtube.com/channel/UC" + CHANNEL_ID):
+        with pytest.raises(ChannelURLError, match="can't be approved as a whole"):
+            parse_youtube_url(url)
+
+
+@pytest.mark.parametrize("list_id", [
+    PL, "PLuuFgquLnL59alCl_2TQvOiD5Vgm1hCaGSI", "OLAK5uy_kUZ9DRnPMwYtcrBBS19pmkNrzUO6Ri-1g",
+    "uu" + CHANNEL_ID, "fl" + CHANNEL_ID,  # ids are case-sensitive: only the real prefixes are channel lists
+])
+def test_normal_playlists_still_accepted(list_id):
+    p = parse_youtube_url(f"https://www.youtube.com/playlist?list={list_id}")
+    assert p.kind == "playlist" and p.list_id == list_id
+    p = parse_youtube_url(f"https://www.youtube.com/watch?v={V}&list={list_id}", kind="playlist")
+    assert p.kind == "playlist" and p.list_id == list_id and p.video_id == V
 
 
 def test_mix_rejected_when_parent_chooses_playlist():

@@ -7,6 +7,10 @@ Safety rules enforced here (not just in the UI):
   unknown age; a parent may authorise it (``parent_override`` / ``media.allow_under_min_age``).
 * Session and daily time limits (daily usage persisted per calendar day) with a gentle stop.
 * Offline mode refuses playback; ``media.enabled`` can switch video off entirely.
+* The video the page says is in the player must be the approved one: for a single video exactly
+  its id; for a playlist one of the playlist's video ids the page reported from the official
+  player. Anything else ends the session (``unexpected_video``); a missing id never counts as
+  approval (a ``playing`` report that is never confirmed ends it too, ``unverified_video``).
 * When a video ends, errors or is stopped, the player is torn down and the animated face returns
   (``RobotState.PLAYING_MEDIA`` -> ``IDLE``; the face module owns ``face.visible`` and hides
   itself for ``PLAYING_MEDIA``) - YouTube's end screen / related videos never take over.
@@ -23,7 +27,7 @@ import datetime as _dt
 import itertools
 import logging
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Coroutine
 
 from littlebot.core.arbiter import Lease, Priority, Resource
@@ -33,7 +37,9 @@ from littlebot.core.events import Event, Subscription, Topics
 from littlebot.core.runtime import cancel_and_wait
 from littlebot.core.service import Service, ServiceStatus
 from littlebot.core.state import RobotState
-from littlebot.media.allowlist import parse_youtube_url
+from littlebot.media.allowlist import (
+    MediaURLError, is_valid_video_id, parse_youtube_url, validate_list_id, validate_video_id,
+)
 from littlebot.media.bridge import PlayerBridge
 from littlebot.media.display import DisplayBackend, PlayerBackendError, select_backend
 from littlebot.media.oembed import OEmbedResult, lookup_oembed
@@ -49,6 +55,14 @@ PAGE_FADE_SECONDS = 1.5  # player.js fades the volume out this long on a limit s
 USAGE_FLUSH_SECONDS = 10.0
 MAX_SESSION_LIMIT_MINUTES = 120
 MAX_DAILY_LIMIT_MINUTES = 240
+# A "playing" report without a confirmed video id ends the session after this long. (player.js
+# itself only reports "playing" once it confirmed the video, and stops by itself after its own,
+# shorter grace period - see VERIFY_GRACE_MS in bridge.py.)
+VERIFY_GRACE_SECONDS = 10.0
+MAX_PLAYLIST_IDS = 200  # video ids remembered per playlist load (same cap as the page / the route)
+# Page events that describe the player and may carry the id of the video in it (+ playlist ids).
+VIDEO_CHECK_EVENTS = frozenset({"ready", "playing", "paused", "buffering", "cued", "track_ended",
+                                "heartbeat", "autoplay_blocked"})
 
 # YouTube IFrame API onError codes -> (short code, parent-facing message)
 PLAYER_ERRORS: dict[Any, tuple[str, str]] = {
@@ -70,6 +84,10 @@ PLAYER_ERRORS: dict[Any, tuple[str, str]] = {
     "bad_item": ("bad_item", "The player received an invalid item."),
     "player_create_failed": ("player_create_failed", "The YouTube player could not be created."),
 }
+
+UNEXPECTED_VIDEO_MESSAGE = PLAYER_ERRORS["unexpected_video"][1]
+UNVERIFIED_VIDEO_MESSAGE = ("The player didn't confirm which video it was showing, so it was stopped "
+                            "(only approved videos may play).")
 
 PLAYER_HIDDEN_MESSAGE = ("The video was stopped because the player was hidden or left "
                          "(another window or tab opened over it, or the page was closed).")
@@ -101,6 +119,10 @@ class _Session:
     ever_connected: bool = False
     backend_opened: bool = False
     has_played: bool = False  # the player reported "playing" for the current load
+    # What the page reported about the video in the player (reset for every load):
+    playlist_ids: set[str] = field(default_factory=set)  # ids of the approved playlist (from the player)
+    verified: bool = False  # the current video's id was reported and is approved
+    unverified_since: float | None = None  # "playing" reported without a confirmed id
 
 
 class MediaController(Service):
@@ -339,7 +361,7 @@ class MediaController(Service):
             if limit:
                 await self._end_session("limit", detail=limit)
                 return self.status()
-            nxt = self.repo.next_enabled(sess.item["id"])
+            nxt = self._next_playable(sess.item["id"])
             if nxt is None:
                 await self._end_session("stopped", detail="no approved videos left")
                 return self.status()
@@ -457,6 +479,9 @@ class MediaController(Service):
         settings = self.ctx.settings
         if not item.get("enabled", True):
             raise PermissionError(f"“{item['title']}” is switched off in the approved list.")
+        problem = self._stored_item_problem(item)
+        if problem:
+            raise PermissionError(f"“{item['title']}” can't be played: {problem}")
         if not settings.get("media.enabled", True):
             raise PermissionError("Videos are turned off in LittleBot's settings.")
         if self.ctx.config.is_offline:
@@ -478,6 +503,36 @@ class MediaController(Service):
             raise PermissionError(f"Today's video time ({minutes} minutes) is used up. It resets tomorrow.")
         if sess is not None and sess.seconds >= self._session_limit_seconds():
             raise PermissionError("This video session has reached its time limit.")
+
+    @staticmethod
+    def _stored_item_problem(item: dict[str, Any]) -> str | None:
+        """Re-check a stored item's ids with today's rules (e.g. items added before channel uploads
+        lists were refused). Returns the parent-facing reason, or None if it may play."""
+        try:
+            if item.get("kind") == "playlist":
+                validate_list_id(item.get("list_id") or "")
+                if item.get("youtube_id"):
+                    validate_video_id(item["youtube_id"])
+            elif item.get("kind") == "video":
+                validate_video_id(item.get("youtube_id") or "")
+            else:
+                return "unknown item type"
+        except MediaURLError as e:
+            return str(e)
+        return None
+
+    def _next_playable(self, after_id: int) -> dict[str, Any] | None:
+        """Next enabled item (wrapping) whose ids still pass validation."""
+        seen: set[int] = set()
+        cur = after_id
+        while True:
+            nxt = self.repo.next_enabled(cur)
+            if nxt is None or nxt["id"] in seen:
+                return None
+            if self._stored_item_problem(nxt) is None:
+                return nxt
+            seen.add(nxt["id"])
+            cur = nxt["id"]
 
     def _limit_reason(self, sess: _Session) -> str | None:
         if sess.seconds >= self._session_limit_seconds():
@@ -511,6 +566,9 @@ class MediaController(Service):
             sess.load_started = now
             sess.last_accrual = now
             sess.has_played = False
+            sess.playlist_ids = set()
+            sess.verified = False
+            sess.unverified_since = None
         self.bridge.set_volume(self._volume())
         sess.load_id = self.bridge.load(item)
         self.repo.record_play(item["id"])
@@ -605,6 +663,10 @@ class MediaController(Service):
                 and now - sess.paused_at >= self.cfg.max_pause_minutes * 60:
             await self._end_session("stopped", detail="paused for too long")
             return
+        if not sess.verified and sess.unverified_since is not None \
+                and now - sess.unverified_since >= VERIFY_GRACE_SECONDS:
+            await self._fail(sess, "unverified_video", UNVERIFIED_VIDEO_MESSAGE)
+            return
         if self.backend.can_close and sess.backend_opened and self.backend.is_running() is False:
             await self._fail(sess, "player_closed", "The player window closed unexpectedly.")
             return
@@ -631,18 +693,60 @@ class MediaController(Service):
                              source="media")
         log.warning("media error on item %s: %s", item["id"], message)
 
+    def _reported_video_ok(self, sess: _Session, event: dict[str, Any]) -> bool:
+        """Check the video id the page reports against the approved item (fail closed).
+
+        Single video: the id must be the item's id. Playlist: the id must be one of the playlist's
+        video ids the page read from the official player (``playlist_ids``, merged per load);
+        before any are known, no id is approved. A missing ``video_id`` approves nothing: the
+        current video just stays unverified."""
+        item = sess.item
+        if item.get("kind") == "playlist":
+            ids = event.get("playlist_ids")
+            if isinstance(ids, (list, tuple)):
+                for vid in ids:
+                    if len(sess.playlist_ids) >= MAX_PLAYLIST_IDS:
+                        break
+                    if is_valid_video_id(vid):
+                        sess.playlist_ids.add(vid)
+        vid = event.get("video_id")
+        if vid is None:
+            return True
+        if not is_valid_video_id(vid):
+            ok = False
+        elif item.get("kind") == "video":
+            ok = vid == item.get("youtube_id")
+        else:
+            ok = item.get("kind") == "playlist" and vid in sess.playlist_ids
+        if not ok:
+            log.warning("media: the player reported video %r for item %s, which is not approved; stopping",
+                        str(vid)[:64], item.get("id"))
+            return False
+        sess.verified = True
+        sess.unverified_since = None
+        return True
+
     async def _handle_player_event(self, event: dict[str, Any]) -> dict[str, Any]:
         etype = str(event.get("type") or "")
         current = self.bridge.record_event(event)
-        if etype == "heartbeat" or not current:
-            return {"ok": True, "current": current}
+        if not current:
+            return {"ok": True, "current": False}
+        if etype == "heartbeat" and event.get("video_id") is None and not event.get("playlist_ids"):
+            return {"ok": True, "current": True}  # nothing to check
         async with self._op_lock:
             sess = self._session
             if sess is None or sess.load_id != event.get("load_id"):
                 return {"ok": True, "current": False}
             sess.ever_connected = True
+            if etype in VIDEO_CHECK_EVENTS and not self._reported_video_ok(sess, event):
+                await self._fail(sess, "unexpected_video", UNEXPECTED_VIDEO_MESSAGE)
+                return {"ok": True, "current": True}
             if etype == "playing":
                 sess.has_played = True
+                if event.get("video_id") is None:
+                    sess.verified = False  # player.js always names the video it reports as playing
+                if not sess.verified and sess.unverified_since is None:
+                    sess.unverified_since = self._clock.now()  # never trusted without an id
                 if sess.state == "loading":
                     with self._lock:
                         self._accrue()
@@ -650,6 +754,10 @@ class MediaController(Service):
                     if sess.item.get("last_error"):
                         self.repo.set_error(sess.item["id"], None)
                         sess.item = dict(sess.item, last_error=None)
+            elif etype == "track_ended":
+                # YouTube moves on to the playlist's next video: it has to be confirmed again.
+                sess.verified = False
+                sess.unverified_since = None
             elif etype == "ended":
                 await self._end_session("ended")
             elif etype == "error":

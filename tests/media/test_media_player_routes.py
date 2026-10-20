@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import httpx
 import pytest
-from conftest import VID_A, VID_B  # type: ignore[import-not-found]
+from media_testkit import LIST_A, VID_A, VID_B, VID_C  # type: ignore[import-not-found]
 from fastapi import FastAPI
 
 from littlebot.core.events import Topics
@@ -175,7 +175,37 @@ async def test_hidden_or_navigated_page_stops_playback(env, client, kind):
     assert env.backend.closed == 1  # the kiosk (and any popup it opened) is closed
 
 
+async def test_reported_video_id_is_checked(env, client):
+    item = env.add(VID_A, "Approved")
+    await env.media.play(item["id"])
+    load_id = (await client.get("/player/api/state", headers=_h(env))).json()["load_id"]
+    r = await client.post("/player/api/event", headers=_h(env), json={
+        "type": "playing", "load_id": load_id, "video_id": "ZZZZZZZZZZZ"})
+    assert r.status_code == 200 and r.json()["current"] is True
+    assert env.last(Topics.MEDIA_ERROR).data["code"] == "unexpected_video"
+    assert env.last(Topics.MEDIA_STOPPED).data["reason"] == "error"
+    assert env.ctx.state.state == RobotState.IDLE
+
+
+async def test_playlist_ids_reach_the_controller(env, client):
+    pl = env.media.add_item(f"https://www.youtube.com/playlist?list={LIST_A}", "Songs")
+    await env.media.play(pl["id"])
+    load_id = (await client.get("/player/api/state", headers=_h(env))).json()["load_id"]
+    r = await client.post("/player/api/event", headers=_h(env), json={
+        "type": "playing", "load_id": load_id, "video_id": VID_B, "playlist_ids": [VID_A, VID_B]})
+    assert r.json() == {"ok": True, "current": True}
+    assert env.media.status()["state"] == "playing" and env.last(Topics.MEDIA_ERROR) is None
+    await client.post("/player/api/event", headers=_h(env), json={
+        "type": "heartbeat", "load_id": load_id, "video_id": VID_C})  # outside the playlist
+    assert env.last(Topics.MEDIA_ERROR).data["code"] == "unexpected_video"
+    assert env.ctx.state.state == RobotState.IDLE
+
+
 @pytest.mark.parametrize("body", [
+    {"type": "heartbeat", "playlist_ids": ["short"]},
+    {"type": "heartbeat", "playlist_ids": ["<script>xx>"]},
+    {"type": "heartbeat", "playlist_ids": "dQw4w9WgXcQ"},
+    {"type": "heartbeat", "playlist_ids": [VID_A] * 501},
     {"type": "explode"},
     {"type": "error", "code": "x" * 100},
     {"type": "heartbeat", "player_state": 42},

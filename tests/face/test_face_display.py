@@ -296,12 +296,24 @@ def test_quit_keys(loop_env):
 
 # ------------------------------------------------------------------ mouse / touch
 def test_click_simulates_camera_face_in_sim_mode(loop_env):
+    from littlebot.vision.detector import Detection
+    from littlebot.vision.tracker import GazeMapper
+
     loop, robot = loop_env
     r = loop.face_rect
     loop.handle_click((r.x + r.w // 4, r.y + r.h // 2), 1, 0)
     name, args, _ = robot.ctx.vision.calls[-1]
     assert name == "simulate_face"
-    assert args[0] == pytest.approx(0.25, abs=0.01) and args[1] == pytest.approx(0.5, abs=0.01)
+    # simulate_face() takes camera-IMAGE coordinates: the camera faces the child, so a person on
+    # the left of the screen is on the right of the (mirrored) image ...
+    assert args[0] == pytest.approx(0.75, abs=0.01) and args[1] == pytest.approx(0.5, abs=0.01)
+    # ... and the vision tracker turns that back into "look left", where the click was.
+    gx, _ = GazeMapper(mirror=robot.ctx.config.camera.mirror).map(Detection.centred(args[0], args[1], 0.2, 0.2))
+    assert gx == pytest.approx(0.25, abs=0.01)
+    robot.ctx.config.camera.mirror = False  # a camera driver that already mirrors the image
+    loop.handle_click((r.x + r.w // 4, r.y + r.h // 2), 1, 0)
+    assert robot.ctx.vision.calls[-1][1][0] == pytest.approx(0.25, abs=0.01)
+    robot.ctx.config.camera.mirror = True
     loop.handle_click((r.x + 5, r.y + 5), 3, 0)
     assert robot.ctx.vision.calls[-1][0] == "simulate_no_face"
     n = len(robot.ctx.vision.calls)

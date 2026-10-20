@@ -11,7 +11,7 @@ verification status: [YOUTUBE_ON_PI.md](../YOUTUBE_ON_PI.md).
 | File | Contents |
 |------|----------|
 | `__init__.py` | `create_service(ctx)` -> `MediaController`; `create_player_router(media)` (lazy re-export) |
-| `allowlist.py` | `parse_youtube_url()` (validation + canonical URL), `sanitize_title()`, error classes (all `ValueError`) |
+| `allowlist.py` | `parse_youtube_url()` (validation + canonical URL), `sanitize_title()`, error classes (all `ValueError`; `ChannelURLError` for whole channels) |
 | `repository.py` | SQLite tables `media_items` (allowlist) and `media_usage` (seconds per day) via `ctx.db` |
 | `controller.py` | `MediaController`: gating, session, limits watchdog, leases/state, events, player-event handling |
 | `bridge.py` | `PlayerBridge`: desired state for the page (`seq`, `load_id`, action, item, volume), events, heartbeat, token |
@@ -42,14 +42,14 @@ All decisions (gating, limits, what plays next) are made in Python.
 | Method | Behaviour |
 |------|------|
 | `list_items()` | `[{id, kind: video\|playlist, youtube_id, list_id, title, title_source, url, start_seconds, added_at, enabled, sort_order, play_count, last_played_at, last_error, last_error_at, thumbnail_url}]` in list order |
-| `add_item(url, title=None, *, kind=None)` | validates + stores. `kind="playlist"` keeps the playlist of a `watch?v=..&list=..` link (default: the single video). Raises `MediaURLError` subclasses, `DuplicateItemError`, `AllowlistFullError` (all `ValueError`) with parent-friendly messages |
+| `add_item(url, title=None, *, kind=None)` | validates + stores. `kind="playlist"` keeps the playlist of a `watch?v=..&list=..` link (default: the single video). Raises `MediaURLError` subclasses (`ChannelURLError` for channels and channel uploads lists), `DuplicateItemError`, `AllowlistFullError` (all `ValueError`) with parent-friendly messages |
 | `remove_item(id)` | `bool`; stops playback if that item is playing |
 | `update_item(id, *, title=None, enabled=None)` | extra; `KeyError` if unknown; disabling a playing item stops it |
 | `reorder_items(ids)`, `get_item(id)` | extras |
-| `await play(id, *, parent_override=False)` | `KeyError` unknown; `PermissionError` with a friendly message for: item disabled, `media.enabled` off, offline mode, age gate, limits, lease refused, state refused, player window could not open. Playing another item during a session switches item (same session). Returns `status()` |
+| `await play(id, *, parent_override=False)` | `KeyError` unknown; `PermissionError` with a friendly message for: item disabled, stored ids that today's rules refuse (e.g. a channel uploads list added before it was refused), `media.enabled` off, offline mode, age gate, limits, lease refused, state refused, player window could not open. Playing another item during a session switches item (same session). Returns `status()` |
 | `await pause()` / `await resume()` | `bool`; paused time does not count; resume re-checks limits |
 | `await stop(reason="stopped")` | idempotent; terminates the kiosk Chromium (SIGTERM to its process group, SIGKILL after 2 s) **before returning**; also the `Service.stop` lifecycle hook (after `system.shutdown` it also tears down subscriptions/tasks) |
-| `await skip()` | next **enabled approved** item in list order, wrapping (a single item restarts); never anything else |
+| `await skip()` | next **enabled approved** item in list order, wrapping (a single item restarts; items whose stored ids are refused are passed over); never anything else |
 | `set_volume(v)` | clamps to `[0, media.max_volume]`, persists `media.volume`, pushes to the page. `ValueError` for non-numbers/NaN |
 | `status()` | see below (cheap, thread-safe) |
 | `player_url()` / `player_path()` / `player_token` | link with token: full URL for the robot's own browser, relative path for "open player on this device" |
@@ -87,9 +87,12 @@ gate for sessions that were not started with an explicit parent override), `syst
 1. **Allowlist only.** Links are parsed and validated; the stored URL is rebuilt from the
    validated 11-character video id / playlist id. Rejected: non-YouTube hosts, any scheme but
    http(s) (`javascript:`, `data:` ...), user-info / ports / backslashes / control characters,
-   inputs over 2048 chars, channel / search / feed / hashtag / clip pages, YouTube "Mix" lists
-   (`RD...`, picked by YouTube) and private lists (`WL`, `LL`). Duplicates (any URL form of the
-   same video/playlist) are rejected. Titles are plain text, control/bidi characters removed,
+   inputs over 2048 chars, channel / search / feed / hashtag / clip pages, channel uploads lists
+   (`list=` ids starting `UU` - incl. `UULF` `UUSH` `UULV` `UUMO` `UUPV` `UUPS` - `FL`, `UL`;
+   case-sensitive: they grow with whatever the channel posts, so they'd approve a whole channel,
+   same `ChannelURLError` message as a channel page; `watch?v=X&list=UU..` adds just video X),
+   YouTube "Mix" lists (`RD...`, picked by YouTube) and private lists (`WL`, `LL`). Duplicates
+   (any URL form of the same video/playlist) are rejected. Stored items are re-checked at play. Titles are plain text, control/bidi characters removed,
    max 100 characters (the dashboard must still HTML-escape them).
 2. **Age gate.** `ctx.age_policy().video_allowed(parent_override or media.allow_under_min_age)`:
    off under `media.min_age_months_for_video` (18) and for an unknown age, unless a parent
@@ -102,8 +105,19 @@ gate for sessions that were not started with an explicit parent override), `syst
 4. **Never into unapproved content.** On `ENDED` the page destroys the player at once and
    shows "All done!" - YouTube's end screen / related videos never render. Inside an approved
    playlist the page lets YouTube continue to the next track (`track_ended`) and ends after
-   the last one. The page checks the playing video id (`getVideoUrl`, `getPlaylist`) and
-   tears down + reports `unexpected_video` if it isn't the approved one.
+   the last one. **The playing video id is checked on both sides, failing closed:**
+   * page (`getVideoData` / `getVideoUrl`): a single video must have exactly the approved id. In a
+     playlist only ids from the playlist's own video list (`getPlaylist()` of the player loaded
+     with the approved list id; remembered per load, max 200) are accepted. While the id or the
+     list isn't known yet, the video may play for `verify_grace_ms` (4 s) only, then the page
+     tears down and reports `unexpected_video`. It reports `playing` (and a `video_id`) only once
+     the video is confirmed, and sends the list as `playlist_ids` until the robot acknowledges it.
+   * controller: every `ready/playing/paused/buffering/cued/track_ended/heartbeat/autoplay_blocked`
+     event's `video_id` is checked - video: `== youtube_id`; playlist: in the `playlist_ids` the
+     page reported for this load (none reported -> no id is approved, not even the link's start
+     video). Anything else ends the session with `error` / `unexpected_video`. A missing id never
+     counts as approval: a `playing` report not confirmed by an approved id within
+     `VERIFY_GRACE_SECONDS` (10 s) ends the session (`unverified_video`).
 5. **Page hidden or left** (a YouTube link opened a new tab/window, tab switched, page
    closed) -> the page reports `hidden` / `navigated_away`; the controller stops with
    `error` and the kiosk backend kills Chromium's whole process group (popups included).
@@ -121,7 +135,9 @@ gate for sessions that were not started with an explicit parent override), `syst
 Player errors -> `media.error` + `media.stopped(error)` + the item's `last_error`:
 2 invalid id, 5 HTML5 player error, 100 not found / private, 101 / 150 "Unsupported video"
 (usually embedding disabled; YouTube also uses 150 when it refuses playback for other
-reasons), 153 missing referrer, `api_load_failed` (no internet), `unexpected_video`.
+reasons), 153 missing referrer, `api_load_failed` (no internet), `unexpected_video` (a video id that isn't
+approved, from the page or the controller's own check), `unverified_video` (playing, but never
+confirmed which video).
 
 ## Player page protocol
 
@@ -130,13 +146,15 @@ missing -> 401, wrong -> 403). The token is random per process (`secrets.token_u
 
 * `GET /player/api/state` ->
   `{seq, action: idle|play|pause|stop, reason, load_id, item: {id, kind, video_id, list_id,
-  start_seconds, title} | null, volume, youtube_host, poll_ms, heartbeat_ms}`. Each poll marks
+  start_seconds, title} | null, volume, youtube_host, poll_ms, heartbeat_ms, verify_grace_ms}`. Each poll marks
   the page connected. The page applies a command once per `seq`; a new `load_id` means
   "tear down and load this item".
 * `POST /player/api/event` `{type, load_id, code?, player_state?, current_time?, duration?,
-  video_id?, detail?}` with `type` in `ready playing paused buffering cued ended track_ended
-  error heartbeat autoplay_blocked hidden navigated_away`. Events whose `load_id` is not the
-  current one are recorded but ignored (e.g. an `ended` arriving after a skip).
+  video_id?, playlist_ids?, detail?}` with `type` in `ready playing paused buffering cued ended
+  track_ended error heartbeat autoplay_blocked hidden navigated_away`; `playlist_ids` is a list of
+  at most 500 valid 11-character ids (the controller keeps up to 200 per load). Response
+  `{ok, current}`. Events whose `load_id` is not the current one are recorded but ignored (e.g.
+  an `ended` arriving after a skip). `video_id` checks: see safety rule 4.
 * `GET /player` sends `Content-Security-Policy: default-src 'none'; script-src 'self'
   https://www.youtube.com https://s.ytimg.com; frame-src https://www.youtube-nocookie.com
   https://www.youtube.com; connect-src 'self'; ...; frame-ancestors 'none'`,
@@ -179,7 +197,7 @@ Player variables: `autoplay=1` (only the parent's choice), `controls=0`, `disabl
 ## Testing
 
 `.venv/bin/python -m pytest -q tests/media` - URL table, repository, controller (manual clock,
-fake backend), routes (httpx ASGI), display backends (fake launcher + a real dummy process),
+fake backend; helpers in `tests/media/media_testkit.py`), video-id checks, routes (httpx ASGI), display backends (fake launcher + a real dummy process),
 composition root, and `test_media_player_page.py`: the real page in headless Chromium driven
 by the real controller/uvicorn with a **stubbed `window.YT`** (skipped without Playwright /
 Chromium; set `LITTLEBOT_TEST_CHROMIUM=/path/to/chrome` if Playwright's own browser is missing).
@@ -189,6 +207,10 @@ Real YouTube playback is not part of the suite (YOUTUBE_ON_PI.md section 9).
 
 * Real playback and everything Pi-specific are unverified (YOUTUBE_ON_PI.md).
 * The robot can't verify what a playlist contains in advance; playlists can change on YouTube.
+  It trusts the video list the official player reports for the approved list id.
+* Only the first 200 video ids of a playlist are accepted: a longer playlist stops (as
+  `unexpected_video`) when it reaches a later video. If the player never reports the playlist's
+  list, the playlist stops after the 4 s grace period (fail closed). Unverified with real YouTube.
 * Desktop-browser tabs can't be closed by the robot.
 * If Python dies without running `stop()`, an `atexit` hook SIGTERMs any kiosk process group
   still running; under systemd (`KillMode=mixed`) the final SIGKILL of the unit's cgroup also

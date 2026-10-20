@@ -8,6 +8,12 @@ warm, playful and short, and get a little longer as the child grows:
 * ``toddler``   - 24-36 months: one short sentence plus an invitation to play
 * ``preschool`` - 36 months and up: two short sentences
 
+Input the rules do not recognise gets a calm, neutral "I'm listening" reply that points to a
+grown-up - never an enthusiastic "What a fun idea!", because the robot cannot tell whether the
+words it did not understand were happy chatter or something worrying. Concerning input
+("I ate a battery", "daddy hit me") is normally answered by the engine before a provider is
+asked; the mock checks it again (``classify_child_input``) so it can never answer cheerfully.
+
 Nothing here needs the network; nothing the child says leaves the robot.
 """
 
@@ -20,7 +26,7 @@ from dataclasses import dataclass
 from typing import Callable, Iterable
 
 from littlebot.brain.providers.base import BaseProvider, Message, ProviderReply
-from littlebot.safety.content import normalise
+from littlebot.safety.content import classify_child_input, normalise
 
 MOCK_MODEL = "littlebot-scripted-1"
 
@@ -156,13 +162,19 @@ _RULES: tuple[_Rule, ...] = (
        ["Hello there! I'm so happy to see you. Can you wave hello?"]),
 )
 
+# Neutral and gentle on purpose (see module docstring): no "wow", "yay" or "fun idea" for words
+# LittleBot did not understand.
 _UNKNOWN: dict[Tier, tuple[str, ...]] = {
-    "baby": ("Ooh! Wow!", "Hee hee! Yay!", "Wow! Clap clap!"),
-    "toddler": ("Ooh, tell me more!", "Wow! Can you show me?", "Hmm! What a fun idea!"),
-    "preschool": ("Ooh, that sounds interesting! Can you tell me more about it?",
-                  "Wow, what a fun idea! Can you show me?",
-                  "Hmm, I wonder about that too! What do you think?"),
+    "baby": ("I hear you.", "I'm listening.", "Mm hmm. I hear you."),
+    "toddler": ("I'm listening! Shall we ask a grown-up?", "I hear you. Let's ask a grown-up.",
+                "Hmm, I'm not sure. Let's ask a grown-up."),
+    "preschool": ("I'm listening. I'm not sure I understood, so shall we ask a grown-up together?",
+                  "Hmm, I'm not sure about that one. You can tell your grown-up about it too.",
+                  "I hear you. Let's ask a grown-up about that, okay?"),
 }
+
+# Word caps per tier (also used for the concern reply).
+TIER_MAX_WORDS: dict[Tier, int] = {"baby": 6, "toddler": 15, "preschool": 25}
 
 _WORD = re.compile(r"[a-z]+")
 
@@ -194,6 +206,9 @@ class MockProvider(BaseProvider):
     def respond(self, text: str, age_months: int | None = None) -> tuple[str, str, str]:
         """Pure function used by ``reply``: returns (reply, expression, topic)."""
         tier = tier_for_age(age_months)
+        concern = classify_child_input(text)
+        if concern is not None:  # never a cheerful scripted line for "I ate a battery"
+            return concern.reply_for(TIER_MAX_WORDS[tier]), "affectionate", "concern"
         norm = normalise(text)
         words = _WORD.findall(norm)
         if not words:

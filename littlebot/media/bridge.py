@@ -25,6 +25,9 @@ YOUTUBE_HOSTS = {
 
 POLL_MS = 500
 HEARTBEAT_MS = 2000
+# How long the page lets a video play while it can't confirm it yet (no video id, or a playlist's
+# video list not loaded yet); then it stops with ``unexpected_video``.
+VERIFY_GRACE_MS = 4000
 
 
 class PlayerBridge:
@@ -52,6 +55,7 @@ class PlayerBridge:
         self._last_seen: float | None = None
         self._last_event: dict[str, Any] | None = None
         self._player: dict[str, Any] = {}
+        self.verify_grace_ms = VERIFY_GRACE_MS
 
     # -- auth ---------------------------------------------------------------
     def check_token(self, candidate: str | None) -> bool:
@@ -96,6 +100,7 @@ class PlayerBridge:
                 "seq": self._seq, "action": self._action, "reason": self._reason, "load_id": self._load_id,
                 "item": dict(self._item) if self._item else None, "volume": self._volume,
                 "youtube_host": self._host, "poll_ms": POLL_MS, "heartbeat_ms": HEARTBEAT_MS,
+                "verify_grace_ms": self.verify_grace_ms,
             }
 
     def touch(self) -> None:
@@ -108,7 +113,8 @@ class PlayerBridge:
             self._last_seen = self._clock()
             current = bool(event.get("load_id")) and event.get("load_id") == self._load_id
             if event.get("type") != "heartbeat":
-                self._last_event = {k: v for k, v in event.items() if v is not None}
+                # (a playlist's id list is checked by the controller; no need to keep it here)
+                self._last_event = {k: v for k, v in event.items() if v is not None and k != "playlist_ids"}
                 self._last_event["current"] = current
             if current:
                 for key in ("player_state", "current_time", "duration", "video_id"):

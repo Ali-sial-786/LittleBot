@@ -6,7 +6,7 @@ import asyncio
 import datetime as dt
 
 import pytest
-from conftest import LIST_A, VID_A, VID_B, VID_C  # type: ignore[import-not-found]
+from media_testkit import LIST_A, VID_A, VID_B, VID_C  # type: ignore[import-not-found]
 
 from littlebot.core.arbiter import Priority, Resource
 from littlebot.core.events import Topics
@@ -235,7 +235,7 @@ async def test_successful_play_clears_previous_error(env):
     item = env.add()
     env.media.repo.set_error(item["id"], "old problem")
     await env.media.play(item["id"])
-    await env.page_event("playing")
+    await env.page_event("playing", video_id=VID_A)
     assert env.media.get_item(item["id"])["last_error"] is None
 
 
@@ -271,7 +271,7 @@ async def test_pause_resume_and_paused_time_not_counted(env):
     item = env.add()
     assert await env.media.pause() is False and await env.media.resume() is False
     await env.media.play(item["id"])
-    await env.page_event("playing")
+    await env.page_event("playing", video_id=VID_A)
     env.clock.advance(10)
     assert await env.media.pause() is True and await env.media.pause() is False
     assert env.poll()["action"] == "pause"
@@ -304,7 +304,7 @@ async def test_session_limit(env):
     env.ctx.settings.set("media.session_limit_minutes", 1)
     item = env.add()
     await env.media.play(item["id"])
-    await env.page_event("playing")
+    await env.page_event("playing", video_id=VID_A)
     env.clock.advance(59)
     await env.media.tick()
     assert env.media.status()["state"] == "playing"
@@ -580,6 +580,148 @@ async def test_playlist_item_sent_to_player(env):
     await env.media.play(pl["id"])
     item = env.poll()["item"]
     assert item["kind"] == "playlist" and item["list_id"] == LIST_A and item["video_id"] is None
+
+
+# ------------------------------------------------------------------ the reported video id (fail closed)
+def _assert_stopped_unexpected(env, code="unexpected_video"):
+    err = env.last(Topics.MEDIA_ERROR)
+    assert err is not None and err.data["code"] == code
+    stopped = env.last(Topics.MEDIA_STOPPED)
+    assert stopped is not None and stopped.data["reason"] == "error"
+    assert env.ctx.state.state == RobotState.IDLE and env.media.status()["state"] == "idle"
+    assert env.poll()["action"] == "stop" and env.poll()["reason"] == "error"
+    return err
+
+
+@pytest.mark.parametrize("etype", ["playing", "heartbeat", "paused", "buffering", "ready", "track_ended"])
+async def test_other_video_id_ends_a_single_video_session(env, etype):
+    item = env.add(VID_A, "Approved")
+    await env.media.play(item["id"])
+    await env.page_event("playing", video_id=VID_A)
+    assert env.media.status()["state"] == "playing"
+    r = await env.page_event(etype, video_id="ZZZZZZZZZZZ")  # e.g. YouTube switched to another video
+    assert r["current"] is True
+    err = _assert_stopped_unexpected(env)
+    assert "not on the approved" in err.data["error"]
+    assert "not on the approved" in env.media.get_item(item["id"])["last_error"]
+
+
+async def test_first_playing_report_with_wrong_id_is_refused(env):
+    item = env.add(VID_A, "Approved")
+    await env.media.play(item["id"])
+    await env.page_event("playing", video_id=VID_B)  # another (real) video id: never approved
+    _assert_stopped_unexpected(env)
+    assert env.all(Topics.MEDIA_STOPPED)[-1].data["item_id"] == item["id"]
+
+
+async def test_playing_without_a_video_id_is_never_approval(env):
+    item = env.add(VID_A, "Approved")
+    await env.media.play(item["id"])
+    await env.page_event("playing")  # no id: time counts, but nothing is confirmed
+    assert env.media.status()["state"] == "playing"
+    env.clock.advance(9)
+    await env.media.tick()
+    assert env.media.status()["state"] == "playing"
+    env.clock.advance(2)
+    await env.media.tick()
+    err = _assert_stopped_unexpected(env, "unverified_video")
+    assert "didn't confirm" in err.data["error"]
+
+
+async def test_late_confirmation_by_heartbeat_keeps_playing(env):
+    item = env.add(VID_A, "Approved")
+    await env.media.play(item["id"])
+    await env.page_event("playing")
+    env.clock.advance(5)
+    await env.page_event("heartbeat", video_id=VID_A)
+    env.clock.advance(30)
+    await env.media.tick()
+    assert env.media.status()["state"] == "playing" and env.last(Topics.MEDIA_ERROR) is None
+
+
+async def test_a_later_playing_report_without_id_must_be_confirmed_again(env):
+    item = env.add(VID_A, "Approved")
+    await env.media.play(item["id"])
+    await env.page_event("playing", video_id=VID_A)
+    await env.page_event("playing")  # e.g. YouTube switched video and the page can't tell which
+    env.clock.advance(11)
+    await env.media.tick()
+    _assert_stopped_unexpected(env, "unverified_video")
+
+
+async def test_playlist_accepts_only_its_reported_video_ids(env):
+    pl = env.media.add_item(f"https://www.youtube.com/playlist?list={LIST_A}", "Songs")
+    await env.media.play(pl["id"])
+    await env.page_event("ready", video_id=VID_A, playlist_ids=[VID_A, VID_B])
+    await env.page_event("playing", video_id=VID_A)
+    assert env.media.status()["state"] == "playing"
+    await env.page_event("track_ended", video_id=VID_A)
+    await env.page_event("playing", video_id=VID_B)  # the next track of the approved playlist
+    await env.page_event("heartbeat", video_id=VID_B)
+    env.clock.advance(30)
+    await env.media.tick()
+    assert env.media.status()["state"] == "playing" and env.last(Topics.MEDIA_ERROR) is None
+    assert "playlist_ids" not in env.media.status()["player"]["last_event"]  # not echoed to the dashboard
+    await env.page_event("playing", video_id=VID_C)  # not in the playlist's list
+    _assert_stopped_unexpected(env)
+
+
+@pytest.mark.parametrize("url", [f"https://www.youtube.com/playlist?list={LIST_A}",
+                                 f"https://www.youtube.com/watch?v={VID_A}&list={LIST_A}"])
+async def test_playlist_video_without_known_ids_is_refused(env, url):
+    # No playlist_ids reported yet: no video id is approved - not even the link's own start video.
+    pl = env.media.add_item(url, "Songs", kind="playlist")
+    await env.media.play(pl["id"])
+    await env.page_event("playing", video_id=VID_A)
+    _assert_stopped_unexpected(env)
+
+
+async def test_playlist_ids_are_per_load_and_capped(env):
+    pl = env.media.add_item(f"https://www.youtube.com/playlist?list={LIST_A}", "Songs")
+    other = env.add(VID_C, "C")
+    await env.media.play(pl["id"])
+    await env.page_event("playing", video_id=VID_A, playlist_ids=[VID_A, "bad id!", 42, VID_B])
+    assert env.media.status()["state"] == "playing"
+    await env.media.play(other["id"])  # a new load: the playlist's ids don't carry over
+    await env.page_event("playing", video_id=VID_C, playlist_ids=[VID_A])  # ignored for a single video
+    assert env.media.status()["state"] == "playing"
+    await env.media.play(pl["id"])
+    await env.page_event("playing", video_id=VID_B)
+    _assert_stopped_unexpected(env)
+
+    from littlebot.media.controller import MAX_PLAYLIST_IDS
+    await env.media.play(pl["id"])
+    many = [f"{i:011d}" for i in range(MAX_PLAYLIST_IDS + 50)]
+    await env.page_event("heartbeat", playlist_ids=many)
+    await env.page_event("playing", video_id=many[MAX_PLAYLIST_IDS - 1])
+    assert env.media.status()["state"] == "playing"
+    await env.page_event("playing", video_id=many[MAX_PLAYLIST_IDS + 10])  # beyond the cap: not remembered
+    _assert_stopped_unexpected(env)
+
+
+async def test_ids_of_stale_loads_are_ignored(env):
+    a, b = env.add(VID_A, "A"), env.add(VID_B, "B")
+    await env.media.play(a["id"])
+    old = env.poll()["load_id"]
+    await env.media.skip()
+    r = await env.media.handle_player_event({"type": "playing", "load_id": old, "video_id": VID_A})
+    assert r["current"] is False and env.media.status()["item"]["id"] == b["id"]
+    assert env.last(Topics.MEDIA_ERROR) is None
+
+
+async def test_stored_channel_uploads_list_is_refused_at_play_and_skipped(env):
+    # Items stored before channel uploads lists were refused by the parser: never played.
+    from littlebot.media.allowlist import ParsedMedia
+    uu = "UU" + "x5XG1OV2P6uZZ5FSM9Ttw"
+    bad = env.media.repo.add(ParsedMedia("playlist", None, uu, 0, f"https://www.youtube.com/playlist?list={uu}"),
+                             "Whole channel")
+    a = env.add(VID_A, "A")
+    with pytest.raises(PermissionError, match="whole channels"):
+        await env.media.play(bad["id"])
+    assert env.ctx.state.state == RobotState.IDLE
+    await env.media.play(a["id"])
+    await env.media.skip()  # the only other item is the channel list: skip restarts A instead
+    assert env.poll()["item"]["id"] == a["id"]
 
 
 # ------------------------------------------------------------------ volume

@@ -17,7 +17,9 @@ Accepted forms (http or https, with or without ``www.``):
 
 Rejected with a clear message (all errors subclass :class:`ValueError`):
 non-YouTube hosts, ``javascript:`` and other schemes, malformed or overly long
-input, channel / search / home pages, YouTube-generated mixes and private lists.
+input, channel / search / home pages, channel uploads lists (``UU...``, ``FL...``,
+``UL...``: they grow by themselves, so they'd approve a whole channel),
+YouTube-generated mixes and private lists.
 """
 
 from __future__ import annotations
@@ -45,6 +47,18 @@ _SCHEME_RE = re.compile(r"^([A-Za-z][A-Za-z0-9+.-]*):")
 
 # Playlist ids that are generated per user / per session and are not a fixed list a parent can review.
 _PRIVATE_LISTS = {"WL": "Watch Later", "LL": "Liked videos", "LM": "Liked music"}
+
+# Auto-generated channel lists (case-sensitive YouTube id prefixes): every upload of a channel
+# (``UU`` + channel id, and its ``UULF`` videos / ``UUSH`` shorts / ``UULV`` live / ``UUMO`` /
+# ``UUPV`` / ``UUPS`` variants), and the ``FL`` / ``UL`` channel lists. They keep growing with
+# whatever the channel posts next, so approving one would approve the whole channel.
+_CHANNEL_LIST_PREFIXES = ("UU", "FL", "UL")  # "UU" also covers UULF, UUSH, UULV, UUMO, UUPV, UUPS
+
+CHANNEL_MESSAGE = ("That link is a channel, which can't be approved as a whole. "
+                   "Open one video (or one playlist) and copy its link instead.")
+CHANNEL_LIST_MESSAGE = ("That playlist is a channel's automatic list of everything it uploads (it keeps "
+                        "growing by itself), and whole channels can't be approved. "
+                        "Open one video (or one of your own playlists) and copy its link instead.")
 
 # Path prefixes that point at something other than a single video or playlist.
 _UNSUPPORTED_PATHS: tuple[tuple[str, str], ...] = (
@@ -80,6 +94,10 @@ class UnsupportedURLError(MediaURLError):
 
 class InvalidMediaIdError(MediaURLError):
     reason = "invalid_id"
+
+
+class ChannelURLError(UnsupportedURLError):
+    """A whole channel (channel page or its auto-growing uploads list): can't be approved as a whole."""
 
 
 class DuplicateItemError(ValueError):
@@ -136,6 +154,8 @@ def validate_list_id(value: str) -> str:
         raise UnsupportedURLError(
             f"'{_PRIVATE_LISTS[value]}' is a private list. Make a public or unlisted playlist and add that link."
         )
+    if value.startswith(_CHANNEL_LIST_PREFIXES):
+        raise ChannelURLError(CHANNEL_LIST_MESSAGE)
     if value.startswith("RD"):
         raise UnsupportedURLError(
             "YouTube 'Mix' lists are picked automatically by YouTube, so they can't be approved. "
@@ -277,6 +297,8 @@ def parse_youtube_url(url: object, *, kind: str | None = None) -> ParsedMedia:
         lower = path.lower()
         for prefix, what in _UNSUPPORTED_PATHS:
             if lower.startswith(prefix):
+                if what == "a channel":
+                    raise ChannelURLError(CHANNEL_MESSAGE)
                 raise UnsupportedURLError(
                     f"That link is {what}, which can't be approved as a whole. "
                     "Open one video (or one playlist) and copy its link instead."

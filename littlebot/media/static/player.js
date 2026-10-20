@@ -8,7 +8,11 @@
  *  - reports    POST player/api/event  (ready, playing, paused, ended, error <code>, heartbeat, ...)
  *  - when a video ENDS the player is destroyed immediately and a calm "All done!" screen is shown,
  *    so YouTube's end screen / related videos never appear
- *  - checks the video actually playing is the approved one (or part of the approved playlist)
+ *  - checks the video actually playing is the approved one, failing closed: a single video must have
+ *    exactly the approved id; inside a playlist only ids of the approved playlist's own video list
+ *    (read from the official player and reported to the robot) are accepted. While the id or the
+ *    playlist's list isn't known yet the video may play for a short grace period only, then the
+ *    page stops with unexpected_video. A missing id never counts as approval.
  *  - reports when the page is hidden (e.g. a YouTube link opened a new tab/window over it) or
  *    navigated away; the robot then stops and closes the whole kiosk browser
  *  - never draws anything over a live player and never blocks player functionality
@@ -29,6 +33,8 @@
   var PS = { UNSTARTED: -1, ENDED: 0, PLAYING: 1, PAUSED: 2, BUFFERING: 3, CUED: 5 };
   var VIDEO_ID_RE = /^[A-Za-z0-9_-]{11}$/;
   var LIST_ID_RE = /^[A-Za-z0-9_-]{2,64}$/;
+  var VERIFY_CHECK_MS = 250;   // re-check this often while a playing video can't be confirmed yet
+  var MAX_PLAYLIST_IDS = 200;  // ids of one playlist we remember/report (the robot's cap too)
 
   var st = {
     appliedSeq: null,
@@ -39,6 +45,7 @@
     host: 'https://www.youtube-nocookie.com',
     pollMs: 500,
     heartbeatMs: 2000,
+    verifyGraceMs: 4000, // from the robot (verify_grace_ms)
     player: null,
     playerReady: false,
     apiState: 'none', // none | loading | ready | failed
@@ -46,6 +53,12 @@
     apiTimer: null,
     autoplayTimer: null,
     fadeTimer: null,
+    started: false,       // the current load has reached PLAYING at least once
+    confirmed: false,     // 'playing' was reported for the current PLAYING stretch
+    pendingSince: null,   // when a playing video could not be confirmed yet (grace period)
+    verifyTimer: null,
+    playlistIds: null,    // video ids of the approved playlist, as read from the official player
+    idsAcked: 0,          // how many of them the robot has confirmed receiving for this load
     screen: 'idle',
     authFailed: false,
     events: [] // last few events sent (debug / tests)
@@ -71,12 +84,20 @@
       st.events.push(type + (body.code !== undefined && body.code !== null ? ':' + body.code : ''));
       if (st.events.length > 50) { st.events.shift(); }
     }
+    var sentIds = body.playlist_ids ? body.playlist_ids.length : 0;
+    var loadId = st.loadId;
     return fetch(EVENT_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-Player-Token': TOKEN },
       body: JSON.stringify(body),
       cache: 'no-store',
       keepalive: true
+    }).then(function (r) {
+      // Keep re-sending the playlist's ids until the robot has them for this load.
+      if (!sentIds || !r || !r.ok || typeof r.json !== 'function') { return; }
+      return Promise.resolve(r.json()).then(function (j) {
+        if (j && j.current === true && st.loadId === loadId && sentIds > st.idsAcked) { st.idsAcked = sentIds; }
+      });
     }).catch(function () { /* robot unreachable: the next poll/heartbeat retries */ });
   }
 
@@ -86,12 +107,17 @@
     var ps = safe(function () { return p.getPlayerState(); });
     var ct = safe(function () { return p.getCurrentTime(); });
     var du = safe(function () { return p.getDuration(); });
-    return {
+    var info = {
       player_state: typeof ps === 'number' ? ps : undefined,
       current_time: typeof ct === 'number' && ct >= 0 ? ct : undefined,
-      duration: typeof du === 'number' && du >= 0 ? du : undefined,
-      video_id: currentVideoId() || undefined
+      duration: typeof du === 'number' && du >= 0 ? du : undefined
     };
+    // Only a video id we could check is reported (the robot checks it again); while it can't be
+    // confirmed yet (grace period) it is left out rather than reported as if it were fine.
+    if (verdict() !== 'pending') { info.video_id = currentVideoId() || undefined; }
+    var ids = st.playlistIds;
+    if (ids && ids.length > st.idsAcked) { info.playlist_ids = ids.slice(0, MAX_PLAYLIST_IDS); }
+    return info;
   }
 
   function currentVideoId() {
@@ -107,15 +133,63 @@
     return null;
   }
 
-  // Is the video the player shows right now one the parent approved?
-  function approvedNow() {
+  // Remember the video ids of the approved playlist as the official player reports them
+  // (it was loaded with the approved list id only). Grows, never shrinks, capped.
+  function refreshPlaylist() {
     var item = st.item;
+    var p = st.player;
+    if (!item || item.kind !== 'playlist' || !p) { return; }
+    var list = safe(function () { return p.getPlaylist(); });
+    if (!Array.isArray(list) || !list.length) { return; }
+    var known = st.playlistIds ? st.playlistIds.slice() : [];
+    for (var i = 0; i < list.length && known.length < MAX_PLAYLIST_IDS; i++) {
+      var id = list[i];
+      if (typeof id === 'string' && VIDEO_ID_RE.test(id) && known.indexOf(id) < 0) { known.push(id); }
+    }
+    if (known.length) { st.playlistIds = known; }
+  }
+
+  // Is the video in the player one the parent approved? 'ok' | 'pending' (can't tell yet: no video
+  // id, or the playlist's list not loaded yet) | 'bad'. Fails closed: nothing unknown is 'ok'.
+  function verdict() {
+    var item = st.item;
+    if (!item || !st.player) { return 'pending'; }
+    if (item.kind === 'playlist') { refreshPlaylist(); }
     var vid = currentVideoId();
-    if (!item || !vid) { return true; } // nothing to compare yet
-    if (item.kind === 'video') { return vid === item.video_id; }
-    var list = safe(function () { return st.player.getPlaylist(); });
-    if (list && list.length) { return list.indexOf(vid) >= 0; }
-    return vid === item.video_id || !item.video_id;
+    if (!vid) { return 'pending'; }
+    if (item.kind === 'video') { return vid === item.video_id ? 'ok' : 'bad'; }
+    if (item.kind !== 'playlist') { return 'bad'; }
+    if (!st.playlistIds) { return 'pending'; }
+    return st.playlistIds.indexOf(vid) >= 0 ? 'ok' : 'bad';
+  }
+
+  // true: approved; false: rejected (torn down); 'pending': not confirmed yet. Once something has
+  // played, an unconfirmed video gets st.verifyGraceMs, then it is rejected.
+  function checkApproval() {
+    if (!st.player) { return false; }
+    var v = verdict();
+    if (v === 'bad') { reject(); return false; }
+    if (v === 'ok') { st.pendingSince = null; return true; }
+    if (!st.started) { return 'pending'; } // nothing has played yet
+    var now = Date.now();
+    if (st.pendingSince === null) { st.pendingSince = now; }
+    if (now - st.pendingSince >= st.verifyGraceMs) { reject(); return false; }
+    scheduleVerify();
+    return 'pending';
+  }
+
+  function scheduleVerify() {
+    if (st.verifyTimer) { return; }
+    st.verifyTimer = setTimeout(function () {
+      st.verifyTimer = null;
+      if (st.player && checkApproval() === true) { maybeConfirm(); }
+    }, VERIFY_CHECK_MS);
+  }
+
+  // Report 'playing' for a video that was only confirmed after it started.
+  function maybeConfirm() {
+    if (st.confirmed || !st.player) { return; }
+    if (safe(function () { return st.player.getPlayerState(); }) === PS.PLAYING) { confirmPlaying(); }
   }
 
   function playlistHasMore() {
@@ -167,6 +241,13 @@
     clearTimeout(st.autoplayTimer);
     clearInterval(st.fadeTimer);
     st.fadeTimer = null;
+    clearTimeout(st.verifyTimer);
+    st.verifyTimer = null;
+    st.started = false;
+    st.confirmed = false;
+    st.pendingSince = null;
+    st.playlistIds = null;
+    st.idsAcked = 0;
     var p = st.player;
     st.player = null;
     st.playerReady = false;
@@ -253,11 +334,14 @@
   }
 
   function onStateChange(s) {
+    if (s !== PS.PLAYING) { st.confirmed = false; }
     if (s === PS.PLAYING) {
-      if (!approvedNow()) { reject(); return; }
-      clearTimeout(st.autoplayTimer);
-      post('playing', playerInfo());
+      st.started = true;
+      st.confirmed = false;
+      var ok = checkApproval();
+      if (ok === false) { return; } // rejected and torn down
       if (st.action === 'pause') { safe(function () { st.player.pauseVideo(); }); }
+      if (ok === true) { confirmPlaying(); } // else reported once confirmed (scheduleVerify)
     } else if (s === PS.PAUSED) {
       post('paused', playerInfo());
     } else if (s === PS.BUFFERING) {
@@ -266,6 +350,12 @@
       if (playlistHasMore()) { post('track_ended', playerInfo()); return; } // next video of the approved playlist
       finishEnded();
     }
+  }
+
+  function confirmPlaying() {
+    st.confirmed = true;
+    clearTimeout(st.autoplayTimer);
+    post('playing', playerInfo());
   }
 
   function finishEnded() {
@@ -330,6 +420,7 @@
     if (!s || typeof s !== 'object') { return; }
     if (typeof s.poll_ms === 'number') { st.pollMs = clamp(s.poll_ms, 200, 5000); }
     if (typeof s.heartbeat_ms === 'number') { st.heartbeatMs = clamp(s.heartbeat_ms, 500, 10000); }
+    if (typeof s.verify_grace_ms === 'number') { st.verifyGraceMs = clamp(s.verify_grace_ms, 200, 10000); }
     if (typeof s.youtube_host === 'string' && /^https:\/\/www\.youtube(-nocookie)?\.com$/.test(s.youtube_host)) {
       st.host = s.youtube_host;
     }
@@ -379,8 +470,9 @@
 
   function heartbeat() {
     if (!st.authFailed) {
-      if (st.player && st.playerReady && st.screen === 'video' && !approvedNow()) { reject(); }
-      else { post('heartbeat', playerInfo()); }
+      var ok = st.player && st.playerReady && st.screen === 'video' ? checkApproval() : 'n/a';
+      if (ok === true) { maybeConfirm(); }
+      if (ok !== false) { post('heartbeat', playerInfo()); } // false: rejected (already reported)
     }
     setTimeout(heartbeat, st.heartbeatMs);
   }
@@ -415,7 +507,8 @@
       return {
         appliedSeq: st.appliedSeq, action: st.action, loadId: st.loadId, screen: st.screen,
         hasPlayer: !!st.player, playerReady: st.playerReady, volume: st.volume, apiState: st.apiState,
-        events: st.events.slice()
+        verifying: st.pendingSince !== null, playlistIds: st.playlistIds ? st.playlistIds.length : 0,
+        idsAcked: st.idsAcked, events: st.events.slice()
       };
     }
   };

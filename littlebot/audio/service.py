@@ -22,8 +22,12 @@ Input (half-duplex echo prevention)
 
 Privacy
     Microphone disabled -> ``listen()`` returns None immediately and the input
-    stream is closed (also mid-listen). Cloud TTS/STT only while
-    ``ctx.privacy.cloud_enabled``; otherwise / on failure the local provider is used.
+    stream is closed (also mid-listen). Cloud TTS/STT only while the same gates as
+    cloud AI conversation pass: ``ctx.privacy.cloud_enabled`` (not offline), a known
+    child age with ``age_policy().cloud_ai_allowed()`` (24 months+) and the parent's
+    ``ai.enabled`` opt-in; otherwise / on failure the local provider is used. Text for a
+    cloud voice has the child's nickname replaced by "friend" unless
+    ``ai.share_child_name`` is on.
 """
 
 from __future__ import annotations
@@ -52,7 +56,7 @@ from littlebot.audio.errors import AudioDeviceError
 from littlebot.audio.sfx import SAMPLE_RATE as SFX_RATE
 from littlebot.audio.sfx import SoundBank, render_melody
 from littlebot.audio.stt import STTProvider, STTResult, build_stt
-from littlebot.audio.tts import MockTTS, TTSProvider, build_tts, clamp_rate, clean_text, local_tts
+from littlebot.audio.tts import MockTTS, TTSProvider, build_tts, clamp_rate, clean_text, local_tts, scrub_names
 from littlebot.audio.vad import EnergyVAD, VADState
 from littlebot.core.events import Event, Subscription, Topics
 from littlebot.core.service import Service, ServiceStatus
@@ -135,7 +139,8 @@ class AudioService(Service):
                 ctx.settings.register_validator(key, fn)
 
         # --- providers (primary may be cloud; local is the offline fallback) ---
-        cloud_allowed = lambda: bool(ctx.privacy.cloud_enabled)  # noqa: E731
+        # The service re-checks this gate before every cloud call (also for injected providers).
+        cloud_allowed = self._cloud_speech_allowed
         if tts is None:
             self._tts, self._tts_local = build_tts(self.cfg.tts, cloud_allowed=cloud_allowed, api_key=self._openai_key)
         else:
@@ -557,8 +562,45 @@ class AudioService(Service):
         except Exception:  # noqa: BLE001
             return None
 
+    def _cloud_block_reason(self) -> str:
+        """Why cloud speech (TTS/STT) may not be used right now; "" when it may.
+
+        Same gates as the cloud AI conversation: the privacy cloud switch (never offline), a known
+        child age of at least ``ai.min_age_months_for_cloud`` (24 months: no infant's voice is
+        uploaded) and the parent's ``ai.enabled`` opt-in."""
+        ctx = self.ctx
+        try:
+            if getattr(ctx.config, "is_offline", False):
+                return "offline mode"
+            if not bool(ctx.privacy.cloud_enabled):
+                return "cloud features are turned off (privacy)"
+            policy = ctx.age_policy()
+            if policy.age_months is None:
+                return "the child's age is not set"
+            if not policy.cloud_ai_allowed():
+                return f"child under {policy.min_age_months_for_cloud_ai} months"
+            if not bool(ctx.settings.get("ai.enabled", False)):
+                return "cloud AI is turned off (ai.enabled)"
+        except Exception:  # noqa: BLE001 - fail closed
+            return "cloud check failed"
+        return ""
+
+    def _cloud_speech_allowed(self) -> bool:
+        return self._cloud_block_reason() == ""
+
+    def _cloud_text(self, text: str) -> str:
+        """Text as sent to a cloud voice: the child's nickname only with ``ai.share_child_name``."""
+        try:
+            if bool(self.ctx.settings.get("ai.share_child_name", False)):
+                return text
+            profile = self.ctx.settings.get("profile") or {}
+            nickname = str(profile.get("nickname") or "") if isinstance(profile, dict) else ""
+        except Exception:  # noqa: BLE001
+            return text
+        return scrub_names(text, [nickname]) if nickname.strip() else text
+
     def _active_tts(self) -> TTSProvider:
-        if self._tts.is_cloud and not self._tts.available():
+        if self._tts.is_cloud and not (self._cloud_speech_allowed() and self._tts.available()):
             return self._tts_local
         return self._tts
 
@@ -569,8 +611,11 @@ class AudioService(Service):
                 chain.append(p)
         last: Exception | None = None
         for provider in chain:
+            if provider.is_cloud and not self._cloud_speech_allowed():
+                continue  # never a cloud voice without every gate (age, ai.enabled, privacy)
             try:
-                samples, sr = provider.synthesize(text, rate)
+                spoken = self._cloud_text(text) if provider.is_cloud else text
+                samples, sr = provider.synthesize(spoken, rate)
                 if len(samples) == 0:
                     raise ValueError("no audio produced")
                 return samples, sr
@@ -846,12 +891,14 @@ class AudioService(Service):
             log.warning("could not store recording", exc_info=True)
 
     def _active_stt(self) -> STTProvider:
-        if self._stt.is_cloud and not self._stt.available():
+        if self._stt.is_cloud and not (self._cloud_speech_allowed() and self._stt.available()):
             return self._stt_local
         return self._stt
 
     def _transcribe(self, audio: np.ndarray, sample_rate: int) -> STTResult | None:
         provider = self._active_stt()
+        if provider.is_cloud and not self._cloud_speech_allowed():  # re-checked right before uploading
+            provider = self._stt_local
         try:
             return provider.transcribe(audio, sample_rate)
         except Exception as e:  # noqa: BLE001
@@ -1019,6 +1066,9 @@ class AudioService(Service):
     def _provider_label(self, active: Any, primary: Any) -> str:
         if active is primary:
             return active.name
+        reason = self._cloud_block_reason() if getattr(primary, "is_cloud", False) else ""
+        if reason and "privacy" not in reason:
+            return f"{active.name} ({primary.name} not allowed: {reason})"
         return f"{active.name} ({primary.name} needs cloud + key)"
 
     def status(self) -> dict[str, Any]:

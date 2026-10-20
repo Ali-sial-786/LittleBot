@@ -12,10 +12,12 @@ littlebot/brain/
   providers/
     base.py            ProviderReply, BaseProvider, typed errors
     http.py            shared httpx plumbing: client injection, status -> error mapping, key redaction
-    mock.py            MockProvider: offline, deterministic, rule-based, age-aware
+    mock.py            MockProvider: offline, deterministic, rule-based, age-aware; neutral "I'm listening"
+                       replies for unknown input, grown-up line for concerning input
     anthropic.py       AnthropicProvider: POST /v1/messages (raw REST)
     openai.py          OpenAIProvider: POST /v1/chat/completions (raw REST)
-littlebot/safety/content.py   validate_reply, sanitize_user_text, classify_child_input (word lists)
+littlebot/safety/content.py   validate_reply, sanitize_user_text, classify_child_input (word lists),
+                              directs_to_grownup, grownup_fallback
 ```
 
 No vendor SDKs: providers use `httpx` directly (small install on the Pi, deterministic
@@ -39,7 +41,10 @@ provider failures `auth_error`, `rate_limited`, `quota_exceeded`, `timeout`, `ne
 `internal_error`. Provider failures still produce a friendly spoken `reply`
 ("Hmm, my thinking cap is sleepy. Let's play instead!") with a `confused` face.
 
-`provider` is `mock`, `anthropic`, `openai` or `safety` (concerning-input reply).
+`provider` is `mock`, `anthropic`, `openai` or `safety` (concerning-input reply). `attention` is present
+when the parent was alerted: a concern category (`safety`, `water`, `swallowed`, `emergency`, `stranger`,
+`hurt`, `lost`, `scared`, `help`) for concerning input, or `danger` when a cloud reply talked about a hazard
+while urging a grown-up (see AI_SAFETY.md §2a/§2b).
 
 ## Turn flow
 
@@ -48,12 +53,18 @@ provider failures `auth_error`, `rate_limited`, `quota_exceeded`, `timeout`, `ne
    priority reactions are preempted.
 2. **State** `LISTENING` (push-to-talk only; face `listening`) → `THINKING` (face `thinking`).
    A sleeping robot is woken (`SLEEPING → IDLE`) by an explicit turn.
-3. **Concerning input?** (`classify_child_input`) → local "Let's find a grown-up!" reply,
+3. **Concerning input?** (`classify_child_input`, run on the whole input *before* the `max_input_chars`
+   cap) → fixed, gentle, never cheerful "let's get a grown-up right now" reply for the category,
+   `affectionate` face, context cleared,
    `brain.status {provider: "safety", status: "attention", detail: <category>}`, no cloud.
 4. **Provider choice** (`select_provider`, see AI_SAFETY.md §1) — reason reported in `status()`.
 5. **Cloud call**: scrub PII (`sanitize_user_text`), age-aware system prompt, tiny context,
    `asyncio.wait_for(timeout_seconds + 0.5)`; usage counted before sending, tokens/cost after.
 6. **Validate** every reply (`validate_reply`): strip, cap words (age-aware), block → fallback.
+   A reply that urges a grown-up about a hazard (`ValidationResult.concern == "danger"`) is either spoken
+   (pure safety advice: every hazard mention is a warning) or replaced by the gentle
+   `GROWNUP_FALLBACK` ("Let's find a grown-up right now.") — never a cheerful game — and the engine
+   clears the context and publishes `brain.status {provider: <cloud>, status: "attention", detail: "danger"}`.
 7. Publish `brain.reply {text, provider, filtered}`.
 8. **Speak**: `SPEAKING`, expression from the reply (mock hint or heuristic), `audio.say()`
    (bounded), then release back to `IDLE` — only if the robot is still in the state the
@@ -66,7 +77,7 @@ provider failures `auth_error`, `rate_limited`, `quota_exceeded`, `timeout`, `ne
 | Topic | When | Payload |
 |---|---|---|
 | `brain.reply` | every answered turn | `{text, provider, filtered}` |
-| `brain.status` | start (`ready`), provider failure (`error` / `auth_error`), concerning input (`attention`), successful key test (`ok`) | `{provider, status, detail}` — `detail` is a reason / error kind / category, never transcript text |
+| `brain.status` | start (`ready`), provider failure (`error` / `auth_error`), concerning input or a reply that urges a grown-up about a hazard (`attention`), successful key test (`ok`) | `{provider, status, detail}` — `detail` is a reason / error kind / category (`safety`, `water`, `swallowed`, `emergency`, `stranger`, `hurt`, `lost`, `scared`, `help`, `danger`), never transcript text |
 
 Subscribed: `system.stop_all` (cancel the in-flight request, stop speech, clear context),
 `state.changed` (clear context on `SLEEPING`), `settings.changed` (any `ai.*` change clears
@@ -117,9 +128,12 @@ assistant prefill (the message list always ends with the user turn).
 ## Extending
 
 * **New scripted topic**: add a `_r(...)` rule or vocabulary entry in `providers/mock.py`;
-  `tests/brain/test_brain_mock.py` checks every reply passes the validator at every age.
+  `tests/brain/test_brain_mock.py` checks every reply passes the validator at every age. Keep
+  `_UNKNOWN` replies neutral (no "wow" / "fun idea"): they also answer things the rules missed.
 * **New block rule / concern rule**: `safety/content.py` (`BLOCK_RULES` / `CONCERN_RULES`),
-  plus a case in `tests/brain/test_brain_content_safety.py`.
+  plus a case in `tests/brain/test_brain_content_safety.py` (blocked *and* a must-still-pass control).
+  A new concern category also needs a gentle line in `_CONCERN_REPLIES` (reply + ≤ 6-word short reply,
+  containing "grown-up", no games or "yay"); the tests enforce this for every category.
 * **New provider**: subclass `HttpProvider`, implement `reply()`, register it in
   `ConversationEngine._build_providers`, add its prices to `usage.PRICES_PER_MTOK`, and add
   it to `CLOUD_PROVIDERS` / the `ai.provider` literal in `core/config.py`.

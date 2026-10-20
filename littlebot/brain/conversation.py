@@ -4,10 +4,11 @@ Per turn::
 
     lease(face, audio_out, microphone @ CONVERSATION)   -> refused while an activity/media runs ("busy")
     [LISTENING: audio.listen()]                          -> converse_once() only
-    THINKING:  concerning input? -> "Let's find a grown-up!" + parent alert (no cloud call)
+    THINKING:  concerning input? -> gentle "Let's get a grown-up right now" + parent alert (no cloud call)
                choose provider (age gate, parent opt-in, privacy, offline, key, limits, budget)
                cloud: scrub PII, tiny in-memory context, timeout, typed errors -> friendly fallback
-               validate_reply()  (markdown/emoji/URL strip, age-aware length, block rules)
+               validate_reply()  (markdown/emoji/URL strip, age-aware length, block rules); a reply that
+               urges a grown-up about a hazard also alerts the parent and is never swapped for a game
     SPEAKING:  audio.say(reply) with a fitting expression
     -> release state back to IDLE
 
@@ -494,6 +495,8 @@ class ConversationEngine(Service):
     async def _utterance_turn(self, text: str, source: str, speak: bool) -> dict[str, Any]:
         ctx, cfg = self.ctx, self.cfg
         t0 = time.monotonic()
+        # Concern check on everything the child said, before the length cap can cut it off.
+        concern = classify_child_input(text)
         text = text[: max(20, cfg.max_input_chars)]
         self._last_heard = (normalise(text), time.monotonic())
         if ctx.state.state == RobotState.SLEEPING:
@@ -516,10 +519,11 @@ class ConversationEngine(Service):
                                                    max_chars=cfg.max_input_chars)
         if scrubbed:
             log.info("removed personal info before thinking: %s", ",".join(scrubbed))
-        concern = classify_child_input(text)
+        attention: str | None = None
         if concern is not None:
             provider_name, reason = "safety", f"safety: {concern.category}"
             reply, expression = concern.reply_for(limit), "affectionate"
+            attention = concern.category
             self.clear_context("concerning input")
             log.warning("child input needs a grown-up (category=%s)", concern.category)
             self._publish_status("safety", "attention", concern.category)
@@ -545,12 +549,20 @@ class ConversationEngine(Service):
                 result = validate_reply(raw.text, policy, max_words)
                 reply, reasons = result.text, list(result.reasons)
                 filtered = not result.ok
-                if raw.stop_reason == "refusal":
+                if raw.stop_reason == "refusal" and result.concern is None:
                     if result.ok:
                         reply = safe_fallback(raw.text, limit)
                     filtered = True
                     reasons.append("provider_refusal")
-                if filtered:
+                if result.concern is not None:
+                    # The reply talked about a hazard while urgently sending the child to a grown-up:
+                    # treat it like concerning input (gentle face, parent alert, forget the context).
+                    attention = result.concern
+                    expression = "affectionate"
+                    self.clear_context("reply flagged a possible danger")
+                    log.warning("reply from %s urges a grown-up (category=%s)", provider_name, result.concern)
+                    self._publish_status(provider_name, "attention", result.concern)
+                elif filtered:
                     expression = "playful"
                     log.info("reply from %s replaced by a safe fallback (%s)", provider_name,
                              ",".join(r for r in reasons if ":" not in r))
@@ -577,7 +589,7 @@ class ConversationEngine(Service):
             **self._result(reply=reply, provider=provider_name, filtered=filtered, error=error),
             "reason": reason, "expression": expression, "latency_ms": latency, "spoken": spoken,
             "checks": [r for r in reasons if r != "empty"][:8],
-            **({"attention": concern.category} if concern is not None else {}),
+            **({"attention": attention} if attention is not None else {}),
         }
 
     async def _ask(self, sel: Selection, text: str, sent: str, policy: Any,

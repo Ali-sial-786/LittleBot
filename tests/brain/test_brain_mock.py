@@ -18,6 +18,9 @@ PROMPTS = [
     "I am grumpy", "why is the sky blue", "bye bye", "good night", "what's your name", "who are you",
     "are you real", "are you alive", "I love you", "banana", "where is your nose", "thank you", "let's play",
     "how are you", "blorp zing wug", "", "   ", "!!!", "🦄🦄",
+    # concerning input must get the gentle grown-up line even from the scripted provider
+    "I ate a battery", "i swallowed a coin", "I drank the soap", "daddy hit me", "a man said come with me",
+    "the baby is in the pool", "help me",
 ]
 
 
@@ -84,6 +87,31 @@ def test_unknown_gets_gentle_curious_reply_and_is_deterministic():
     a = m.respond("blorp zing wug", 30)
     b = m.respond("blorp zing wug", 30)
     assert a == b and a[1] == "curious" and a[2] == "unknown"
+
+
+CHEERFUL = ("wow", "yay", "fun", "hee hee", "clap", "show me", "tell me more", "ooh", "interesting")
+
+
+@pytest.mark.parametrize("age", AGES)
+@pytest.mark.parametrize("text", ["blorp zing wug", "the thing is on the floor", "it went in there", "my shoe",
+                                  "mmm gaga", "purple monkey dishwasher zz", "look at this"])
+def test_unknown_input_gets_a_neutral_reply_not_an_enthusiastic_one(text, age):
+    reply, expression, topic = MockProvider().respond(text, age)
+    if topic != "unknown":
+        return
+    assert not any(w in reply.lower() for w in CHEERFUL), reply
+    assert expression not in ("excited", "celebrating", "playful")
+    if tier_for_age(age) != "baby":
+        assert "grown-up" in reply  # points the child at a real person, not at the robot
+
+
+@pytest.mark.parametrize("age", AGES)
+@pytest.mark.parametrize("text", ["I ate a battery", "I swallowed a coin", "I drank the soap", "daddy hit me",
+                                  "a man said come with me", "the baby is in the pool", "help me"])
+def test_concerning_input_never_gets_a_cheerful_scripted_reply(text, age):
+    reply, expression, topic = MockProvider().respond(text, age)
+    assert topic == "concern" and expression == "affectionate"
+    assert "grown-up" in reply and not any(w in reply.lower() for w in CHEERFUL), reply
 
 
 def test_replies_grow_with_age():

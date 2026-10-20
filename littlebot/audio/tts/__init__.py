@@ -3,7 +3,9 @@
 ``build_tts`` returns ``(primary, local)``. The AudioService uses ``primary``
 when allowed and falls back to ``local`` when the primary is a cloud provider
 that is not allowed right now (privacy) or fails (timeout, invalid key...).
-``auto`` never selects a cloud provider.
+``auto`` never selects a cloud provider. The service only uses a cloud voice when the parent's
+cloud gates allow it (privacy, child's age, ``ai.enabled``) and removes the child's nickname
+first unless ``ai.share_child_name`` is on (see ``AudioService``).
 """
 
 from __future__ import annotations
@@ -11,7 +13,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Callable
 
-from littlebot.audio.tts.base import TTSProvider, clamp_rate, clean_text, estimate_seconds
+from littlebot.audio.tts.base import TTSProvider, clamp_rate, clean_text, estimate_seconds, scrub_names
 from littlebot.audio.tts.espeak import EspeakTTS
 from littlebot.audio.tts.mock import MockTTS
 from littlebot.audio.tts.openai import OpenAITTS
@@ -20,7 +22,7 @@ from littlebot.audio.tts.piper import PiperTTS
 log = logging.getLogger("littlebot.audio.tts")
 
 __all__ = ["TTSProvider", "MockTTS", "EspeakTTS", "PiperTTS", "OpenAITTS", "build_tts", "local_tts",
-           "clamp_rate", "clean_text", "estimate_seconds"]
+           "clamp_rate", "clean_text", "estimate_seconds", "scrub_names"]
 
 
 def local_tts(cfg: Any) -> TTSProvider:

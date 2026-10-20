@@ -224,7 +224,9 @@ class SimPanel:
         pygame.draw.rect(surf, (44, 52, 68), pygame.Rect(cx - 60, rect.bottom - 18, 120, 10), border_radius=5)
         # arms behind the body
         moving = bool(motion and motion.get("moving"))
-        for name, side in (("left_arm", -1), ("right_arm", 1)):
+        # The robot faces the viewer: its left arm is on the viewer's right (as for the head yaw
+        # below and the dashboard's drawing).
+        for name, side in (("left_arm", 1), ("right_arm", -1)):
             j = joints.get(name, DEFAULT_JOINTS[name])
             shoulder = (body.centerx + side * (body.w // 2 - 4), body.top + 12)
             rot = math.radians(arm_rotation(j))

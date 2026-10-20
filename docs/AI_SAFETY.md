@@ -46,24 +46,72 @@ Otherwise the turn uses the scripted provider, and the dashboard shows the reaso
 | Cloud only with parent opt-in + privacy switch + key + budget | ✅ | – |
 | Short replies (≤ 8 words under 2 y, ≤ 15 words 2–3 y, ≤ 30 words 3 y+; never more than `ai.max_words`) | ✅ `validate_reply` truncates at a sentence boundary | ✅ |
 | No markdown, emojis, links, code, stage directions | ✅ stripped before speaking | ✅ |
-| No secrecy ("our secret", "don't tell") | ✅ blocked → safe fallback line | ✅ |
-| No dependency / exclusivity ("I'm your best friend", "you only need me", "I'll be sad if you go", "don't leave", "I love you") | ✅ blocked | ✅ |
-| No pretending to be a parent / human / alive | ✅ blocked | ✅ |
-| No requests for personal info (name, address, phone, school, password, photos) | ✅ blocked | ✅ |
-| No unsafe instructions (stove, knives, medicine, climbing, electricity, going out alone, strangers, swallowing things…) | ✅ blocked | ✅ |
-| No scary / violent / adult / rude / self-harm content | ✅ blocked | ✅ |
-| No medical or developmental diagnosis | ✅ blocked | ✅ |
-| No commerce / ads ("buy", "ask your parents to purchase") | ✅ blocked | ✅ |
-| No internet ("search for", links, YouTube) | ✅ blocked | ✅ |
+| No secrecy ("our secret", "don't tell", "let's not tell anyone", "mommy doesn't need to know", "only you and I will know", "just for us") | ✅ blocked → safe fallback line | ✅ |
+| No dependency / exclusivity / guilt ("I'm your best friend", "you only need me", "I'll be sad if you go", "please don't go", "I'll miss you", "without you", "love you", "lonely", "stay here with me") | ✅ blocked | ✅ |
+| No pretending to be a parent / human / alive ("I'm just like you, a little kid") | ✅ blocked | ✅ |
+| No requests for personal info (name, address, "where you live", "what's your mommy called", "the name of your street", phone, school, teacher, password, photos) | ✅ blocked | ✅ |
+| No unsafe instructions (stove, knives, medicine, climbing or jumping on beds / sofas / tables, anything "in your mouth / nose / ear", cords or string round the neck, hiding in toy boxes / closets / appliances, baths / pools / ponds / taps, electricity, going out alone, strangers, swallowing things…) | ✅ blocked (see the safety-advice exception below) | ✅ |
+| No scary / violent / adult / rude / self-harm content ("the wolf will gobble you up", "a monster under your bed") | ✅ blocked | ✅ |
+| No medical or developmental diagnosis ("you sound like you have a cold", "see a doctor") | ✅ blocked | ✅ |
+| No commerce / ads ("buy", "ask your parents to purchase", "the new … toy") | ✅ blocked | ✅ |
+| No internet / streaming ("search for", links, "dot org", YouTube, Netflix) | ✅ blocked | ✅ |
 | Model refusals (`stop_reason: refusal`) | ✅ replaced by a safe line | – |
-| Concerning child input ("I'm hurt", "I'm lost", "there's a fire", "someone touched me") | ✅ answered locally with "Let's find a grown-up!" — **no cloud call** — and the parent dashboard gets a `brain.status` event `{status: "attention", detail: <category>}` with **only a category label**, never the words | ✅ |
-| Personal info scrubbed before any cloud request (phone numbers, e-mails, street addresses, postcodes, long numbers, "my name is …", school names, passwords, the child's nickname) | ✅ `sanitize_user_text` | ✅ "[name]" placeholders are explained |
+| Concerning child input (emergencies, swallowed objects, water danger, stranger lures, abuse disclosures, "help me" — see §2a) | ✅ answered locally with a **gentle, never cheerful** "let's get a grown-up right now" line — **no cloud call** — and the parent dashboard gets a `brain.status` event `{status: "attention", detail: <category>}` with **only a category label**, never the words | ✅ |
+| Good safety advice from the model ("Swallowing a battery is not safe. Tell a grown-up right now!") | ✅ spoken, not swapped for a game; parent alerted (`detail: "danger"`) — see §2b | ✅ |
+| Personal info scrubbed before any cloud request (phone numbers, e-mails, street addresses incl. "my address is …" and spelled-out numbers, postcodes, long numbers, "my name is …", "I'm Lily", "my mommy's name is …", "we live in Springfield", school names, passwords, the child's nickname) | ✅ `sanitize_user_text` | ✅ "[name]" placeholders are explained |
 | Camera data | ✅ never used by the conversation engine at all | – |
 
 Blocked replies are replaced with a cheerful line ("Hmm, let's play a game! Can you find
-something blue?"). Every reply — including the scripted ones — passes the validator.
-The validator is deliberately conservative: a false positive costs one redirect; a false
-negative could reach a toddler.
+something blue?") — **except** when the reply was about a possible danger (§2b), where the
+replacement is the gentle "Let's find a grown-up right now." Every reply — including the
+scripted ones — passes the validator. The validator is deliberately conservative: a false
+positive costs one redirect; a false negative could reach a toddler.
+
+The scripted (offline) provider answers words it does not understand neutrally and points
+at a grown-up ("I'm listening! Shall we ask a grown-up?"), never with enthusiasm ("What a
+fun idea!"), because it cannot tell happy chatter from something worrying it failed to
+recognise.
+
+### 2a. Concerning input: categories and replies
+
+`classify_child_input` (`CONCERN_RULES` in `littlebot/safety/content.py`) checks everything
+the child said — before the input length cap, so a worrying sentence at the end is not cut
+off — and the first matching category wins. The reply is fixed, short and **never cheerful**
+(no games, "yay" or "fun"); the face shows the gentle `affectionate` expression; the
+in-memory context is forgotten; the parent alert carries the category label only.
+
+| Category (parent alert) | Examples | LittleBot says |
+|---|---|---|
+| `safety` | "daddy hit me", "my uncle touched me", "he keeps hitting me", "it's our secret", "I want to hurt myself" | "Thank you for telling me. Let's tell a grown-up you trust right now." |
+| `water` | "the baby is in the pool", "my brother fell in the pond", "someone is under the water" | "Get a grown-up right now! Shout for help!" |
+| `swallowed` | "I ate a battery", "I swallowed a coin", "I drank the soap", "the baby ate mommy's pills", "I put a bead in my mouth" | "Uh oh. Please tell a grown-up right now." |
+| `emergency` | "there's a fire", "I can't breathe", "I'm choking", "mommy won't wake up", "I found daddy's gun", "finger in the socket" | "Let's get a grown-up right now! Call for help!" |
+| `stranger` | "a man said come with me", "the lady said get in her car", "a man gave me candy", "a stranger talked to me" | "Thank you for telling me. Let's find your grown-up and tell them right now." |
+| `hurt` | "I'm hurt", "I fell down", "the dog bit me", "I feel sick", "a bead up my nose" | "Oh no! Let's find a grown-up to help you right now." |
+| `lost` | "I'm lost", "I can't find my mommy" | "Let's find a grown-up who can help you." |
+| `scared` | "I'm scared" | "It's okay. Let's find a grown-up for a big hug." |
+| `help` | "Help!", "help me", "I'm stuck", "somebody help" (but not "help me count to ten") | "I hear you. Let's get a grown-up to help you right now." |
+
+Very young children get the short form of each line (≤ 6 words, e.g. "Tell a grown-up right
+now."). The scripted provider runs the same check itself, so even a direct call can never
+answer "I ate a battery" with a cheerful line.
+
+### 2b. Safety advice from the model
+
+A good cloud reply to a danger necessarily *mentions* the danger, which the `unsafe` rules
+would normally block. `validate_reply` therefore lets a reply through when **all** of these
+hold: the only block category is `unsafe`; a sentence urgently sends the child to a grown-up
+("tell / get / find / call a grown-up / mommy / daddy … right now / right away"); and every
+clause that mentions a hazard is a warning ("is not safe", "don't touch", "can hurt you",
+"not food") with no invitation in it. Reassurances ("it isn't dangerous", "it won't hurt"),
+invitations ("let's", "can you", "touch it") or a hazard in any other clause keep it blocked.
+If the reply is too long, the grown-up sentence is kept.
+
+Whenever a blocked or exempted reply both mentions a hazard / scary / medical / secrecy topic
+**and** urges a grown-up, the model has probably noticed something the word lists missed:
+LittleBot then says the model's warning (or, if it could not be spoken safely, the gentle
+"Let's find a grown-up right now." — never a game), forgets the context, and alerts the parent
+with `{status: "attention", detail: "danger"}`.
 
 Evasion tricks are normalised before matching: upper/lower case, punctuation and
 letter-spacing (`S.E.C.R.E.T`, `s e c r e t`), zero-width and bidi characters, soft
@@ -79,6 +127,19 @@ prompt, the model provider's own safety systems, short replies and the age gate 
 this risk; they do not remove it. **LittleBot is a supervised toy: a grown-up should be
 nearby whenever cloud conversation is on.** Speech recognition can also mishear, so
 concern detection may miss real problems or flag harmless ones.
+
+Deliberate trade-offs (to keep everyday play from setting off parent alerts):
+
+* The child's own "come with me" or "get in the car" is **not** flagged — only when a
+  stranger / "he" / "she" said it ("a man said come with me"), or with a lure ("… and I'll
+  give you a puppy"), or "get in **his / her / a man's** car".
+* "The baby is in the bath" **is** flagged (a toddler reporting it may mean no grown-up is
+  there); "I had a bath" or "mommy is in the bath" is not.
+* Some ordinary words are flagged on purpose: "I had medicine for my cough" → `swallowed`,
+  "my brother hit me" → `safety`, a lone "help me" → `help`.
+* A lower-case name ("i'm lily") cannot be told apart from a word ("i'm silly") and is not
+  scrubbed; a Capitalised one ("I'm Lily") is, unless it is a feeling or state ("I'm Happy").
+* Mild activities such as "spin around until you're dizzy" are not blocked.
 
 ---
 
