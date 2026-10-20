@@ -1,0 +1,184 @@
+# Movement games (about 12 months - 5 years): dance, freeze and move like animals.
+#
+# Real bodies moving in real space. Always clear the floor first, and play on a
+# soft surface if you can. LittleBot's own arm/head gestures are optional - they
+# are skipped when motion is off or the emergency stop is active.
+
+activities:
+
+  # ------------------------------------------------------------------ freeze dance
+  - id: freeze_dance
+    name: Freeze Dance
+    description: Dance while the music plays - when it stops, freeze like a statue!
+    min_age_months: 24
+    max_age_months: 72
+    category: movement
+    participation: recommended
+    duration_seconds: 180
+    tags: [toddler, preschool, dance, listening, self-control]
+    parent_instructions: >
+      Dance together while the music plays and freeze when LittleBot says "Freeze!".
+      Exaggerate your own freezes - wobbling statues are hilarious. For younger
+      toddlers, a "freeze" can just be a big still hug.
+    safety_notes:
+      - Clear a space away from furniture corners, stairs and hard edges.
+      - Bare feet or grippy socks on smooth floors.
+      - Stop for a drink and a rest if anyone gets tired or dizzy.
+    steps:
+      - expression: excited
+      - say: "Freeze dance! When the music plays, dance. When it stops... freeze!"
+        animation: bounce
+        pause: 1
+      - repeat: 5
+        steps:
+          - gesture: dance
+          - expression: playful
+          - choice:
+              - melody: "C4:0.5 E4:0.5 G4:0.5 E4:0.5 C4:0.5 E4:0.5 G4 F4:0.5 A4:0.5 C5:0.5 A4:0.5 F4:0.5 A4:0.5 C5"
+                tempo: 150
+              - melody: "G4:0.5 G4:0.5 A4:0.5 G4:0.5 C5:0.5 B4 G4:0.5 G4:0.5 A4:0.5 G4:0.5 D5:0.5 C5 E5:0.5 D5:0.5 C5:0.5 B4:0.5 A4 G4"
+                tempo: 150
+              - melody: "E4:0.5 G4:0.5 C5:0.5 G4:0.5 E4:0.5 G4:0.5 C5 D5:0.5 C5:0.5 B4:0.5 A4:0.5 G4 E4:0.5 G4:0.5 C5:2"
+                tempo: 160
+              - melody: "C5:0.5 B4:0.5 A4:0.5 G4:0.5 A4:0.5 B4:0.5 C5 G4:0.5 G4:0.5 E4 G4:0.5 G4:0.5 E4 C4:0.5 E4:0.5 G4 C5:2"
+                tempo: 150
+            avoid_repeats: false
+          - expression: surprised
+          - say: "Freeze!"
+          - wait: 3
+          - say: ["Great freezing!", "You're a statue! Wow!", "So still! Amazing!", "Freeze... and... unfreeze!"]
+            expression: happy
+            animation: bounce
+      - say: "Phew! What a dance party. Great dancing and freezing!"
+        expression: celebrating
+        animation: confetti
+
+  # ------------------------------------------------------------------ animal moves
+  - id: animal_moves
+    name: Move Like the Animals
+    description: Stomp like an elephant, hop like a bunny, flap like a bird - big movements with fun sounds.
+    min_age_months: 18
+    max_age_months: 60
+    category: movement
+    participation: recommended
+    duration_seconds: 210
+    tags: [toddler, preschool, gross motor, animals, pretend]
+    parent_instructions: >
+      Move like each animal together - the bigger and sillier, the better. For
+      younger toddlers, hold hands while hopping and stomping. Let your child invent
+      their own animal moves too.
+    safety_notes:
+      - Clear a space away from furniture corners and stairs.
+      - Hold hands for hopping and jumping with younger toddlers.
+      - Take breaks for water and rest.
+    steps:
+      - expression: excited
+      - say: "Let's move like the animals! Are you ready?"
+        animation: bounce
+        pause: 1
+      - repeat: 5
+        steps:
+          - choice:
+              - steps:
+                  - say: "Stomp like a big elephant! Stomp, stomp, stomp!"
+                    expression: excited
+                  - sound: drum
+                  - sound: drum
+                  - sound: drum
+              - steps:
+                  - say: "Hop like a bunny! Hop, hop, hop!"
+                    expression: playful
+                    animation: bounce
+                  - sound: boing
+                  - sound: boing
+                  - sound: boing
+              - steps:
+                  - gesture: raise_arms
+                  - say: "Flap your wings like a bird! Flap, flap, flap!"
+                    expression: happy
+                  - sound: whoosh
+              - steps:
+                  - say: "Wiggle like a snake. Wiggle, wiggle... sssss!"
+                    expression: playful
+                    animation: wiggle
+              - steps:
+                  - say: "Tiptoe like a tiny mouse. Shh... squeak, squeak!"
+                    expression: curious
+                    rate: 0.8
+              - steps:
+                  - say: "Waddle like a penguin! Waddle, waddle, waddle!"
+                    expression: happy
+                    animation: wiggle
+                  - sound: pop
+                  - sound: pop
+              - steps:
+                  - say: "Jump like a frog! Ribbit... jump!"
+                    expression: excited
+                  - sound: boing
+              - steps:
+                  - say: "Walk like a big, slow bear. Step... step... grrr!"
+                    expression: playful
+                    rate: 0.8
+          - say: "Keep going!"
+            pause: 4
+          - say: ["And... stop! Great moving!", "Stop! Wow, you're good at that!", "And rest! Brilliant!"]
+            expression: happy
+            animation: sparkle
+            pause: 1
+      - say: "You moved like so many animals! Now let's take a big breath and rest."
+        expression: affectionate
+        animation: hearts
+
+  # ------------------------------------------------------------------ dancing
+  - id: dance_party
+    name: Dance Party
+    description: Bouncy music, simple dance moves and lots of wiggles - for little dancers of every size.
+    min_age_months: 12
+    max_age_months: 60
+    category: movement
+    participation: recommended
+    duration_seconds: 180
+    tags: [baby, toddler, preschool, dance, music]
+    parent_instructions: >
+      Dance with your child - babies love being held and gently swayed or bounced to
+      the beat; toddlers can bounce, clap and wiggle. Copy the moves LittleBot calls
+      out, or make up your own.
+    safety_notes:
+      - Clear a space; hold babies securely and sway gently (never shake).
+      - Turn around slowly to avoid dizziness.
+      - Keep the volume gentle.
+    steps:
+      - expression: excited
+      - say: "It's a dance party! Let's get moving!"
+        animation: bounce
+      - sound: drum
+      - sound: drum
+      - repeat: 4
+        steps:
+          - gesture: dance
+          - melody: "C4:0.5 C4:0.5 G4 E4:0.5 E4:0.5 C5 A4:0.5 A4:0.5 G4 E4 G4:2"
+            tempo: 132
+          - choice:
+              - say: "Bounce, bounce, bounce!"
+                expression: happy
+                animation: bounce
+              - say: "Clap your hands! Clap, clap!"
+                expression: excited
+              - say: "Wiggle your arms! Wiggle, wiggle!"
+                expression: playful
+                animation: wiggle
+              - say: "Sway side to side, like a tree in the wind."
+                expression: affectionate
+              - say: "Turn around... slowly!"
+                expression: curious
+                animation: spin_eyes
+              - say: "Stomp your feet! Stomp, stomp!"
+                expression: excited
+          - wait: 3
+      - melody: "C4:0.5 E4:0.5 G4:0.5 C5:0.5 G4:0.5 C5:2"
+        tempo: 132
+      - gesture: celebrate
+      - sound: yay
+      - say: "What a dance party! You are a superstar dancer!"
+        expression: celebrating
+        animation: confetti

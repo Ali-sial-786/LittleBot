@@ -198,12 +198,14 @@ class MediaAPI(Protocol):
 class MotionAPI(Protocol):
     def gestures(self) -> list[str]: ...
 
-    async def run_gesture(self, name: str) -> bool:
-        """False if cancelled, refused (estop) or unknown."""
+    async def run_gesture(self, name: str, *, priority: int | None = None, owner: str | None = None) -> bool:
+        """False if cancelled, refused (estop / lease held by higher priority) or unknown.
+        ``owner``: a behaviour that already holds Resource.MOTION runs the gesture under its lease."""
 
-    async def move_joint(self, joint: str, angle: float, *, speed_dps: float | None = None) -> bool: ...
+    async def move_joint(self, joint: str, angle: float, *, speed_dps: float | None = None,
+                         priority: int | None = None, owner: str | None = None) -> bool: ...
 
-    async def neutral(self) -> bool: ...
+    async def neutral(self, *, priority: int | None = None, owner: str | None = None) -> bool: ...
 
     def cancel(self) -> None: ...
 
@@ -213,8 +215,9 @@ class MotionAPI(Protocol):
     def reset_emergency_stop(self) -> bool: ...
 
     def status(self) -> dict[str, Any]:
-        """{backend, physical_enabled, armed, estop, moving, gesture,
-        joints: {name: {angle, target, min, max, neutral}}}"""
+        """{backend, physical_enabled, armed, estop, moving, gesture, simulation_only, reason,
+        joints: {name: {angle, target, min, max, neutral, channel, position}}}
+        (position: -1..1 normalised, 0 = neutral, +1 = arm raised / head turned to robot's left)"""
 
 
 @runtime_checkable

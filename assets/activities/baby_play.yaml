@@ -1,0 +1,628 @@
+# Baby play (about 6-24 months): short, repetitive, face-to-face games.
+#
+# Age ranges are flexible suggestions, never a test. Every baby enjoys these at
+# their own pace - watching IS taking part. A caregiver sits with the baby and
+# answers the dashboard prompts. See docs/ACTIVITY_GUIDE.md for the step language.
+
+activities:
+
+  # ------------------------------------------------------------------ peekaboo
+  - id: peekaboo
+    name: Peekaboo
+    description: LittleBot hides its eyes and pops back with a happy "Peekaboo!" - then it's your turn to hide.
+    min_age_months: 6
+    max_age_months: 24
+    category: social
+    participation: recommended
+    duration_seconds: 150
+    tags: [baby, classic, turn-taking, laughter]
+    materials: [your hands or a light cloth (optional)]
+    parent_instructions: >
+      Sit with your baby facing LittleBot. Each time LittleBot closes its eyes, ask
+      "Where did it go?" together, then share the surprise when it pops back. In the
+      second part, hide your own face behind your hands or a cloth and tap
+      "Peekaboo!" as you reveal yourself. Laugh and go at your baby's pace - if she
+      looks away or fusses, that's her way of asking for a break.
+    safety_notes:
+      - Hide your own face, never your baby's. Keep cloths away from her face and put them out of reach afterwards.
+      - Stay with your baby the whole time.
+      - If the surprise startles her, lower the volume and make the reveals gentler.
+    steps:
+      - expression: happy
+      - say: "Hi {child_name}! Let's play peekaboo!"
+        animation: bounce
+        pause: 1
+      - repeat: 3
+        steps:
+          - say: ["Where did {robot_name} go?", "Where am I?", "Uh oh! Where did I go?"]
+            expression: playful
+          - close_eyes
+          - wait: 2
+          - open_eyes
+          - expression: surprised
+          - sound: peekaboo
+          - say: "Peekaboo!"
+            animation: peek
+          - expression: happy
+            hold: 2
+          - sound: giggle
+            pause: 1.5
+      - say: "Now it's your turn to hide!"
+        expression: curious
+      - repeat: 2
+        steps:
+          - note: "Hide your face behind your hands or a cloth. Pop out and tap Peekaboo!"
+          - say: ["Where did you go?", "Hmm, where is everybody?"]
+            expression: curious
+          - prompt: "Hide your face, then pop out and tap Peekaboo!"
+            options: ["Peekaboo!"]
+            timeout: 30
+            branches:
+              "Peekaboo!":
+                - expression: surprised
+                - sound: peekaboo
+                - say: ["There you are! Peekaboo!", "Peekaboo! I found you!"]
+                  animation: bounce
+                - expression: happy
+                - sound: giggle
+                  pause: 1
+            on_timeout:
+              - say: "Peekaboo! I see you!"
+                expression: happy
+      - say: "Peekaboo! I see you, {child_name}!"
+        expression: affectionate
+        animation: hearts
+        pause: 1
+      - say: "That was fun! Bye bye, peekaboo!"
+        expression: happy
+
+  # ------------------------------------------------------------------ clapping
+  - id: clapping_game
+    name: Clap Along
+    description: LittleBot claps, pauses, and cheers for every clap (or try) from your little one.
+    min_age_months: 8
+    max_age_months: 24
+    category: movement
+    participation: recommended
+    duration_seconds: 150
+    tags: [baby, imitation, rhythm]
+    parent_instructions: >
+      Hold your baby on your lap facing LittleBot. When LittleBot claps, clap too, or
+      gently bring her hands together. Tap "Clapped!" when she claps or tries - any
+      attempt counts. Clapping appears at very different ages, so if she just
+      watches today, she's still learning.
+    safety_notes:
+      - Help with gentle hand-over-hand clapping only; never pull her arms.
+      - Stay with your baby the whole time.
+    steps:
+      - expression: happy
+      - say: "Let's clap our hands!"
+        animation: bounce
+      - repeat: 3
+        steps:
+          - say: ["Clap, clap, clap!", "Clap your hands!", "Ready? Clap, clap, clap!"]
+          - sound: clap
+          - sound: clap
+          - sound: clap
+          - say: "Your turn! Can you clap?"
+            expression: curious
+            pause: 2
+          - prompt: "Did {child_name|your little one} clap (or try)?"
+            options: ["Clapped!", "Not this time"]
+            timeout: 20
+            branches:
+              "Clapped!":
+                - expression: celebrating
+                - sound: yay
+                - animation: confetti
+                - gesture: celebrate
+                - say: ["You clapped! Hooray!", "Yay! Clap, clap! You did it!", "Wonderful clapping!"]
+                  pause: 1
+              "Not this time":
+                - expression: affectionate
+                - say: "That's okay! Let's clap together."
+                - sound: clap
+                - sound: clap
+            on_timeout:
+              - expression: happy
+              - say: "Clap, clap! Good watching!"
+      - say: "Clap, clap, hooray! Thank you for clapping with me!"
+        expression: happy
+        animation: hearts
+
+  # ------------------------------------------------------------------ wave hello
+  - id: wave_hello
+    name: Waving Hello
+    description: LittleBot waves hello and waits for a wave back - seen by the camera or confirmed by you.
+    min_age_months: 6
+    max_age_months: 24
+    category: social
+    participation: recommended
+    duration_seconds: 100
+    tags: [baby, greeting, gesture, imitation]
+    parent_instructions: >
+      Wave to LittleBot together and say "Hi!". You can gently help her wave, or just
+      wave yourself so she can watch. If camera gesture detection is switched on,
+      LittleBot may notice the wave by itself; otherwise tap "Waved!" when she waves
+      or tries.
+    safety_notes:
+      - Stay with your baby the whole time.
+      - The camera only looks for a wave here; nothing is recorded or stored.
+    steps:
+      - expression: happy
+      - gesture: wave
+      - say: "Hi! Hi, {child_name}!"
+        animation: bounce
+        pause: 1
+      - repeat: 2
+        steps:
+          - say: ["Can you wave hi?", "Wave hello to me!"]
+            expression: curious
+          - gesture: wave
+          - wait_for: vision.gesture
+            match: {gesture: wave}
+            timeout: 20
+            ask_caregiver: "Tap when {child_name|your little one} waves (or tries!)"
+            caregiver_option: "Waved!"
+            on_event:
+              - expression: excited
+              - sound: yay
+              - say: ["You waved! Hi, hi, hi!", "Hello to you too!", "What a lovely wave!"]
+                animation: hearts
+            on_timeout:
+              - expression: happy
+              - say: "I'm waving to you! Hi!"
+              - gesture: wave
+          - wait: 1
+      - say: "Hello, hello! I'm so happy to see you!"
+        expression: affectionate
+
+  # ------------------------------------------------------------------ bye-bye
+  - id: bye_bye
+    name: Bye-Bye Wave
+    description: A cosy goodbye routine - wave bye-bye, blow a kiss, and see you soon.
+    min_age_months: 6
+    max_age_months: 24
+    category: social
+    participation: recommended
+    duration_seconds: 90
+    tags: [baby, routine, gesture, transitions]
+    parent_instructions: >
+      A predictable goodbye helps little ones with endings and transitions. Wave and
+      say "bye-bye" together, and blow LittleBot a kiss. Use it at the end of play time
+      so stopping feels friendly.
+    safety_notes:
+      - Stay with your baby the whole time.
+    steps:
+      - expression: affectionate
+      - say: "It's time to say bye-bye!"
+        pause: 1
+      - gesture: wave
+      - say: "Bye-bye, {child_name}! Bye-bye!"
+        expression: happy
+      - wait_for: vision.gesture
+        match: {gesture: wave}
+        timeout: 20
+        ask_caregiver: "Tap when {child_name|your little one} waves bye-bye (or tries)"
+        caregiver_option: "Waved!"
+        on_event:
+          - sound: yay
+          - say: "Bye-bye wave! Thank you!"
+            expression: excited
+            animation: bounce
+        on_timeout:
+          - say: "Bye-bye! I'm waving to you."
+          - gesture: wave
+      - say: "Can you blow me a kiss? Mwah!"
+        expression: playful
+        pause: 2
+      - animation: hearts
+      - say: "Mwah! I got your kiss!"
+        expression: affectionate
+        pause: 1
+      - gesture: wave
+      - say: "See you soon! Bye-bye!"
+        expression: happy
+
+  # ------------------------------------------------------------------ animal sounds
+  - id: animal_sounds
+    name: Animal Sounds
+    description: Meet friendly animals and their sounds - "The cow says moo!" Favourite animals come first.
+    min_age_months: 8
+    max_age_months: 36
+    category: language
+    participation: recommended
+    duration_seconds: 180
+    tags: [baby, toddler, animals, sounds, vocabulary]
+    materials: [toy animals or an animal picture book (optional)]
+    parent_instructions: >
+      Make the animal sounds together - your baby loves hearing your voice copy
+      LittleBot. If you have toy animals or a picture book, hold up or point to the
+      matching animal. Add favourite animals in the profile and LittleBot will meet
+      those first.
+    safety_notes:
+      - Toy animals should be too big to fit in her mouth.
+      - Keep the volume gentle.
+    steps:
+      - expression: happy
+      - say: "Let's meet some animals!"
+        animation: bounce
+        pause: 1
+      - repeat: 4
+        steps:
+          - pick: animal
+            from: animals
+            prefer_profile: favourite_animals
+          - expression: curious
+          - say: ["Who's this? It's a {animal.name}!", "Look! A {animal.name}!", "Here comes a {animal.name}!"]
+          - note: "Point to a {animal.name} in a book, or hold up a toy {animal.name} if you have one."
+          - say: "The {animal.name} says {animal.sound}! {animal.sound}!"
+            expression: excited
+            animation: wiggle
+            pause: 0.5
+          - say: "Can you say {animal.sound}?"
+            expression: listening
+          - listen: 4
+            on_heard:
+              - sound: giggle
+              - say: ["Yes! {animal.sound}! Great sound!", "I heard you! {animal.sound}!"]
+                expression: happy
+            on_timeout:
+              - say: "{animal.sound}, {animal.sound}!"
+                expression: happy
+          - wait: 1
+      - say: "Bye bye, animals! You were great!"
+        expression: affectionate
+        animation: hearts
+
+  # ------------------------------------------------------------------ first words
+  - id: first_words
+    name: First Words
+    description: Slow, repeated everyday words - mama, dada, ball, dog - while you point to the real thing.
+    min_age_months: 9
+    max_age_months: 24
+    category: language
+    participation: required
+    duration_seconds: 240
+    tags: [baby, vocabulary, talking]
+    materials: [a ball, her cup or bottle, a toy dog or cat (or pictures)]
+    data:
+      words:
+        - {word: mama, line: "Mama! Where's Mama? Mama loves you.", hint: "Point to Mama (or use the name your family uses)."}
+        - {word: dada, line: "Dada! Where's Dada? Hi, Dada!", hint: "Point to Dada, or a photo of Dada (or use your family's word)."}
+        - {word: ball, line: "Ball! A round, bouncy ball.", hint: "Hold up a ball and roll it gently."}
+        - {word: dog, line: "Dog! The dog says woof.", hint: "Show a toy dog or a picture of a dog."}
+        - {word: cat, line: "Cat! A soft cat says meow.", hint: "Show a toy cat or a picture of a cat."}
+        - {word: bye-bye, line: "Bye-bye! Wave bye-bye!", hint: "Wave and say bye-bye together."}
+        - {word: more, line: "More! More, please!", hint: "Use 'more' with a snack or a game she loves."}
+        - {word: milk, line: "Milk! Yummy milk!", hint: "Show her cup or bottle."}
+    parent_instructions: >
+      This one needs you! LittleBot says a word slowly; you show the real thing and
+      say the word too. Pause and let her look, babble or reach - every sound and
+      gesture is communication. Repeat the words she enjoys. There's no rush and no
+      right answer.
+    safety_notes:
+      - Objects you show should be too big to fit in her mouth.
+      - Stay with your baby the whole time.
+    steps:
+      - expression: happy
+      - say: "Let's say some words together!"
+        pause: 1
+      - repeat: 4
+        steps:
+          - pick: w
+            from: words
+          - note: "{w.hint}"
+          - prompt: "Get ready to show: {w.word}"
+            options: ["Ready"]
+            timeout: 20
+          - say: "{w.word}."
+            rate: 0.8
+            expression: curious
+            pause: 1
+          - say: "{w.line}"
+            expression: happy
+            pause: 1
+          - say: "{w.word}!"
+            rate: 0.8
+            expression: listening
+            pause: 3
+          - choice:
+              - say: "Lovely listening!"
+              - say: "Yes! {w.word}!"
+              - say: "I love talking with you!"
+      - say: "Great talking, {child_name}! Bye-bye, words!"
+        expression: affectionate
+        animation: hearts
+
+  # ------------------------------------------------------------------ musical turns
+  - id: music_turns
+    name: Musical Turns
+    description: LittleBot plays a little tune, then waits for your baby's turn to make music.
+    min_age_months: 6
+    max_age_months: 24
+    category: music
+    participation: recommended
+    duration_seconds: 180
+    tags: [baby, turn-taking, rhythm, sounds]
+    materials: [a rattle or shaker, or a wooden spoon and a pot]
+    parent_instructions: >
+      Turn-taking is the beginning of conversation. LittleBot plays, then pauses for
+      her turn: help her shake a rattle, tap a pot, or simply babble. Then tap what
+      happened. Any sound counts as music!
+    safety_notes:
+      - Use baby-safe instruments only; check shakers are sealed with nothing that can come loose.
+      - Keep the volume gentle - babies' ears are sensitive.
+    steps:
+      - expression: happy
+      - say: "Let's make music! I'll go first, then it's your turn."
+        pause: 1
+      - repeat: 3
+        steps:
+          - choice:
+              - melody: "C4 E4 G4:2"
+                tempo: 110
+              - melody: "G4 G4 E4:2"
+                tempo: 110
+              - melody: "C5 G4 E4 C4:2"
+                tempo: 120
+              - steps: [{sound: drum}, {sound: drum}, {sound: drum}]
+          - say: "Your turn!"
+            expression: listening
+            pause: 1
+          - prompt: "Help {child_name|your baby} shake, tap or babble, then tap here"
+            options: ["Made music!", "Just listening"]
+            timeout: 20
+            branches:
+              "Made music!":
+                - expression: excited
+                - sound: tada
+                - say: ["What beautiful music!", "Wow! You made music!", "I love your music!"]
+                  animation: sparkle
+              "Just listening":
+                - expression: affectionate
+                - say: "Listening is lovely too."
+            on_timeout:
+              - say: "La la la! Music is fun!"
+                expression: happy
+      - melody: "C4 D4 E4 F4 G4:2 G4:2"
+        tempo: 120
+      - say: "Thank you for making music with me!"
+        expression: affectionate
+        animation: hearts
+
+  # ------------------------------------------------------------------ imitation
+  - id: copy_me
+    name: Copy Me!
+    description: Simple actions to copy - clap, wave, big smile, "ooh", and arms up "so big!"
+    min_age_months: 9
+    max_age_months: 30
+    category: social
+    participation: recommended
+    duration_seconds: 180
+    tags: [baby, toddler, imitation, gesture]
+    parent_instructions: >
+      Babies learn by copying, and they copy you most of all. Do each action along
+      with LittleBot, big and slow, with a smile. Tap "Copied!" when she copies or
+      tries. "So big!" is a classic: lift her arms gently up high.
+    safety_notes:
+      - Lift her arms gently, never by the hands alone while she is standing.
+      - Stay with your baby the whole time.
+    steps:
+      - expression: happy
+      - say: "Let's play copy me! Watch me, then you try."
+        pause: 1
+      - repeat: 4
+        steps:
+          - choice:
+              - steps:
+                  - say: "Clap, clap!"
+                    expression: happy
+                  - sound: clap
+                  - sound: clap
+                  - say: "Can you clap?"
+              - steps:
+                  - gesture: wave
+                  - say: "Wave, wave, wave!"
+                    expression: happy
+                  - say: "Can you wave?"
+              - steps:
+                  - expression: happy
+                    hold: 3
+                  - animation: sparkle
+                  - say: "Big smile! Can you smile at me?"
+              - steps:
+                  - expression: surprised
+                  - say: "Ooooh!"
+                    rate: 0.7
+                  - say: "Can you say ooh?"
+              - steps:
+                  - gesture: raise_arms
+                  - say: "How big is {child_name|baby}? So big!"
+                    expression: excited
+                    animation: bounce
+                  - say: "Arms up high! So big!"
+          - wait: 3
+          - prompt: "Did {child_name|your little one} copy (or try)?"
+            options: ["Copied!", "Next one"]
+            timeout: 15
+            branches:
+              "Copied!":
+                - sound: yay
+                - say: ["You copied me! Clever you!", "Yes! Just like me!", "Great copying!"]
+                  expression: celebrating
+                  animation: confetti
+      - say: "You are a super copier! Bye-bye!"
+        expression: affectionate
+        animation: hearts
+
+  # ------------------------------------------------------------------ object permanence
+  - id: hide_the_toy
+    name: Where Did It Go?
+    description: A gentle hide-and-find game with a toy and a cloth. You hide, LittleBot adds the suspense.
+    min_age_months: 6
+    max_age_months: 24
+    category: cognitive
+    participation: required
+    duration_seconds: 240
+    tags: [baby, object permanence, hide and seek, suspense]
+    materials: [a favourite toy (too big to fit in her mouth), a light cloth or tea towel]
+    parent_instructions: >
+      You do the hiding; LittleBot adds the suspense. Show the toy, then hide it under
+      the cloth while she watches. Start by leaving a bit of the toy peeking out -
+      that's easier - then hide it fully. Let her pull the cloth away herself if she
+      can, and celebrate the find. Tap the buttons as you go.
+    safety_notes:
+      - Use a toy too big to fit in her mouth.
+      - Keep the cloth away from her face and put it away when you finish.
+      - Stay with your baby the whole time.
+    steps:
+      - expression: happy
+      - say: "Let's play where did it go!"
+        animation: bounce
+      - prompt: "Show {child_name|your baby} the toy, then tap Ready"
+        options: ["Ready"]
+        timeout: 60
+      - say: "Ooh, look at the toy!"
+        expression: excited
+        animation: sparkle
+        pause: 1
+      - repeat: 3
+        steps:
+          - note: "Round {round}: hide the toy under the cloth while she watches. In round 1, leave a corner peeking out."
+          - say: ["Now let's hide it. Bye bye, toy!", "Let's hide it again!"]
+            expression: curious
+          - prompt: "Hide the toy under the cloth, then tap Hidden"
+            options: ["Hidden"]
+            timeout: 45
+          - say: "Hmm. Where did it go?"
+            expression: thinking
+            pause: 2
+          - say: "Is it... under the cloth?"
+            expression: curious
+          - prompt: "Let her look. Did she find it?"
+            options: ["Found it!", "Help please"]
+            timeout: 30
+            branches:
+              "Found it!":
+                - expression: surprised
+                - sound: tada
+                - say: ["There it is! You found it!", "You found the toy! Hooray!"]
+                  expression: celebrating
+                  animation: confetti
+              "Help please":
+                - say: "Let's peek under the cloth. Lift it up, slowly..."
+                  expression: curious
+                  pause: 2
+                - expression: surprised
+                - sound: peekaboo
+                - say: "Peekaboo, toy! There it is!"
+                  expression: happy
+            on_timeout:
+              - expression: surprised
+              - sound: tada
+              - say: "There it is! The toy was hiding!"
+                expression: happy
+      - say: "The toy was hiding, and we found it every time! Hooray!"
+        expression: celebrating
+        animation: hearts
+      - note: "Please put the cloth away now."
+
+  # ------------------------------------------------------------------ cause and effect
+  - id: again_again
+    name: Again! Again!
+    description: Each tap on "Again!" makes LittleBot do the same funny boing - babies love knowing what comes next.
+    min_age_months: 6
+    max_age_months: 18
+    category: cognitive
+    participation: required
+    duration_seconds: 120
+    tags: [baby, cause and effect, prediction, laughter]
+    parent_instructions: >
+      Babies discover "I can make things happen" through repetition. Tap "Again!" (or
+      let her touch the button with you) and LittleBot does exactly the same boing
+      every time. Watch for her to anticipate it - a smile, a kick or a look at you
+      just before the boing is the magic moment. Stop whenever she looks away.
+    safety_notes:
+      - If you let her touch your phone, hold it yourself.
+      - Keep the volume gentle.
+    steps:
+      - expression: playful
+      - say: "Tap again, and I'll do my trick!"
+      - repeat: 8
+        steps:
+          - prompt: "Tap Again! for the trick"
+            options: ["Again!", "All done"]
+            timeout: 30
+            branches:
+              "Again!":
+                - expression: surprised
+                - sound: boing
+                - animation: bounce
+                - say: "Boing!"
+                - expression: happy
+                  hold: 1.5
+              "All done":
+                - say: "All done! That was fun!"
+                  expression: affectionate
+                - end: all done
+            on_timeout:
+              - say: "Boing! Bye-bye for now!"
+                expression: happy
+              - end: no more taps
+      - say: "Boing, boing! What a fun game!"
+        expression: celebrating
+        animation: confetti
+
+  # ------------------------------------------------------------------ sensory
+  - id: touch_and_feel
+    name: Touch and Feel
+    description: Explore soft, smooth, crinkly and bumpy things together while LittleBot describes each one.
+    min_age_months: 6
+    max_age_months: 30
+    category: sensory
+    participation: required
+    duration_seconds: 210
+    tags: [baby, toddler, textures, senses, words]
+    materials: [3 or 4 safe things with different textures - a soft blanket, a wooden spoon, crinkly paper, a bumpy ball]
+    data:
+      textures:
+        - {name: soft, line: "Soft, soft, soft. Like a fluffy blanket. Mmm, so soft.", hint: "Offer something soft - a blanket, a teddy or a scarf."}
+        - {name: smooth, line: "Smooth! Slide your fingers. Smooth and cool, like a wooden spoon.", hint: "Offer something smooth - a wooden spoon or a plastic cup."}
+        - {name: crinkly, line: "Crinkle, crinkle! Listen to that crinkly sound!", hint: "Offer crinkly paper or a crinkle toy (never a plastic bag)."}
+        - {name: bumpy, line: "Bumpy, bumpy! Lots of little bumps.", hint: "Offer something bumpy - a textured ball or a bath sponge."}
+        - {name: squishy, line: "Squishy! Squeeze, squeeze. Squish!", hint: "Offer something squishy - a sponge or a soft ball."}
+    parent_instructions: >
+      Collect a few safe things with different textures. When LittleBot names a
+      texture, let your baby touch it while you say the word too - "soft!". Watch her
+      face: babies explore with hands and mouths, and every reaction is interesting.
+      Move on whenever she loses interest.
+    safety_notes:
+      - Every object must be clean, too big to swallow, with no loose parts, strings or sharp edges.
+      - Never use plastic bags, balloons or anything that could cover her nose and mouth.
+      - Stay with your baby - only offer things that are safe to mouth.
+    steps:
+      - expression: curious
+      - say: "Let's touch and feel!"
+        animation: sparkle
+        pause: 1
+      - for_each: t
+        in: textures
+        shuffle: true
+        limit: 4
+        steps:
+          - note: "{t.hint}"
+          - prompt: "Give {child_name|your baby} something {t.name} to touch, then tap"
+            options: ["Touching it!", "Next one"]
+            timeout: 45
+            branches:
+              "Touching it!":
+                - say: "{t.line}"
+                  expression: happy
+                  pause: 2
+                - say: ["Ooh, {t.name}!", "{t.name}! Do you like it?", "{t.name}, {t.name}!"]
+                  expression: curious
+                  pause: 2
+      - say: "Soft, smooth, crinkly, bumpy. So many feelings for little fingers!"
+        expression: affectionate
+        animation: hearts

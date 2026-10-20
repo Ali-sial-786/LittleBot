@@ -1,0 +1,55 @@
+# LittleBot servo calibration - EXAMPLE / FORMAT REFERENCE.
+#
+# The real file is config/calibration.yaml (git-ignored, machine specific). It is written
+# by `python scripts/calibrate_servos.py` - do not hand-copy this example onto a robot:
+# every servo, horn and mounting is different, and wrong limits can drive an arm into
+# the body (stall current, stripped gears, pinch points).
+#
+# Physical motion needs ALL of: motion.backend: pca9685, motion.physical_enabled: true,
+# a valid calibration file covering every joint, AND a parent arming motion in the
+# dashboard after each start. See docs/MOTION_SAFETY.md.
+#
+# Units: joint angles in degrees (0..180); pulses in microseconds (absolute 500..2500).
+#   servo angle = joint angle            (inverted: false)
+#   servo angle = 180 - joint angle      (inverted: true, mirrored mounting)
+#   pulse_us    = min_pulse_us + servo_angle / 180 * (max_pulse_us - min_pulse_us)
+# Rules checked on load (motion stays simulated if any fails):
+#   0 <= min_angle < neutral < max_angle <= 180
+#   500 <= min_pulse_us < max_pulse_us <= 2500
+#   0 < max_speed_dps <= 180, 0 < max_accel_dps2 <= 720, channels 0..15 and unique
+#   joint names must exist in motion.servos; unknown keys are errors (typo protection)
+# positive_toward: which limit a positive gesture value moves toward -
+#   arms: the "raised" limit; head: the limit where the robot looks to ITS left.
+
+version: 1
+created: "2026-10-20T12:00:00"
+tool: scripts/calibrate_servos.py
+pwm_frequency: 50          # informational: pulses are stored in us, independent of frequency
+i2c_address: 0x40          # informational
+notes: "example values only"
+servos:
+  head:
+    channel: 0
+    neutral: 90.0          # required
+    min_angle: 50.0        # required
+    max_angle: 130.0       # required
+    inverted: false        # optional (defaults come from motion.servos in config)
+    positive_toward: max   # optional
+    min_pulse_us: 500      # optional: pulse at servo angle 0 (MG90S datasheets vary: ~500-600)
+    max_pulse_us: 2500     # optional: pulse at servo angle 180 (~2300-2500)
+    max_speed_dps: 60      # optional, deg/s
+    max_accel_dps2: 200    # optional, deg/s^2
+  left_arm:
+    channel: 1
+    neutral: 20.0
+    min_angle: 10.0
+    max_angle: 150.0
+    inverted: false
+    positive_toward: max
+  right_arm:
+    channel: 2
+    neutral: 160.0
+    min_angle: 30.0
+    max_angle: 170.0
+    inverted: true
+    positive_toward: min

@@ -91,6 +91,11 @@ class CameraConfig(_Section):
     detect_fps: float = 6.0  # detection rate (CPU budget)
     mirror: bool = True  # camera faces the child: image-right means "look to my right"
     reconnect_seconds: float = 3.0
+    # --- added by vision (all optional, defaults keep previous behaviour) ---
+    fourcc: str = "MJPG"  # requested pixel format; MJPG keeps USB 2.0 bandwidth low ("" = driver default)
+    stall_seconds: float = 3.0  # no frame for this long => treated as disconnected
+    fixture: str | None = None  # dev aid: image / video / directory used instead of a real camera
+    mock_face: bool = False  # mock camera draws a slowly moving synthetic face (demos)
 
 
 class VisionConfig(_Section):
@@ -100,6 +105,16 @@ class VisionConfig(_Section):
     left_after_seconds: float = 3.0  # hysteresis before person.left
     gaze_smoothing: float = 0.35  # 0..1 exponential smoothing factor
     gestures_enabled: bool = False  # experimental wave/motion detection
+    # --- added by vision (all optional) ---
+    yunet_model: str = "models/face_detection_yunet_2023mar.onnx"  # relative to the project root
+    yunet_score_threshold: float = 0.7
+    haar_cascade: str | None = None  # explicit cascade XML path; None = search OpenCV / system / models/
+    haar_min_neighbors: int = 5  # higher = fewer false positives, more misses
+    haar_scale_factor: float = 1.2  # image-pyramid step; 1.1 finds slightly more faces but costs ~2x CPU
+    opencv_threads: int = 2  # cv2.setNumThreads for detection (0 = OpenCV default); leaves cores for the UI
+    gaze_vertical_offset: float = 0.0  # added to gaze_y (camera mounted above/below the eyes)
+    simulated_face_seconds: float = 3.0  # simulate_face() expires unless refreshed
+    gesture_fps: float = 10.0  # frame rate for the experimental gesture analyser (when enabled)
 
 
 class MicrophoneConfig(_Section):
@@ -160,33 +175,75 @@ class AIConfig(_Section):
     daily_budget_usd: float = 0.50
     min_age_months_for_cloud: int = 24  # below this, scripted responses only
     store_transcripts: bool = False
+    # --- brain module extensions (see docs/modules/brain.md) ---
+    # Anthropic request tuning. Current Claude models think adaptively by default and
+    # thinking tokens count toward max_tokens, so we ask for low effort and add headroom.
+    anthropic_effort: Literal["low", "medium", "high"] | None = "low"
+    anthropic_thinking: Literal["adaptive", "disabled"] = "adaptive"  # "disabled": Haiku 5.5 only
+    thinking_headroom_tokens: int = 400
+    anthropic_base_url: str = "https://api.anthropic.com"
+    openai_base_url: str = "https://api.openai.com/v1"
+    # Estimated USD per million tokens {model: [input, output]}; overrides the built-in table.
+    price_per_mtok: dict[str, tuple[float, float]] = Field(default_factory=dict)
+    # Tiny in-memory conversation context (never persisted unless store_transcripts).
+    context_turns: int = 3
+    context_ttl_seconds: float = 120.0
+    max_input_chars: int = 300
+    listen_timeout_seconds: float = 8.0
+    say_didnt_hear: bool = True
+    # Reply to audio.utterance events that arrive while LittleBot is idle (not mid-activity).
+    reply_to_utterance_events: bool = True
+    # Personal info is NOT sent to cloud providers unless a parent opts in.
+    share_child_name: bool = False
+    share_interests: bool = False
 
 
 class MediaConfig(_Section):
+    # auto: Pi -> kiosk (if Chromium is installed), desktop -> browser, headless/offline -> none
     player: Literal["auto", "browser", "kiosk", "none"] = "auto"
     browser_command: str | None = None  # e.g. "chromium-browser"; None = autodetect
     session_limit_minutes: int = 15
     daily_limit_minutes: int = 30
     min_age_months_for_video: int = 18
     default_volume: float = 0.5
+    max_volume: float = 0.8  # ceiling for the YouTube player volume (0..1)
+    # Base URL the robot's own browser uses to reach the player page (the dashboard server).
+    # None = http://127.0.0.1:<dashboard.port>
+    player_base_url: str | None = None
+    youtube_host: Literal["nocookie", "standard"] = "nocookie"  # youtube-nocookie.com or youtube.com embeds
+    oembed_titles: bool = False  # look up missing titles via youtube.com/oembed (network call; off by default)
+    max_items: int = 200  # allowlist size cap
+    connect_timeout_seconds: float = 60.0  # stop if the player page never connects
+    heartbeat_timeout_seconds: float = 15.0  # stop if a connected player page goes silent
+    max_pause_minutes: float = 10.0  # a paused video gives the screen back after this long
+    limit_check_seconds: float = 1.0  # limit/timeout watchdog period while a session is active
+    kiosk_close_delay_seconds: float = 1.5  # let the page fade out before the kiosk window closes
+    kiosk_extra_args: list[str] = Field(default_factory=list)
 
 
 class ServoChannelConfig(_Section):
+    # Angles are joint angles in degrees (0..180). See docs/modules/motion.md.
+    # Validated by littlebot.motion.joints (invalid values disable motion, they never crash the app).
     channel: int
     neutral: float = 90.0
     min_angle: float = 45.0
     max_angle: float = 135.0
     max_speed_dps: float = 90.0  # degrees per second
-    inverted: bool = False
-    min_pulse_us: int = 500
-    max_pulse_us: int = 2500
+    max_accel_dps2: float = 200.0  # acceleration limit, degrees per second^2
+    inverted: bool = False  # servo angle = 180 - joint angle (mirrored mounting)
+    min_pulse_us: int = 500  # servo pulse at servo angle 0 (absolute bounds 500..2500)
+    max_pulse_us: int = 2500  # servo pulse at servo angle 180
+    # Which limit a positive normalised gesture value moves toward: "raise" for arms,
+    # "look to the robot's left" for the head.
+    positive_toward: Literal["max", "min"] = "max"
 
 
 def _default_servos() -> dict[str, ServoChannelConfig]:
     return {
         "head": ServoChannelConfig(channel=0, neutral=90, min_angle=50, max_angle=130, max_speed_dps=60),
         "left_arm": ServoChannelConfig(channel=1, neutral=20, min_angle=10, max_angle=150, max_speed_dps=90),
-        "right_arm": ServoChannelConfig(channel=2, neutral=160, min_angle=30, max_angle=170, max_speed_dps=90, inverted=True),
+        "right_arm": ServoChannelConfig(channel=2, neutral=160, min_angle=30, max_angle=170, max_speed_dps=90, inverted=True,
+                                        positive_toward="min"),
     }
 
 
@@ -199,6 +256,13 @@ class MotionConfig(_Section):
     update_hz: float = 50.0
     servos: dict[str, ServoChannelConfig] = Field(default_factory=_default_servos)
     calibration_file: str = "config/calibration.yaml"
+    positions_hz: float = 10.0  # motion.positions event rate while moving
+    speed_scale: float = 1.0  # global slow-down factor for every movement (0 < x <= 1)
+    min_move_seconds: float = 0.25  # no movement is ever shorter than this
+    settle_seconds: float = 0.5  # hold at the assumed position after energising a joint, before moving
+    stop_all_returns_to_neutral: bool = True  # parent STOP: halt smoothly, then drift slowly back to neutral
+    homing_speed_factor: float = 0.4  # fraction of max speed used for that return to neutral
+    release_when_idle_seconds: float = 0.0  # >0: de-energise servos after this long without motion (0 = hold)
 
 
 class DashboardConfig(_Section):
@@ -214,6 +278,10 @@ class ActivitiesConfig(_Section):
     time_scale: float = 1.0  # tests use small values to run scripts quickly
     caregiver_timeout_seconds: float = 45.0  # wait this long for caregiver confirmation
     record_history: bool = False  # optional, off by default
+    # Extra folders of parent-authored activity YAML (relative paths are under data_dir).
+    # Missing folders are ignored; built-in scripts always come from assets/activities.
+    custom_dirs: list[str] = Field(default_factory=lambda: ["activities"])
+    random_seed: int | None = None  # fixed seed = reproducible random choices (demos / tests)
 
 
 class PrivacyConfig(_Section):

@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light dark">
+  <meta name="theme-color" content="#f5f3ee" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0e131b" media="(prefers-color-scheme: dark)">
+  <meta name="referrer" content="same-origin">
+  <title>LittleBot · Parent dashboard</title>
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/app.css">
+  <script type="module" src="/static/js/app.js"></script>
+</head>
+<body>
+  <div id="app" class="booting" aria-busy="true">
+    <div class="boot">
+      <div class="boot-face" aria-hidden="true"><span></span><span></span></div>
+      <p>Connecting to LittleBot…</p>
+    </div>
+  </div>
+  <div id="toasts" class="toasts" role="status" aria-live="polite"></div>
+  <dialog id="dialog" class="dialog" aria-labelledby="dialog-title"></dialog>
+  <noscript><p class="noscript">The LittleBot dashboard needs JavaScript enabled.</p></noscript>
+</body>
+</html>

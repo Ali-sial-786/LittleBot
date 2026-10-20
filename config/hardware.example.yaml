@@ -1,0 +1,115 @@
+# LittleBot - Raspberry Pi hardware configuration TEMPLATE.
+#
+# scripts/install_pi.sh copies this file to config/local.yaml (git-ignored) when that
+# file does not exist yet; it never overwrites an existing local.yaml. Edit local.yaml,
+# not this file.
+#
+# Layering (later wins): default.yaml -> pi.yaml -> local.yaml -> LITTLEBOT__* env vars.
+# Everything here repeats pi.yaml's values on purpose, so you can see and change the
+# knobs that matter on the robot in one place. Delete lines you do not need.
+#
+# Values marked UNVERIFIED are educated guesses until the hardware is tested
+# (HARDWARE_ARRIVAL_CHECKLIST.md). Check your edits with:
+#   .venv/bin/python scripts/diagnose.py --section config
+#
+# Secrets (API keys) never go in YAML - they live in .env (see .env.example).
+
+# ---------------------------------------------------------------------------
+# Display: DORHEA MPI3508 3.5" HDMI screen, 480x320 panel.
+# The app draws its face at width x height and fills the screen. If the Pi drives the
+# HDMI output at another mode (e.g. 720x480 or 640x480 - see docs/DISPLAY_SETUP.md),
+# keep these at 480x320: they are the face's drawing size, not the HDMI mode.
+# ---------------------------------------------------------------------------
+display:
+  width: 480
+  height: 320
+  fullscreen: true
+  scale: 1.0
+  hide_cursor: true        # no mouse pointer over the face
+  show_sim_panel: false    # desktop-simulator side panel: off on the robot
+  fps: 30                  # while animating
+  idle_fps: 15             # when nothing moves: saves CPU and heat
+
+# ---------------------------------------------------------------------------
+# Camera: InnoMaker U20CAM-1080P (USB 2.0 UVC). Find it with:
+#   .venv/bin/python scripts/check_camera.py --list     (or: v4l2-ctl --list-devices)
+# device: auto (first USB camera) | an index such as 0 | a path such as /dev/video0.
+# On the Pi 5, /dev/video19+ belong to the ISP / video decoder, not to your camera.
+# ---------------------------------------------------------------------------
+camera:
+  backend: auto            # auto | real | mock | none   (switch to real once the camera is confirmed)
+  device: auto
+  capture_width: 640       # 640x480 MJPG keeps USB bandwidth and CPU low; 1080p is not needed
+  capture_height: 480
+  capture_fps: 15
+  fourcc: MJPG
+  process_width: 320       # detection runs on a 320 px wide copy
+  detect_fps: 5.0          # face detections per second (CPU budget on a 2 GB Pi 5)
+  mirror: true
+
+vision:
+  detector: haar           # haar | yunet | none - falls back automatically; see scripts/diagnose.py camera section
+
+# ---------------------------------------------------------------------------
+# Audio: mini USB microphone + mini USB speaker (the Pi 5 has no headphone jack).
+# device: null = system default; otherwise a NAME SUBSTRING (robust when USB ports
+# change) or an index. List names with:
+#   .venv/bin/python scripts/check_audio.py --list      (or: arecord -l / aplay -l)
+# Examples (UNVERIFIED - copy the real names from the list): "USB PnP Sound Device",
+# "UACDemo", "USB Audio".
+# ---------------------------------------------------------------------------
+audio:
+  microphone:
+    backend: auto          # auto | real | mock | none
+    device: null
+  speaker:
+    backend: sounddevice   # auto | sounddevice | pygame | mock | none
+    device: null
+    volume: 0.4            # start quiet; parents can change it in the dashboard
+    max_volume: 0.7        # hard ceiling - test loudness at the child's ear distance first
+  tts:
+    provider: auto         # espeak-ng (installed by install_pi.sh) unless a piper model is set
+
+# ---------------------------------------------------------------------------
+# Media: the YouTube player runs in Chromium (kiosk window) on the robot's screen.
+# browser_command: null autodetects chromium-browser (Bookworm) / chromium (Trixie).
+# ---------------------------------------------------------------------------
+media:
+  player: auto             # auto | browser | kiosk | none (none = no video at all)
+  browser_command: null
+
+# ---------------------------------------------------------------------------
+# Motion: 3x MG90S on a PCA9685. KEEP physical_enabled: false until the servos are
+# wired to their OWN regulated supply (common ground with the Pi), calibrated with
+# scripts/calibrate_servos.py, and docs/MOTION_SAFETY.md has been followed.
+# This installer and template never enable physical motion.
+# ---------------------------------------------------------------------------
+motion:
+  backend: mock            # mock | pca9685
+  physical_enabled: false
+  i2c_bus: 1               # /dev/i2c-1 = GPIO2 (SDA, pin 3) / GPIO3 (SCL, pin 5)
+  i2c_address: 0x40        # PCA9685 default address
+
+# ---------------------------------------------------------------------------
+# Parent dashboard.
+# lan_access: false -> only this Pi can open http://127.0.0.1:8765 (safest default).
+# lan_access: true  -> phones on your home Wi-Fi can reach http://<pi-ip>:8765 (or
+#                      http://<hostname>.local:8765). Only on a trusted home network,
+#                      after setting a strong dashboard password (first-run setup code
+#                      is printed in the app log). Never forward this port on your router.
+# Leave host at 127.0.0.1: lan_access is the switch that opens it to the network.
+# ---------------------------------------------------------------------------
+dashboard:
+  enabled: true
+  host: 127.0.0.1
+  port: 8765
+  lan_access: false
+
+# ---------------------------------------------------------------------------
+# Logging: JSON lines; also written to data/logs/littlebot.log (rotating, 3 x 2 MB).
+# The service's stdout/stderr go to the journal: journalctl --user -u littlebot
+# ---------------------------------------------------------------------------
+logging:
+  level: INFO              # DEBUG while bringing up hardware
+  format: json
+  file: logs/littlebot.log # relative to data_dir (data/)

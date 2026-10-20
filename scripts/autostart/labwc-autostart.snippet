@@ -1,0 +1,14 @@
+# LittleBot - optional line for the labwc autostart file (alternative to the XDG
+# autostart entry; use ONE of them). Not installed automatically.
+#
+# IMPORTANT: by default labwc reads only the FIRST autostart file it finds:
+# ~/.config/labwc/autostart replaces /etc/xdg/labwc/autostart (which starts the
+# Raspberry Pi desktop, panel and kanshi). If you do not have a user file yet, copy the
+# system one first so nothing else stops starting:
+#
+#   mkdir -p ~/.config/labwc
+#   [ -f ~/.config/labwc/autostart ] || cp /etc/xdg/labwc/autostart ~/.config/labwc/autostart
+#
+# then append the line below (replace /home/pi/LittleBot with your repository path):
+
+/home/pi/LittleBot/scripts/autostart/littlebot-session-start.sh &

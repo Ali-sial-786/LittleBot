@@ -32,18 +32,26 @@ face:
   glow: true
 
 camera:
-  backend: auto          # auto | real | mock | none
-  device: 0
+  backend: auto          # auto | real | mock | none   (auto: real camera, else mock in simulation/offline)
+  device: auto           # auto (first USB camera) | index (0) | /dev/videoN  -- see scripts/check_camera.py --list
   capture_width: 640
   capture_height: 480
   capture_fps: 15
-  process_width: 320
+  fourcc: MJPG           # compressed frames: low USB 2.0 bandwidth
+  process_width: 320     # detection runs on a 320 px wide copy (CPU budget on the Pi)
   detect_fps: 6.0
-  mirror: true
+  mirror: true           # camera faces the child: image-right => eyes look to the robot's right
+  reconnect_seconds: 3.0
 
 vision:
-  detector: haar         # haar (built into OpenCV) | yunet | none
-  gestures_enabled: false
+  # yunet: small CNN, ~4x cheaper than Haar here and more robust (needs scripts/download_models.py).
+  # If its model is missing it falls back to haar (OpenCV 4.x), then to none - it never crashes.
+  detector: yunet        # yunet | haar | none
+  min_face_fraction: 0.08   # ignore faces narrower than 8% of the frame (people farther than ~1.3 m)
+  present_after_seconds: 0.6
+  left_after_seconds: 3.0
+  gaze_smoothing: 0.35
+  gestures_enabled: false   # experimental; parents can toggle it in the dashboard
 
 audio:
   half_duplex: true
@@ -71,17 +79,62 @@ ai:
   max_requests_per_day: 200
   daily_budget_usd: 0.50
   min_age_months_for_cloud: 24
-  store_transcripts: false
+  store_transcripts: false   # true AND the parent "record history" setting are both needed to keep transcripts
+  anthropic_model: claude-haiku-5-5   # fast, low-cost current Claude model
+  openai_model: gpt-4o-mini
+  anthropic_effort: low      # low | medium | high (thinking depth on current Claude models)
+  anthropic_thinking: adaptive  # adaptive | disabled (disabled is accepted by Haiku 5.5, not by Opus/Sonnet 5.5)
+  thinking_headroom_tokens: 400  # extra max_tokens so thinking never starves the short reply
+  context_turns: 3           # in-memory only; cleared on stop / sleep / STOP ALL / after context_ttl_seconds
+  context_ttl_seconds: 120
+  max_input_chars: 300
+  listen_timeout_seconds: 8
+  say_didnt_hear: true
+  reply_to_utterance_events: true
+  share_child_name: false    # never send the child's nickname to a cloud provider unless a parent opts in
+  share_interests: false     # favourite animals / interests in the cloud prompt only with parent opt-in
+  # price_per_mtok:          # optional overrides of the built-in price estimates (USD per 1M tokens)
+  #   claude-haiku-5-5: [0.10, 0.50]
 
 media:
-  player: auto           # auto | browser | kiosk | none
+  player: auto           # auto | browser | kiosk | none  (auto: Pi -> kiosk Chromium, desktop -> browser)
+  browser_command: null  # null = autodetect chromium-browser / chromium
   session_limit_minutes: 15
   daily_limit_minutes: 30
-  min_age_months_for_video: 18
+  min_age_months_for_video: 18   # video is off below this age unless a parent explicitly allows it
+  default_volume: 0.5
+  max_volume: 0.8
+  player_base_url: null  # null = http://127.0.0.1:<dashboard.port> (the robot's own browser)
+  youtube_host: nocookie # nocookie (youtube-nocookie.com) | standard (youtube.com)
+  oembed_titles: false   # optional title lookup from youtube.com/oembed when the parent gives none
+  connect_timeout_seconds: 60
+  max_pause_minutes: 10
 
 motion:
+  # Servos are SIMULATED unless backend=pca9685 AND physical_enabled=true AND a valid
+  # calibration file exists - and even then outputs stay off until a parent arms motion
+  # in the dashboard (never remembered across restarts). Read docs/MOTION_SAFETY.md first.
   backend: mock          # mock | pca9685
   physical_enabled: false   # keep false until servos are wired, powered separately, and calibrated
+  i2c_bus: 1
+  i2c_address: 0x40
+  pwm_frequency: 50      # Hz; analog servos (MG90S) expect 50 Hz (allowed 40..60)
+  update_hz: 50          # motion scheduler rate while moving (idle = no ticks at all)
+  positions_hz: 10       # motion.positions events while moving
+  speed_scale: 1.0       # global slow-down for every movement (0 < x <= 1)
+  min_move_seconds: 0.25
+  settle_seconds: 0.5    # hold after energising a joint before moving it
+  stop_all_returns_to_neutral: true   # parent STOP: halt smoothly, then return slowly to neutral
+  homing_speed_factor: 0.4
+  release_when_idle_seconds: 0        # >0 de-energises servos after idling this long
+  calibration_file: config/calibration.yaml   # written by scripts/calibrate_servos.py (git-ignored)
+  # Per-joint limits (defaults are built in; calibration.yaml overrides them). If you
+  # override `servos` here you must list ALL joints, e.g.:
+  # servos:
+  #   head:      {channel: 0, neutral: 90,  min_angle: 50, max_angle: 130, max_speed_dps: 60}
+  #   left_arm:  {channel: 1, neutral: 20,  min_angle: 10, max_angle: 150, max_speed_dps: 90}
+  #   right_arm: {channel: 2, neutral: 160, min_angle: 30, max_angle: 170, max_speed_dps: 90,
+  #               inverted: true, positive_toward: min}
 
 dashboard:
   enabled: true
@@ -93,6 +146,10 @@ activities:
   time_scale: 1.0
   caregiver_timeout_seconds: 45
   record_history: false
+  custom_dirs: [activities]   # your own YAML activities go in data/activities/ (see docs/ACTIVITY_GUIDE.md)
+  random_seed: null           # set a number for reproducible random picks
+  custom_dirs: [activities]   # your own YAML activities go in data/activities/ (see docs/ACTIVITY_GUIDE.md)
+  random_seed: null           # set a number for reproducible random picks
 
 privacy:
   camera_enabled: true

@@ -1,0 +1,222 @@
+# Thinking games (about 2-5 years): matching, remembering and simple problem solving.
+#
+# No scores, no "wrong": the robot celebrates effort and offers hints. Caregivers
+# set up real objects so the thinking happens with hands, not on a screen.
+
+activities:
+
+  # ------------------------------------------------------------------ matching
+  - id: matching_pairs
+    name: Find the Pairs
+    description: Mix up a few pairs of everyday things - socks, cups, blocks - and find the ones that match.
+    min_age_months: 24
+    max_age_months: 60
+    category: cognitive
+    participation: required
+    duration_seconds: 240
+    tags: [toddler, preschool, matching, sorting]
+    materials: [3 or 4 pairs of matching things - socks, cups, spoons, blocks or toy cars]
+    parent_instructions: >
+      Lay out 3 or 4 pairs of real things, all mixed up. LittleBot asks your child to
+      find two that are the same. Help by holding one up and asking "Which one looks
+      just like this?". Start with very different pairs (a sock and a cup) and make
+      it trickier as they get the idea.
+    safety_notes:
+      - Use objects too big to fit in a child's mouth.
+      - Stay with your child the whole time.
+    steps:
+      - expression: happy
+      - say: "Let's play a matching game!"
+        animation: bounce
+      - prompt: "Lay out 3 or 4 pairs of things, all mixed up. Tap Ready"
+        options: ["Ready"]
+        timeout: 120
+      - say: "Look at all these things! Some of them are the same."
+        expression: curious
+        pause: 1
+      - repeat: 3
+        steps:
+          - say: ["Can you find two that are the same?", "Find a pair! Two that match.", "Which two go together?"]
+            expression: curious
+            pause: 3
+          - prompt: "Tap when a pair is found (helping is great!)"
+            options: ["Found a pair!", "Need a hint"]
+            timeout: 60
+            branches:
+              "Found a pair!":
+                - sound: success
+                - say: ["A match! They're the same!", "Same and same! Brilliant!", "You found a pair!"]
+                  expression: celebrating
+                  animation: sparkle
+              "Need a hint":
+                - say: "Pick one up. Now look for one that looks just like it. Same colour? Same shape?"
+                  expression: thinking
+                  pause: 4
+                - say: "Great looking! You're a good matcher."
+                  expression: happy
+      - say: "Matching, matching, you're so good at matching!"
+        expression: affectionate
+        animation: hearts
+
+  # ------------------------------------------------------------------ memory
+  - id: memory_game
+    name: Remember With Me
+    description: LittleBot says two or three animals; can your child say them back? Hear them again as often as you like.
+    min_age_months: 36
+    max_age_months: 72
+    category: cognitive
+    participation: recommended
+    duration_seconds: 210
+    tags: [preschool, memory, listening, animals]
+    parent_instructions: >
+      Listen together while LittleBot names some animals, then let your child say them
+      back. Tap "Hear again" as often as you like - repeating is part of the game, not
+      a failure. Make it easier by holding up fingers for each animal.
+    safety_notes:
+      - Keep it relaxed and short; stop if it stops being fun.
+    steps:
+      - expression: happy
+      - say: "Let's play a remembering game! I'll say some animals. Listen carefully."
+        animation: bounce
+        pause: 1
+      - repeat: 2
+        steps:
+          - pick: two
+            from: animals
+            count: 2
+          - say: "Ready? {two}."
+            expression: curious
+            rate: 0.8
+            pause: 2
+          - say: "Can you remember them? Say them back!"
+            expression: listening
+          - prompt: "Let {child_name|your child} have a go, then choose"
+            options: ["Remembered!", "Hear again", "Next"]
+            timeout: 40
+            branches:
+              "Remembered!":
+                - sound: tada
+                - say: "Wow, what a memory! {two}!"
+                  expression: celebrating
+                  animation: confetti
+              "Hear again":
+                - say: "Here they are again: {two}."
+                  rate: 0.8
+                  pause: 2
+                - say: "Remembering is tricky. Great trying!"
+                  expression: affectionate
+      - say: "Now a tricky one. Three animals!"
+        expression: excited
+      - pick: three
+        from: animals
+        count: 3
+      - say: "{three}."
+        expression: curious
+        rate: 0.8
+        pause: 2
+      - prompt: "Let {child_name|your child} try all three"
+        options: ["Remembered!", "Hear again", "All done"]
+        timeout: 45
+        branches:
+          "Remembered!":
+            - sound: tada
+            - say: "Three animals! What a super memory!"
+              expression: celebrating
+              animation: confetti
+          "Hear again":
+            - say: "Listen: {three}. Great listening!"
+              rate: 0.8
+              expression: affectionate
+      - say: "Your brain is so busy and clever! Thanks for playing."
+        expression: affectionate
+        animation: hearts
+
+  # ------------------------------------------------------------------ problem solving
+  - id: teddy_problem
+    name: Help Teddy!
+    description: Teddy has little problems - a ball out of reach, a wobbly tower, a chilly evening. What could we do?
+    min_age_months: 24
+    max_age_months: 60
+    category: cognitive
+    participation: required
+    duration_seconds: 300
+    tags: [toddler, preschool, problem solving, pretend, kindness]
+    materials: [a teddy or doll, a few blocks or cups, a small blanket]
+    parent_instructions: >
+      Use a real teddy and act each problem out. Ask your child what Teddy could do,
+      then try their idea - even if it doesn't work, "Let's try another way" is a
+      great lesson. Tap the idea they chose (or the closest one). Every idea is a
+      good idea here.
+    safety_notes:
+      - Keep blocks large enough not to be swallowed.
+      - No climbing on furniture to reach things - that's one for a grown-up!
+    steps:
+      - expression: curious
+      - say: "Oh! Teddy needs our help. Can we help Teddy?"
+        pause: 1
+      - prompt: "Get a teddy (or any cuddly toy), then tap Ready"
+        options: ["Ready"]
+        timeout: 90
+      - say: "Teddy wants his ball, but it's up high on a shelf. He can't reach!"
+        expression: confused
+        pause: 1
+      - say: "What could Teddy do?"
+        expression: thinking
+        pause: 3
+      - prompt: "Which idea did {child_name|your child} like?"
+        options: ["Ask a grown-up", "Jump!", "Something else"]
+        timeout: 45
+        branches:
+          "Ask a grown-up":
+            - say: "Great idea! Teddy asks a grown-up for help. Here's your ball, Teddy!"
+              expression: happy
+          "Jump!":
+            - say: "Jump, jump! Hmm, still too high. Teddy asks a grown-up to help. There it is!"
+              expression: playful
+          "Something else":
+            - say: "What a clever idea! Teddy says thank you!"
+              expression: happy
+      - sound: tada
+      - say: "Teddy got his ball! You helped!"
+        expression: celebrating
+        animation: confetti
+        pause: 1
+      - say: "Now Teddy is building a tower, but it keeps falling down. Crash!"
+        expression: surprised
+      - say: "Should the big block go at the bottom, or the small block?"
+        expression: thinking
+        pause: 3
+      - note: "Try both ways with real blocks or cups - which tower stands up?"
+      - prompt: "Build a tower together, then tap"
+        options: ["It stood up!", "It fell down"]
+        timeout: 90
+        branches:
+          "It stood up!":
+            - sound: success
+            - say: "Hooray! A strong tower! Big blocks at the bottom make it steady."
+              expression: celebrating
+              animation: sparkle
+          "It fell down":
+            - sound: uhoh
+            - say: "Crash! That's okay. Builders try again. Let's put the biggest one at the bottom."
+              expression: affectionate
+      - say: "Brrr! Now Teddy feels chilly. What can we do to warm him up?"
+        expression: curious
+        pause: 3
+      - prompt: "What did {child_name|your child} choose?"
+        options: ["A blanket", "A cuddle", "Something else"]
+        timeout: 45
+        branches:
+          "A blanket":
+            - say: "A cosy blanket! Snuggle, snuggle. Teddy feels warm now."
+              expression: affectionate
+          "A cuddle":
+            - say: "A big warm cuddle! Teddy feels so much better."
+              expression: affectionate
+              animation: hearts
+          "Something else":
+            - say: "What a kind idea! Teddy feels warm and happy."
+              expression: happy
+      - say: "You are a wonderful helper and a great thinker!"
+        expression: celebrating
+        animation: hearts

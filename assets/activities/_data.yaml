@@ -1,0 +1,101 @@
+# Shared word lists for LittleBot activities.
+#
+# Files whose name starts with "_" hold data, not activities. Any activity can use
+# these lists with `pick: {var: x, from: <list>}` or `for_each: {var: x, in: <list>}`
+# and then say "{x.name}" etc. An activity's own `data:` section overrides a list
+# with the same name.
+#
+# Keep entries short, concrete and familiar. Fields must be present in EVERY item
+# of a list if a script uses them (the validator checks this).
+
+data:
+  # Familiar animals and the sound they make. `aliases` lets a parent's favourite
+  # ("puppy", "kitty") match the right animal.
+  animals:
+    - {name: cow, sound: moo, aliases: [cows, moo cow]}
+    - {name: dog, sound: woof, aliases: [puppy, doggy, doggie, dogs]}
+    - {name: cat, sound: meow, aliases: [kitty, kitten, cats]}
+    - {name: duck, sound: quack, aliases: [ducky, duckling, ducks]}
+    - {name: sheep, sound: baa, aliases: [lamb]}
+    - {name: pig, sound: oink, aliases: [piggy, pigs]}
+    - {name: horse, sound: neigh, aliases: [pony, horsey]}
+    - {name: chicken, sound: cluck, aliases: [hen, chick]}
+    - {name: donkey, sound: hee-haw, aliases: [donkeys]}
+    - {name: frog, sound: ribbit, aliases: [froggy, frogs]}
+    - {name: bee, sound: buzz, aliases: [bumblebee, bees]}
+    - {name: mouse, sound: squeak, aliases: [mice]}
+    - {name: lion, sound: roar, aliases: [lions]}
+    - {name: bird, sound: tweet, aliases: [birdie, birds]}
+    - {name: snake, sound: hiss, aliases: [snakes]}
+
+  # Animals with short, one-word sounds that fit "Old MacDonald".
+  farm_animals:
+    - {name: cow, sound: moo, aliases: [cows]}
+    - {name: pig, sound: oink, aliases: [piggy, pigs]}
+    - {name: duck, sound: quack, aliases: [ducky, ducks]}
+    - {name: sheep, sound: baa, aliases: [lamb]}
+    - {name: horse, sound: neigh, aliases: [pony]}
+    - {name: chicken, sound: cluck, aliases: [hen]}
+    - {name: dog, sound: woof, aliases: [puppy, doggy]}
+    - {name: cat, sound: meow, aliases: [kitty, kitten]}
+
+  colours:
+    - {name: red, things: "a shiny red apple, or a red fire truck"}
+    - {name: blue, things: "the big blue sky, or blue water"}
+    - {name: yellow, things: "the sunshine, or a yellow banana"}
+    - {name: green, things: "green grass, or a green leaf"}
+    - {name: orange, things: "a juicy orange, or a crunchy carrot"}
+    - {name: purple, things: "purple grapes"}
+    - {name: pink, things: "a pink flower"}
+
+  shapes:
+    - {name: circle, hint: "A circle is round, like a ball or a plate."}
+    - {name: square, hint: "A square has four sides, all the same, like a cracker."}
+    - {name: triangle, hint: "A triangle has three pointy corners, like a slice of pizza."}
+    - {name: star, hint: "A star has five points, like the stars in the sky."}
+    - {name: heart, hint: "A heart is the shape of love."}
+    - {name: rectangle, hint: "A rectangle is long, like a door or a book."}
+    - {name: oval, hint: "An oval is like an egg."}
+
+  body_parts:
+    - {name: nose, question: "Where is your nose?", action: "Touch your nose. Beep beep!"}
+    - {name: eyes, question: "Where are your eyes?", action: "Blink, blink, blink your eyes!"}
+    - {name: ears, question: "Where are your ears?", action: "Wiggle your ears. Can you hear me?"}
+    - {name: mouth, question: "Where is your mouth?", action: "Open your mouth big. Ahhh!"}
+    - {name: hands, question: "Where are your hands?", action: "Clap your hands. Clap, clap!"}
+    - {name: tummy, question: "Where is your tummy?", action: "Pat your tummy. Pat, pat, pat!"}
+    - {name: feet, question: "Where are your feet?", action: "Stomp your feet. Stomp, stomp!"}
+    - {name: toes, question: "Where are your toes?", action: "Wiggle your toes. Wiggle, wiggle!"}
+    - {name: head, question: "Where is your head?", action: "Nod your head. Yes, yes, yes!"}
+    - {name: knees, question: "Where are your knees?", action: "Bend your knees. Down and up!"}
+
+  letters:
+    - {name: A, sound: "ah", words: "apple and alligator"}
+    - {name: B, sound: "buh", words: "ball, bear and banana"}
+    - {name: D, sound: "duh", words: "dog and duck"}
+    - {name: F, sound: "fff", words: "fish and frog"}
+    - {name: M, sound: "mmm", words: "moon, mouse and milk"}
+    - {name: P, sound: "puh", words: "pig and pear"}
+    - {name: S, sound: "sss", words: "sun, sock and snake"}
+    - {name: T, sound: "tuh", words: "teddy and tiger"}
+    - {name: L, sound: "lll", words: "lion and leaf"}
+    - {name: N, sound: "nnn", words: "nose and nest"}
+
+  opposites:
+    - {a: big, b: small, a_line: "An elephant is big!", b_line: "A mouse is small.", a_act: "Make yourself big and tall!", b_act: "Now curl up small, small, small."}
+    - {a: up, b: down, a_line: "A bird flies up, up, up!", b_line: "A leaf falls down.", a_act: "Reach your hands up high!", b_act: "Now touch the floor, down low."}
+    - {a: fast, b: slow, a_line: "A rabbit is fast!", b_line: "A snail is slow.", a_act: "Wave your hands fast, fast, fast!", b_act: "Now wave them slowly... slowly."}
+    - {a: loud, b: quiet, a_line: "A drum is loud!", b_line: "A whisper is quiet.", a_act: "Clap loudly!", b_act: "Now clap very quietly. Shh."}
+    - {a: open, b: closed, a_line: "A door can be open.", b_line: "Now the door is closed.", a_act: "Open your hands wide!", b_act: "Now close them tight."}
+    - {a: hot, b: cold, a_line: "The sun is hot!", b_line: "Ice cream is cold. Brrr!", a_act: "Fan your face, it's hot!", b_act: "Now shiver, brrr, it's cold!"}
+    - {a: tall, b: short, a_line: "A giraffe is tall!", b_line: "A little puppy is short.", a_act: "Stand up tall on your tiptoes!", b_act: "Now squat down short."}
+
+  zoo_animals:
+    - {name: lion, sound: "roar", food: "some lunch", fact: "Lions are big cats with fluffy manes."}
+    - {name: elephant, sound: "toot toot", food: "hay and juicy fruit", fact: "Elephants have long trunks to pick things up."}
+    - {name: monkey, sound: "ooh ooh, ah ah", food: "bananas", fact: "Monkeys love to climb and swing."}
+    - {name: giraffe, sound: "hmmm", food: "green leaves from tall trees", fact: "Giraffes have very long necks, and they hum very quietly."}
+    - {name: penguin, sound: "squawk", food: "fish", fact: "Penguins waddle and swim, but they can't fly."}
+    - {name: zebra, sound: "neigh", food: "grass", fact: "Zebras have black and white stripes."}
+    - {name: bear, sound: "grrr", food: "berries and honey", fact: "Bears like to have long naps in winter."}
+    - {name: hippo, sound: "grunt", food: "lots of grass", fact: "Hippos love to splash in the water."}

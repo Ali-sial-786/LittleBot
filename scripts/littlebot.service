@@ -1,0 +1,53 @@
+# LittleBot - HEADLESS system service variant: dashboard + devices, NO face window.
+#
+# Use this for bring-up before the screen works, or for a robot without a display.
+# For the normal robot (face on the screen) use the USER service in
+# scripts/systemd/littlebot.service instead - never enable both (they would fight over
+# the camera and microphone).
+#
+# Installed by:  scripts/install_pi.sh --headless-service
+#   -> /etc/systemd/system/littlebot.service  (@REPO_DIR@, @USER@, @UID@ are filled in)
+# Manage it with:
+#   sudo systemctl status littlebot          journalctl -u littlebot -f
+#   sudo systemctl restart littlebot         sudo systemctl disable --now littlebot
+#
+# Audio caveat (UNVERIFIED): sound on Raspberry Pi OS goes through the user's PipeWire,
+# which only runs while that user is logged in (or has lingering enabled:
+# `sudo loginctl enable-linger @USER@`). XDG_RUNTIME_DIR below lets the service reach it.
+
+[Unit]
+Description=LittleBot companion robot (headless: dashboard + devices, no face window)
+Documentation=file://@REPO_DIR@/docs/PI_SETUP.md
+After=network-online.target sound.target
+Wants=network-online.target
+StartLimitIntervalSec=600
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=@USER@
+WorkingDirectory=@REPO_DIR@
+Environment=PYTHONUNBUFFERED=1
+Environment=SDL_VIDEODRIVER=dummy
+Environment=XDG_RUNTIME_DIR=/run/user/@UID@
+EnvironmentFile=-/etc/default/littlebot
+ExecStart=@REPO_DIR@/.venv/bin/python -m littlebot --mode pi --headless
+KillSignal=SIGTERM
+KillMode=mixed
+TimeoutStopSec=20
+Restart=on-failure
+RestartSec=5
+RestartSteps=5
+RestartMaxDelaySec=60
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=littlebot
+# Light hardening that still allows USB camera/audio/I2C access via the user's groups.
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+
+[Install]
+WantedBy=multi-user.target

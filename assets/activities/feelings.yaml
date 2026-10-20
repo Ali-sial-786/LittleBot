@@ -1,0 +1,137 @@
+# Feelings (about 18 months - 5 years): naming emotions and calming down.
+#
+# LittleBot shows a face and names the feeling. All feelings are okay; sad and
+# cross feelings are met with comfort, never with "don't be sad".
+
+activities:
+
+  # ------------------------------------------------------------------ emotion naming
+  - id: feelings_faces
+    name: Feelings Faces
+    description: LittleBot shows happy, surprised, sleepy, sad and excited faces and names each feeling.
+    min_age_months: 18
+    max_age_months: 60
+    category: emotional
+    participation: recommended
+    duration_seconds: 210
+    tags: [toddler, preschool, emotions, faces, empathy]
+    parent_instructions: >
+      Make each face together and name it: "That's a sad face. When I'm sad, I like a
+      hug." At the end, LittleBot asks how your child feels - help them choose, and
+      accept any answer warmly. Naming feelings is the first step to handling them.
+    safety_notes:
+      - If the sad face upsets your child, skip ahead or stop - comfort comes first.
+    steps:
+      - expression: happy
+      - say: "I can make lots of faces! Each face shows a feeling. Let's look!"
+        pause: 1
+      - expression: happy
+      - say: "This is my happy face!"
+        animation: bounce
+      - say: "I feel happy when we play together. Can you make a happy face?"
+        pause: 3
+      - expression: surprised
+      - say: "This is my surprised face. Oh!"
+      - say: "Surprised is when something new happens. Can you make a surprised face?"
+        pause: 3
+      - expression: sleepy
+      - say: "This is my sleepy face. Yawn..."
+        rate: 0.8
+      - say: "When I'm sleepy, I need a rest. Can you do a big yawn?"
+        pause: 3
+      - expression: sad
+      - say: "This is my sad face."
+        rate: 0.85
+      - say: "Sometimes I feel sad. That's okay. A hug helps me feel better."
+        pause: 1
+      - prompt: "Give LittleBot (or a teddy) a pretend hug, then tap"
+        options: ["Hug given!"]
+        timeout: 25
+        branches:
+          "Hug given!":
+            - expression: affectionate
+            - say: "Thank you! I feel better now."
+              animation: hearts
+        on_timeout:
+          - expression: affectionate
+          - say: "Thinking about a hug helps me feel better."
+      - expression: excited
+      - sound: yay
+      - say: "This is my excited face! Hooray!"
+        animation: bounce
+        pause: 1
+      - expression: happy
+      - say: "Happy, surprised, sleepy, sad, excited. All feelings are okay!"
+        pause: 1
+      - say: "How do you feel today?"
+        expression: listening
+        pause: 2
+      - prompt: "How is {child_name|your child} feeling? Tap one (or let them point)"
+        options: ["Happy", "Sleepy", "Sad", "Silly"]
+        timeout: 40
+        branches:
+          "Happy":
+            - say: "Happy! I'm so glad you feel happy."
+              expression: happy
+              animation: sparkle
+          "Sleepy":
+            - say: "Sleepy... maybe a cuddle and a rest soon."
+              expression: sleepy
+          "Sad":
+            - say: "Thank you for telling me. It's okay to feel sad. Your grown-up can give you a big hug."
+              expression: affectionate
+              animation: hearts
+          "Silly":
+            - say: "Silly! Me too! Wiggle, wiggle!"
+              expression: playful
+              animation: wiggle
+        on_timeout:
+          - say: "However you feel, that's okay."
+            expression: affectionate
+      - say: "Thank you for sharing feelings with me."
+        expression: affectionate
+        animation: hearts
+
+  # ------------------------------------------------------------------ calm breathing
+  - id: calm_breathing
+    name: Smell the Flower, Blow the Candle
+    description: A short calming game - breathe in to smell a flower, breathe out to blow out a candle.
+    min_age_months: 30
+    max_age_months: 72
+    category: emotional
+    participation: recommended
+    duration_seconds: 150
+    finish_expression: affectionate
+    tags: [preschool, calm, breathing, self-regulation, bedtime]
+    parent_instructions: >
+      Do the breathing with your child: hold up one finger as a pretend flower to
+      smell (slow breath in through the nose), then as a candle to blow out (slow
+      breath out). Great before bed, after a big feeling, or whenever things feel
+      busy. Keep it gentle - never force it.
+    safety_notes:
+      - Breathe gently and slowly; stop if your child feels dizzy.
+      - Keep the volume low.
+    steps:
+      - expression: affectionate
+      - say: "Let's be calm together. Hold up one finger. It's a pretend flower."
+        rate: 0.85
+        pause: 1
+      - repeat: 4
+        steps:
+          - say: "Smell the flower... breathe in slowly."
+            rate: 0.8
+            expression: happy
+          - wait: 3
+          - say: "Now it's a candle. Blow it out... whoooo."
+            rate: 0.8
+            expression: neutral
+          - sound: whoosh
+            volume: 0.4
+          - wait: 2
+      - say: "Now give yourself a big, gentle hug. Squeeze... and relax."
+        rate: 0.85
+        expression: affectionate
+        pause: 3
+      - say: "I feel calm and cosy. Do you feel calm too?"
+        rate: 0.85
+        animation: hearts

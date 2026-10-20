@@ -1,0 +1,55 @@
+# LittleBot - systemd USER service: the face window + parent dashboard, inside your
+# desktop session. This is the recommended way to start LittleBot automatically.
+#
+# Installed by:  scripts/install_pi.sh --with-service
+#   -> ~/.config/systemd/user/littlebot.service  (@REPO_DIR@ is replaced with the repo path)
+# Manage it with (no sudo - it is your user's service):
+#   systemctl --user status littlebot        journalctl --user -u littlebot -f
+#   systemctl --user restart littlebot       systemctl --user stop littlebot
+#   systemctl --user disable littlebot       (stop starting it at login)
+#
+# Needs Desktop Autologin (raspi-config > System Options > Boot / Auto Login), so the
+# user's systemd instance and the labwc desktop start at boot. labwc does not activate
+# graphical-session.target by itself, so the unit is wanted by default.target and the
+# launcher waits for the Wayland socket; the XDG autostart entry (scripts/autostart/)
+# additionally imports the session variables and starts it once the desktop is up.
+# See docs/PI_SETUP.md ("Autostart") for the trade-offs and alternatives.
+
+[Unit]
+Description=LittleBot companion robot (face window + parent dashboard)
+Documentation=file://@REPO_DIR@/docs/PI_SETUP.md
+After=graphical-session.target pipewire.service wireplumber.service pipewire-pulse.service
+# Give up after 5 failed starts in 10 minutes (then: journalctl --user -u littlebot -b).
+StartLimitIntervalSec=600
+StartLimitBurst=5
+
+[Service]
+Type=simple
+WorkingDirectory=@REPO_DIR@
+Environment=PYTHONUNBUFFERED=1
+Environment=LITTLEBOT_MODE=pi
+# Optional overrides, one KEY=value per line (e.g. SDL_VIDEODRIVER=x11,
+# LITTLEBOT_ARGS=--debug, LITTLEBOT__LOGGING__LEVEL=DEBUG). API keys belong in the repo's .env.
+EnvironmentFile=-%h/.config/littlebot/littlebot.env
+ExecStart=@REPO_DIR@/scripts/systemd/littlebot-launch.sh
+# SIGTERM -> the app stops activities, de-energises servos and closes devices.
+KillSignal=SIGTERM
+KillMode=mixed
+TimeoutStopSec=20
+# Restart after crashes (not after a clean exit, e.g. a parent pressing "quit").
+Restart=on-failure
+RestartSec=5
+# Exponential backoff 5 s -> 60 s (systemd >= 254, i.e. Trixie; Bookworm's systemd 252
+# ignores these two lines with a harmless "unknown key" notice and keeps RestartSec=5).
+RestartSteps=5
+RestartMaxDelaySec=60
+# Logs: stdout/stderr go to the journal; the app also writes data/logs/littlebot.log (rotating).
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=littlebot
+# Optional soft memory cap for the 2 GB Pi (uncomment after measuring - docs/PERFORMANCE.md).
+# A Chromium kiosk started by the app counts towards this too.
+#MemoryHigh=700M
+
+[Install]
+WantedBy=default.target

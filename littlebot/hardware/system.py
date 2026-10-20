@@ -35,13 +35,59 @@ def read_cpu_temperature() -> float | None:
     return None
 
 
+_THROTTLE_GLOBS = (
+    "/sys/devices/platform/soc/soc:firmware/get_throttled",
+    "/sys/devices/platform/*/*firmware*/get_throttled",
+    "/sys/devices/platform/*/*/*firmware*/get_throttled",
+)
+_THROTTLE_BITS = {
+    0: "under-voltage now",
+    1: "ARM frequency capped now",
+    2: "throttled now",
+    3: "soft temperature limit now",
+    16: "under-voltage has occurred",
+    17: "frequency capping has occurred",
+    18: "throttling has occurred",
+    19: "soft temperature limit has occurred",
+}
+_vcgencmd_cache: tuple[float, str | None] = (0.0, None)
+
+
+def decode_throttled(value: int) -> list[str]:
+    return [text for bit, text in _THROTTLE_BITS.items() if value & (1 << bit)]
+
+
 def read_pi_throttled() -> str | None:
-    """`vcgencmd get_throttled` flags (under-voltage etc.) via sysfs when available (Pi only)."""
-    p = Path("/sys/devices/platform/soc/soc:firmware/get_throttled")
+    """Pi firmware throttling flags as a hex string (e.g. '0x50000'), or None off-Pi.
+
+    Reads the firmware sysfs node (its path differs between Pi models), falling back
+    to ``vcgencmd get_throttled`` (cached for 30 s - it spawns a process).
+    """
+    global _vcgencmd_cache
+    import glob
+
+    for pattern in _THROTTLE_GLOBS:
+        for path in glob.glob(pattern):
+            try:
+                return Path(path).read_text().strip()
+            except OSError:
+                continue
+    now = time.monotonic()
+    if now - _vcgencmd_cache[0] < 30:
+        return _vcgencmd_cache[1]
+    value: str | None = None
     try:
-        return p.read_text().strip()
-    except OSError:
-        return None
+        import shutil
+        import subprocess
+
+        if shutil.which("vcgencmd"):
+            out = subprocess.run(["vcgencmd", "get_throttled"], capture_output=True, text=True, timeout=3).stdout
+            if "=" in out:
+                value = out.strip().split("=", 1)[1]
+    except (OSError, subprocess.SubprocessError):
+        value = None
+    _vcgencmd_cache = (now, value)
+    return value
 
 
 class SystemMonitor:
@@ -66,7 +112,8 @@ class SystemMonitor:
             snap: dict[str, Any] = {
                 "uptime_seconds": round(now - self._started, 1),
                 "temperature_c": read_cpu_temperature(),
-                "throttled": read_pi_throttled(),
+                "throttled": (throttled := read_pi_throttled()),
+                "throttled_flags": _flags(throttled),
                 "is_raspberry_pi": bool(self._platform["is_raspberry_pi"]),
                 "platform": self._platform,
             }
@@ -85,6 +132,15 @@ class SystemMonitor:
                 snap.update(cpu_percent=None, memory_mb=None, memory_percent=None, system_memory_percent=None)
             self._cache, self._cache_t = snap, now
             return dict(snap)
+
+
+def _flags(value: str | None) -> list[str]:
+    if not value:
+        return []
+    try:
+        return decode_throttled(int(value, 16))
+    except ValueError:
+        return []
 
 
 class MockSystemMonitor:

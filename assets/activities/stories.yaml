@@ -1,0 +1,141 @@
+# Stories (about 12 months - 5 years): short, warm and interactive.
+#
+# Original stories written for LittleBot. In the branching story the child makes
+# the choices (the caregiver taps them), so every telling can be different.
+
+activities:
+
+  # ------------------------------------------------------------------ branching story
+  - id: story_pip_the_puppy
+    name: "Pip's Big Day"
+    description: An interactive story about a little puppy - your child chooses where Pip goes and who Pip meets.
+    min_age_months: 24
+    max_age_months: 72
+    category: story
+    participation: recommended
+    duration_seconds: 240
+    tags: [toddler, preschool, story, choices, animals]
+    parent_instructions: >
+      Sit together and listen to Pip's adventure. When LittleBot asks a question,
+      let your child choose (they can point or say it) and tap their choice. Join in
+      with the sounds - woof, splash, quack! Afterwards, ask what they think Pip will
+      do tomorrow.
+    safety_notes:
+      - Enjoy it snuggled up - no special safety needs beyond normal supervision.
+    steps:
+      - expression: happy
+      - say: "Once upon a time, there was a little puppy called Pip."
+        pause: 1
+      - say: "Pip had floppy ears and a waggy tail. Can you bark like Pip? Woof woof!"
+        expression: playful
+        animation: wiggle
+        pause: 2
+      - say: "One sunny morning, Pip woke up and stretched. Yawn! Where should Pip go today?"
+        expression: curious
+      - prompt: "Where should Pip go? Let {child_name|your child} choose"
+        options: ["The park", "The beach"]
+        timeout: 45
+        branches:
+          "The park":
+            - set: {place: park}
+            - say: "To the park! Pip ran on the soft green grass. Run, run, run!"
+              expression: excited
+            - say: "And under a tree, Pip found a bouncy red ball. Boing, boing!"
+              animation: bounce
+            - sound: boing
+          "The beach":
+            - set: {place: beach}
+            - say: "To the beach! Pip dug in the warm sand. Dig, dig, dig!"
+              expression: excited
+            - say: "Splash! Pip paddled in the waves, and found a shiny shell."
+              animation: sparkle
+            - sound: whoosh
+        on_timeout:
+          - set: {place: park}
+          - say: "Pip went to the park and ran on the soft green grass. Run, run, run!"
+            expression: excited
+      - say: "Then Pip heard a sound. Who could it be?"
+        expression: curious
+        pause: 1
+      - prompt: "Who does Pip meet? Let {child_name|your child} choose"
+        options: ["A duck", "A cat"]
+        timeout: 45
+        branches:
+          "A duck":
+            - say: "Quack, quack! It was a little duck. Quack! said Duck. Do you want to play?"
+              expression: happy
+            - say: "Pip and Duck played chase. Waddle, waddle, run, run!"
+              animation: wiggle
+          "A cat":
+            - say: "Meow! It was a fluffy cat. Meow! said Cat. Do you want to play?"
+              expression: happy
+            - say: "Pip and Cat played hide and seek. Peekaboo, Cat!"
+              animation: peek
+            - sound: peekaboo
+        on_timeout:
+          - say: "Quack, quack! It was a little duck, and they played chase all around the {place}."
+            expression: happy
+      - say: "They played and played at the {place} until the sun began to set."
+        expression: affectionate
+        pause: 1
+      - say: "Pip said goodbye to his new friend, and trotted home, tired and happy."
+        expression: sleepy
+      - say: "He curled up in his cosy bed. Goodnight, Pip."
+        rate: 0.85
+        animation: zzz
+        pause: 1
+      - say: "The end! Did you like Pip's big day?"
+        expression: happy
+        animation: hearts
+
+  # ------------------------------------------------------------------ calm bedtime story
+  - id: story_goodnight_farm
+    name: Goodnight, Farm
+    description: A soft, slow wind-down story that says goodnight to the farm animals, ending with a lullaby tune.
+    min_age_months: 12
+    max_age_months: 48
+    category: story
+    participation: recommended
+    duration_seconds: 180
+    finish_expression: sleepy
+    tags: [baby, toddler, bedtime, calm, animals]
+    parent_instructions: >
+      A calm story for winding down. Dim the lights, cuddle up, and whisper the
+      animal sounds softly together. Use it as part of a bedtime routine - the same
+      story every night can be very soothing.
+    safety_notes:
+      - Keep the volume low at bedtime.
+      - Follow safe-sleep advice - LittleBot is not a baby monitor and should not be in the cot.
+    steps:
+      - expression: affectionate
+      - say: "The sun is going down on the farm. It's time for everyone to say goodnight."
+        rate: 0.85
+        pause: 1
+      - for_each: animal
+        in: farm_animals
+        shuffle: true
+        limit: 4
+        steps:
+          - say: "Goodnight, little {animal.name}."
+            rate: 0.8
+            expression: affectionate
+            pause: 0.5
+          - say: "{animal.sound}... {animal.sound}... softly, softly."
+            rate: 0.75
+            expression: sleepy
+            pause: 1.5
+      - say: "Goodnight, moon in the sky. Goodnight, twinkly stars."
+        rate: 0.8
+        expression: sleepy
+        animation: sparkle
+        pause: 1
+      - song: "Twinkle, Twinkle (lullaby)"
+        style: play_only
+        tempo: 72
+        lines:
+          - {words: "Twinkle, twinkle, little star,", notes: "C4 C4 G4 G4 A4 A4 G4:2"}
+          - {words: "How I wonder what you are.", notes: "F4 F4 E4 E4 D4 D4 C4:2"}
+      - say: "And goodnight to you, {child_name|little one}. Sweet dreams."
+        rate: 0.75
+        expression: sleepy
+        animation: zzz

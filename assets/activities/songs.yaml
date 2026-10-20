@@ -1,0 +1,453 @@
+# Songs: traditional, public-domain nursery rhymes with simple melodies.
+#
+# Only traditional songs whose words and tunes are in the public domain belong
+# here. Melodies are simple arrangements for LittleBot's small synthesiser
+# (note names like C4, beats after a colon: "G4:2" = two beats, R = rest).
+#
+# Each song plays line by line: LittleBot says the words, then plays that line's
+# tune. The words appear on the parent dashboard so grown-ups can sing along -
+# a caregiver's singing voice is the best part of any song for a baby.
+# YAML anchors (&name / *name) reuse a melody line without copying it.
+
+activities:
+
+  # ------------------------------------------------------------------ Twinkle Twinkle
+  - id: song_twinkle_twinkle
+    name: Twinkle, Twinkle, Little Star
+    description: The gentle classic. LittleBot sings it line by line, then plays the tune for you to sing.
+    min_age_months: 6
+    max_age_months: 72
+    category: music
+    participation: recommended
+    duration_seconds: 150
+    tags: [song, nursery rhyme, calm, public domain]
+    parent_instructions: >
+      Sing along - your voice is her favourite sound. The words appear on the
+      dashboard. Try the hand actions: open and close your hands for "twinkle", and
+      make a diamond shape with your fingers for "like a diamond in the sky".
+    safety_notes:
+      - Keep the volume gentle, especially near bedtime.
+    steps:
+      - expression: happy
+      - say: "Let's sing Twinkle, Twinkle, Little Star!"
+        pause: 0.5
+      - song: "Twinkle, Twinkle, Little Star"
+        tempo: 96
+        lines: &twinkle
+          - {words: "Twinkle, twinkle, little star,", notes: "C4 C4 G4 G4 A4 A4 G4:2"}
+          - {words: "How I wonder what you are.", notes: "F4 F4 E4 E4 D4 D4 C4:2"}
+          - {words: "Up above the world so high,", notes: "G4 G4 F4 F4 E4 E4 D4:2"}
+          - {words: "Like a diamond in the sky.", notes: "G4 G4 F4 F4 E4 E4 D4:2"}
+          - {words: "Twinkle, twinkle, little star,", notes: "C4 C4 G4 G4 A4 A4 G4:2"}
+          - {words: "How I wonder what you are.", notes: "F4 F4 E4 E4 D4 D4 C4:2"}
+      - animation: sparkle
+      - say: "Now you sing, and I'll play the tune!"
+        expression: listening
+      - song: "Twinkle, Twinkle, Little Star"
+        style: play_only
+        tempo: 90
+        lines: *twinkle
+      - say: "Beautiful singing! Twinkle, twinkle!"
+        expression: affectionate
+        animation: sparkle
+
+  # ------------------------------------------------------------------ Row Row Row
+  - id: song_row_your_boat
+    name: Row, Row, Row Your Boat
+    description: A rocking, rowing song - perfect for sitting face to face and rowing back and forth.
+    min_age_months: 6
+    max_age_months: 72
+    category: music
+    participation: recommended
+    duration_seconds: 120
+    tags: [song, nursery rhyme, movement, public domain]
+    parent_instructions: >
+      Sit facing each other (or with your baby on your lap) and hold hands. Gently
+      rock forward and back as if rowing a boat. Older children can sit on the floor
+      and row together with you.
+    safety_notes:
+      - Rock gently and support your baby's back and head.
+      - Keep the volume gentle.
+    steps:
+      - expression: happy
+      - say: "Let's row our boat! Hold hands and rock with me."
+        pause: 1
+      - song: "Row, Row, Row Your Boat"
+        tempo: 100
+        lines: &row
+          - {words: "Row, row, row your boat,", notes: "C4:1.5 C4:1.5 C4 D4:0.5 E4:1.5"}
+          - {words: "Gently down the stream.", notes: "E4 D4:0.5 E4 F4:0.5 G4:3"}
+          - {words: "Merrily, merrily, merrily, merrily,", notes: "C5:0.5 C5:0.5 C5:0.5 G4:0.5 G4:0.5 G4:0.5 E4:0.5 E4:0.5 E4:0.5 C4:0.5 C4:0.5 C4:0.5"}
+          - {words: "Life is but a dream.", notes: "G4 F4:0.5 E4 D4:0.5 C4:3"}
+      - say: "Again! Row, row, row!"
+        expression: excited
+        animation: wiggle
+      - song: "Row, Row, Row Your Boat"
+        style: play_only
+        tempo: 100
+        lines: *row
+      - say: "What a lovely boat ride!"
+        expression: affectionate
+        animation: hearts
+
+  # ------------------------------------------------------------------ Old MacDonald
+  - id: song_old_macdonald
+    name: Old MacDonald Had a Farm
+    description: Visit the farm, verse by verse - favourite animals join in first.
+    min_age_months: 9
+    max_age_months: 72
+    category: music
+    participation: recommended
+    duration_seconds: 210
+    tags: [song, nursery rhyme, animals, public domain]
+    parent_instructions: >
+      Make the animal sounds together - the sillier the better! Toy animals or a
+      farm picture book make it even more fun. Favourite animals from the profile
+      appear first.
+    safety_notes:
+      - Toy animals should be too big to fit in a baby's mouth.
+      - Keep the volume gentle.
+    steps:
+      - expression: happy
+      - say: "Let's visit Old MacDonald's farm!"
+        animation: bounce
+      - repeat: 3
+        steps:
+          - pick: animal
+            from: farm_animals
+            prefer_profile: favourite_animals
+          - say: ["Who lives on the farm? A {animal.name}!", "Who's next? It's a {animal.name}!"]
+            expression: curious
+          - song: "Old MacDonald"
+            tempo: 120
+            lines:
+              - {words: "Old MacDonald had a farm,", notes: &omd1 "G4 G4 G4 D4 E4 E4 D4:2"}
+              - {words: "E-I-E-I-O!", notes: &omd2 "B4 B4 A4 A4 G4:2"}
+              - {words: "And on that farm he had a {animal.name},", notes: "D4 G4 G4 G4 D4 E4 E4 D4:2"}
+              - {words: "E-I-E-I-O!", notes: *omd2}
+              - {words: "With a {animal.sound} {animal.sound} here, and a {animal.sound} {animal.sound} there,", notes: "D4:0.5 D4:0.5 G4 G4 G4:2 D4:0.5 D4:0.5 G4 G4 G4:2"}
+              - {words: "Here a {animal.sound}, there a {animal.sound}, everywhere a {animal.sound} {animal.sound}!", notes: "G4:0.5 G4:0.5 G4 G4:0.5 G4:0.5 G4 G4:0.5 G4:0.5 G4:0.5 G4:0.5 G4 G4"}
+              - {words: "Old MacDonald had a farm,", notes: *omd1}
+              - {words: "E-I-E-I-O!", notes: *omd2}
+          - say: "{animal.sound}! {animal.sound}!"
+            expression: excited
+            animation: wiggle
+            pause: 0.5
+      - say: "Thank you for visiting the farm! E-I-E-I-O!"
+        expression: celebrating
+        animation: confetti
+
+  # ------------------------------------------------------------------ Wheels on the Bus
+  - id: song_wheels_on_the_bus
+    name: The Wheels on the Bus
+    description: Round and round, swish swish swish, beep beep beep - a song full of hand actions.
+    min_age_months: 9
+    max_age_months: 72
+    category: music
+    participation: recommended
+    duration_seconds: 180
+    tags: [song, nursery rhyme, actions, traditional]
+    data:
+      verses:
+        - {thing: "wheels on the bus go", action: "round and round", short: "Round and round, round and round.", hint: "Roll your hands round and round."}
+        - {thing: "wipers on the bus go", action: "swish, swish, swish", short: "Swish, swish, swish! Swish, swish, swish!", hint: "Swish your arms like wipers."}
+        - {thing: "horn on the bus goes", action: "beep, beep, beep", short: "Beep, beep, beep! Beep, beep, beep!", hint: "Press a pretend horn - beep!"}
+        - {thing: "people on the bus go", action: "up and down", short: "Up and down, up and down.", hint: "Bounce gently up and down."}
+    parent_instructions: >
+      Each verse has its own action: roll your hands for the wheels, swish your arms
+      for the wipers, press a pretend horn, and bounce gently for "up and down".
+      The action for each verse appears on the dashboard. Babies love being bounced
+      gently on your knee for the last verse.
+    safety_notes:
+      - Bounce gently and keep a secure hold of your baby.
+      - Keep the volume gentle.
+    steps:
+      - expression: happy
+      - say: "All aboard the bus! Let's sing."
+        animation: bounce
+      - for_each: verse
+        in: verses
+        steps:
+          - note: "Action: {verse.hint}"
+          - song: "The Wheels on the Bus"
+            tempo: 112
+            lines:
+              - {words: "The {verse.thing} {verse.action},", notes: &wob1 "G4 C5 C5 C5 C5 E5 G5 E5 C5:2"}
+              - {words: "{verse.short}", notes: "D5 B4 G4:2 G5 E5 C5:2"}
+              - {words: "The {verse.thing} {verse.action},", notes: *wob1}
+              - {words: "All through the town!", notes: "D5 G4 G4 C5:2"}
+          - expression: excited
+            hold: 1
+      - say: "Ding ding! The bus is at the stop. Everybody off!"
+        expression: celebrating
+        animation: confetti
+
+  # ------------------------------------------------------------------ If You're Happy
+  - id: song_if_youre_happy
+    name: If You're Happy and You Know It
+    description: Clap your hands, stomp your feet and shout hooray - an action song for little bodies.
+    min_age_months: 12
+    max_age_months: 72
+    category: music
+    participation: recommended
+    duration_seconds: 180
+    tags: [song, nursery rhyme, actions, emotions, public domain]
+    parent_instructions: >
+      Do the actions together: clap, stomp and throw your arms up for "hooray!". For a
+      baby, help her clap on your lap. Toddlers love it when you do the actions in a
+      big, silly way.
+    safety_notes:
+      - Clear a little space for stomping.
+      - Keep the volume gentle.
+    steps:
+      - expression: happy
+      - say: "If you're happy and you know it... let's sing!"
+        animation: bounce
+      # verse 1: clap
+      - song: "If You're Happy and You Know It"
+        tempo: 116
+        lines:
+          - {words: "If you're happy and you know it, clap your hands!", notes: &hk1 "G4:0.5 G4:0.5 C5 C5 C5:0.5 C5:0.5 C5:0.5 C5:0.5 B4 C5 D5:2"}
+      - sound: clap
+      - sound: clap
+      - song: "If You're Happy and You Know It"
+        tempo: 116
+        lines:
+          - {words: "If you're happy and you know it, clap your hands!", notes: &hk2 "G4:0.5 G4:0.5 D5 D5 D5:0.5 D5:0.5 D5:0.5 D5:0.5 C5 D5 E5:2"}
+      - sound: clap
+      - sound: clap
+      - song: "If You're Happy and You Know It"
+        tempo: 116
+        lines:
+          - {words: "If you're happy and you know it, then your face will surely show it.", notes: &hk3 "E5:0.5 E5:0.5 F5 F5 A5 A5 F5:0.5 F5:0.5 E5 E5 D5 C5:2"}
+          - {words: "If you're happy and you know it, clap your hands!", notes: &hk4 "D5:0.5 D5:0.5 D5 C5 B4 B4 A4 B4 C5:2"}
+      - sound: clap
+      - sound: clap
+      - expression: excited
+      # verse 2: stomp
+      - song: "If You're Happy and You Know It"
+        tempo: 116
+        lines:
+          - {words: "If you're happy and you know it, stomp your feet!", notes: *hk1}
+      - sound: drum
+      - sound: drum
+      - song: "If You're Happy and You Know It"
+        tempo: 116
+        lines:
+          - {words: "If you're happy and you know it, stomp your feet!", notes: *hk2}
+      - sound: drum
+      - sound: drum
+      - song: "If You're Happy and You Know It"
+        tempo: 116
+        lines:
+          - {words: "If you're happy and you know it, then your face will surely show it.", notes: *hk3}
+          - {words: "If you're happy and you know it, stomp your feet!", notes: *hk4}
+      - sound: drum
+      - sound: drum
+      - expression: celebrating
+      # verse 3: hooray
+      - song: "If You're Happy and You Know It"
+        tempo: 116
+        lines:
+          - {words: "If you're happy and you know it, shout hooray!", notes: *hk1}
+      - say: "Hooray!"
+        animation: bounce
+      - song: "If You're Happy and You Know It"
+        tempo: 116
+        lines:
+          - {words: "If you're happy and you know it, shout hooray!", notes: *hk2}
+      - say: "Hooray!"
+        animation: bounce
+      - song: "If You're Happy and You Know It"
+        tempo: 116
+        lines:
+          - {words: "If you're happy and you know it, then your face will surely show it.", notes: *hk3}
+          - {words: "If you're happy and you know it, shout hooray!", notes: *hk4}
+      - gesture: celebrate
+      - sound: yay
+      - say: "Hooray! I'm happy, and I know it!"
+        expression: celebrating
+        animation: confetti
+
+  # ------------------------------------------------------------------ Itsy Bitsy Spider
+  - id: song_itsy_bitsy_spider
+    name: Itsy Bitsy Spider
+    description: Up the water spout, down came the rain, out came the sun - with finger actions.
+    min_age_months: 9
+    max_age_months: 72
+    category: music
+    participation: recommended
+    duration_seconds: 120
+    tags: [song, nursery rhyme, fingerplay, public domain]
+    parent_instructions: >
+      Do the finger actions: walk your fingers up for the spider, wiggle them down
+      for the rain, and make a big circle with your arms for the sun. Babies love
+      watching your hands; toddlers will try to copy.
+    safety_notes:
+      - Keep the volume gentle.
+    steps:
+      - expression: happy
+      - say: "Let's sing about the itsy bitsy spider! Get your fingers ready."
+        pause: 0.5
+      - song: "Itsy Bitsy Spider"
+        tempo: 104
+        lines: &spider
+          - {words: "The itsy bitsy spider climbed up the water spout.", notes: "G4:0.5 C5 C5 C5 D5 E5 E5 E5 D5 C5 D5 E5 C5:2"}
+          - {words: "Down came the rain and washed the spider out.", notes: "E5:1.5 E5:0.5 F5 G5:2 G5 F5 E5 F5 G5 E5:2"}
+          - {words: "Out came the sun and dried up all the rain.", notes: "C5:1.5 C5:0.5 D5 E5:2 E5 D5 C5 D5 E5 C5:2"}
+          - {words: "And the itsy bitsy spider climbed up the spout again.", notes: "G4:0.5 G4:0.5 C5 C5 C5 D5 E5 E5 E5 D5 C5 D5 E5 C5:2"}
+      - expression: excited
+      - say: "Up, up, up! Let's do it again."
+        animation: wiggle
+      - song: "Itsy Bitsy Spider"
+        style: play_only
+        tempo: 104
+        lines: *spider
+      - say: "The spider made it to the top! Hooray!"
+        expression: celebrating
+        animation: sparkle
+
+  # ------------------------------------------------------------------ Baa Baa Black Sheep
+  - id: song_baa_baa_black_sheep
+    name: Baa, Baa, Black Sheep
+    description: A short, sweet sheep song with the same tune as Twinkle, Twinkle.
+    min_age_months: 6
+    max_age_months: 60
+    category: music
+    participation: recommended
+    duration_seconds: 100
+    tags: [song, nursery rhyme, animals, public domain]
+    parent_instructions: >
+      Say "baa!" together like a sheep. Hold up three fingers for "three bags full".
+      Notice anything? It's the same tune as Twinkle, Twinkle!
+    safety_notes:
+      - Keep the volume gentle.
+    steps:
+      - expression: happy
+      - say: "Here's a song about a sheep. Baa!"
+        animation: wiggle
+      - song: "Baa, Baa, Black Sheep"
+        tempo: 100
+        lines:
+          - {words: "Baa, baa, black sheep, have you any wool?", notes: &baa1 "C4 C4 G4 G4 A4:0.5 A4:0.5 A4:0.5 A4:0.5 G4:2"}
+          - {words: "Yes sir, yes sir, three bags full!", notes: &baa2 "F4 F4 E4 E4 D4 D4 C4:2"}
+          - {words: "One for the master, and one for the dame,", notes: "G4 G4:0.5 G4:0.5 F4 F4 E4 E4:0.5 E4:0.5 D4:2"}
+          - {words: "And one for the little one who lives down the lane.", notes: "G4 G4:0.5 G4:0.5 F4:0.5 F4:0.5 F4 E4:0.5 E4:0.5 E4:0.5 E4:0.5 D4:2"}
+          - {words: "Baa, baa, black sheep, have you any wool?", notes: *baa1}
+          - {words: "Yes sir, yes sir, three bags full!", notes: *baa2}
+      - say: "Baa! Baa! Thank you, sheep!"
+        expression: affectionate
+        animation: hearts
+
+  # ------------------------------------------------------------------ Head Shoulders
+  - id: song_head_shoulders
+    name: Head, Shoulders, Knees and Toes
+    description: Touch each body part as you sing - then try it a little faster!
+    min_age_months: 15
+    max_age_months: 72
+    category: music
+    participation: recommended
+    duration_seconds: 120
+    tags: [song, body parts, movement, public domain]
+    parent_instructions: >
+      Touch each body part as you sing. For younger toddlers, touch their head,
+      shoulders, knees and toes gently for them. The second time is faster - giggles
+      guaranteed. Slow down whenever you need to.
+    safety_notes:
+      - Clear a little space so nobody bumps into furniture when bending to their toes.
+      - Keep the volume gentle.
+    steps:
+      - expression: happy
+      - say: "Let's touch our head, shoulders, knees and toes!"
+        animation: bounce
+        pause: 0.5
+      - song: "Head, Shoulders, Knees and Toes"
+        tempo: 104
+        lines: &hskt
+          - {words: "Head, shoulders, knees and toes, knees and toes.", notes: "C4 D4 E4 F4 G4:2 E4 F4 G4:2"}
+          - {words: "Head, shoulders, knees and toes, knees and toes.", notes: "D4 E4 F4 G4 A4:2 F4 G4 A4:2"}
+          - {words: "And eyes and ears and mouth and nose.", notes: "A4:0.5 A4 G4:0.5 G4 F4:0.5 F4 E4 D4"}
+          - {words: "Head, shoulders, knees and toes, knees and toes!", notes: "G4 F4 E4 D4 C4:2 D4 E4 C4:2"}
+      - say: "Now faster!"
+        expression: excited
+        animation: spin_eyes
+      - song: "Head, Shoulders, Knees and Toes"
+        tempo: 150
+        lines: *hskt
+      - say: "Phew! Head, shoulders, knees and toes! Well done!"
+        expression: celebrating
+        animation: confetti
+
+  # ------------------------------------------------------------------ Pat-a-Cake
+  - id: song_pat_a_cake
+    name: Pat-a-Cake
+    description: The clapping rhyme where you bake a pretend cake - and mark it with a letter.
+    min_age_months: 6
+    max_age_months: 36
+    category: music
+    participation: recommended
+    duration_seconds: 100
+    tags: [song, nursery rhyme, clapping, public domain]
+    parent_instructions: >
+      Clap along, roll your hands for "roll it", draw a letter on her tummy or palm
+      for "mark it with...", and pretend to pop the cake in the oven. LittleBot uses
+      the first letter of her name when it's set in the profile.
+    safety_notes:
+      - Gentle clapping only - guide her hands softly.
+    steps:
+      - expression: happy
+      - say: "Let's bake a pretend cake! Pat-a-cake!"
+        animation: bounce
+      - repeat: 2
+        steps:
+          - song: "Pat-a-Cake"
+            tempo: 104
+            lines:
+              - {words: "Pat-a-cake, pat-a-cake, baker's man,", notes: "C4 C4:0.5 C4:0.5 C4 E4 E4:0.5 E4:0.5 E4 G4 G4 G4:2"}
+              - {words: "Bake me a cake as fast as you can.", notes: "A4 G4:0.5 F4:0.5 E4 F4 E4:0.5 D4:0.5 D4 C4:2"}
+              - {words: "Roll it and pat it and mark it with {child_initial|B},", notes: "C4 C4:0.5 C4:0.5 E4 E4:0.5 E4:0.5 G4 G4:0.5 G4:0.5 A4:2"}
+              - {words: "And put it in the oven for {child_name|baby} and me!", notes: "G4:0.5 G4:0.5 F4 F4:0.5 F4:0.5 E4 E4:0.5 D4:0.5 E4 C4:2"}
+          - sound: clap
+          - sound: clap
+      - say: "Mmm! The cake is ready. Yummy!"
+        expression: happy
+        animation: hearts
+
+  # ------------------------------------------------------------------ ABC song
+  - id: song_abc
+    name: The Alphabet Song
+    description: The ABC song, line by line, then once more with the tune for you to sing - early letter exposure.
+    min_age_months: 18
+    max_age_months: 72
+    category: literacy
+    participation: optional
+    duration_seconds: 120
+    tags: [song, alphabet, letters, public domain]
+    parent_instructions: >
+      Just enjoy singing - nobody needs to "know" the letters yet. Hearing the
+      alphabet in a song is a playful first step. If you have alphabet blocks or a
+      book, point to letters as you sing.
+    safety_notes:
+      - Alphabet blocks and magnets can be a choking risk for under-3s - choose large ones.
+    steps:
+      - expression: happy
+      - say: "Let's sing the alphabet!"
+        animation: bounce
+      - song: "The Alphabet Song"
+        tempo: 100
+        lines: &abc
+          - {words: "A, B, C, D, E, F, G,", notes: "C4 C4 G4 G4 A4 A4 G4:2"}
+          - {words: "H, I, J, K, L, M, N, O, P,", notes: "F4 F4 E4 E4 D4:0.5 D4:0.5 D4:0.5 D4:0.5 C4:2"}
+          - {words: "Q, R, S, T, U, V,", notes: "G4 G4 F4:2 E4 E4 D4:2"}
+          - {words: "W, X, Y and Z.", notes: "G4:0.5 G4:0.5 G4 F4:2 E4 E4 D4:2"}
+          - {words: "Now I know my A, B, Cs,", notes: "C4 C4 G4 G4 A4 A4 G4:2"}
+          - {words: "Next time won't you sing with me?", notes: "F4 F4 E4 E4 D4 D4 C4:2"}
+      - say: "Your turn to sing! I'll play the tune."
+        expression: listening
+      - song: "The Alphabet Song"
+        style: play_only
+        tempo: 100
+        lines: *abc
+      - say: "A, B, C! Wonderful singing!"
+        expression: celebrating
+        animation: sparkle

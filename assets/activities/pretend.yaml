@@ -1,0 +1,126 @@
+# Pretend play (about 2-5 years): tea parties, zoo keepers and imagination.
+#
+# LittleBot sets the scene; the play happens with real toys, real cups and your
+# child's imagination. Follow their lead - if the tea party turns into a picnic
+# on the moon, go with it!
+
+activities:
+
+  # ------------------------------------------------------------------ tea party
+  - id: tea_party
+    name: Tea Party
+    description: Pour pretend tea, blow on it, share cake with Teddy - a cosy pretend party.
+    min_age_months: 24
+    max_age_months: 60
+    category: creativity
+    participation: required
+    duration_seconds: 240
+    tags: [toddler, preschool, pretend, sharing, manners]
+    materials: [toy (or plastic) cups and plates, a teddy or doll]
+    parent_instructions: >
+      Set out some cups and invite a teddy or two. Follow LittleBot's party steps:
+      pour, blow, sip and share. Let your child be the host - offering food to Teddy
+      is wonderful practice in caring and sharing. Use pretend tea only.
+    safety_notes:
+      - Pretend tea only - no hot drinks anywhere near the play.
+      - Use unbreakable cups and plates.
+    steps:
+      - expression: excited
+      - say: "Let's have a tea party!"
+        animation: bounce
+      - say: "Who is coming to our party? Teddy? Dolly?"
+        expression: curious
+        pause: 2
+      - prompt: "Set out cups and invite a teddy, then tap Ready"
+        options: ["Ready"]
+        timeout: 90
+      - say: "Welcome, everyone! First, let's pour the tea. Pour, pour, pour!"
+        expression: happy
+        pause: 2
+      - say: "Careful, it's hot! Let's blow on it. Whoo, whoo!"
+        expression: playful
+        pause: 2
+      - say: "Now sip, sip. Mmm, yummy tea!"
+        expression: happy
+        pause: 2
+      - say: "Would you like something to eat?"
+        expression: curious
+      - prompt: "What would {child_name|your child} like?"
+        options: ["Cake", "Cookies", "Fruit"]
+        timeout: 45
+        branches:
+          "Cake":
+            - say: "Cake! A big slice of pretend cake. Yum, yum!"
+              expression: excited
+          "Cookies":
+            - say: "Crunchy cookies! Crunch, crunch, crunch!"
+              expression: excited
+          "Fruit":
+            - say: "Juicy fruit! Strawberries and grapes. Yum!"
+              expression: excited
+        on_timeout:
+          - say: "Pretend cake for everyone! Yum, yum!"
+            expression: happy
+      - say: "Don't forget Teddy! Can you give Teddy some too? Sharing is kind."
+        expression: affectionate
+        pause: 3
+      - say: "Teddy says thank you very much!"
+        expression: happy
+        animation: hearts
+        pause: 1
+      - say: "What a lovely party! Let's tidy up together."
+        expression: affectionate
+      - note: "Tidy up together - little ones love helping."
+
+  # ------------------------------------------------------------------ zoo keeper
+  - id: zoo_keeper
+    name: Zoo Keeper
+    description: Be the zoo keeper! Guess who's making each sound, learn a fact, and feed the hungry animals.
+    min_age_months: 30
+    max_age_months: 72
+    category: creativity
+    participation: recommended
+    duration_seconds: 240
+    tags: [preschool, pretend, animals, caring]
+    materials: [toy animals or animal pictures (optional), a pretend bucket or bowl]
+    parent_instructions: >
+      Your child is the zoo keeper. LittleBot makes a sound - guess the animal
+      together - then shares a fact. Pretend to feed each animal (toy animals make it
+      extra fun) and tap "Fed!". Let your child invent what else the animals need: a
+      bath, a nap, a song?
+    safety_notes:
+      - Toy animals should be too big to fit in a young child's mouth.
+    steps:
+      - expression: excited
+      - say: "Today, you are the zoo keeper! The animals are hungry."
+        animation: bounce
+        pause: 1
+      - for_each: zoo
+        in: zoo_animals
+        shuffle: true
+        limit: 3
+        steps:
+          - say: "Listen... {zoo.sound}! Who could that be?"
+            expression: curious
+            pause: 2
+          - say: "It's the {zoo.name}! {zoo.fact}"
+            expression: happy
+            animation: sparkle
+          - say: "The {zoo.name} is hungry. It eats {zoo.food}. Can you feed the {zoo.name}?"
+            expression: playful
+          - prompt: "Pretend to feed the {zoo.name}, then tap"
+            options: ["Fed!", "Next animal"]
+            timeout: 45
+            branches:
+              "Fed!":
+                - sound: pop
+                - say: "Munch, munch! {zoo.sound}! The {zoo.name} says thank you, zoo keeper!"
+                  expression: celebrating
+                  animation: hearts
+      - say: "All the animals are full and happy. You are a wonderful zoo keeper!"
+        expression: celebrating
+        animation: confetti
+        pause: 1
+      - say: "Shh... now the animals are sleepy. Goodnight, zoo!"
+        expression: sleepy
+        rate: 0.85

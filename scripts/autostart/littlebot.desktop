@@ -1,0 +1,11 @@
+[Desktop Entry]
+# LittleBot XDG autostart entry. Installed by scripts/install_pi.sh --with-service to
+# ~/.config/autostart/littlebot.desktop (@REPO_DIR@ is replaced with the repo path).
+# Delete that file to stop the desktop from starting LittleBot.
+Type=Application
+Name=LittleBot
+Comment=Start the LittleBot companion robot when the desktop session starts
+Exec=@REPO_DIR@/scripts/autostart/littlebot-session-start.sh
+Terminal=false
+NoDisplay=true
+X-GNOME-Autostart-enabled=true
