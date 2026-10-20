@@ -52,6 +52,8 @@ vision:
   left_after_seconds: 3.0
   gaze_smoothing: 0.35
   gestures_enabled: false   # experimental; parents can toggle it in the dashboard
+  pause_during_media: true  # no frame decoding / detection while a video plays (CPU for Chromium)
+  sleep_detect_fps: 1.5     # while SLEEPING: low-rate presence detection so a person can wake the robot
 
 audio:
   half_duplex: true

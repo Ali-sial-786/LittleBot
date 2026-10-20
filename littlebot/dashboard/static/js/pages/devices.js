@@ -123,7 +123,18 @@ export default {
     function renderVision(v, privacy) {
       const camOff = privacy?.camera_enabled === false;
       clear(camBadge).append(statusBadge(camOff ? 'disabled' : v.camera ?? v.status));
-      kv(camKv, [['Backend', v.backend], ['Face detector', v.detector], ['Frame rate', v.fps != null ? `${Number(v.fps).toFixed(1)} fps` : undefined], ['Faces seen', v.faces], ['Someone there', v.person_present === undefined ? undefined : v.person_present ? 'Yes' : 'No']]);
+      const num = (x, d = 1) => (x === null || x === undefined || Number.isNaN(Number(x)) ? undefined : Number(x).toFixed(d));
+      kv(camKv, [
+        ['Backend', v.backend !== undefined ? `${v.backend}${v.simulated ? ' (simulated)' : ''}` : undefined],
+        ['Device', v.device ?? undefined],
+        ['Resolution', v.resolution ?? undefined],
+        ['Face detector', v.detector !== undefined ? `${v.detector}${v.detect_mode ? ` · ${v.detect_mode}` : ''}` : undefined],
+        ['Camera rate', num(v.fps) !== undefined ? `${num(v.fps)} fps` : undefined],
+        ['Detection', num(v.detect_fps) !== undefined ? `${num(v.detect_fps)} per second${num(v.detect_ms) !== undefined ? ` · ${num(v.detect_ms, 0)} ms each` : ''}` : undefined],
+        ['Faces seen', v.faces],
+        ['Someone there', v.person_present === undefined ? undefined : v.person_present ? 'Yes' : 'No'],
+        ['Details', v.detail || v.detector_detail || undefined],
+      ]);
       camNote.replaceChildren(...(camOff ? [banner('info', 'info', 'Camera is off', 'Turn it on in Privacy to let LittleBot see faces.')] : []));
       camNote.hidden = !camOff;
     }

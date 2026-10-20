@@ -202,7 +202,7 @@ export default {
           h('div', { class: 'info' }, h('div', { class: 'title', text: it.title || it.url }), h('div', { class: 'muted', text: meta }),
             data.supports_update ? h('label', { class: 'mini-toggle mt-1' }, allow, 'Allowed') : null),
           h('div', { class: 'actions' },
-            data.supports_reorder && items.length > 1 ? button('', { kind: 'ghost icon small', iconName: 'chevron', ariaLabel: `Move ${it.title} up`, title: 'Move up', onClick: () => move(idx, -1) }) : null,
+            data.supports_reorder && idx > 0 ? button('', { kind: 'ghost icon small', iconName: 'chevron', ariaLabel: `Move ${it.title} up`, title: 'Move up', onClick: () => move(idx, -1) }) : null,
             button('', { kind: 'primary icon', iconName: 'play', ariaLabel: `Play ${it.title}`, title: 'Play on LittleBot', onClick: () => app.act(() => post('/media/play', { item_id: it.id }), `Playing “${it.title}”`) }),
             button('', { kind: 'soft icon', iconName: 'edit', ariaLabel: `Rename ${it.title}`, title: 'Rename', onClick: async () => {
               const t = await promptDialog({ title: 'Rename video', label: 'Name', value: it.title || '' });

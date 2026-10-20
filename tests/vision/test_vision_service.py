@@ -614,7 +614,6 @@ async def test_sleeping_reduces_detection_and_an_arriving_person_wakes_the_robot
     ctx.settings.set("vision.gestures_enabled", True)
     try:
         assert ctx.state.transition(RobotState.SLEEPING, "idle timeout")
-        svc.process_once(clock.now())
         calls = det.calls
         run_for(svc, clock, 4.0)
         st = svc.status()

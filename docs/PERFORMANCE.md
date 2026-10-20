@@ -63,9 +63,9 @@ own desktop browser at the same time, and consider `MemoryHigh=` in the user ser
 
 | Item | Target | Measured |
 |---|---|---|
-| Face animating | 30 FPS (`display.fps`) using <= 25 % of one core | TO MEASURE |
-| Face idle | 15 FPS (`display.idle_fps`) using <= 10 % of one core | TO MEASURE |
-| Vision (640x480 MJPG capture, 320 px detection at 5 Hz) | <= 40 % of one core | TO MEASURE |
+| Face animating | 30 FPS (`display.fps`) using <= 25 % of one core | TO MEASURE on Pi (desktop x86: ~4 % of one core during the demo; 1.2 ms mean update+render per frame at scale 1) |
+| Face idle | 15 FPS (`display.idle_fps`) using <= 10 % of one core | TO MEASURE on Pi (desktop x86: ~3 % of one core) |
+| Vision (640x480 MJPG capture, 320 px detection at 5 Hz) | <= 40 % of one core | TO MEASURE on Pi (desktop x86 at 6 Hz: YuNet 8.6–10.4 %, Haar 22.5 % of one core; YuNet 6.5–8.6 ms/frame; estimate Pi 5: YuNet 15–25 %, Haar 35–55 %) |
 | Dashboard idle | ~0 % | TO MEASURE |
 | Whole app, idle face, nobody present | <= 20 % of one core | TO MEASURE |
 | YouTube in Chromium (system total) | will dominate; keep `sys_cpu_pct` < 80 % | TO MEASURE |

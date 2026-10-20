@@ -29,7 +29,8 @@ is explicitly enabled. Parent-facing instructions: [DASHBOARD_GUIDE.md](../DASHB
   `ctx.face/audio/vision/motion/media/brain/activities` may be `None`: status shows
   `{"status": "unavailable"}`, actions answer `503` with a friendly message.
 * Optional duck-typed extras: `activities.clear_history()`, `brain.clear_history()`,
-  `media.update_item(id, title=...)` (rename; otherwise remove + re-add).
+  `media.update_item(id, title=, enabled=)` (rename / allow; otherwise rename = remove + re-add),
+  `media.reorder_items(ids)`.
 * If `littlebot.media.player_routes.create_player_router(media)` is importable it is mounted
   as-is at `/player*` **without parent auth** (the player checks its own kiosk token) and
   keeps its own CSP / frame headers (the dashboard only adds `nosniff` + `Referrer-Policy`
@@ -67,7 +68,7 @@ stop():   cancel background tasks, unsubscribe, should_exit=True, await <=4 s, t
 | Unauthenticated access | Middleware: every `/api/*` path except `/api/health`, `/api/session`, `/api/login`, `/api/setup` returns `401` without a valid session - including unknown paths. A test walks every router route. |
 | XSS / injection | Frontend builds DOM with `textContent` only (no HTML strings), no inline scripts/styles in markup, strict CSP (below). Request bodies: pydantic, `extra="forbid"`, length limits, NFC + control-character stripping, enum/regex validation. Validation errors never echo input values. |
 | Clickjacking / leaks | `X-Frame-Options: DENY`, `frame-ancestors 'none'`, `Referrer-Policy: same-origin`, `X-Content-Type-Options: nosniff`, `Cross-Origin-Opener-Policy`/`-Resource-Policy: same-origin`, `Permissions-Policy` (no camera/mic/geo), `Cache-Control: no-store` on the API. No `/docs` / OpenAPI. |
-| API key exposure | Keys are never read by the dashboard; the AI page shows only `has_anthropic_key` / `has_openai_key` (`config.public_dict()`). `scrub.py` additionally hides keys named `*api_key/secret/password/token/cookie/authorization` and values like `sk-…` in status, config, events and subsystem results. A test sets fake keys and scans every GET response. |
+| API key exposure | Status is passed through unchanged except for secrets (e.g. `media.player.last_event` hints and the player path/URL with its kiosk token reach the parent). Keys are never read by the dashboard; the AI page shows only `has_anthropic_key` / `has_openai_key` (`config.public_dict()`). `scrub.py` additionally hides keys named `*api_key/secret/password/token/cookie/authorization` and values like `sk-…` in status, config, events and subsystem results. A test sets fake keys and scans every GET response. |
 | Network exposure | Binds `127.0.0.1` unless `dashboard.lan_access: true` / `--lan`; a non-loopback `dashboard.host` without `lan_access` is refused (falls back to localhost, warning logged). |
 | Dangerous actions | Shutdown/restart need `confirm: true`; video under 18 months needs `confirm_under_min_age: true`; arming servos needs `motion.physical_enabled: true` **and** the typed phrase `ARM MOTORS`; e-stop also disarms. Media play always passes `parent_override=False` (the media module enforces the age gate and limits from settings). |
 
@@ -144,9 +145,10 @@ except login/setup). All routes except the four public ones need a session cooki
 
 | Method | Path | Body | Calls |
 |---|---|---|---|
-| GET | `/api/media` | | `list_items()`, `status()`, settings, age policy, `supports_update` |
-| POST | `/api/media/items` | `{url <= 500, title?}` | `add_item()` (worker thread); 201; `ValueError` -> 422 |
-| PATCH | `/api/media/items/{id}` | `{title}` | `update_item()` if present, else remove + re-add |
+| GET | `/api/media` | | `list_items()`, `status()`, settings, age policy, `supports_update`, `supports_reorder` |
+| POST | `/api/media/items` | `{url <= 500, title?, kind? video\|playlist}` | `add_item(url, title[, kind=])` (worker thread; `kind` only passed when the parent chose, e.g. "whole playlist" for a `watch?v=..&list=..` link); 201; `ValueError` -> 422 |
+| PATCH | `/api/media/items/{id}` | `{title?, enabled?}` | `update_item(id, title=, enabled=)` if present (KeyError -> 404); else title-only fallback remove + re-add (`enabled` -> 501) |
+| POST | `/api/media/reorder` | `{ids: [...]}` | `reorder_items(ids)` if present, else 501 |
 | DELETE | `/api/media/items/{id}` | | `remove_item()`; 404 |
 | POST | `/api/media/play` | `{item_id}` | `play(id, parent_override=False)`; 403 age gate / limits, 404 |
 | POST | `/api/media/pause`, `/resume`, `/stop`, `/skip` | | protocol methods |
@@ -172,7 +174,7 @@ same origin) or, failing that, `["url"]` with a localhost host rewritten to the 
 | PUT | `/api/ai/settings` | `{enabled?, provider? ∈ mock\|anthropic\|openai, max_words 3..60?, max_requests_per_hour 0..600?, max_requests_per_day 0..5000?, daily_budget_usd 0..20?, share_child_name?, share_interests?}` | enabling in offline mode -> 403 |
 | GET | `/api/ai/providers` | | `brain.providers()` |
 | POST | `/api/ai/test` | `{provider}` | `brain.test_provider()`; cloud provider while privacy cloud is off -> 403 |
-| POST | `/api/ai/push-to-talk` | | `await brain.converse_once()` (45 s timeout -> 504) |
+| POST | `/api/ai/push-to-talk` | | `await brain.converse_once()` (45 s timeout -> 504); buttons on the AI and Simulator pages |
 
 ### Privacy
 
@@ -197,7 +199,7 @@ same origin) or, failing that, `["url"]` with a localhost host rewritten to the 
 | POST | `/api/audio/stop` | | `stop_output()` |
 | GET | `/api/vision` | | `vision.status()`, `vision.follow_faces`, camera privacy |
 | PUT | `/api/vision/settings` | `{follow_faces}` | `vision.follow_faces` (+ `clear_gaze()` when off) |
-| POST | `/api/vision/simulate-face` | `{x, y, size?}` | `simulate_face()` |
+| POST | `/api/vision/simulate-face` | `{x, y, size?}` | `simulate_face()` with raw camera-image coordinates |
 | POST | `/api/vision/simulate-no-face` | | `simulate_no_face()` |
 
 ### Motion
@@ -221,7 +223,7 @@ raised / head turned to the robot's left), falling back to angles and limits.
 |---|---|---|---|
 | POST | `/api/sim/speech` | `{text <= 200, route: auto\|brain\|microphone, speak}` | `auto`: microphone (`audio.inject_utterance`) while an activity runs or audio is listening, else `brain.handle_utterance(text, source="simulated", speak=)` |
 | POST | `/api/sim/caregiver` | `{response, prompt_id?}` | `activities.respond()`; 409 if nothing waiting |
-| POST | `/api/sim/camera` | `{event: face\|no_face\|person_left, x, y, size}` | `vision.simulate_face/no_face()`, or bus events when there is no vision module |
+| POST | `/api/sim/camera` | `{event: face\|no_face\|person_left, x, y, size}` | `x, y` = where the child is *as seen facing LittleBot* (screen coordinates, like gaze); calls `vision.simulate_face(1 - x, y, size)` (camera-image coordinates are mirrored) or `simulate_no_face()` (`person_left` follows after the vision module's ~3 s hysteresis); bus events when there is no vision module |
 
 ## Frontend
 

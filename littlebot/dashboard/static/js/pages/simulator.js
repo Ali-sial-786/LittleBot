@@ -52,8 +52,8 @@ export default {
 
     // camera view
     const mark = h('div', { class: 'face-mark', hidden: true });
-    const cam = h('div', { class: 'pad camera', role: 'button', tabindex: '0', 'aria-label': 'Camera view: tap to place a pretend face' },
-      mark, h('span', { class: 'pad-label', text: 'Camera view (as LittleBot sees it) - tap to place a face' }));
+    const cam = h('div', { class: 'pad camera', role: 'button', tabindex: '0', 'aria-label': 'Tap where the child is, as seen facing LittleBot' },
+      mark, h('span', { class: 'pad-label', text: 'Tap where the child is, as seen facing LittleBot - its eyes look that way' }));
     const place = async (x, y) => {
       mark.hidden = false;
       mark.style.left = `${x * 100}%`;
@@ -79,7 +79,8 @@ export default {
           h('div', { class: 'stack' }, cam,
             h('div', { class: 'btn-row' },
               button('No face', { kind: 'soft', iconName: 'eyeOff', onClick: async () => { mark.hidden = true; await app.act(() => post('/sim/camera', { event: 'no_face' })); } }),
-              button('Person left', { kind: 'soft', iconName: 'logout', onClick: async () => { mark.hidden = true; await app.act(() => post('/sim/camera', { event: 'person_left' }), 'Pretend person left.'); } })))),
+              button('Person left', { kind: 'soft', iconName: 'logout', onClick: async () => { mark.hidden = true; await app.act(() => post('/sim/camera', { event: 'person_left' }), 'Face removed - LittleBot notices the person has left after about 3 seconds.'); } })),
+            h('p', { class: 'muted', text: '“Person left” removes the pretend face; like with a real camera, LittleBot waits about 3 seconds before deciding nobody is there.' }))),
         h('section', { class: 'card span-2' }, h('div', { class: 'card-head' }, h('h2', {}, icon('person'), 'Caregiver answers')),
           h('div', { class: 'stack-sm' }, promptText, promptBtns))));
 

@@ -64,19 +64,25 @@ async def caregiver(body: RespondBody, dash: DashState = Depends(get_dash)) -> d
 
 @router.post("/camera")
 async def camera(body: CameraSimBody, dash: DashState = Depends(get_dash)) -> dict[str, Any]:
+    """Pretend camera events. ``x``/``y`` are where the child is *as seen facing LittleBot*
+    (screen coordinates, like the face's gaze): tapping the left of the pad makes the eyes
+    look left. The camera image is mirrored relative to that, so ``x_image = 1 - x``.
+    ``person_left`` = no face; the vision module reports the person gone after its usual
+    hysteresis (about 3 s)."""
     ctx = dash.ctx
     vision = ctx.vision
+    x_image = round(1.0 - body.x, 4)
     if vision is not None:
         if body.event == "face":
-            vision.simulate_face(body.x, body.y, body.size)
+            vision.simulate_face(x_image, body.y, body.size)
         else:
             vision.simulate_no_face()
-        return {"ok": True, "via": "vision"}
+        return {"ok": True, "via": "vision", "x_image": x_image if body.event == "face" else None}
     # No vision module: publish the equivalent events so behaviours can still be exercised.
     if body.event == "face":
         gx, gy = body.x, body.y
         ctx.bus.publish(Topics.VISION_FACES, {
-            "faces": [{"x": body.x, "y": body.y, "w": body.size, "h": body.size, "gaze_x": gx, "gaze_y": gy}],
+            "faces": [{"x": x_image, "y": body.y, "w": body.size, "h": body.size, "gaze_x": gx, "gaze_y": gy}],
             "frame_w": 1.0, "frame_h": 1.0}, source="simulator")
         ctx.bus.publish(Topics.VISION_PERSON_PRESENT, {"gaze_x": gx, "gaze_y": gy}, source="simulator")
     else:

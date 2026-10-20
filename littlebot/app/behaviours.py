@@ -85,7 +85,10 @@ class Behaviours:
         faces = event.get("faces") or []
         if not faces:
             return
-        biggest = max(faces, key=lambda f: f.get("w", 0) * f.get("h", 0))
+        # Vision marks the face it is tracking (stable across similar-sized faces, smoothed gaze);
+        # fall back to the biggest (closest) box for producers that don't mark one.
+        biggest = next((f for f in faces if f.get("primary")), None) or max(
+            faces, key=lambda f: f.get("w", 0) * f.get("h", 0))
         # Tracking gaze is a "soft" gaze: explicit look_at() calls still win.
         tracker = getattr(face, "track_gaze", None)
         if callable(tracker):

@@ -514,8 +514,10 @@ async def test_sim_caregiver_and_camera(authed, dctx, fakes):
     assert (await authed.post("/api/sim/caregiver", json={"response": "done"})).status_code == 409
     await fakes["activities"].start("peekaboo")
     assert (await authed.post("/api/sim/caregiver", json={"response": "done", "prompt_id": "p1"})).status_code == 200
+    # Pad coordinates are "as seen facing LittleBot"; the camera image is mirrored.
     r = await authed.post("/api/sim/camera", json={"event": "face", "x": 0.7, "y": 0.3})
-    assert r.json()["via"] == "vision" and fakes["vision"].face == (0.7, 0.3)
+    assert r.json()["via"] == "vision" and fakes["vision"].face == (0.3, 0.3)
+    assert fakes["vision"].called("simulate_face")[-1] == ((0.3, 0.3, 0.25), {})
     await authed.post("/api/sim/camera", json={"event": "person_left"})
     assert fakes["vision"].face is None
     assert (await authed.post("/api/sim/camera", json={"event": "explode"})).status_code == 422
@@ -529,6 +531,8 @@ async def test_sim_camera_without_vision_publishes_events(dctx, app):
         r = await c.post("/api/sim/camera", json={"event": "face", "x": 0.2, "y": 0.5})
         assert r.json()["via"] == "events"
         await c.post("/api/sim/camera", json={"event": "person_left"})
+    faces = next(e for e in seen if e.topic == Topics.VISION_FACES).get("faces")
+    assert faces[0]["x"] == 0.8 and faces[0]["gaze_x"] == 0.2  # image vs screen coordinates
     topics = [e.topic for e in seen]
     assert Topics.VISION_FACES in topics and Topics.VISION_PERSON_PRESENT in topics and Topics.VISION_PERSON_LEFT in topics
 

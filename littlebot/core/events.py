@@ -48,11 +48,11 @@ class Topics:
     FACE_VISIBLE = "face.visible"  # {visible} False while video owns the screen (published by the face only)
 
     # --- vision ---
-    VISION_FACES = "vision.faces"  # {faces: [{x, y, w, h, gaze_x, gaze_y}], frame_w, frame_h}
+    VISION_FACES = "vision.faces"  # {faces: [{x, y, w, h, gaze_x, gaze_y, score, primary}], frame_w, frame_h, simulated}
     VISION_PERSON_PRESENT = "vision.person_present"  # {gaze_x, gaze_y}
     VISION_PERSON_LEFT = "vision.person_left"  # {}
     VISION_GESTURE = "vision.gesture"  # {gesture: "wave"|"motion", confidence}
-    VISION_CAMERA_STATUS = "vision.camera_status"  # {status: "ok"|"disconnected"|"disabled"|"unavailable", detail}
+    VISION_CAMERA_STATUS = "vision.camera_status"  # {status: "ok"|"disconnected"|"disabled"|"unavailable", detail, backend}
 
     # --- audio ---
     AUDIO_SPEECH_STARTED = "audio.speech_started"  # {text, duration_estimate}

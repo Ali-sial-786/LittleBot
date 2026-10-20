@@ -144,13 +144,16 @@ class AudioAPI(Protocol):
 @runtime_checkable
 class VisionAPI(Protocol):
     def simulate_face(self, x: float, y: float, size: float = 0.25) -> None:
-        """Inject a simulated detected face (normalised image coords)."""
+        """Inject a simulated detected face at normalised CAMERA-IMAGE coords (before mirroring:
+        with camera.mirror, image x=0.2 makes the eyes look towards screen x~0.8). Expires
+        after a few seconds unless refreshed."""
 
     def simulate_no_face(self) -> None: ...
 
     def status(self) -> dict[str, Any]:
-        """{camera: ok|disconnected|disabled|unavailable, backend, detector,
-        fps, faces, person_present, gaze: {x, y} | None}"""
+        """{camera: ok|disconnected|disabled|unavailable, detail, backend, detector, detector_detail,
+        device, resolution ("640x480"), fourcc, fps, detect_fps, detect_ms, faces, person_present,
+        gaze: {x, y} | None, gestures_enabled, simulated, detect_mode: full|reduced|paused, robot_state}"""
 
 
 @runtime_checkable

@@ -16,7 +16,7 @@ littlebot/vision/
   imaging.py      optional-cv2 helpers, resize/grey, RateMeter, numpy-only synthetic drawing
 scripts/check_camera.py      list devices, open one, negotiated format, capture fps, detector timings
 scripts/download_models.py   YuNet ONNX / Haar XML into models/ (git-ignored), SHA-256 pinned
-tests/vision/                82 tests (mocks, fake cv2 driver, fixtures, threads)
+tests/vision/                87 tests (mocks, fake cv2 driver, fixtures, threads)
 ```
 
 OpenCV is an optional extra (`pip install -e ".[vision]"`). Without it the service still runs:
@@ -28,7 +28,7 @@ mock camera in simulation/offline, `unavailable` on the Pi. It never crashes the
 |---|---|
 | `simulate_face(x, y, size=0.25)` | Face **centred** at (x, y) in normalised **image** coords; `size` = face width / frame width. Goes through the same tracker/event path as a camera face. Overrides camera detections while active; expires after `vision.simulated_face_seconds` (3 s) unless called again. |
 | `simulate_no_face()` | Drops the simulated face now (camera faces, if any, take over; otherwise `person_left` follows after `left_after_seconds`). |
-| `status()` | `{camera: ok\|disconnected\|disabled\|unavailable, detail, backend: opencv\|mock\|fixture\|none, detector: yunet\|haar\|mock\|none, detector_detail, device, resolution: "640x480"\|None, fourcc, fps (measured capture), detect_fps (measured), detect_ms (last), faces (count), person_present, gaze: {x, y}\|None, gestures_enabled, simulated}`. Cheap, thread-safe, JSON-serialisable. |
+| `status()` | `{camera: ok\|disconnected\|disabled\|unavailable, detail, backend: opencv\|mock\|fixture\|none, detector: yunet\|haar\|mock\|none, detector_detail, device, resolution: "640x480"\|None, fourcc, fps (measured capture), detect_fps (measured), detect_ms (last), faces (count), person_present, gaze: {x, y}\|None, gestures_enabled, simulated, detect_mode: active\|reduced\|paused, robot_state}`. Cheap, thread-safe, JSON-serialisable. |
 
 Lifecycle: `await start()` spawns the `littlebot-vision` daemon thread; `await stop()` joins it
 (4 s timeout, off the event loop) and releases the camera. Both are idempotent and the service is
@@ -71,6 +71,22 @@ camera sends (cheap, no decode; keeps the driver queue empty so frames are never
 6 MJPG frames/s are decoded. `read(timeout)` never blocks longer than its timeout; a driver
 that stops answering is detected after `camera.stall_seconds` (3 s). Only the newest frame
 is held, and only until it is handed over.
+
+## Robot state -> how much vision work (CPU for video)
+
+The service follows `state.changed` and adapts its work. The thread is woken on the change, so
+the new level applies within one cycle:
+
+| Robot state | `detect_mode` | What runs |
+|---|---|---|
+| `PLAYING_MEDIA` (and `vision.pause_during_media: true`, default) | `paused` | **Nothing is read, decoded or detected**, no gestures, no events. The camera stays **open** (no release / re-open churn; the reader thread only `grab()`s, which costs almost nothing) and an unplugged camera is still noticed. Presence is **frozen**, so a video does not produce a fake `person_left` + `person_present` pair. On the Pi 5 2 GB the video decode in Chromium needs the CPU. |
+| `SLEEPING` | `reduced` | detection at `vision.sleep_detect_fps` (1.5 Hz instead of 6), gestures off. A person arriving still publishes `person_present`, and `behaviours.py` wakes the robot (tested end to end). Someone who was already present when the robot fell asleep does not wake it again until they leave and return. |
+| everything else | `active` | `camera.detect_fps` (6 Hz) and gestures if enabled |
+
+When `paused` ends, detection runs at once, stale detections from before the video are dropped,
+and presence continues: still there means no new greeting; gone means `person_left` right away.
+The tracker's missed-detection tolerance scales with the detection interval
+(`max(0.5 s, 1.5 / rate)`), so presence still works at 1-1.5 Hz.
 
 ## Camera backends and device selection
 
@@ -119,8 +135,8 @@ Bookworm/Trixie) Haar works out of the box.
 
 Design choices: 640x480 MJPG capture (USB 2.0 friendly, cheap to decode), detection on a 320 px
 copy at 6 Hz (5 Hz in `pi.yaml`), decode only the frames we process, `vision.opencv_threads: 2` so
-detection never takes every core from the face renderer and audio, and no work at all while the
-camera is disabled.
+detection never takes every core from the face renderer and audio. There is no work at all while
+the camera is disabled or a video plays, and 1.5 Hz while the robot sleeps (see above).
 
 Measured in the dev container (x86 Xeon 2.8 GHz, 4 vCPU; **not the Pi**), with
 `check_camera.py --fixture` and a scratch benchmark of the full service (frames already decoded):
@@ -223,7 +239,7 @@ reactions.
 `vision`: `detector`, `min_face_fraction`, `present_after_seconds`, `left_after_seconds`,
 `gaze_smoothing`, `gestures_enabled`, `yunet_model`, `yunet_score_threshold`, `haar_cascade`,
 `haar_min_neighbors`, `haar_scale_factor`, `opencv_threads`, `gaze_vertical_offset`,
-`simulated_face_seconds`, `gesture_fps`. Parent settings: `vision.gestures_enabled` (live toggle),
+`simulated_face_seconds`, `gesture_fps`, `pause_during_media`, `sleep_detect_fps`. Parent settings: `vision.gestures_enabled` (live toggle),
 `vision.follow_faces` (used by `app/behaviours.py`).
 
 ## Tools
@@ -242,7 +258,8 @@ Verified here (no camera in the container): all logic with `MockCamera`, `Fixtur
 `MockDetector` and a **fake cv2 driver** that exercises `OpenCVCamera`'s reader thread
 (negotiation readback, decode-on-demand, read timeouts, stalls, driver errors, release).
 Covered: service lifecycle and threads, throttling, disconnect/reconnect, privacy release,
-simulation expiry, the events -> `behaviours.py` -> `face.look_at` path, and the scripts.
+simulation expiry, media pause / sleep reduction (incl. a person waking the sleeping robot through
+`behaviours.py`), the events -> `behaviours.py` -> face gaze path, and the scripts.
 The suite passes on OpenCV 5.0.0 (dev venv; Haar tests skip) and on OpenCV 4.14 (scratch venv;
 Haar + YuNet run). Real detectors on public OpenCV sample photos (not committed): Haar and YuNet
 both find the face in `lena.jpg` (YuNet score 0.87); neither fires on `fruits`, `baboon`, `home`,

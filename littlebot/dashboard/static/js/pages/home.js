@@ -176,7 +176,9 @@ export default {
       const priv = s.privacy || {};
       const cam = s.vision || {};
       const audio = s.audio || {};
-      dev.camera.set(...Object.values(priv.camera_enabled === false ? deviceState('disabled') : deviceState(cam.camera ?? cam.status)));
+      const camState = priv.camera_enabled === false ? 'disabled'
+        : (cam.camera === 'ok' && (cam.simulated || cam.backend === 'mock')) ? 'simulated' : (cam.camera ?? cam.status);
+      dev.camera.set(...Object.values(deviceState(camState)));
       dev.mic.set(...Object.values(priv.microphone_enabled === false ? deviceState('disabled') : deviceState(audio.microphone?.status ?? audio.status)));
       dev.speaker.set(...Object.values(deviceState(audio.speaker?.status ?? audio.status)));
       const cloudOn = priv.cloud_enabled && s.settings?.ai_enabled;
