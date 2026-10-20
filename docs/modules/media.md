@@ -30,7 +30,7 @@ dashboard (parent, authenticated)            robot screen (Chromium kiosk) / any
       MediaController ──── load / command / volume ───► PlayerBridge ◄── ready/playing/ended/error/
         │  lease (screen+audio_out+face, MEDIA)            (token,          heartbeat/hidden ...
         │  RobotState.PLAYING_MEDIA                          seq, load_id)          │
-        │  media.* + face.visible events                                           ▼
+        │  media.* events (the face hides itself for PLAYING_MEDIA)                ▼
         └─ DisplayBackend.open(url) / close()            YouTube IFrame Player API (youtube-nocookie.com)
 ```
 
@@ -48,7 +48,7 @@ All decisions (gating, limits, what plays next) are made in Python.
 | `reorder_items(ids)`, `get_item(id)` | extras |
 | `await play(id, *, parent_override=False)` | `KeyError` unknown; `PermissionError` with a friendly message for: item disabled, `media.enabled` off, offline mode, age gate, limits, lease refused, state refused, player window could not open. Playing another item during a session switches item (same session). Returns `status()` |
 | `await pause()` / `await resume()` | `bool`; paused time does not count; resume re-checks limits |
-| `await stop(reason="stopped")` | idempotent; also the `Service.stop` lifecycle hook (after `system.shutdown` it also tears down) |
+| `await stop(reason="stopped")` | idempotent; terminates the kiosk Chromium (SIGTERM to its process group, SIGKILL after 2 s) **before returning**; also the `Service.stop` lifecycle hook (after `system.shutdown` it also tears down subscriptions/tasks) |
 | `await skip()` | next **enabled approved** item in list order, wrapping (a single item restarts); never anything else |
 | `set_volume(v)` | clamps to `[0, media.max_volume]`, persists `media.volume`, pushes to the page. `ValueError` for non-numbers/NaN |
 | `status()` | see below (cheap, thread-safe) |
@@ -72,10 +72,11 @@ and the robot itself; never put it anywhere public.
 
 Published: `media.started {item_id, title, kind, session_id, skipped}`, `media.paused {item_id}`,
 `media.resumed {item_id}`, `media.stopped {item_id, reason, title, session_id, session_seconds,
-detail?}` with `reason` one of `ended | stopped | limit | error`, `media.error {item_id, error, code}`,
-`face.visible {visible: false}` when a session starts and `{visible: true}` when it ends.
+detail?}` with `reason` one of `ended | stopped | limit | error`, `media.error {item_id, error, code}`.
 State: `IDLE -> PLAYING_MEDIA -> IDLE` via `ctx.state.release(PLAYING_MEDIA)` (never clobbers a
-newer state).
+newer state). The screen hand-over is expressed only through that state: `PLAYING_MEDIA` maps to
+face state `hidden`, and the **face module is the single owner of `face.visible`** (it publishes
+it when entering/leaving `hidden`); this module does not publish it.
 
 Subscribed: `system.stop_all` (stop), `settings.changed` (`media.volume` -> page volume;
 `media.enabled` false -> stop; `media.allow_under_min_age` / `profile` changes re-check the age
@@ -189,5 +190,6 @@ Real YouTube playback is not part of the suite (YOUTUBE_ON_PI.md section 9).
 * Real playback and everything Pi-specific are unverified (YOUTUBE_ON_PI.md).
 * The robot can't verify what a playlist contains in advance; playlists can change on YouTube.
 * Desktop-browser tabs can't be closed by the robot.
-* `face.visible` is published both by this module (session start/end) and by the face module
-  (when its state enters/leaves `hidden`); consumers must treat it as idempotent.
+* If Python dies without running `stop()`, an `atexit` hook SIGTERMs any kiosk process group
+  still running; under systemd (`KillMode=mixed`) the final SIGKILL of the unit's cgroup also
+  covers Chromium. A hard SIGKILL of Python outside systemd can leave Chromium running.

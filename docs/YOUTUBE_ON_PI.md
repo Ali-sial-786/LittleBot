@@ -21,7 +21,10 @@ littlebot (Python: face hidden + low fps, audio idle, vision, dashboard server)
 ```
 
 Chromium is started when a session starts and terminated (whole process group) when it ends,
-so its memory is only used while a video plays.
+so its memory is only used while a video plays. `MediaController.stop()` - also called on app
+shutdown - waits for that termination (SIGTERM, SIGKILL after 2 s), so it does not rely on
+systemd: the unit's `KillMode=mixed` only sends SIGTERM to the main Python process. An `atexit`
+hook signals any kiosk still running if Python exits without a clean stop.
 
 ## 2. Video decoding on the Pi 5
 
