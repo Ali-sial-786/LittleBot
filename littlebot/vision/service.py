@@ -72,6 +72,7 @@ class VisionService(Service):
             left_after=self.vis_cfg.left_after_seconds,
             mirror=self.cam_cfg.mirror,
             vertical_offset=self.vis_cfg.gaze_vertical_offset,
+            gap_tolerance=self._gap_tolerance(float(self.cam_cfg.detect_fps)),
         )
         self._gestures = gestures or GestureDetector()
         self._lock = threading.RLock()
@@ -103,8 +104,11 @@ class VisionService(Service):
         self._sim_until = 0.0
         self._sim_dirty = False
         # gestures (experimental)
-        self._gestures_on = bool(self.vis_cfg.gestures_enabled)
+        self._gestures_on = bool(self.vis_cfg.gestures_enabled)  # parent setting
         self._gestures_reset = False
+        # robot-state dependent work level: active | reduced (SLEEPING) | paused (PLAYING_MEDIA)
+        self._robot_state = ctx.state.state.value
+        self._mode = self._mode_for(self._robot_state)
         # publishing
         self._last_faces_pub = -1e9
         self._faces_visible = False
@@ -125,16 +129,39 @@ class VisionService(Service):
     def _backend_label(self) -> str:
         return {"real": "opencv", "mock": "mock", "fixture": "fixture", "none": "none"}[self._kind]
 
+    def _mode_for(self, robot_state: str | None) -> str:
+        if robot_state == "PLAYING_MEDIA" and self.vis_cfg.pause_during_media:
+            return "paused"  # the video player needs the CPU; camera stays open, nothing is decoded
+        if robot_state == "SLEEPING":
+            return "reduced"  # still notice a person arriving (wakes the robot), at a low rate
+        return "active"
+
+    @staticmethod
+    def _gap_tolerance(detect_fps: float) -> float:
+        # Missed-detection tolerance must exceed the detection interval, or slow rates never "arrive".
+        return max(0.5, 1.5 / max(0.1, detect_fps))
+
+    @property
+    def effective_detect_fps(self) -> float:
+        rate = max(0.1, float(self.cam_cfg.detect_fps))
+        if self._mode == "reduced":
+            rate = min(rate, max(0.1, float(self.vis_cfg.sleep_detect_fps)))
+        return rate
+
+    @property
+    def gestures_active(self) -> bool:
+        return self._gestures_on and self._mode == "active"
+
     @property
     def frame_interval(self) -> float:
-        rate = max(0.1, float(self.cam_cfg.detect_fps))
-        if self._gestures_on:
+        rate = self.effective_detect_fps
+        if self.gestures_active:
             rate = max(rate, float(self.vis_cfg.gesture_fps))
         return 1.0 / rate
 
     @property
     def detect_interval(self) -> float:
-        return 1.0 / max(0.1, float(self.cam_cfg.detect_fps))
+        return 1.0 / self.effective_detect_fps
 
     # -------------------------------------------------------------- lifecycle
     async def start(self, *, run_thread: bool = True) -> None:
@@ -145,10 +172,12 @@ class VisionService(Service):
         self._stop_evt.clear()
         self._camera_allowed = bool(self.ctx.privacy.camera_enabled)
         self._gestures_on = bool(self.ctx.settings.get("vision.gestures_enabled", self.vis_cfg.gestures_enabled))
+        self._robot_state = self.ctx.state.state.value
         if not self._subs:
             bus = self.ctx.bus
             self._subs = [bus.subscribe(Topics.PRIVACY_CHANGED, self._on_privacy),
-                          bus.subscribe(Topics.SETTINGS_CHANGED, self._on_setting)]
+                          bus.subscribe(Topics.SETTINGS_CHANGED, self._on_setting),
+                          bus.subscribe(Topics.STATE_CHANGED, self._on_state)]
         if run_thread:
             self._thread = threading.Thread(target=self._run, name="littlebot-vision", daemon=True)
             self._thread.start()
@@ -215,6 +244,12 @@ class VisionService(Service):
             cam.cancel_read()  # the vision thread releases the device right away
         self._wake.set()
 
+    def _on_state(self, event: Event) -> None:
+        new = event.get("new")
+        if new and new != self._robot_state:
+            self._robot_state = str(new)
+            self._wake.set()  # the vision thread applies the new work level on its next cycle
+
     def _on_setting(self, event: Event) -> None:
         if event.get("key") == "vision.gestures_enabled":
             self._gestures_on = bool(event.get("value"))
@@ -251,7 +286,18 @@ class VisionService(Service):
         if self._gestures_reset:
             self._gestures_reset = False
             self._gestures.reset()
+        self._apply_mode(now)
         self._manage_camera(now)
+        if self._mode == "paused":
+            # No reads (so no MJPG decoding), no detection, no events; presence is frozen so a video
+            # does not cause a fake "left" + "arrived" pair. Still notice an unplugged camera.
+            cam = self._camera
+            if cam is not None and (cam.failed or not cam.is_open):
+                self._camera_lost(now, "camera stopped delivering frames")
+            self._refresh_snapshot(now)
+            if self._camera is None and self._kind != "none" and self._camera_allowed:
+                return min(IDLE_WAIT, max(0.0, self._next_open_at - now))
+            return IDLE_WAIT
         detected = False
         cam = self._camera
         if cam is not None and now >= self._next_frame_at:
@@ -265,7 +311,7 @@ class VisionService(Service):
             if sim is not None:
                 faces = [sim]
             elif self._camera is not None and self._camera_dets_at is not None \
-                    and now - self._camera_dets_at <= 2.5 * self.detect_interval:
+                    and now - self._camera_dets_at <= 2.5 * self.detect_interval:  # fresh only
                 faces = self._camera_dets
             else:
                 faces = []
@@ -273,6 +319,22 @@ class VisionService(Service):
             self._publish(upd, now, simulated=sim is not None)
         self._refresh_snapshot(now)
         return self._next_delay(now)
+
+    def _apply_mode(self, now: float) -> None:
+        mode = self._mode_for(self._robot_state)
+        if mode == self._mode:
+            return
+        old, self._mode = self._mode, mode
+        self.log.info("vision %s -> %s (robot %s, detection %.1f/s)", old, mode, self._robot_state,
+                      0.0 if mode == "paused" else self.effective_detect_fps)
+        self._tracker.gap_tolerance = self._gap_tolerance(self.effective_detect_fps)
+        self._gestures.reset()
+        if old == "paused":
+            self._camera_dets, self._camera_dets_at = [], None  # stale: from before the video
+            self._next_frame_at = self._next_detect_at = self._next_track_at = now
+        else:  # apply the new rate from now on
+            self._next_frame_at = min(self._next_frame_at, now + self.frame_interval)
+            self._next_detect_at = min(self._next_detect_at, now + self.detect_interval)
 
     @staticmethod
     def _advance(target: float, interval: float, now: float) -> float:
@@ -311,7 +373,7 @@ class VisionService(Service):
             self._camera_dets, self._camera_dets_at = dets, now
             self._detect_rate.tick(now)
             detected = True
-        if self._gestures_on:
+        if self.gestures_active:
             face = self._camera_dets[0] if self._camera_dets else None
             try:
                 for ev in self._gestures.update(small, now, face):
@@ -498,6 +560,8 @@ class VisionService(Service):
             "gaze": {"x": round(gaze[0], 4), "y": round(gaze[1], 4)} if gaze is not None else None,
             "gestures_enabled": self._gestures_on,
             "simulated": self._sim_face is not None,
+            "detect_mode": self._mode,  # active | reduced (robot sleeping) | paused (video playing)
+            "robot_state": self._robot_state,
         }
         with self._lock:
             self._snapshot = snap

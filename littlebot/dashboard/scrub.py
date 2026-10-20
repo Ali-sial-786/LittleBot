@@ -13,7 +13,7 @@ from typing import Any
 # Values that must never leave the server even if a module puts them in an event.
 _SECRET_KEY_RE = re.compile(r"(^|[_\-])(api[_\-]?key|secret|password|passwd|token|authorization|cookie)$",
                             re.IGNORECASE)
-_SECRET_VALUE_RE = re.compile(r"\b(sk-[A-Za-z0-9_\-]{8,}|sk-ant-[A-Za-z0-9_\-]{8,})")
+_SECRET_VALUE_RE = re.compile(r"(?<![\w-])(sk-[A-Za-z0-9_\-]{8,}|sk-ant-[A-Za-z0-9_\-]{8,})")
 
 
 def scrub(value: Any, depth: int = 0) -> Any:

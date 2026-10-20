@@ -18,7 +18,7 @@ export default {
     const mic = flag('microphone_enabled', 'Microphone',
       'Lets LittleBot hear simple words during games and conversations. Sound is never recorded or stored. LittleBot does not listen while it is talking.');
     const cloud = flag('cloud_enabled', 'Cloud communication',
-      'Allows LittleBot to contact online services such as cloud AI. Off by default - while this is off nothing leaves the robot.');
+      'Allows online services that receive information about your child - cloud AI conversation and cloud speech - to be used. Off by default: while it is off, nothing about your child leaves the robot. (YouTube videos are controlled separately on the Videos page; they only stream the videos you approved.)');
     const history = flag('record_history', 'Remember activity history',
       'Keeps a simple list of which activities were played (names and times only), stored on the robot.');
     const offlineNote = h('div');

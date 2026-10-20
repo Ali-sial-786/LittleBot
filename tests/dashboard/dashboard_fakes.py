@@ -121,8 +121,8 @@ class FakeMedia(_Recorder):
         with self._lock:
             return [dict(i) for i in self.items]
 
-    def add_item(self, url: str, title: str | None = None) -> dict[str, Any]:
-        self._rec("add_item", url, title)
+    def add_item(self, url: str, title: str | None = None, **kwargs: Any) -> dict[str, Any]:
+        self._rec("add_item", url, title, **kwargs)
         m = _YT.match(url)
         if not m:
             raise ValueError("That doesn't look like a YouTube video link.")
@@ -180,7 +180,29 @@ class FakeMedia(_Recorder):
     def status(self) -> dict[str, Any]:
         return {"state": self.state, "item": self.current, "session_seconds": 0, "session_limit_seconds": 900,
                 "daily_used_seconds": 0, "daily_limit_seconds": 1800, "volume": self.volume,
-                "player": {"mode": "kiosk", "url": self.player_url, "connected": False}}
+                "player": {"mode": "kiosk", "url": self.player_url, "path": "/player?token=kiosk-token-123",
+                           "connected": False, "last_event": {"type": "autoplay_blocked", "current": 0.0}}}
+
+
+class FakeMediaFull(FakeMedia):
+    """FakeMedia plus the optional update_item / reorder_items extras of the real controller."""
+
+    def update_item(self, item_id: int, *, title: str | None = None, enabled: bool | None = None) -> dict[str, Any]:
+        self._rec("update_item", item_id, title=title, enabled=enabled)
+        for it in self.items:
+            if it["id"] == item_id:
+                if title is not None:
+                    it["title"] = title
+                if enabled is not None:
+                    it["enabled"] = enabled
+                return dict(it)
+        raise KeyError(f"unknown media item {item_id}")
+
+    def reorder_items(self, ids: list[int]) -> list[dict[str, Any]]:
+        self._rec("reorder_items", list(ids))
+        order = {i: n for n, i in enumerate(ids)}
+        self.items.sort(key=lambda it: order.get(it["id"], len(order)))
+        return self.list_items()
 
 
 class FakeBrain(_Recorder):

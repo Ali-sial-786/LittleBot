@@ -622,3 +622,43 @@ async def test_push_to_talk(authed, fakes, dctx, app):
     assert fakes["brain"].called("converse_once") == [((), {})]
     dctx.brain = None
     assert (await authed.post("/api/ai/push-to-talk")).status_code == 503
+
+
+async def test_media_playlist_kind_passed_only_when_chosen(authed, fakes):
+    url = "https://www.youtube.com/watch?v=abcdefghijk"
+    await authed.post("/api/media/items", json={"url": url})
+    await authed.post("/api/media/items", json={"url": url, "kind": "playlist"})
+    calls = fakes["media"].called("add_item")
+    assert calls[0] == ((url, None), {}) and calls[1] == ((url, None), {"kind": "playlist"})
+    assert (await authed.post("/api/media/items", json={"url": url, "kind": "album"})).status_code == 422
+
+
+async def test_media_update_enable_and_reorder(dctx):
+    from dashboard_fakes import FakeMediaFull
+
+    dctx.media = FakeMediaFull()
+    app = create_app(dctx)
+    async with make_client(app) as c:
+        await do_setup(c, app)
+        a = dctx.media.add_item("https://youtu.be/aaaaaaaaaaa", "A")
+        b = dctx.media.add_item("https://youtu.be/bbbbbbbbbbb", "B")
+        info = (await c.get("/api/media")).json()
+        assert info["supports_update"] and info["supports_reorder"]
+        r = await c.patch(f"/api/media/items/{a['id']}", json={"enabled": False})
+        assert r.status_code == 200 and r.json()["item"]["enabled"] is False
+        assert dctx.media.called("update_item")[-1] == ((a["id"],), {"title": None, "enabled": False})
+        assert (await c.patch("/api/media/items/999", json={"enabled": True})).status_code == 404
+        assert (await c.patch(f"/api/media/items/{a['id']}", json={})).status_code == 422
+        r = await c.post("/api/media/reorder", json={"ids": [b["id"], a["id"]]})
+        assert r.status_code == 200 and [i["title"] for i in r.json()["items"]] == ["B", "A"]
+
+
+async def test_media_reorder_unsupported(authed):
+    assert (await authed.post("/api/media/reorder", json={"ids": [1]})).status_code == 501
+    assert (await authed.patch("/api/media/items/1", json={"enabled": False})).status_code == 501
+
+
+async def test_status_keeps_player_hints(authed):
+    player = (await authed.get("/api/status")).json()["media"]["player"]
+    assert player["last_event"] == {"type": "autoplay_blocked", "current": 0.0}
+    assert player["path"] == "/player?token=kiosk-token-123"

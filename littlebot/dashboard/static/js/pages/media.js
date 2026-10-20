@@ -7,6 +7,7 @@ import {
 
 const YT_RE = /^(https?:\/\/)?((www|m|music)\.)?(youtube\.com\/(watch\?(.*&)?v=[\w-]{11}|shorts\/[\w-]{11}|live\/[\w-]{11}|embed\/[\w-]{11}|playlist\?(.*&)?list=[\w-]+)|youtu\.be\/[\w-]{11}|youtube-nocookie\.com\/embed\/[\w-]{11})/i;
 const ID_RE = /^[\w-]{11}$/;
+const HAS_VIDEO_AND_LIST = (u) => /[?&]v=[\w-]{11}/.test(u) && /[?&]list=[\w-]+/.test(u);
 
 /** Player URLs from the robot may say 127.0.0.1; on a phone use the address this page came from. */
 function playerHref(url) {
@@ -62,15 +63,27 @@ export default {
     const urlInput = h('input', { type: 'url', id: 'media-url', inputmode: 'url', autocomplete: 'off', spellcheck: 'false', maxlength: 500, placeholder: 'https://www.youtube.com/watch?v=…', required: true });
     const titleInput = h('input', { type: 'text', id: 'media-title', maxlength: 120, placeholder: 'e.g. Twinkle Twinkle (optional)' });
     const urlHint = h('span', { class: 'hint', text: 'Paste a YouTube video or playlist link.' });
+    let addKind = 'video';
+    const kindVideo = h('button', { type: 'button', 'aria-pressed': 'true', text: 'Just this video' });
+    const kindList = h('button', { type: 'button', 'aria-pressed': 'false', text: 'Whole playlist' });
+    const setKind = (k) => { addKind = k; kindVideo.setAttribute('aria-pressed', String(k === 'video')); kindList.setAttribute('aria-pressed', String(k === 'playlist')); };
+    kindVideo.addEventListener('click', () => setKind('video'));
+    kindList.addEventListener('click', () => setKind('playlist'));
+    const kindBox = h('div', { class: 'stack-sm', hidden: true },
+      h('span', { class: 'muted', text: 'This link is a video inside a playlist. Approve:' }),
+      h('div', { class: 'segmented', role: 'group', 'aria-label': 'What to approve' }, kindVideo, kindList));
     const addBtn = h('button', { type: 'submit', class: 'btn primary' }, icon('plus'), h('span', { text: 'Add to approved list' }));
     const addForm = h('form', { class: 'stack', novalidate: true },
       h('div', { class: 'form-grid' },
         h('div', { class: 'field' }, h('label', { for: 'media-url', text: 'YouTube link' }), urlInput, urlHint),
+        kindBox,
         h('div', { class: 'field' }, h('label', { for: 'media-title', text: 'Name (optional)' }), titleInput)),
       h('div', {}, addBtn));
     urlInput.addEventListener('input', () => {
       const v = urlInput.value.trim();
       urlInput.removeAttribute('aria-invalid');
+      kindBox.hidden = !HAS_VIDEO_AND_LIST(v);
+      if (kindBox.hidden) setKind('video');
       if (!v) { urlHint.className = 'hint'; urlHint.textContent = 'Paste a YouTube video or playlist link.'; }
       else if (YT_RE.test(v)) { urlHint.className = 'hint good'; urlHint.textContent = 'Looks like a YouTube link.'; }
       else { urlHint.className = 'hint error'; urlHint.textContent = "That doesn't look like a YouTube link yet."; }
@@ -81,8 +94,11 @@ export default {
       if (!url) { urlInput.focus(); return; }
       addBtn.disabled = true;
       try {
-        const res = await post('/media/items', { url, title: titleInput.value.trim() || null });
+        const body = { url, title: titleInput.value.trim() || null };
+        if (HAS_VIDEO_AND_LIST(url)) body.kind = addKind;
+        const res = await post('/media/items', body);
         urlInput.value = ''; titleInput.value = '';
+        kindBox.hidden = true; setKind('video');
         urlHint.className = 'hint good';
         urlHint.textContent = `Added “${res.item?.title || 'video'}”.`;
         await reload();
@@ -143,6 +159,7 @@ export default {
       pageHead('Videos', 'Only videos on your approved list can ever play on LittleBot, with time limits you choose.'),
       h('div', { class: 'stack' },
         policyBox,
+        h('p', { class: 'muted', text: 'Videos stream from YouTube and are controlled only here (the “Videos allowed” switch), not by the Privacy page\'s cloud switch. LittleBot sends YouTube nothing about your child - it only plays the videos you approved.' }),
         h('div', { class: 'grid two' },
           nowCard,
           h('section', { class: 'card' }, h('div', { class: 'card-head' }, h('h2', {}, icon('plus'), 'Add a video')), addForm)),
@@ -163,11 +180,29 @@ export default {
       if (!data?.available) { listBox.append(h('p', { class: 'empty', text: 'The video player is not available right now.' })); return; }
       if (!items.length) { listBox.append(h('div', { class: 'empty' }, icon('film'), 'No videos yet. Add a favourite song or story above.')); return; }
       const playingId = app.status?.media?.item?.id;
-      for (const it of items) {
-        listBox.append(h('div', { class: ['media-item', it.id === playingId ? 'playing' : ''] },
+      const move = async (idx, delta) => {
+        const ids = items.map((x) => x.id);
+        const j = idx + delta;
+        if (j < 0 || j >= ids.length) return;
+        [ids[idx], ids[j]] = [ids[j], ids[idx]];
+        await app.act(() => post('/media/reorder', { ids }));
+        await reload();
+      };
+      items.forEach((it, idx) => {
+        const off = it.enabled === false;
+        const allow = h('input', { type: 'checkbox', checked: !off });
+        allow.addEventListener('change', async () => {
+          const r = await app.act(() => patch(`/media/items/${it.id}`, { enabled: allow.checked }), allow.checked ? 'Allowed again.' : 'Paused - it stays on the list but won\'t play.');
+          if (!r) allow.checked = !allow.checked;
+          await reload();
+        });
+        const meta = [titleCase(it.kind || 'video'), it.last_error ? `Problem: ${it.last_error}` : null].filter(Boolean).join(' · ');
+        listBox.append(h('div', { class: ['media-item', it.id === playingId ? 'playing' : '', off ? 'off' : ''] },
           thumb(it),
-          h('div', { class: 'info' }, h('div', { class: 'title', text: it.title || it.url }), h('div', { class: 'muted', text: titleCase(it.kind || 'video') })),
+          h('div', { class: 'info' }, h('div', { class: 'title', text: it.title || it.url }), h('div', { class: 'muted', text: meta }),
+            data.supports_update ? h('label', { class: 'mini-toggle mt-1' }, allow, 'Allowed') : null),
           h('div', { class: 'actions' },
+            data.supports_reorder && items.length > 1 ? button('', { kind: 'ghost icon small', iconName: 'chevron', ariaLabel: `Move ${it.title} up`, title: 'Move up', onClick: () => move(idx, -1) }) : null,
             button('', { kind: 'primary icon', iconName: 'play', ariaLabel: `Play ${it.title}`, title: 'Play on LittleBot', onClick: () => app.act(() => post('/media/play', { item_id: it.id }), `Playing “${it.title}”`) }),
             button('', { kind: 'soft icon', iconName: 'edit', ariaLabel: `Rename ${it.title}`, title: 'Rename', onClick: async () => {
               const t = await promptDialog({ title: 'Rename video', label: 'Name', value: it.title || '' });
@@ -179,7 +214,8 @@ export default {
                 await reload();
               }
             } }))));
-      }
+      });
+      for (const b of listBox.querySelectorAll('[title="Move up"] svg')) b.classList.add('rot-up');
     }
 
     function renderSettings() {

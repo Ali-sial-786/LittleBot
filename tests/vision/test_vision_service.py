@@ -551,3 +551,114 @@ async def test_eyes_follow_simulated_face_via_behaviours(make_ctx):
     finally:
         await svc.stop()
         await behaviours.stop()
+
+
+# ----------------------------------------------- robot-state work levels
+async def test_media_pauses_detection_but_keeps_camera_and_presence(make_ctx):
+    from littlebot.core.state import RobotState
+
+    ctx = make_ctx(camera={"detect_fps": 10.0}, vision={**FAST, "left_after_seconds": 1.0})
+    events = collect(ctx.bus, ["vision.*"])
+    det = MockDetector()
+    det.set_faces([Detection.centred(0.5, 0.5, 0.2)])
+    svc, cam, clock = build(ctx, detector=det)
+    await svc.start(run_thread=False)
+    run_for(svc, clock, 1.0)
+    assert svc.status()["person_present"] and svc.status()["detect_mode"] == "active"
+    calls, reads, n_events = det.calls, cam.frames_read, len(events)
+
+    assert ctx.state.transition(RobotState.PLAYING_MEDIA, "video")
+    run_for(svc, clock, 5.0)  # much longer than left_after_seconds
+    st = svc.status()
+    assert st["detect_mode"] == "paused" and st["robot_state"] == "PLAYING_MEDIA"
+    assert det.calls == calls and cam.frames_read == reads  # nothing read, decoded or detected
+    assert cam.is_open and cam.release_count == 0  # camera stays open: resuming is instant
+    assert len(events) == n_events  # no faces / left events while the video plays
+    assert st["person_present"]  # presence frozen, not "left"
+    assert svc.process_once(clock.now()) == pytest.approx(1.0)  # idle sleep while paused
+
+    assert ctx.state.transition(RobotState.IDLE, "video ended")
+    svc.process_once(clock.now())
+    assert det.calls == calls + 1  # detection resumes immediately
+    run_for(svc, clock, 1.0)
+    assert svc.status()["detect_mode"] == "active"
+    assert not topics(events, Topics.VISION_PERSON_LEFT)  # still there: no fake leave/arrive pair
+    assert len(topics(events, Topics.VISION_PERSON_PRESENT)) == 1
+    await svc.stop()
+
+
+async def test_media_pause_can_be_disabled(make_ctx):
+    from littlebot.core.state import RobotState
+
+    ctx = make_ctx(camera={"detect_fps": 5.0}, vision={"pause_during_media": False})
+    det = MockDetector()
+    svc, cam, clock = build(ctx, detector=det)
+    await svc.start(run_thread=False)
+    ctx.state.transition(RobotState.PLAYING_MEDIA, "video")
+    run_for(svc, clock, 2.0)
+    assert svc.status()["detect_mode"] == "active" and det.calls in (10, 11)
+    await svc.stop()
+
+
+async def test_sleeping_reduces_detection_and_an_arriving_person_wakes_the_robot(make_ctx):
+    from littlebot.app.behaviours import Behaviours
+    from littlebot.core.state import RobotState
+
+    ctx = make_ctx(camera={"detect_fps": 6.0}, vision={"sleep_detect_fps": 1.5, "present_after_seconds": 0.6})
+    behaviours = Behaviours(ctx)
+    await behaviours.start()
+    g = ScriptedGestures()
+    det = MockDetector()
+    svc, cam, clock = build(ctx, detector=det, gestures=g)
+    await svc.start(run_thread=False)
+    ctx.settings.set("vision.gestures_enabled", True)
+    try:
+        assert ctx.state.transition(RobotState.SLEEPING, "idle timeout")
+        svc.process_once(clock.now())
+        calls = det.calls
+        run_for(svc, clock, 4.0)
+        st = svc.status()
+        assert st["detect_mode"] == "reduced" and st["robot_state"] == "SLEEPING"
+        assert det.calls - calls in (6, 7)  # 1.5 Hz instead of 6 Hz
+        assert g.updates == 0 and cam.frames_read == det.calls  # no gestures, no extra frames
+        assert st["detect_fps"] == pytest.approx(1.5, abs=0.2)
+
+        det.set_faces([Detection.centred(0.5, 0.5, 0.2)])  # someone comes to the sleeping robot
+        run_for(svc, clock, 2.0)
+        assert ctx.state.state == RobotState.IDLE  # behaviours woke it on vision.person_present
+        assert svc.status()["detect_mode"] == "active"
+    finally:
+        await svc.stop()
+        await behaviours.stop()
+
+
+async def test_low_detection_rates_still_report_presence(make_ctx):
+    ctx = make_ctx(camera={"detect_fps": 1.0}, vision={"present_after_seconds": 0.6})
+    events = collect(ctx.bus, [Topics.VISION_PERSON_PRESENT])
+    det = MockDetector()
+    det.set_faces([Detection.centred(0.5, 0.5, 0.2)])
+    svc, cam, clock = build(ctx, detector=det)
+    await svc.start(run_thread=False)
+    run_for(svc, clock, 2.5)
+    assert len(events) == 1  # 1 s between detections is not mistaken for "a new person each time"
+    await svc.stop()
+
+
+async def test_threaded_state_change_pauses_capture(make_ctx):
+    from littlebot.core.state import RobotState
+
+    ctx = make_ctx(camera={"detect_fps": 20.0})
+    cam = MockCamera()
+    svc = VisionService(ctx, camera_factory=lambda kind: cam, detector=MockDetector())
+    await svc.start()
+    try:
+        assert await wait_until(lambda: cam.frames_read >= 3)
+        ctx.state.transition(RobotState.PLAYING_MEDIA, "video")
+        assert await wait_until(lambda: svc.status()["detect_mode"] == "paused", timeout=1.0)
+        n = cam.frames_read
+        await asyncio.sleep(0.3)
+        assert cam.frames_read == n and cam.is_open
+        ctx.state.transition(RobotState.IDLE, "done")
+        assert await wait_until(lambda: cam.frames_read > n + 2, timeout=1.0)
+    finally:
+        await svc.stop()
