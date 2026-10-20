@@ -10,13 +10,13 @@ is explicitly enabled. Parent-facing instructions: [DASHBOARD_GUIDE.md](../DASHB
 | File | Contents |
 |------|----------|
 | `__init__.py` | `create_service(ctx)` -> `DashboardService` (uvicorn task on the current loop, pre-bound socket, port-in-use handling), re-exports `create_app`, `resolve_bind_host` |
-| `app.py` | `create_app(ctx, robot=None)`: security middleware (auth, CSRF, Origin), security headers, error mapping, static files, media player router mount |
-| `auth.py` | `AuthManager`: setup code, scrypt password hash, sessions (hashed, SQLite + memory cache), CSRF tokens, `RateLimiter`; `log_setup_code()` |
-| `deps.py` | `DashState` (ctx, lazy robot facade, auth, background tasks, parent alerts, aggregated `status()`, STOP fallback), bind-host / URL helpers |
+| `app.py` | `create_app(ctx, robot=None)`: outermost `RequestGuard` (Host allowlist, body-size caps, client address), security middleware (auth, CSRF, Origin), security headers, error mapping, static files, media player router mount |
+| `auth.py` | `AuthManager`: setup code, scrypt password hash, sessions (hashed, SQLite-confirmed + memory cache), CSRF tokens, `RateLimiter` (per client) + `FailureLockout` (all clients) combined in `GuardedLimiter`; `log_setup_code()` |
+| `deps.py` | `DashState` (ctx, lazy robot facade, auth, background tasks, parent alerts, aggregated `status()`, STOP fallback, `ensure_setup_code()`), `HostAllowlist`, bind-host / URL helpers |
 | `models.py` | pydantic request bodies (`extra="forbid"`, length limits, unicode/control-char cleaning) |
 | `scrub.py` | second safety net that hides secret-looking keys/values in anything sent to the browser |
 | `routes/*.py` | one router per section (auth, robot/system, face, activities, media, profile, ai, privacy, devices, motion, simulator) |
-| `__main__.py` | `python -m littlebot.dashboard reset-password` (forgotten password recovery, run on the robot) |
+| `__main__.py` | `python -m littlebot.dashboard reset-password [--data-dir] [--port] [--yes]` (forgotten password recovery, run on the robot; works while LittleBot is running) |
 | `static/` | `index.html`, `app.css`, `favicon.svg`, `js/app.js` (boot, auth screens, router, polling), `js/api.js`, `js/ui.js`, `js/pages/*.js` |
 
 ## Wiring
@@ -46,10 +46,14 @@ is explicitly enabled. Parent-facing instructions: [DASHBOARD_GUIDE.md](../DASHB
 ```
 start():  resolve_bind_host(cfg.dashboard)      127.0.0.1 | 0.0.0.0 (lan_access only)
           bind socket ourselves                  EADDRINUSE -> log error, FAILED, return (robot keeps running)
-          uvicorn.Server(Config(app, lifespan="off", log_level="warning")).serve(sockets=[sock])
+          uvicorn.Server(Config(app, lifespan="off", log_level="warning",
+                                proxy_headers=False, forwarded_allow_ips="")).serve(sockets=[sock])
               as a task on the running loop     SystemExit/any error inside is caught (never kills the loop)
           wait (bounded) until accepting, RUNNING
+          install auth.on_setup_code (-> bus dashboard.setup, robot screen), always
           no password yet -> issue + log a one-time setup code (WARNING, contains "setup code:")
+later:    GET /api/session or POST /api/setup with no password and no active code (reset-password
+          run while running) -> issue + log + announce a fresh code (DashState.ensure_setup_code)
 stop():   cancel background tasks, unsubscribe, should_exit=True, await <=4 s, then force_exit + cancel
 ```
 
@@ -60,16 +64,19 @@ stop():   cancel background tasks, unsubscribe, should_exit=True, await <=4 s, t
 
 | Threat | Mitigation |
 |--------|-----------|
-| Default / weak credentials | No default password. First run prints a one-time **setup code** (8 chars, ~40 bits, alphabet without 0/O/1/I/L) to the robot's console/log only; its SHA-256 is kept in memory. After 10 wrong codes it is burned and a new one is logged. Passwords >= 8 chars. |
+| Default / weak credentials | No default password. First run prints a one-time **setup code** (8 chars, ~40 bits, alphabet without 0/O/1/I/L) to the robot's console/log only; its SHA-256 is kept in memory. After 10 counted wrong codes it is burned and a new one is logged - only attempts that passed the rate limits count, and **one client counts at most 3** (`SETUP_CODE_MAX_FAILURES_PER_CLIENT`; the client comes from the `current_client` context variable set by `RequestGuard`), so a single neighbour cannot keep burning the parent's code. Passwords >= 8 chars. |
 | Password theft from disk | `hashlib.scrypt` (N=2^14, r=8, p=1, 16-byte random salt per hash), stored in SQLite kv `dashboard:password`; constant-time compare; hashing in `asyncio.to_thread`. |
-| Session theft | 32-byte `secrets.token_urlsafe` tokens; only SHA-256 stored (`dashboard_sessions` table) and cached in memory; cookie `littlebot_session` `HttpOnly; SameSite=Strict; Path=/`, `Secure` over https; absolute expiry `dashboard.session_hours`; max 32 sessions; logout, logout-everywhere, password change logs out other devices. |
+| Session theft | 32-byte `secrets.token_urlsafe` tokens; only SHA-256 stored (`dashboard_sessions` table) and cached in memory - every lookup also confirms the row still exists (primary-key query), so sessions deleted by another process (`reset-password`) end at once; cookie `littlebot_session` `HttpOnly; SameSite=Strict; Path=/`, `Secure` over https; absolute expiry `dashboard.session_hours`; max 32 sessions; logout, logout-everywhere, password change logs out other devices. |
 | CSRF | Every non-GET `/api/*` request needs `X-CSRF-Token` equal to the session's own token (from `GET /api/session`), compared in constant time. Origin (or Referer) host must equal the Host header when present (`null` origin rejected). Login/setup (no session yet) require `Content-Type: application/json` (forces a CORS preflight, which is never granted) and the Origin check. |
-| Brute force | `dashboard.login_attempts_per_minute` per client IP, separately for login, setup code and change-password (sliding window, `429` + `Retry-After`). Generic errors ("Incorrect password."). |
+| Brute force | `dashboard.login_attempts_per_minute` per client IP, separately for login, setup code and change-password (sliding window, `429` + `Retry-After`). The IP is the real TCP peer: uvicorn runs with `proxy_headers=False`, so `X-Forwarded-For` / `Forwarded` are ignored (they used to be trusted from 127.0.0.1, letting a local or DNS-rebinding client rotate "IPs"). On top, failed logins and failed setup codes are counted across **all** clients (`FailureLockout`): `GLOBAL_FAILURES_PER_MINUTE` = 20 (at least 2 x the per-client limit) failures within 60 s pause login (or setup) for everyone for `GLOBAL_LOCKOUT_SECONDS` = 30 s (WARNING logged); the failures stay in the window, so the overall rate stays near 20/min. Attempts refused with 429 are never checked, so they count neither as failures nor towards burning the setup code. Change-password failures (already logged in) only use the per-client limit. Generic errors ("Incorrect password."). |
+| DNS rebinding | `RequestGuard` (outermost ASGI layer, before routing) answers only known `Host` names, else `400` with a short plain-text message (first 20 distinct refused names logged): `localhost` and loopback IP literals; this machine's hostname, its first label and `<first label>.local`; with `lan_access`, this machine's LAN IPs (the address the connection arrived on, `lan_addresses()` and the dashboard URLs, re-scanned at most every 30 s); every `dashboard.allowed_hosts` entry and the host of `media.player_base_url`. Loopback names (`localhost`, `127.x`, `::1`) match any port, so SSH tunnels just work; other names without a port match the dashboard's port or no port, and `"name:port"` entries match only that port. A page on `attacker.example` whose DNS is re-pointed at the robot still sends `Host: attacker.example`, so it cannot even reach `/api/setup` or `/api/login`. The in-process test clients use `testserver`, allowed explicitly by the test fixtures. |
+| Memory exhaustion | `RequestGuard` caps request bodies before anything is read: `Content-Length` > 64 KB (`MAX_BODY_BYTES`; 16 KB under `/player`, `littlebot.media.player_routes.MAX_BODY_BYTES`, room for 500 playlist ids) -> `413` + `Connection: close` without reading a byte; bodies without a length (chunked) are counted while the app reads them and cut off at the cap (the app sees a disconnect, its response is replaced by the 413). Invalid `Content-Length` -> 400. |
 | Unauthenticated access | Middleware: every `/api/*` path except `/api/health`, `/api/session`, `/api/login`, `/api/setup` returns `401` without a valid session - including unknown paths. A test walks every router route. |
 | XSS / injection | Frontend builds DOM with `textContent` only (no HTML strings), no inline scripts/styles in markup, strict CSP (below). Request bodies: pydantic, `extra="forbid"`, length limits, NFC + control-character stripping, enum/regex validation. Validation errors never echo input values. |
 | Clickjacking / leaks | `X-Frame-Options: DENY`, `frame-ancestors 'none'`, `Referrer-Policy: same-origin`, `X-Content-Type-Options: nosniff`, `Cross-Origin-Opener-Policy`/`-Resource-Policy: same-origin`, `Permissions-Policy` (no camera/mic/geo), `Cache-Control: no-store` on the API. No `/docs` / OpenAPI. |
 | API key exposure | Status is passed through unchanged except for secrets (e.g. `media.player.last_event` hints and the player path/URL with its kiosk token reach the parent). Keys are never read by the dashboard; the AI page shows only `has_anthropic_key` / `has_openai_key` (`config.public_dict()`). `scrub.py` additionally hides keys named `*api_key/secret/password/token/cookie/authorization` and values like `sk-…` in status, config, events and subsystem results. A test sets fake keys and scans every GET response. |
-| Network exposure | Binds `127.0.0.1` unless `dashboard.lan_access: true` / `--lan`; a non-loopback `dashboard.host` without `lan_access` is refused (falls back to localhost, warning logged). |
+| Network exposure | Binds `127.0.0.1` unless `dashboard.lan_access: true` / `--lan`; a non-loopback `dashboard.host` without `lan_access` is refused (falls back to localhost, warning logged). LAN mode is plain HTTP: the password and session cookie cross the home Wi-Fi unencrypted, so it is for trusted home networks only and must never be port-forwarded (stated in the guide). |
+| File permissions | The dashboard never creates or chmods files; `core.storage.Database` keeps `littlebot.db` (+ `-wal`/`-shm`) at `0600` (also when opened by the `reset-password` CLI) and the app sets `umask 077`. |
 | Dangerous actions | Shutdown/restart need `confirm: true`; video under 18 months needs `confirm_under_min_age: true`; arming servos needs `motion.physical_enabled: true` **and** the typed phrase `ARM MOTORS`; e-stop also disarms. Media play always passes `parent_override=False` (the media module enforces the age gate and limits from settings). |
 
 Content-Security-Policy for dashboard pages:
@@ -134,6 +141,7 @@ except login/setup). All routes except the four public ones need a session cooki
 | Method | Path | Body / query | Calls |
 |---|---|---|---|
 | GET | `/api/activities` | `?age_months=&category=&age_group=&favourites=` | `list(age_months, category)`; `age_group` = overlap filter; items gain `enabled`, `favourite`, `age_label`, `suitable_now` |
+| GET | `/api/activities/recommended` | `?limit=6&category=` | `recommended(age_months=<profile age>, category, limit)` (falls back to `list()` minus disallowed, favourites first, if the engine lacks it); adds `nickname`, `child_age_months` |
 | GET | `/api/activities/status` | | `status()` |
 | GET | `/api/activities/{id}` | | `get(id)`; 404 |
 | POST | `/api/activities/{id}/start` | | `start(id, source="dashboard")`; 404 / 403 |
@@ -251,6 +259,17 @@ facade; face/audio/motion fakes from `littlebot.testing`):
 * `test_dashboard_service.py` - bind-host logic, real uvicorn on an ephemeral port in the test
   loop (setup code logged, HTTP round trip), port in use -> FAILED without crashing, STOP
   cancels dashboard tasks, `reset-password` CLI.
+* `test_dashboard_security.py` - Host allowlist (rebinding Host refused before any route, local
+  names / ports, `allowed_hosts`, LAN IPs only with `lan_access`, `testserver` only when
+  configured); real uvicorn ignores `X-Forwarded-For`; global login and setup lockouts across
+  many clients (and 429s not counted); body caps (`Content-Length` -> 413 without reading,
+  chunked cut off at the cap, smaller `/player` cap that still fits 500 playlist ids);
+  sessions deleted from SQLite end at once; `reset-password` CLI while running (old session
+  401, new code logged + announced, setup works, DB stays 0600, running-port warning); one
+  client cannot burn the setup code, several can.
+
+The in-process clients send `Host: testserver`: `conftest.py` and `dashboard_fakes.make_client`
+add it (and `robot.local`) to `dashboard.allowed_hosts`.
 
 Visual QA (local only): Playwright screenshots of every page at 390 px and 1280 px, light and
 dark, saved under `artifacts/dashboard/` (git-ignored).

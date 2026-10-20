@@ -2,7 +2,7 @@
 
 import { get, post } from '../api.js';
 import {
-  button, clear, deviceState, fmtAge, fmtDuration, h, icon, miniFace, setText, stateLabel, titleCase,
+  append, button, cameraState, clear, deviceState, fmtAge, fmtDuration, h, icon, miniFace, setText, stateLabel, titleCase,
 } from '../ui.js';
 
 function stat(label, iconName) {
@@ -115,7 +115,7 @@ export default {
         const idx = Number(a.step_index) || 0;
         const bar = h('span');
         bar.style.width = total ? `${Math.min(100, ((idx + 1) / total) * 100)}%` : '0%';
-        actBody.append(
+        append(actBody, [
           h('div', { class: 'row between' }, h('h3', { text: a.name || 'Activity' }), a.paused ? h('span', { class: 'badge warn', text: 'Paused' }) : h('span', { class: 'badge ok', text: 'Playing' })),
           total ? h('div', { class: 'stack-sm' }, h('div', { class: 'progress' }, bar), h('span', { class: 'muted', text: `Step ${Math.min(idx + 1, total)} of ${total}` })) : null,
           a.step_text ? h('div', {}, STEP_KIND[a.step_kind] ? h('div', { class: 'muted', text: STEP_KIND[a.step_kind] }) : null, h('p', { class: 'step', text: a.step_text })) : null,
@@ -123,7 +123,7 @@ export default {
             a.paused
               ? button('Resume', { kind: 'primary', iconName: 'play', onClick: () => app.act(() => post('/activities/resume')) })
               : button('Pause', { kind: 'soft', iconName: 'pause', onClick: () => app.act(() => post('/activities/pause')) }),
-            button('Stop activity', { kind: 'danger-outline', iconName: 'square', onClick: () => app.act(() => post('/activities/stop'), 'Activity stopped.') })));
+            button('Stop activity', { kind: 'danger-outline', iconName: 'square', onClick: () => app.act(() => post('/activities/stop'), 'Activity stopped.') }))]);
         return;
       }
       actBody.append(h('p', { class: 'muted', text: 'Nothing running. Pick something to play together:' }));
@@ -176,9 +176,7 @@ export default {
       const priv = s.privacy || {};
       const cam = s.vision || {};
       const audio = s.audio || {};
-      const camState = priv.camera_enabled === false ? 'disabled'
-        : (cam.camera === 'ok' && (cam.simulated || cam.backend === 'mock')) ? 'simulated' : (cam.camera ?? cam.status);
-      dev.camera.set(...Object.values(deviceState(camState)));
+      dev.camera.set(...Object.values(deviceState(cameraState(cam, priv))));
       dev.mic.set(...Object.values(priv.microphone_enabled === false ? deviceState('disabled') : deviceState(audio.microphone?.status ?? audio.status)));
       dev.speaker.set(...Object.values(deviceState(audio.speaker?.status ?? audio.status)));
       const cloudOn = priv.cloud_enabled && s.settings?.ai_enabled;

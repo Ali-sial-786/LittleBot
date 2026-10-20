@@ -66,12 +66,13 @@ async def caregiver(body: RespondBody, dash: DashState = Depends(get_dash)) -> d
 async def camera(body: CameraSimBody, dash: DashState = Depends(get_dash)) -> dict[str, Any]:
     """Pretend camera events. ``x``/``y`` are where the child is *as seen facing LittleBot*
     (screen coordinates, like the face's gaze): tapping the left of the pad makes the eyes
-    look left. The camera image is mirrored relative to that, so ``x_image = 1 - x``.
-    ``person_left`` = no face; the vision module reports the person gone after its usual
-    hysteresis (about 3 s)."""
+    look left. The camera image is mirrored relative to that (``camera.mirror``, the default),
+    so ``x_image = 1 - x``. ``person_left`` = no face; the vision module reports the person gone
+    after its usual hysteresis (about 3 s)."""
     ctx = dash.ctx
     vision = ctx.vision
-    x_image = round(1.0 - body.x, 4)
+    mirror = getattr(getattr(ctx.config, "camera", None), "mirror", True)
+    x_image = round(1.0 - body.x if mirror else body.x, 4)
     if vision is not None:
         if body.event == "face":
             vision.simulate_face(x_image, body.y, body.size)

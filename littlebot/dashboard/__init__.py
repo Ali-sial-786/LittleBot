@@ -6,7 +6,9 @@ no extra threads or loops. ``create_app(ctx, robot=None)`` builds the ASGI
 app on its own (used by tests).
 
 Binding: 127.0.0.1 by default; 0.0.0.0 only when ``dashboard.lan_access`` is
-explicitly enabled (config or ``--lan``).
+explicitly enabled (config or ``--lan``). uvicorn runs with ``proxy_headers=False``:
+there is no reverse proxy, so ``X-Forwarded-For`` is never trusted and the rate
+limits always see the real client address.
 """
 
 from __future__ import annotations
@@ -71,8 +73,11 @@ class DashboardService(Service):
         self.dash.bind_host, self.dash.port = self.host, self.port
         self.dash.urls = await asyncio.to_thread(dashboard_urls, self.host, self.port)
 
+        # proxy_headers=False: otherwise uvicorn trusts X-Forwarded-For from 127.0.0.1, and any local
+        # (or DNS-rebinding) client could pick a fresh "client IP" per request to dodge the rate limits.
         config = uvicorn.Config(self.app, host=self.host, port=self.port, log_level="warning", lifespan="off",
-                                access_log=False, server_header=False, timeout_graceful_shutdown=2)
+                                access_log=False, server_header=False, timeout_graceful_shutdown=2,
+                                proxy_headers=False, forwarded_allow_ips="")
         self._server = uvicorn.Server(config)
         self._task = asyncio.get_running_loop().create_task(self._serve(), name="dashboard-server")
         loop = asyncio.get_running_loop()
@@ -87,15 +92,17 @@ class DashboardService(Service):
         where = ", ".join(self.dash.urls) or self.url
         self.set_status(ServiceStatus.RUNNING, where)
         self.log.info("parent dashboard at %s%s", where, "" if self.host == "0.0.0.0" else " (this computer only)")
+        url = self.dash.urls[0] if self.dash.urls else self.url
+
+        def announce(code: str | None) -> None:
+            if self.ctx.config.dashboard.show_setup_code_on_screen or code is None:
+                self.ctx.bus.publish(Topics.DASHBOARD_SETUP,
+                                     {"active": code is not None, "code": code, "url": url}, source="dashboard")
+
+        # Installed even when a password exists: `reset-password` run while we are up makes the next
+        # dashboard visit issue a new code (DashState.ensure_setup_code), which must reach the screen too.
+        self.auth.on_setup_code = announce
         if self.auth.setup_required:
-            url = self.dash.urls[0] if self.dash.urls else self.url
-
-            def announce(code: str | None) -> None:
-                if self.ctx.config.dashboard.show_setup_code_on_screen or code is None:
-                    self.ctx.bus.publish(Topics.DASHBOARD_SETUP,
-                                         {"active": code is not None, "code": code, "url": url}, source="dashboard")
-
-            self.auth.on_setup_code = announce
             log_setup_code(self.auth.issue_setup_code(), url)
 
     async def _serve(self) -> None:

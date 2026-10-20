@@ -180,6 +180,70 @@ async def test_activities_list_and_filters(authed, fakes, dctx):
     assert (await authed.get("/api/activities/..%2Fetc")).status_code == 404
 
 
+async def test_recommended_activities_fallback_without_engine_method(authed, fakes, dctx):
+    # The fake engine has no recommended(): the route derives it from list() + the parent's preferences.
+    assert not hasattr(fakes["activities"], "recommended")
+    await authed.put("/api/profile", json={"nickname": "Sami", "age_months": 12})
+    await authed.put("/api/activities/animal_sounds/preferences", json={"favourite": True})
+    r = await authed.get("/api/activities/recommended")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["nickname"] == "Sami" and body["child_age_months"] == 12 and body["available"] is True
+    assert [i["id"] for i in body["items"]] == ["animal_sounds", "peekaboo"]  # favourite first, counting too old
+    assert body["items"][0]["favourite"] and body["items"][0]["suitable_now"] and body["items"][0]["age_label"]
+    assert fakes["activities"].called("list")[-1] == ((), {"age_months": 12, "category": None})
+    await authed.put("/api/activities/animal_sounds/preferences", json={"enabled": False})
+    assert [i["id"] for i in (await authed.get("/api/activities/recommended")).json()["items"]] == ["peekaboo"]
+    assert [i["id"] for i in (await authed.get("/api/activities/recommended?limit=1&category=language")).json()["items"]] == []
+    assert (await authed.get("/api/activities/recommended?limit=0")).status_code == 422
+    assert (await authed.get("/api/activities/recommended?limit=21")).status_code == 422
+    assert (await authed.get("/api/activities/recommended?category=cooking")).status_code == 422
+
+
+async def test_recommended_activities_uses_engine_method(authed, fakes, dctx):
+    acts = fakes["activities"]
+    calls = []
+
+    def recommended(age_months=None, *, category=None, limit=None):
+        calls.append((age_months, category, limit))
+        return [acts.get("counting"), acts.get("peekaboo")]
+
+    acts.recommended = recommended
+    await authed.put("/api/profile", json={"age_months": 40})
+    body = (await authed.get("/api/activities/recommended?limit=6&category=numeracy")).json()
+    assert calls == [(40, "numeracy", 6)]
+    assert [i["id"] for i in body["items"]] == ["counting", "peekaboo"]
+    assert body["items"][0]["suitable_now"] is True and body["items"][1]["suitable_now"] is False
+    assert body["nickname"] == ""
+
+
+async def test_recommended_activities_unavailable(dctx, app):
+    dctx.activities = None
+    async with make_client(app) as c:
+        await do_setup(c, app)
+        r = await c.get("/api/activities/recommended")
+        assert r.status_code == 200 and r.json()["items"] == [] and r.json()["available"] is False
+
+
+async def test_recommended_activities_with_real_engine(dctx, app):
+    from littlebot.activities.engine import ActivityEngine
+
+    dctx.activities = ActivityEngine(dctx)
+    try:
+        async with make_client(app) as c:
+            await do_setup(c, app)
+            await c.put("/api/profile", json={"nickname": "Sami", "age_months": 10})
+            await c.put("/api/activities/peekaboo/preferences", json={"favourite": True})
+            await c.put("/api/activities/again_again/preferences", json={"enabled": False})
+            body = (await c.get("/api/activities/recommended?limit=6")).json()
+            ids = [i["id"] for i in body["items"]]
+            assert len(ids) == 6 and ids[0] == "peekaboo" and "again_again" not in ids
+            assert all(i["suitable_now"] and i["enabled"] for i in body["items"])
+            assert body["nickname"] == "Sami" and body["child_age_months"] == 10
+    finally:
+        dctx.activities.close()
+
+
 async def test_activity_controls(authed, fakes):
     acts = fakes["activities"]
     r = await authed.post("/api/activities/peekaboo/start")
@@ -521,6 +585,13 @@ async def test_sim_caregiver_and_camera(authed, dctx, fakes):
     await authed.post("/api/sim/camera", json={"event": "person_left"})
     assert fakes["vision"].face is None
     assert (await authed.post("/api/sim/camera", json={"event": "explode"})).status_code == 422
+
+
+async def test_sim_camera_respects_camera_mirror_setting(authed, fakes, dctx):
+    # A camera whose driver already mirrors the image (camera.mirror: false): pad = image coordinates.
+    dctx.config.camera.mirror = False
+    r = await authed.post("/api/sim/camera", json={"event": "face", "x": 0.7, "y": 0.3})
+    assert r.json()["x_image"] == 0.7 and fakes["vision"].face == (0.7, 0.3)
 
 
 async def test_sim_camera_without_vision_publishes_events(dctx, app):

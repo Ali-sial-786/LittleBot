@@ -2,6 +2,11 @@
 
 Security layers applied here (details in docs/modules/dashboard.md):
 
+* an outermost ASGI guard (:class:`RequestGuard`) that runs before routing and
+  before any body byte is read: ``Host`` allowlist (400, DNS-rebinding defence),
+  request-body caps (413: 64 KB, 16 KB under ``/player``; ``Content-Length`` is
+  checked up front and chunked bodies are cut off while streaming) and the
+  client address for the auth failure accounting;
 * an HTTP middleware that, for every ``/api/*`` request except the public
   allowlist, resolves the session cookie (401 if missing / expired) and, for
   state-changing methods, checks the ``X-CSRF-Token`` header and the
@@ -20,13 +25,13 @@ from urllib.parse import urlsplit
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import ValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from littlebot.core.context import RobotContext
-from littlebot.dashboard.auth import CSRF_HEADER, SESSION_COOKIE, AuthManager
+from littlebot.dashboard.auth import CSRF_HEADER, SESSION_COOKIE, AuthManager, current_client
 from littlebot.dashboard.deps import DashState
 
 log = logging.getLogger("littlebot.dashboard")
@@ -34,6 +39,15 @@ log = logging.getLogger("littlebot.dashboard")
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 PUBLIC_API_PATHS = frozenset({"/api/health", "/api/session", "/api/login", "/api/setup"})
+# Public paths on which a missing password + missing setup code (reset-password while running)
+# makes the server issue a fresh code.
+SETUP_CODE_PATHS = frozenset({"/api/session", "/api/setup"})
+# Largest accepted request body. No dashboard request comes close (the biggest is a few KB);
+# /player uses the media module's own, smaller cap (littlebot.media.player_routes.MAX_BODY_BYTES).
+MAX_BODY_BYTES = 64 * 1024
+DEFAULT_PLAYER_MAX_BODY_BYTES = 16 * 1024
+UNKNOWN_HOST_MESSAGE = ("Unknown host name. Open the dashboard at the address LittleBot shows in its "
+                        "console (or add this name to dashboard.allowed_hosts).\n")
 SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 # Paths served by other modules' routers that set their own security headers.
 EXTERNAL_PREFIXES = ("/player",)
@@ -112,6 +126,8 @@ def create_app(ctx: RobotContext, robot: Any = None, *, auth: AuthManager | None
             token = request.cookies.get(SESSION_COOKIE)
             session = dash.auth.get_session(token)
             if path in PUBLIC_API_PATHS:
+                if session is None and path in SETUP_CODE_PATHS:
+                    dash.ensure_setup_code()
                 request.state.session = session
                 if method not in SAFE_METHODS:
                     ctype = (request.headers.get("content-type") or "").split(";")[0].strip().lower()
@@ -182,7 +198,110 @@ def create_app(ctx: RobotContext, robot: Any = None, *, auth: AuthManager | None
         app.add_api_route(page, _index, methods=["GET"], include_in_schema=False)
 
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+    # Added last = outermost: runs before the security middleware, routing and body parsing.
+    app.add_middleware(RequestGuard, dash=dash, player_max_body=_player_body_limit())
     return app
+
+
+class RequestGuard:
+    """Pure ASGI guard in front of everything else (see the module docstring).
+
+    * ``Host`` must be on the allowlist (:class:`littlebot.dashboard.deps.HostAllowlist`), else 400.
+    * ``Content-Length`` above the cap -> 413 without reading the body; bodies without a length
+      (chunked) are counted while the app reads them and replaced by a 413 once over the cap,
+      so at most ``cap`` bytes are ever buffered. 413 responses close the connection.
+    * The client address is published in :data:`littlebot.dashboard.auth.current_client`.
+    """
+
+    def __init__(self, app: Any, *, dash: DashState, max_body: int = MAX_BODY_BYTES,
+                 player_max_body: int = DEFAULT_PLAYER_MAX_BODY_BYTES) -> None:
+        self.app = app
+        self.dash = dash
+        self.max_body = int(max_body)
+        self.player_max_body = int(player_max_body)
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        path = scope.get("path") or ""
+        hosts: list[str] = []
+        length: bytes | None = None
+        for key, value in scope.get("headers") or ():
+            if key == b"host":
+                hosts.append(value.decode("latin-1"))
+            elif key == b"content-length":
+                length = value
+        host = hosts[0] if len(hosts) == 1 else (None if not hosts else "")  # several Host headers: refuse
+        if not self.dash.hosts.allowed(host, scope.get("server")):
+            self.dash.hosts.note_rejected(host)
+            await _unknown_host(path)(scope, receive, send)
+            return
+        limit = self.player_max_body if path == "/player" or path.startswith("/player/") else self.max_body
+        if length is not None:
+            try:
+                declared = int(length)
+            except ValueError:
+                await _apply_headers(path, _error(400, "Invalid Content-Length.", "bad_request"))(scope, receive, send)
+                return
+            if declared > limit:
+                await _too_large(path)(scope, receive, send)
+                return
+
+        state = {"received": 0, "too_large": False, "started": False}
+
+        async def limited_receive() -> Any:
+            if state["too_large"]:
+                return {"type": "http.disconnect"}
+            message = await receive()
+            if message.get("type") == "http.request":
+                state["received"] += len(message.get("body") or b"")
+                if state["received"] > limit:
+                    # Stop here: the app sees a disconnect (never the extra bytes) and its
+                    # response is replaced by a 413 below.
+                    state["too_large"] = True
+                    return {"type": "http.disconnect"}
+            return message
+
+        async def guarded_send(message: Any) -> None:
+            if state["too_large"]:
+                if message.get("type") == "http.response.start" and not state["started"]:
+                    state["started"] = True
+                    await _too_large(path)(scope, receive, send)
+                return  # drop whatever the app tried to send instead
+            if message.get("type") == "http.response.start":
+                state["started"] = True
+            await send(message)
+
+        client = scope.get("client")
+        token = current_client.set(str(client[0]) if client else None)
+        try:
+            await self.app(scope, limited_receive, guarded_send)
+        except Exception:
+            if not state["too_large"]:
+                raise
+        finally:
+            current_client.reset(token)
+        if state["too_large"] and not state["started"]:
+            state["started"] = True
+            await _too_large(path)(scope, receive, send)
+
+
+def _unknown_host(path: str) -> Response:
+    return _apply_headers(path, PlainTextResponse(UNKNOWN_HOST_MESSAGE, status_code=400,
+                                                  headers={"Cache-Control": "no-store"}))
+
+
+def _too_large(path: str) -> Response:
+    return _apply_headers(path, _error(413, "That request is too large.", "too_large", headers={"Connection": "close"}))
+
+
+def _player_body_limit() -> int:
+    try:
+        from littlebot.media.player_routes import MAX_BODY_BYTES as player_max  # type: ignore[import-not-found]
+    except ImportError:
+        return DEFAULT_PLAYER_MAX_BODY_BYTES
+    return int(player_max)
 
 
 def _apply_headers(path: str, response: Response) -> Response:

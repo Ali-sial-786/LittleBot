@@ -11,6 +11,10 @@ GET  /player?token=...        the page (strict Content-Security-Policy for the I
 GET  /player/static/<file>    player.js / player.css (no secrets, whitelisted names only)
 GET  /player/api/state        desired state: {seq, action, load_id, item, volume, ...}
 POST /player/api/event        {type: ready|playing|paused|buffering|ended|error|heartbeat|hidden|..., load_id, code, ...}
+                              (``video_id`` + for playlists ``playlist_ids``: checked by the controller)
+
+Request bodies under ``/player`` are capped at ``MAX_BODY_BYTES`` by the dashboard's outermost
+middleware *before* anything is read (``Content-Length`` -> 413, chunked bodies cut off at the cap).
 """
 
 from __future__ import annotations
@@ -53,6 +57,10 @@ PAGE_HEADERS = {
 }
 API_HEADERS = {"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"}
 
+# Largest accepted request body for any /player route (enforced by the dashboard middleware).
+# The biggest legitimate one is an event with 500 ``playlist_ids`` (~7 KB of JSON).
+MAX_BODY_BYTES = 16 * 1024
+
 
 class PlayerMedia(Protocol):
     """What the router needs from the media service (MediaController implements it)."""
@@ -79,6 +87,8 @@ class PlayerEvent(BaseModel):
     current_time: float | None = Field(default=None, ge=0, le=1e7)
     duration: float | None = Field(default=None, ge=0, le=1e7)
     video_id: ShortStr | None = None
+    playlist_ids: list[Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9_-]{11}$")]] | None = Field(
+        default=None, max_length=500)
     detail: Annotated[str, StringConstraints(max_length=200)] | None = None
 
 

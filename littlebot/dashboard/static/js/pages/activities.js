@@ -1,7 +1,7 @@
 // Activities: filter by age group / category, start / pause / stop, favourites, caregiver prompts.
 
 import { get, post, put } from '../api.js';
-import { button, clear, fmtAge, fmtDuration, h, icon, pageHead, setText, titleCase } from '../ui.js';
+import { append, button, clear, fmtAge, fmtDuration, h, icon, pageHead, setText, titleCase } from '../ui.js';
 
 const STEP_KIND = { note: 'Tip for you', song: 'Sing along', sing: 'Sing along', say: 'LittleBot says', prompt: 'Your turn', wait: 'Waiting' };
 
@@ -11,7 +11,12 @@ export default {
     let filter = { mode: null, group: null, category: '', favourites: false };
     let loadSeq = 0;
 
-    const running = h('section', { class: 'card info', hidden: true });
+    const running = h('section', { class: 'card info act-running', hidden: true });
+    const suggestTitle = h('h2');
+    const suggestNote = h('p', { class: 'muted' });
+    const suggestList = h('div', { class: 'suggest-grid' });
+    const suggest = h('section', { class: 'card', hidden: true, 'aria-label': 'Suggested activities' },
+      h('div', { class: 'card-head' }, suggestTitle), suggestNote, suggestList);
     const groupChips = h('div', { class: 'chips scroll', role: 'group', 'aria-label': 'Age group' });
     const catSelect = h('select', { 'aria-label': 'Category' }, h('option', { value: '', text: 'All categories' }));
     const favChip = h('button', { type: 'button', class: 'chip', 'aria-pressed': 'false' }, icon('star'), 'Favourites');
@@ -22,6 +27,7 @@ export default {
       pageHead('Activities', 'Short, gentle games. LittleBot leads with sounds, eyes and movement - you join in and help.'),
       h('div', { class: 'stack' },
         running,
+        suggest,
         h('div', { class: 'stack-sm' }, groupChips, h('div', { class: 'row' }, h('div', { class: 'grow' }, catSelect), favChip)),
         countEl,
         list));
@@ -87,12 +93,39 @@ export default {
       for (const a of res.items) list.append(activityCard(a));
     }
 
+    async function loadSuggested() {
+      let res;
+      try { res = await get('/activities/recommended?limit=6'); } catch { suggest.hidden = true; return; }
+      clear(suggestList);
+      suggest.hidden = !res.available || !res.items.length;
+      if (suggest.hidden) return;
+      setText(suggestTitle, `Suggested for ${res.nickname || 'your child'}`);
+      setText(suggestNote, res.child_age_months != null
+        ? `Picked for ${fmtAge(res.child_age_months)} - favourites first.`
+        : 'Add your child\'s age in the Child profile for suggestions that fit.');
+      for (const a of res.items) {
+        suggestList.append(h('div', { class: 'suggest-item' },
+          h('div', { class: 'grow' }, h('strong', { text: a.name }), h('div', { class: 'muted', text: [a.age_label, titleCase(a.category)].filter(Boolean).join(' · ') })),
+          button('Start', { kind: 'primary small', iconName: 'play', ariaLabel: `Start ${a.name}`, onClick: () => startActivity(a) })));
+      }
+    }
+
+    // On a phone the running card (with the caregiver's answer buttons) is far above the card
+    // that was tapped: show it straight away and bring it into view.
+    async function startActivity(a) {
+      const r = await app.act(() => post(`/activities/${encodeURIComponent(a.id)}/start`), `Starting “${a.name}”`);
+      if (r?.status?.running) {
+        renderRunning({ activities: r.status });
+        running.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    }
+
     function activityCard(a) {
       const star = h('button', { type: 'button', class: 'star', 'aria-pressed': String(!!a.favourite), 'aria-label': `Favourite ${a.name}` }, icon(a.favourite ? 'starFill' : 'star'));
       star.addEventListener('click', async () => {
         const want = star.getAttribute('aria-pressed') !== 'true';
         const r = await app.act(() => put(`/activities/${encodeURIComponent(a.id)}/preferences`, { favourite: want }));
-        if (r) { star.setAttribute('aria-pressed', String(want)); clear(star).append(icon(want ? 'starFill' : 'star')); }
+        if (r) { star.setAttribute('aria-pressed', String(want)); clear(star).append(icon(want ? 'starFill' : 'star')); loadSuggested(); }
       });
       const allow = h('input', { type: 'checkbox', checked: a.enabled !== false });
       const article = h('article', { class: ['card', 'act', a.enabled === false ? 'disabled' : ''] });
@@ -100,6 +133,7 @@ export default {
         const r = await app.act(() => put(`/activities/${encodeURIComponent(a.id)}/preferences`, { enabled: allow.checked }));
         if (!r) allow.checked = !allow.checked;
         article.classList.toggle('disabled', !allow.checked);
+        if (r) loadSuggested();
       });
       const badges = [
         a.age_label ? h('span', { class: 'badge brand', text: a.age_label }) : null,
@@ -114,7 +148,7 @@ export default {
             a.parent_instructions ? h('p', { text: a.parent_instructions }) : null,
             a.safety_notes ? h('div', { class: 'safety' }, icon('shield'), h('span', { text: a.safety_notes })) : null))
         : null;
-      article.append(
+      append(article, [
         h('div', { class: 'act-title' }, h('h3', { text: a.name }), star),
         h('div', { class: 'meta' }, badges),
         a.description ? h('p', { class: 'desc', text: a.description }) : null,
@@ -122,7 +156,7 @@ export default {
         details,
         h('div', { class: 'act-foot' },
           h('label', { class: 'mini-toggle', title: 'When off, LittleBot will not suggest this activity' }, allow, 'Allowed'),
-          button('Start', { kind: 'primary', iconName: 'play', onClick: () => app.act(() => post(`/activities/${encodeURIComponent(a.id)}/start`), `Starting “${a.name}”`) })));
+          button('Start', { kind: 'primary', iconName: 'play', onClick: () => startActivity(a) }))]);
       return article;
     }
 
@@ -137,7 +171,7 @@ export default {
       clear(running);
       if (!a.running) return;
       const total = Number(a.total_steps) || 0;
-      running.append(
+      append(running, [
         h('div', { class: 'row between' },
           h('div', {}, h('div', { class: 'muted', text: a.paused ? 'Paused' : 'Now playing' }), h('h2', { text: a.name || 'Activity' })),
           h('div', { class: 'btn-row' },
@@ -145,7 +179,7 @@ export default {
               ? button('Resume', { kind: 'primary small', iconName: 'play', onClick: () => app.act(() => post('/activities/resume')) })
               : button('Pause', { kind: 'soft small', iconName: 'pause', onClick: () => app.act(() => post('/activities/pause')) }),
             button('Stop', { kind: 'danger-outline small', iconName: 'square', onClick: () => app.act(() => post('/activities/stop'), 'Activity stopped.') }))),
-        a.step_text ? h('p', { class: 'mt-1' }, h('span', { class: 'muted', text: `${total ? `Step ${Math.min((a.step_index || 0) + 1, total)} of ${total}` : ''}${STEP_KIND[a.step_kind] ? ` · ${STEP_KIND[a.step_kind]}` : ''}` }), h('br'), a.step_text) : null);
+        a.step_text ? h('p', { class: 'mt-1' }, h('span', { class: 'muted', text: `${total ? `Step ${Math.min((a.step_index || 0) + 1, total)} of ${total}` : ''}${STEP_KIND[a.step_kind] ? ` · ${STEP_KIND[a.step_kind]}` : ''}` }), h('br'), a.step_text) : null]);
       if (p && p.text) {
         const opts = (p.options && p.options.length ? p.options : ['done', 'skip']).slice(0, 6);
         running.append(h('div', { class: 'card prompt mt-2' },
@@ -159,6 +193,7 @@ export default {
     }
 
     load();
+    loadSuggested();
     return { update: renderRunning };
   },
 };

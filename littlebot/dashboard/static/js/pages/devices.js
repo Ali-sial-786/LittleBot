@@ -1,7 +1,7 @@
 // Audio & devices: speaker, speech, microphone and camera status, tests and settings.
 
 import { get, post, put } from '../api.js';
-import { banner, button, clear, deviceState, h, icon, pageHead, rangeField, setText, switchRow, titleCase } from '../ui.js';
+import { banner, button, cameraState, clear, deviceState, h, icon, pageHead, rangeField, setText, switchRow, titleCase } from '../ui.js';
 
 function statusBadge(value) {
   const ds = deviceState(value);
@@ -122,7 +122,7 @@ export default {
 
     function renderVision(v, privacy) {
       const camOff = privacy?.camera_enabled === false;
-      clear(camBadge).append(statusBadge(camOff ? 'disabled' : v.camera ?? v.status));
+      clear(camBadge).append(statusBadge(cameraState(v, privacy)));
       const num = (x, d = 1) => (x === null || x === undefined || Number.isNaN(Number(x)) ? undefined : Number(x).toFixed(d));
       kv(camKv, [
         ['Backend', v.backend !== undefined ? `${v.backend}${v.simulated ? ' (simulated)' : ''}` : undefined],

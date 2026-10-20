@@ -31,11 +31,13 @@ journalctl --user -u littlebot -b | grep -i "setup code"       # when running as
 
 Only someone who can see the robot's console can read the code, so nobody else on your
 network can claim the dashboard. A new code is printed at every start until setup is done,
-and after 10 wrong tries.
+and after many wrong tries from several devices (one device alone only gets slowed down -
+it cannot use up your code).
 
-**Forgot the password?** Stop LittleBot, then on the robot run
-`python -m littlebot.dashboard reset-password` and start LittleBot again - it prints a new
-setup code. (All devices are logged out.)
+**Forgot the password?** On the robot run `python -m littlebot.dashboard reset-password`.
+Every device is logged out immediately. If LittleBot is running, just open the dashboard
+again: LittleBot prints a new setup code in its console/log (and shows it on its screen) -
+no restart needed. If it was stopped, start it and look for the code as above.
 
 ## 2. Using it from your phone (opt-in)
 
@@ -53,16 +55,33 @@ By default the dashboard only accepts connections from the robot itself. To use 
    `littlebot` usually also `http://littlebot.local:8765/`). Open it on a phone connected to
    the **same Wi-Fi** and log in. Tip: add it to your home screen.
 
-Only do this on a home network you trust. Never forward the dashboard port on your router
-or expose it to the internet. The **Settings** page shows whether LAN access is on and the
-current address.
+**LAN mode is plain HTTP on your home network.** Your parent password and the login cookie
+travel over the Wi-Fi unencrypted, so anyone who can watch that network's traffic could
+read them. Use LAN access only on your own, trusted home Wi-Fi (with a WPA2/WPA3 password) -
+not on guest, school, office or public Wi-Fi - and **never forward the dashboard port on
+your router** or otherwise expose it to the internet. The **Settings** page shows whether
+LAN access is on and the current address.
+
+The dashboard only answers to the robot's own addresses: `localhost` / `127.0.0.1`, its
+hostname and `<hostname>.local`, and (with LAN access) its IP addresses on your network.
+`localhost` works on any port (so an SSH tunnel just works). If you reach it some other
+way - your own DNS name or a reverse proxy - and see "Unknown host name", add that name to
+the configuration:
+
+```yaml
+dashboard:
+  allowed_hosts: [littlebot.home]
+```
+
+(This blocks "DNS rebinding", a trick that lets a web page on the internet talk to devices
+on your home network through your own browser.)
 
 ## 3. What each page does
 
 | Page | What you can do |
 |------|-----------------|
 | **Home** | See what LittleBot is doing, its face, devices and system health. The big red **STOP** stops activity, video, speech, listening and movement at once (a STOP button is also always at the top of every page). Put LittleBot to sleep or wake it. When an activity asks you something ("Did your child clap?") the question and answer buttons appear right at the top. |
-| **Activities** | Browse games by age group ("For your child" uses the profile's age) and category. Each card shows the age range, what your child does, tips **for grown-ups** and **safety notes**. Start / pause / stop, star favourites, and untick "Allowed" to keep an activity out of LittleBot's suggestions. |
+| **Activities** | **Suggested for <your child's nickname>** at the top: up to six allowed games that fit the profile's age, favourites first. Browse games by age group ("For your child" uses the profile's age) and category. Each card shows the age range, what your child does, tips **for grown-ups** and **safety notes**. Start / pause / stop, star favourites, and untick "Allowed" to keep an activity out of LittleBot's suggestions. |
 | **Videos** | Add YouTube links to the approved list (only approved videos can ever play; for a video inside a playlist you choose "just this video" or "whole playlist"), rename, pause ("Allowed" off), reorder or remove them, play / pause / skip / stop, set the volume and the minutes per session and per day. Videos are off for children under 18 months unless you explicitly authorise them (with a clear warning). "Open player on this device" shows the video player on the phone/computer you are using. |
 | **Face** | Pick an expression, blink, choose where LittleBot looks by tapping/dragging in the box, play little animations or a 15-second demo. |
 | **Child profile** | Optional nickname, birth month (month and year only) or age in months, language, favourite animals, songs and interests. LittleBot uses the age to choose suitable games; without an age it uses its gentlest settings. "Forget profile" clears it. |
@@ -82,10 +101,14 @@ tap OK. Only a category is shown - never the child's words.
 * Your password is stored only as a salted scrypt hash on the robot (`data/littlebot.db`).
 * Sessions last 12 hours (`dashboard.session_hours`); log out everywhere from Settings,
   and changing the password logs out all other devices.
-* Login attempts are limited (5 per minute per device by default).
-* The dashboard uses plain `http` on your home network. Anyone who can watch your Wi-Fi
-  traffic could see it, which is why LAN access is opt-in and meant for trusted home
-  networks only.
+* Login attempts are limited (5 per minute per device by default). If many wrong
+  passwords or setup codes arrive from several devices at once (20 a minute), login pauses
+  for everyone for 30 seconds - you will see "Too many attempts"; just wait and try again.
+* The dashboard uses plain `http` on your home network: the password and session cookie
+  are not encrypted on the Wi-Fi. That is why LAN access is opt-in and meant for trusted
+  home Wi-Fi only - never port-forward it or open it to the internet.
+* It only answers requests addressed to the robot's own names (see section 2), and
+  ignores oversized requests.
 * The page loads nothing from the internet except small thumbnails of the videos you
   approved (they simply don't show when offline).
 * API keys stay in `.env` on the robot and are never sent to the browser.

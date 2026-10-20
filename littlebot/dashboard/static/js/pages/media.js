@@ -119,7 +119,11 @@ export default {
     // ---- limits
     const enabled = switchRow({
       title: 'Videos allowed', text: 'Turn off to stop all video playback on LittleBot.',
-      onChange: async (v) => (await app.act(() => put('/media/settings', { enabled: v }), v ? 'Videos allowed.' : 'Videos turned off.')) !== null,
+      onChange: async (v) => {
+        const r = await app.act(() => put('/media/settings', { enabled: v }), v ? 'Videos allowed.' : 'Videos turned off.');
+        await reload(); // the "Videos are turned off" banner depends on it
+        return r !== null;
+      },
     });
     const sessionInput = h('input', { type: 'number', id: 'lim-session', min: 1, max: 180, inputmode: 'numeric' });
     const dailyInput = h('input', { type: 'number', id: 'lim-daily', min: 0, max: 600, inputmode: 'numeric' });

@@ -10,12 +10,14 @@ from __future__ import annotations
 
 import asyncio
 import collections
+import ipaddress
 import itertools
 import logging
 import socket
 import threading
 import time
 from typing import Any, Coroutine
+from urllib.parse import urlsplit
 
 from fastapi import HTTPException, Request
 
@@ -23,7 +25,7 @@ from littlebot import __version__
 from littlebot.core.context import RobotContext
 from littlebot.core.events import Event, Subscription, Topics
 from littlebot.core.state import RobotState
-from littlebot.dashboard.auth import AuthManager, Session
+from littlebot.dashboard.auth import AuthManager, Session, log_setup_code
 from littlebot.safety.policy import age_group_label
 
 log = logging.getLogger("littlebot.dashboard")
@@ -59,6 +61,7 @@ class DashState:
         self.bind_host: str | None = None
         self.port: int | None = None
         self.urls: list[str] = []
+        self.hosts = HostAllowlist(self)
         # Parent alerts (e.g. the brain heard "I'm hurt"): category labels only, never the child's words.
         self._alerts: collections.deque[dict[str, Any]] = collections.deque(maxlen=20)
         self._alert_ids = itertools.count(1)
@@ -78,6 +81,13 @@ class DashState:
         for sub in self._subs:
             sub.cancel()
         self._subs.clear()
+
+    def ensure_setup_code(self) -> None:
+        """No password and no active setup code (``reset-password`` while running): issue, log
+        and announce (``auth.on_setup_code`` -> robot screen) a fresh one."""
+        code = self.auth.ensure_setup_code()
+        if code is not None:
+            log_setup_code(code, self.urls[0] if self.urls else None)
 
     # ------------------------------------------------------------ alerts
     def _add_alert(self, kind: str, title: str, detail: str, key: str) -> None:
@@ -340,6 +350,142 @@ def lan_addresses() -> list[str]:
     except OSError:
         pass
     return addrs
+
+
+def split_host(value: str) -> tuple[str, int | None] | None:
+    """``Host`` header / config entry -> (lower-case name without trailing dot, port or None); None if malformed."""
+    v = value.strip().lower()
+    if "://" in v:  # tolerate "http://name:port/" in the config
+        v = urlsplit(v).netloc
+    if not v or any(c in v for c in "/\\@ \t"):
+        return None
+    if v.startswith("["):  # [IPv6]:port
+        end = v.find("]")
+        if end < 0:
+            return None
+        name, rest = v[1:end], v[end + 1:]
+        if rest and not rest.startswith(":"):
+            return None
+        port_s = rest[1:]
+    else:
+        if v.count(":") > 1:  # a bare IPv6 address is not a valid Host header
+            return None
+        name, _, port_s = v.partition(":")
+    name = name.rstrip(".")
+    if not name:
+        return None
+    if not port_s:
+        return name, None
+    if not port_s.isdigit() or len(port_s) > 5 or int(port_s) > 65535:
+        return None
+    return name, int(port_s)
+
+
+def _ip(name: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
+    try:
+        return ipaddress.ip_address(name)
+    except ValueError:
+        return None
+
+
+class HostAllowlist:
+    """Which ``Host`` header values the dashboard answers (DNS-rebinding defence).
+
+    A browser always sends the host name from the address bar, so a page on
+    ``attacker.example`` whose DNS is re-pointed at the robot still sends
+    ``Host: attacker.example`` and is refused before any route runs. Allowed:
+
+    * ``localhost`` and loopback IP literals (``127.x.x.x``, ``::1``);
+    * this machine's hostname, its first label and ``<first label>.local``;
+    * with ``dashboard.lan_access``: this machine's LAN IP addresses (the address the
+      connection actually arrived on, plus ``lan_addresses()`` / the dashboard URLs);
+    * every ``dashboard.allowed_hosts`` entry and the host of ``media.player_base_url``.
+
+    Loopback names (``localhost``, ``127.x``, ``::1``) match any port (SSH tunnels). Other
+    names given without a port match the dashboard's port or no port; an entry with an
+    explicit port (``"robot.example:9000"``) matches only that port.
+    """
+
+    REFRESH_SECONDS = 30.0  # how often an unknown IP literal may trigger a LAN address re-scan
+    _MAX_LOGGED = 20
+
+    def __init__(self, dash: "DashState") -> None:
+        self._dash = dash
+        self._names: frozenset[str] | None = None
+        self._ips: set[str] = set()
+        self._ips_scanned = float("-inf")
+        self._logged: set[str] = set()
+
+    def _own_names(self) -> frozenset[str]:
+        if self._names is None:
+            names = {"localhost"}
+            try:
+                hostname = socket.gethostname().strip().lower().rstrip(".")
+            except OSError:
+                hostname = ""
+            if hostname:
+                short = hostname.split(".")[0]
+                names.update({hostname, short, f"{short}.local"})
+            self._names = frozenset(names)
+        return self._names
+
+    def _configured(self) -> list[tuple[str, int | None]]:
+        ctx = self._dash.ctx
+        entries = list(getattr(ctx.config.dashboard, "allowed_hosts", None) or [])
+        player_base = getattr(getattr(ctx.config, "media", None), "player_base_url", None)
+        if player_base:
+            entries.append(str(player_base))
+        return [h for h in (split_host(str(e)) for e in entries) if h is not None]
+
+    def _is_lan_ip(self, ip: str, server: Any) -> bool:
+        if isinstance(server, (tuple, list)) and server and str(server[0]).lower() == ip:
+            return True  # the address this very connection was accepted on
+        if ip in self._ips:
+            return True
+        now = time.monotonic()
+        if now - self._ips_scanned >= self.REFRESH_SECONDS:  # DHCP may have moved us: re-scan (throttled)
+            self._ips_scanned = now
+            ips = set(lan_addresses())
+            ips.update((urlsplit(u).hostname or "").lower() for u in self._dash.urls)
+            self._ips = {i for i in ips if i}
+        return ip in self._ips
+
+    def allowed(self, value: str | None, server: Any = None) -> bool:
+        if value is None:
+            return True  # HTTP/1.0 without Host: not a browser, so not a rebinding attack
+        parsed = split_host(value)
+        if parsed is None:
+            return False
+        name, port = parsed
+        dash_port = self._dash.port or self._dash.ctx.config.dashboard.port
+        for allowed_name, allowed_port in self._configured():
+            if name == allowed_name and (port == allowed_port if allowed_port is not None
+                                         else port in (None, dash_port)):
+                return True
+        # Loopback names on any port (SSH tunnels, port forwards on this machine): a rebinding
+        # page always sends ITS OWN hostname, never "localhost", so port strictness adds nothing.
+        if name == "localhost" or ((ip0 := _ip(name)) is not None and ip0.is_loopback):
+            return True
+        if port not in (None, dash_port):
+            return False
+        if name in self._own_names():
+            return True
+        ip = _ip(name)
+        if ip is not None:
+            if ip.is_loopback:
+                return True
+            if self._dash.ctx.config.dashboard.lan_access and self._is_lan_ip(str(ip), server):
+                return True
+        return False
+
+    def note_rejected(self, value: str | None) -> None:
+        """Log the first few distinct refused names (helps a parent who uses an unusual address)."""
+        key = (value or "")[:100]
+        if key in self._logged or len(self._logged) >= self._MAX_LOGGED:
+            return
+        self._logged.add(key)
+        log.warning("dashboard request for unknown host %r refused (DNS-rebinding protection). If this is "
+                    "how you reach your robot, add it to dashboard.allowed_hosts.", key)
 
 
 def dashboard_urls(bind_host: str, port: int) -> list[str]:

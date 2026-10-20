@@ -12,13 +12,20 @@ Design (see docs/modules/dashboard.md for the full write-up):
 * Sessions use random 32-byte tokens. Only the SHA-256 of a token is stored
   (``dashboard_sessions`` table, cached in memory). Each session has its own
   CSRF token which the frontend sends as ``X-CSRF-Token`` on every mutation.
-* Login, setup-code and change-password attempts are rate limited per client IP.
+* Login, setup-code and change-password attempts are rate limited per client IP
+  (the real TCP peer: uvicorn runs with ``proxy_headers=False``). Failed logins and
+  setup codes are additionally counted across *all* clients: too many in a minute
+  pauses login / setup for everyone for a short lockout (so many addresses cannot
+  multiply the guess rate).
+* A session is only valid while its row exists in SQLite, so the
+  ``reset-password`` CLI (another process) logs every device out immediately.
 """
 
 from __future__ import annotations
 
 import asyncio
 import collections
+import contextvars
 import hashlib
 import hmac
 import logging
@@ -40,7 +47,17 @@ MAX_PASSWORD_LENGTH = 256
 MAX_SESSIONS = 32  # oldest sessions are dropped beyond this
 SETUP_CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"  # no 0/O, 1/I/L
 SETUP_CODE_LENGTH = 8
-SETUP_CODE_MAX_FAILURES = 10  # after this many wrong codes a fresh code is issued
+SETUP_CODE_MAX_FAILURES = 10  # after this many wrong codes a fresh code is issued ...
+SETUP_CODE_MAX_FAILURES_PER_CLIENT = 3  # ... but one client counts at most 3 of them (cannot burn it alone)
+
+# Failed logins / setup codes from all clients together: this many per minute, then everyone waits.
+GLOBAL_FAILURES_PER_MINUTE = 20
+GLOBAL_LOCKOUT_SECONDS = 30.0
+
+# The client address of the request being handled (set by the dashboard middleware), so the
+# setup-code failure accounting can tell clients apart without changing the route signatures.
+current_client: contextvars.ContextVar[str | None] = contextvars.ContextVar("littlebot_dashboard_client",
+                                                                           default=None)
 
 # scrypt cost: 16 MiB of memory, ~50-150 ms on a Raspberry Pi 5.
 SCRYPT_N = 2**14
@@ -151,6 +168,80 @@ class RateLimiter:
                 del self._hits[k]
 
 
+class FailureLockout:
+    """Failures from *all* clients: ``limit`` within ``window`` s locks everyone out for ``lockout`` s.
+
+    Failures stay in the sliding window, so a failure right after a lockout (while the window
+    is still full) starts the next one: overall at most about ``limit`` failures per window.
+    """
+
+    def __init__(self, limit: int = GLOBAL_FAILURES_PER_MINUTE, window: float = 60.0,
+                 lockout: float = GLOBAL_LOCKOUT_SECONDS, *, now: Callable[[], float] = time.monotonic,
+                 name: str = "login") -> None:
+        self.limit = max(1, int(limit))
+        self.window = float(window)
+        self.lockout = float(lockout)
+        self.name = name
+        self._now = now
+        self._fails: collections.deque[float] = collections.deque()
+        self._locked_until = 0.0
+        self._lock = threading.Lock()
+
+    def retry_after(self) -> float | None:
+        """Seconds until attempts are accepted again, or ``None`` when not locked."""
+        remaining = self._locked_until - self._now()
+        return remaining if remaining > 0 else None
+
+    def failure(self) -> None:
+        now = self._now()
+        with self._lock:
+            while self._fails and now - self._fails[0] >= self.window:
+                self._fails.popleft()
+            self._fails.append(now)
+            if len(self._fails) >= self.limit and now >= self._locked_until:
+                self._locked_until = now + self.lockout
+                log.warning("%d failed dashboard %s attempts within %.0f s (from several devices?): "
+                            "%s paused for everyone for %.0f s", len(self._fails), self.name, self.window,
+                            self.name, self.lockout)
+
+    def reset(self) -> None:
+        with self._lock:
+            self._fails.clear()
+            self._locked_until = 0.0
+
+
+class GuardedLimiter:
+    """What the login / setup routes call ``hit(ip)`` on: the global lockout first, then per client.
+
+    Requests refused here never reach the password / setup-code check, so they are not counted
+    as failures (neither per client nor globally) and cannot burn the setup code.
+    """
+
+    def __init__(self, per_client: RateLimiter, lockout: FailureLockout) -> None:
+        self.per_client = per_client
+        self.lockout = lockout
+
+    @property
+    def limit(self) -> int:
+        return self.per_client.limit
+
+    @property
+    def window(self) -> float:
+        return self.per_client.window
+
+    def hit(self, key: str) -> float | None:
+        retry = self.lockout.retry_after()
+        if retry is not None:
+            return retry
+        return self.per_client.hit(key)
+
+    def failure(self) -> None:
+        self.lockout.failure()
+
+    def reset(self, key: str) -> None:
+        self.per_client.reset(key)
+
+
 # ---------------------------------------------------------------------------
 # Sessions
 # ---------------------------------------------------------------------------
@@ -184,6 +275,7 @@ class AuthManager:
     """Password, setup code, sessions and rate limits for the single parent account."""
 
     def __init__(self, db: Database, *, session_hours: float = 12.0, attempts_per_minute: int = 5,
+                 global_failures_per_minute: int | None = None, global_lockout_seconds: float = GLOBAL_LOCKOUT_SECONDS,
                  now: Callable[[], float] = time.time, monotonic: Callable[[], float] = time.monotonic) -> None:
         self._db = db
         self._now = now
@@ -192,11 +284,18 @@ class AuthManager:
         self._sessions: dict[str, Session] = {}
         self._setup_code_hash: str | None = None
         self._setup_failures = 0
+        self._setup_failures_by_client: dict[str, int] = {}
         # Called with the new code when one is issued, and with None once setup is complete
         # (the dashboard service uses it to show the code on the robot's own screen).
         self.on_setup_code: Callable[[str | None], None] | None = None
-        self.login_limiter = RateLimiter(attempts_per_minute, 60.0, now=monotonic)
-        self.setup_limiter = RateLimiter(attempts_per_minute, 60.0, now=monotonic)
+        if global_failures_per_minute is None:  # never below a few devices' worth of per-client attempts
+            global_failures_per_minute = max(GLOBAL_FAILURES_PER_MINUTE, 2 * int(attempts_per_minute))
+        self.login_limiter = GuardedLimiter(
+            RateLimiter(attempts_per_minute, 60.0, now=monotonic),
+            FailureLockout(global_failures_per_minute, 60.0, global_lockout_seconds, now=monotonic, name="login"))
+        self.setup_limiter = GuardedLimiter(
+            RateLimiter(attempts_per_minute, 60.0, now=monotonic),
+            FailureLockout(global_failures_per_minute, 60.0, global_lockout_seconds, now=monotonic, name="setup"))
         self.password_limiter = RateLimiter(attempts_per_minute, 60.0, now=monotonic)
         self._db.execute(_SCHEMA)
         self._load_sessions()
@@ -216,9 +315,22 @@ class AuthManager:
         with self._lock:
             self._setup_code_hash = _sha256(code)
             self._setup_failures = 0
+            self._setup_failures_by_client.clear()
         pretty = f"{code[:4]}-{code[4:]}"
         self._notify_setup_code(pretty)
         return pretty
+
+    def ensure_setup_code(self) -> str | None:
+        """Issue a fresh code when setup is needed but none is active, else ``None``. Caller logs it.
+
+        This is how a running robot recovers from ``reset-password`` run in another process:
+        the next dashboard visit finds no password and no code, and gets a new one.
+        """
+        if self._setup_code_hash is not None or not self.setup_required:
+            return None
+        log.warning("the dashboard has no password and no active setup code (reset-password while running?); "
+                    "issuing a new setup code")
+        return self.issue_setup_code()
 
     def _notify_setup_code(self, code: str | None) -> None:
         hook = self.on_setup_code
@@ -232,14 +344,28 @@ class AuthManager:
     def setup_code_active(self) -> bool:
         return self._setup_code_hash is not None
 
-    def _check_setup_code(self, code: str) -> bool:
+    def _check_setup_code(self, code: str, client: str | None = None) -> bool:
+        """Compare against the active code. Wrong codes count towards burning it, but each client
+        (``client`` or the request's address from :data:`current_client`) only up to
+        ``SETUP_CODE_MAX_FAILURES_PER_CLIENT`` times, so a single neighbour can only be rate
+        limited, never deny the parent their code. Calls with no known client always count.
+        """
+        client = client if client is not None else current_client.get()
         with self._lock:
             expected = self._setup_code_hash
             if expected is None:
                 return False
             ok = hmac.compare_digest(_sha256(normalise_setup_code(code)), expected)
             if not ok:
-                self._setup_failures += 1
+                self.setup_limiter.failure()
+                counted = True
+                if client is not None:
+                    seen = self._setup_failures_by_client.get(client, 0)
+                    counted = seen < SETUP_CODE_MAX_FAILURES_PER_CLIENT
+                    if counted:
+                        self._setup_failures_by_client[client] = seen + 1
+                if counted:
+                    self._setup_failures += 1
                 if self._setup_failures >= SETUP_CODE_MAX_FAILURES:
                     # Too many wrong guesses: burn this code. The service logs a new one.
                     self._setup_code_hash = None
@@ -265,13 +391,20 @@ class AuthManager:
         log.info("dashboard password set (first-run setup complete)")
 
     async def verify_password(self, password: str) -> bool:
+        """The login check. A wrong password also counts towards the global login lockout."""
+        ok = await self._verify(password)
+        if not ok:
+            self.login_limiter.failure()
+        return ok
+
+    async def _verify(self, password: str) -> bool:
         if not isinstance(password, str) or len(password) > MAX_PASSWORD_LENGTH:
             return False
         return await asyncio.to_thread(verify_password, password, self._password_record())
 
     async def change_password(self, current: str, new: str, *, keep_session: str | None = None) -> None:
         validate_new_password(new)
-        if not await self.verify_password(current):
+        if not await self._verify(current):  # authenticated: per-client password_limiter only
             raise AuthError("Current password is incorrect.")
         record = await asyncio.to_thread(hash_password, new)
         self._db.kv_set(PASSWORD_KEY, record)
@@ -322,6 +455,11 @@ class AuthManager:
                 return None
             if sess.expires <= self._now():
                 self._drop_locked(h)
+                return None
+            # The memory cache is only a cache: the row must still exist (primary-key lookup), so
+            # sessions deleted by another process - the reset-password CLI - end immediately.
+            if self._db.query_one("SELECT 1 AS ok FROM dashboard_sessions WHERE token_hash=?", (h,)) is None:
+                self._sessions.pop(h, None)
                 return None
             return sess
 

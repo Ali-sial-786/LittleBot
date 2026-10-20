@@ -90,6 +90,33 @@ async def list_activities(
     return {"items": out, **meta}
 
 
+@router.get("/recommended")
+async def recommended_activities(
+    dash: DashState = Depends(get_dash),
+    limit: int = Query(6, ge=1, le=20),
+    category: str | None = Query(None, max_length=32),
+) -> dict[str, Any]:
+    """Suggestions for the child: allowed activities that suit the profile age, favourites first."""
+    acts = dash.ctx.activities
+    if category is not None and category not in ACTIVITY_CATEGORIES:
+        raise HTTPException(status_code=422, detail="Unknown category.")
+    child_age = dash.ctx.settings.child_age_months()
+    profile = dash.ctx.settings.get("profile") or {}
+    meta = {"child_age_months": child_age, "nickname": str(profile.get("nickname") or ""),
+            "available": acts is not None}
+    if acts is None:
+        return {"items": [], **meta}
+    prefs = _prefs(dash)
+    if hasattr(acts, "recommended"):
+        items = acts.recommended(age_months=child_age, category=category, limit=limit)
+        out = [_decorate(i, prefs, child_age) for i in items]
+    else:  # older engines / fakes: same rule from list()
+        out = [_decorate(i, prefs, child_age) for i in acts.list(age_months=child_age, category=category)]
+        out = [i for i in out if i["enabled"]]
+        out.sort(key=lambda i: not i["favourite"])  # stable: keeps the engine's suitability order
+    return {"items": out[:limit], **meta}
+
+
 def _overlaps(item: dict[str, Any], lo: int, hi: int) -> bool:
     try:
         a, b = int(item.get("min_age_months", 0)), int(item.get("max_age_months", 999))

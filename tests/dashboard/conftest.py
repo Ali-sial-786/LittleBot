@@ -15,7 +15,8 @@ from dashboard_fakes import FAKE_ANTHROPIC_KEY, FAKE_OPENAI_KEY, do_setup, insta
 
 @pytest.fixture
 def dctx():
-    ctx = make_test_context()
+    # Host names the in-process test clients use ("https://robot.local" in the Secure-cookie test).
+    ctx = make_test_context(dashboard={"allowed_hosts": ["testserver", "robot.local"]})
     ctx.config.anthropic_api_key = SecretStr(FAKE_ANTHROPIC_KEY)
     ctx.config.openai_api_key = SecretStr(FAKE_OPENAI_KEY)
     ctx.extras["fakes"] = install_fakes(ctx)

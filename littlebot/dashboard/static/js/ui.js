@@ -431,6 +431,14 @@ export function deviceState(value) {
   return { cls: 'warn', label: titleCase(v) };
 }
 
+/** Camera status for deviceState(): off by privacy, or "simulated" for the mock camera / a pretend face. */
+export function cameraState(vision, privacy) {
+  const v = vision || {};
+  if (privacy?.camera_enabled === false) return 'disabled';
+  if (v.camera === 'ok' && (v.simulated || v.backend === 'mock')) return 'simulated';
+  return v.camera ?? v.status;
+}
+
 export function debounce(fn, ms) {
   let t;
   return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); };

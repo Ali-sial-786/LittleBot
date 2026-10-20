@@ -328,9 +328,20 @@ PASSWORD = "correct horse battery"
 BASE_URL = "http://testserver"
 
 
+TEST_HOST = "testserver"  # the Host the ASGI test client sends; allowed explicitly (dashboard.allowed_hosts)
+
+
+def allow_test_host(app: Any, host: str = TEST_HOST) -> None:
+    """The dashboard refuses unknown Host names (DNS rebinding); let the test client's through."""
+    hosts = app.state.ctx.config.dashboard.allowed_hosts
+    if host not in hosts:
+        hosts.append(host)
+
+
 def make_client(app: Any, ip: str = "127.0.0.1") -> "httpx.AsyncClient":
     import httpx
 
+    allow_test_host(app)
     transport = httpx.ASGITransport(app=app, client=(ip, 50000))
     return httpx.AsyncClient(transport=transport, base_url=BASE_URL)
 

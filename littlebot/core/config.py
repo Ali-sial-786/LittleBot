@@ -276,6 +276,10 @@ class DashboardConfig(_Section):
     show_setup_code_on_screen: bool = True  # first-run code on the robot's own screen (physical presence)
     session_hours: float = 12.0
     login_attempts_per_minute: int = 5
+    # Extra names the dashboard answers to ("name" or "name:port"), e.g. a reverse proxy or SSH tunnel.
+    # Always allowed: localhost / 127.0.0.1 / ::1, this machine's hostname and <hostname>.local and,
+    # with lan_access, its LAN IP addresses. Anything else gets 400 (DNS-rebinding protection).
+    allowed_hosts: list[str] = Field(default_factory=list)
 
 
 class ActivitiesConfig(_Section):

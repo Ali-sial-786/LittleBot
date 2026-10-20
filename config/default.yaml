@@ -143,6 +143,10 @@ dashboard:
   host: 127.0.0.1        # localhost only
   port: 8765
   lan_access: false      # set true (explicit opt-in) to allow phones on your home Wi-Fi
+                         # (plain HTTP: trusted home Wi-Fi only, never port-forward it)
+  allowed_hosts: []      # extra names the dashboard answers to, e.g. [littlebot.home] (localhost works on any port);
+                         # localhost, 127.0.0.1, this machine's hostname(.local) and (with lan_access)
+                         # its LAN IPs are always allowed - other Host names get 400 (DNS rebinding)
 
 activities:
   time_scale: 1.0
