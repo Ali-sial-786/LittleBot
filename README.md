@@ -65,6 +65,7 @@ remove them.
 | **Camera** | Local face detection (YuNet, Haar fallback) at reduced resolution; eyes follow the child; wakes when someone arrives; no recognition, no images stored or sent. |
 | **AI conversation** | Mock (offline) by default. Claude or OpenAI only for children 2+ when a parent enables it and adds a paid API key. Replies are short and validated in code (no secrecy, dependency, impersonation or personal-info requests), with rate and budget limits. |
 | **Motion** | Head + two arms in simulation: gestures, smooth limited motion, latched emergency stop. Real servos stay disabled until wired, calibrated and armed by a parent. |
+| **3D-printable body** | Two parametric OpenSCAD enclosures with ready-to-print STLs: v1 "TV head" (compact, 11 parts) and v2 "companion" (35 cm character with LED ears, camera pod and a wheel-ready base). Both include automated interference / pinch checks (`hardware/README.md`). |
 
 ## Testing
 
@@ -85,6 +86,7 @@ remove them.
 | `docs/DASHBOARD_GUIDE.md`, `docs/ACTIVITY_GUIDE.md` | For parents |
 | `docs/AI_SAFETY.md`, `docs/MOTION_SAFETY.md`, `docs/YOUTUBE_ON_PI.md` | Safety and feasibility notes |
 | `docs/DEV_CONVENTIONS.md`, `docs/modules/*.md` | For developers |
+| `hardware/README.md` | The two 3D-printable enclosures: parts, hardware lists, assembly, safety |
 
 ## API keys (optional)
 
