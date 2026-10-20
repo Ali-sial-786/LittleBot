@@ -79,10 +79,16 @@ media:
   browser_command: null
 
 # ---------------------------------------------------------------------------
-# Motion: 3x MG90S on a PCA9685. KEEP physical_enabled: false until the servos are
-# wired to their OWN regulated supply (common ground with the Pi), calibrated with
-# scripts/calibrate_servos.py, and docs/MOTION_SAFETY.md has been followed.
-# This installer and template never enable physical motion.
+# Motion: 3x MG90S on a PCA9685. Follow docs/MOTION_SAFETY.md step by step:
+#   1. physical_enabled: false, backend: mock   <- start here (simulated servos)
+#   2. servos wired to their OWN regulated supply (common ground with the Pi),
+#      MOTION_SAFETY.md checklist A-C done -> physical_enabled: true, backend STILL mock
+#      (this is the calibration stage: scripts/calibrate_servos.py writes
+#      config/calibration.yaml; format reference: config/calibration.example.yaml)
+#   3. only with a valid calibration and checklist part D done -> backend: pca9685
+#      (a parent must still arm motion in the dashboard after every start)
+# diagnose.py reports "calibration pending" in stage 2 and FAILs backend: pca9685 +
+# physical_enabled: true without a valid calibration. The installer never enables motion.
 # ---------------------------------------------------------------------------
 motion:
   backend: mock            # mock | pca9685

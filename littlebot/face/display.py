@@ -522,7 +522,7 @@ class DisplayLoop:
 
     def tap_reaction(self, nx: float, ny: float) -> bool:
         """Gentle giggle + bounce when the child taps the face. Returns True if it reacted."""
-        if not TAP_REACTION_ENABLED:
+        if not TAP_REACTION_ENABLED or not getattr(self.ctx.config.display, "tap_reaction", True):
             return False
         now = time.monotonic()
         if now - self._last_tap < TAP_COOLDOWN_SECONDS:

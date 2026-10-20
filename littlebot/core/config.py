@@ -67,6 +67,7 @@ class DisplayConfig(_Section):
     show_debug: bool = False
     show_sim_panel: bool = True  # side panel with simulated servos/status (desktop only)
     hide_cursor: bool = False
+    tap_reaction: bool = True  # tapping the face makes LittleBot giggle (cause-and-effect play)
 
 
 class FaceConfig(_Section):

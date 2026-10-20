@@ -11,7 +11,8 @@ with its 3.5" HDMI screen, USB camera, USB microphone and USB speaker.
 
 Related guides: [DISPLAY_SETUP.md](DISPLAY_SETUP.md) (screen and touch),
 [POWER.md](POWER.md) (power supply and power bank), [TROUBLESHOOTING.md](TROUBLESHOOTING.md),
-[PERFORMANCE.md](PERFORMANCE.md), and `docs/MOTION_SAFETY.md` (servos; owned by the motion module).
+[PERFORMANCE.md](PERFORMANCE.md), and [MOTION_SAFETY.md](MOTION_SAFETY.md) (servos, calibration;
+format reference `config/calibration.example.yaml`).
 
 ---
 
@@ -168,7 +169,11 @@ Typical edits after running the check scripts:
   device list (more robust than an index, which can change when USB devices move).
 - `camera.device`: `auto` normally finds the USB camera; set an index/path if not.
 - `audio.speaker.max_volume`: lower it if the speaker is loud at close range.
-- Keep `motion.physical_enabled: false` (servos come last - `docs/MOTION_SAFETY.md`).
+- Keep `motion.physical_enabled: false` and `motion.backend: mock` - servos come last and
+  follow [MOTION_SAFETY.md](MOTION_SAFETY.md): calibration with `scripts/calibrate_servos.py`
+  runs with `physical_enabled: true` while `backend` is still `mock`, writes
+  `config/calibration.yaml` (format: `config/calibration.example.yaml`), and only then
+  `backend: pca9685`.
 
 API keys (only if you will use cloud AI) go into `.env`, never into YAML. Cloud AI
 stays off until a parent enables it in the dashboard, even with a key present.

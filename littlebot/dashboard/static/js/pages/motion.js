@@ -23,19 +23,30 @@ function robotSvg() {
   const place = (g, x, y, deg) => { g.style.transform = `translate(${x}px, ${y}px) rotate(${deg}deg)`; };
   place(armL, 95, 142, 20);
   place(armR, 205, 142, -20);
+  // Joint "position" is normalised by the motion module: -1..1, 0 = neutral,
+  // +1 = arm raised / head turned to the robot's left (the viewer's right).
+  const position = (joints, servos, n) => {
+    const j = joints?.[n];
+    if (j && typeof j.position === 'number') return Math.max(-1, Math.min(1, j.position));
+    const sv = servos?.[n];
+    if (!j || !sv || typeof j.angle !== 'number') return 0;
+    let p = j.angle >= sv.neutral ? (j.angle - sv.neutral) / Math.max(1, sv.max - sv.neutral) : (j.angle - sv.neutral) / Math.max(1, sv.neutral - sv.min);
+    if (sv.inverted) p = -p;
+    return Math.max(-1, Math.min(1, p));
+  };
+  const armDeg = (p) => (p >= 0 ? 15 + 150 * p : 15 + 15 * p); // hanging ~15° out .. raised ~165°
   root.update = (joints, servos, estop) => {
     const ang = (n, d) => (joints?.[n]?.angle ?? servos?.[n]?.neutral ?? d);
-    const head0 = servos?.head?.neutral ?? 90;
-    const hA = ang('head', head0);
+    const hP = position(joints, servos, 'head');
     head.style.transformOrigin = '150px 118px';
-    head.style.transform = `rotate(${((hA - head0) * 0.4).toFixed(1)}deg)`;
-    const raise = (n, d) => { const a = ang(n, d); return servos?.[n]?.inverted ? 180 - a : a; };
-    const l = raise('left_arm', 20), r = raise('right_arm', 160);
-    place(armL, 95, 142, l);
-    place(armR, 205, 142, -r);
+    head.style.transform = `translateX(${(hP * 10).toFixed(1)}px) rotate(${(hP * 10).toFixed(1)}deg)`;
+    const hA = ang('head', 90);
+    // Robot's left arm is drawn on the viewer's right (the robot faces you).
+    place(armR, 205, 142, -armDeg(position(joints, servos, 'left_arm')));
+    place(armL, 95, 142, armDeg(position(joints, servos, 'right_arm')));
     tHead.textContent = `Head ${Math.round(hA)}°`;
-    tL.textContent = `Left arm ${Math.round(ang('left_arm', 20))}°`;
-    tR.textContent = `Right arm ${Math.round(ang('right_arm', 160))}°`;
+    tL.textContent = `Right arm ${Math.round(ang('right_arm', 160))}°`;
+    tR.textContent = `Left arm ${Math.round(ang('left_arm', 20))}°`;
     root.classList.toggle('estop', !!estop);
   };
   return root;
@@ -77,9 +88,9 @@ export default {
       // mode banner
       clear(modeBox);
       if (!d.available) modeBox.append(banner('warn', 'alert', 'Motion system unavailable', 'Gestures and joints are disabled until it is running.'));
-      else if (d.simulation_only) modeBox.append(banner('info', 'info', 'Simulation only', 'Physical motion is disabled in the configuration (motion.physical_enabled: false). No servo will move - the drawing shows what LittleBot would do.'));
+      else if (d.simulation_only) modeBox.append(banner('info', 'info', 'Simulation only', `${d.reason || 'Physical motion is disabled.'} No servo will move - the drawing shows what LittleBot would do.`));
       else if (d.armed) modeBox.append(banner('danger', 'alert', 'Physical motors are ARMED', 'LittleBot\'s servos will really move. Keep fingers and faces clear and supervise closely.'));
-      else modeBox.append(banner('warn', 'lock', 'Physical motors disarmed', 'Motion is simulated until you arm the motors below.'));
+      else modeBox.append(banner('warn', 'lock', 'Physical motors disarmed', d.reason || 'Motion is simulated until you arm the motors below.'));
       // gestures
       clear(gestures);
       for (const g of d.gestures || []) gestures.append(button(titleCase(g), { kind: 'soft', onClick: () => app.act(() => post('/motion/gesture', { name: g })) }));
@@ -154,7 +165,7 @@ export default {
       update(st) {
         const ms = st.motion || {};
         if (!info) return;
-        const key = `${ms.estop}|${ms.armed}`;
+        const key = `${ms.estop}|${ms.armed}|${ms.simulation_only}|${ms.reason}`;
         if (key !== lastKey && lastKey) { lastKey = key; get('/motion').then(fill).catch(() => {}); return; }
         lastKey = key;
         renderStatus(ms);

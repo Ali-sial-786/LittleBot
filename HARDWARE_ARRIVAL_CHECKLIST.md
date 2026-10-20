@@ -7,7 +7,8 @@ into the next development session.
 
 Guides: [docs/PI_SETUP.md](docs/PI_SETUP.md) · [docs/DISPLAY_SETUP.md](docs/DISPLAY_SETUP.md) ·
 [docs/POWER.md](docs/POWER.md) · [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) ·
-[docs/PERFORMANCE.md](docs/PERFORMANCE.md) · `docs/MOTION_SAFETY.md` (servos)
+[docs/PERFORMANCE.md](docs/PERFORMANCE.md) · [docs/MOTION_SAFETY.md](docs/MOTION_SAFETY.md) (servos;
+calibration format `config/calibration.example.yaml`)
 
 **Ground rules:** power off before plugging anything into the GPIO header · official
 27 W PSU for all bring-up · servos stay disconnected until phase 12 · keep small parts
@@ -151,15 +152,21 @@ Guides: [docs/PI_SETUP.md](docs/PI_SETUP.md) · [docs/DISPLAY_SETUP.md](docs/DIS
 
 ## Phase 13 - Servos LAST (only after everything above)
 
-- [ ] Read `docs/MOTION_SAFETY.md` completely
+- [ ] Read [docs/MOTION_SAFETY.md](docs/MOTION_SAFETY.md) completely; work through its
+      verification checklist parts A-E alongside the steps below
 - [ ] Separate regulated 5-6 V >= 3 A servo supply with an easy-to-reach switch; PCA9685
       V+ from it, VCC from Pi 3.3 V, **common ground** (POWER.md §5); never from the Pi's 5 V
 - [ ] `scripts/install_pi.sh --enable-i2c`, reboot;
       `.venv/bin/python scripts/diagnose.py --section i2c --i2c-scan` -> PCA9685 at 0x40
-- [ ] Servo horns **detached** for the first test; `scripts/calibrate_servos.py --help`
-      and follow MOTION_SAFETY.md
-- [ ] Only after calibration: `motion.backend: pca9685`, `motion.physical_enabled: true`;
-      diagnose.py must not FAIL `motion_safety`
+- [ ] Checklist parts A-C done -> in `config/local.yaml`: `motion.physical_enabled: true`
+      with `motion.backend` **still `mock`** (diagnose.py now says "calibration pending")
+- [ ] Practise first: `.venv/bin/python scripts/calibrate_servos.py --simulate`; then calibrate
+      each joint on hardware as MOTION_SAFETY.md section 5 describes (servo horns detached
+      for the first test). It writes `config/calibration.yaml` (format reference:
+      `config/calibration.example.yaml`)
+- [ ] diagnose.py: `motion_safety` reports "calibration valid; motion still simulated"
+- [ ] Only after checklist part D: `motion.backend: pca9685`; diagnose.py must not FAIL
+      `motion_safety`; a parent arms motion in the dashboard after each start
 - [ ] Re-do the pinch-point and stability checks with the arms/head moving
 
 ---
@@ -186,3 +193,5 @@ Remove anything private (Wi-Fi names are not in these outputs; API keys never ar
 10. Touch (if tried): `dmesg | grep -i ads7846`, `grep -A5 -i touch /proc/bus/input/devices`
 11. Physical notes: does the screen clear the cooler, enclosure temperature, anything
     that did not fit, and the answers you wrote in the blanks above
+12. Servos (phase 13 only): `.venv/bin/python scripts/diagnose.py --section config --section i2c --i2c-scan --json`
+    and the `scripts/calibrate_servos.py` output (`config/calibration.yaml` contains no secrets)

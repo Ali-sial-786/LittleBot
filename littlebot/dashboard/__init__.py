@@ -134,7 +134,7 @@ class DashboardService(Service):
                 pass
         self._task = None
         self._server = None
-        if self.status != ServiceStatus.FAILED:
+        if self.service_status != ServiceStatus.FAILED:
             self.set_status(ServiceStatus.STOPPED)
 
     def health(self) -> dict[str, Any]:

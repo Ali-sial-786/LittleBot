@@ -17,15 +17,21 @@ def _view(dash: DashState) -> dict[str, Any]:
     motion = ctx.motion
     cfg = ctx.config.motion
     physical = bool(cfg.physical_enabled)
-    armed = bool(ctx.settings.get("motion.physical_armed")) and physical
     status = motion.status() if motion is not None else {"status": "unavailable", "joints": {}}
+    armed_setting = bool(ctx.settings.get("motion.physical_armed"))
+    armed = physical and bool(status.get("armed", armed_setting))
+    simulation_only = (not physical) or bool(status.get("simulation_only", False))
+    reason = str(status.get("reason") or "")
+    if not reason and not physical:
+        reason = "Physical motion is disabled in the configuration (motion.physical_enabled: false)."
     return {
         "available": motion is not None,
         "status": status,
         "gestures": motion.gestures() if motion is not None else [],
         "physical_enabled": physical,
         "armed": armed,
-        "simulation_only": not physical,
+        "simulation_only": simulation_only,
+        "reason": reason,
         "arm_phrase": ARM_PHRASE if physical else None,
         "servos": {name: {"neutral": s.neutral, "min": s.min_angle, "max": s.max_angle, "inverted": s.inverted}
                    for name, s in cfg.servos.items()},

@@ -133,7 +133,7 @@ If the bank fails: use the official PSU, a bank that explicitly supports **5 V /
 USB-PD for the Pi 5**, or a powered USB hub for the peripherals. Do not "fix" a failing
 bank with `usb_max_current_enable=1`.
 
-## 5. Servo power (later - read `docs/MOTION_SAFETY.md` first)
+## 5. Servo power (later - read [MOTION_SAFETY.md](MOTION_SAFETY.md) first)
 
 MG90S servos pull large current spikes (up to ~0.7-0.8 A each when stalled, *estimate*).
 Powered from the Pi they cause brown-outs, resets and SD corruption.
@@ -149,8 +149,11 @@ Powered from the Pi they cause brown-outs, resets and SD corruption.
 - Put an **easy-to-reach switch** (and ideally a fuse) in the servo supply: it is the
   real emergency stop. The PCA9685 keeps sending its last PWM pulses even if the Pi
   crashes, so a software stop alone is not enough.
-- `motion.physical_enabled` stays `false` until calibration; the installer never
-  enables it, and `diagnose.py` FAILs if it is true without a calibration file.
+- `motion.physical_enabled` stays `false` until the wiring checks in MOTION_SAFETY.md are
+  done; calibration then runs with `physical_enabled: true` and `backend: mock`.
+  `diagnose.py` shows "calibration pending" at that stage and FAILs `backend: pca9685` +
+  `physical_enabled: true` without a valid `config/calibration.yaml`. The installer never
+  enables motion.
 
 ## 6. Safe shutdown
 

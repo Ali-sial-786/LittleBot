@@ -55,7 +55,7 @@ async def test_service_serves_on_real_port_and_stops(caplog):
     with caplog.at_level(logging.WARNING, logger="littlebot.dashboard.auth"):
         await svc.start()
     try:
-        assert svc.status == ServiceStatus.RUNNING, svc.status_detail
+        assert svc.service_status == ServiceStatus.RUNNING, svc.status_detail
         assert svc.port != 0
         # The first-run setup code went to the console / log, nowhere else.
         log_text = "\n".join(r.getMessage() for r in caplog.records)
@@ -75,7 +75,7 @@ async def test_service_serves_on_real_port_and_stops(caplog):
         assert svc.health()["status"] == "running" and svc.health()["lan_access"] is False
     finally:
         await svc.stop()
-    assert svc.status == ServiceStatus.STOPPED
+    assert svc.service_status == ServiceStatus.STOPPED
     with pytest.raises(httpx.HTTPError):
         async with httpx.AsyncClient(timeout=1, trust_env=False) as c:
             await c.get(f"http://127.0.0.1:{svc.port}/api/health")
@@ -92,11 +92,11 @@ async def test_port_in_use_fails_gracefully():
     try:
         svc = DashboardService(ctx, port=port)
         await svc.start()  # must not raise or kill the loop
-        assert svc.status == ServiceStatus.FAILED
+        assert svc.service_status == ServiceStatus.FAILED
         assert "in use" in svc.status_detail
         await asyncio.sleep(0)  # loop still alive
         await svc.stop()
-        assert svc.status == ServiceStatus.FAILED
+        assert svc.service_status == ServiceStatus.FAILED
     finally:
         blocker.close()
         ctx.db.close()
@@ -111,7 +111,7 @@ async def test_service_does_not_log_setup_code_once_configured(caplog):
     with caplog.at_level(logging.WARNING, logger="littlebot.dashboard.auth"):
         await svc.start()
     try:
-        assert svc.status == ServiceStatus.RUNNING
+        assert svc.service_status == ServiceStatus.RUNNING
         assert "setup code" not in caplog.text.lower()
     finally:
         await svc.stop()

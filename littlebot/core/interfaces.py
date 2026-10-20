@@ -69,6 +69,9 @@ class FaceAPI(Protocol):
         """Gaze target in normalised screen coords (0..1, 0.5/0.5 = centre).
         Explicit gazes override face tracking for ``hold`` seconds (config default)."""
 
+    def track_gaze(self, x: float, y: float) -> None:
+        """Soft camera-tracking gaze target (lower priority than look_at, which wins while it holds)."""
+
     def clear_gaze(self) -> None:
         """Return gaze to tracking / idle wandering."""
 
@@ -86,7 +89,8 @@ class FaceAPI(Protocol):
         """One of FACE_ANIMATIONS, layered on the current expression."""
 
     def status(self) -> dict[str, Any]:
-        """{expression, state, gaze: {x, y}, eyes_closed, fps, visible}"""
+        """{expression, state, gaze: {x, y}, eyes_closed, fps, visible} (+ optional extra keys
+        such as talking, listening, animations, display)"""
 
 
 @runtime_checkable

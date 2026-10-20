@@ -47,6 +47,10 @@ class FakeFace(_Recorder):
         self._rec("look_at", x, y, hold=hold)
         self.gaze = (x, y)
 
+    def track_gaze(self, x: float, y: float) -> None:
+        self._rec("track_gaze", x, y)
+        self.gaze = (x, y)
+
     def clear_gaze(self) -> None:
         self._rec("clear_gaze")
 
