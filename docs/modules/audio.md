@@ -139,8 +139,9 @@ The **Pi 5 has no 3.5 mm audio jack**: use a USB speaker (or HDMI audio) and a U
      microphone: {backend: real, device: "USB PnP"}
    ```
    Direct `hw:` devices only support their native rates (44.1/48 kHz): LittleBot resamples.
-   A device opened directly via `hw:` is exclusive - if the face's `pygame.init()` opened the SDL
-   mixer on the same card first, PortAudio gets "device busy" (see lead notes).
+   A device opened directly via `hw:` is exclusive ("device busy" if another program holds it).
+   The face only initialises pygame's display/font modules, so the SDL mixer is opened only by the
+   audio `pygame` fallback - keep it that way (a bare `pygame.init()` would also open the mixer).
 4. Quiet / silent mic: `alsamixer -c <card>` (F4 capture level) or `audio.input_gain` (dashboard).
 5. Speaker too loud/quiet: the dashboard volume is capped by `audio.speaker.max_volume` (0.8);
    also check the USB speaker's own hardware volume / `alsamixer` playback level once.
