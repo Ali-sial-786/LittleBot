@@ -53,10 +53,6 @@ class VisionService(Service):
                  detector: FaceDetector | None = None, gestures: GestureDetector | None = None,
                  clock: Callable[[], float] | None = None, join_timeout: float = 4.0) -> None:
         super().__init__()
-        # core.service.Service keeps its lifecycle state in ``self.status``, which would shadow the
-        # VisionAPI ``status()`` method. Keep it in ``service_status`` instead (see set_status/health).
-        self.__dict__.pop("status", None)
-        self.service_status = ServiceStatus.STOPPED
         self.ctx = ctx
         self.cam_cfg = ctx.config.camera
         self.vis_cfg = ctx.config.vision
@@ -141,14 +137,6 @@ class VisionService(Service):
         return 1.0 / max(0.1, float(self.cam_cfg.detect_fps))
 
     # -------------------------------------------------------------- lifecycle
-    def set_status(self, status: ServiceStatus, detail: str = "") -> None:  # type: ignore[override]
-        if status != self.service_status or detail != self.status_detail:
-            self.log.info("status %s%s", status.value, f" ({detail})" if detail else "")
-        self.service_status, self.status_detail = status, detail
-
-    def health(self) -> dict[str, Any]:
-        return {"name": self.name, "status": self.service_status.value, "detail": self.status_detail}
-
     async def start(self, *, run_thread: bool = True) -> None:
         """Start the capture thread. ``run_thread=False`` only binds events (tests drive ``process_once``)."""
         if self._thread is not None and self._thread.is_alive():

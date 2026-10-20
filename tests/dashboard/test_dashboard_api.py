@@ -483,14 +483,15 @@ async def test_motion_arming_requires_typed_confirmation():
         assert (await c.post("/api/motion/arm", json={"armed": True, "confirmation": "yes"})).status_code == 422
         assert ctx.settings.get("motion.physical_armed") is False
         r = await c.post("/api/motion/arm", json={"armed": True, "confirmation": "arm motors"})
-        assert r.status_code == 200 and r.json()["armed"] is True
+        assert r.status_code == 200 and r.json()["arm_requested"] is True
         assert ctx.settings.get("motion.physical_armed") is True
         # E-stop disarms immediately.
         await c.post("/api/motion/estop")
         assert ctx.settings.get("motion.physical_armed") is False
         await c.post("/api/motion/estop/reset")
         await c.post("/api/motion/arm", json={"armed": True, "confirmation": "ARM MOTORS"})
-        assert (await c.post("/api/motion/arm", json={"armed": False})).json()["armed"] is False
+        assert (await c.post("/api/motion/arm", json={"armed": False})).json()["arm_requested"] is False
+        assert ctx.settings.get("motion.physical_armed") is False
     ctx.db.close()
 
 

@@ -115,8 +115,8 @@ export default {
       clear(armBox);
       if (!d.physical_enabled) {
         armBox.append(h('p', { class: 'muted', text: 'Disabled in the configuration. To use real servos, wire and power them separately, calibrate them, then set motion.physical_enabled: true in config/local.yaml and restart. See the motion guide.' }));
-      } else if (d.armed) {
-        armBox.append(h('p', { text: 'Motors are armed.' }), button('Disarm motors', { kind: 'primary', iconName: 'lock', onClick: () => app.act(() => post('/motion/arm', { armed: false }), 'Motors disarmed.').then((r) => r && fill(r)) }));
+      } else if (d.armed || d.arm_requested) {
+        armBox.append(h('p', { text: d.armed ? 'Motors are armed.' : `Arming requested - waiting for the motion system${d.reason ? ` (${d.reason})` : ''}.` }), button('Disarm motors', { kind: 'primary', iconName: 'lock', onClick: () => app.act(() => post('/motion/arm', { armed: false }), 'Motors disarmed.').then((r) => r && fill(r)) }));
       } else {
         armBox.append(h('p', { class: 'muted', text: 'Arming lets the servos really move. Make sure LittleBot is on a stable surface and nothing is in the way.' }),
           button('Arm motors…', {

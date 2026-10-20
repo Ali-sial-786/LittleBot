@@ -29,7 +29,8 @@ def _view(dash: DashState) -> dict[str, Any]:
         "status": status,
         "gestures": motion.gestures() if motion is not None else [],
         "physical_enabled": physical,
-        "armed": armed,
+        "armed": armed,  # as reported by the motion module
+        "arm_requested": physical and armed_setting,  # the parent's motion.physical_armed setting
         "simulation_only": simulation_only,
         "reason": reason,
         "arm_phrase": ARM_PHRASE if physical else None,
