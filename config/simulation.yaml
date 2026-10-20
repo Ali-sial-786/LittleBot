@@ -1,0 +1,8 @@
+# Desktop simulation: use the computer's webcam / microphone / speaker when they
+# exist ("auto"), mocks otherwise. Servos are always simulated.
+display:
+  scale: 2.0
+  show_sim_panel: true
+motion:
+  backend: mock
+  physical_enabled: false

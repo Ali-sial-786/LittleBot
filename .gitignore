@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+build/
+dist/
+
+# Secrets and local config - never commit
+.env
+config/local.yaml
+config/calibration.yaml
+
+# Runtime data (SQLite database, logs, optional history)
+data/
+logs/
+*.db
+*.db-journal
+
+# Local speech models (downloaded on demand)
+models/
+
+# Screenshots / benchmark output
+artifacts/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store

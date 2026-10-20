@@ -1,0 +1,100 @@
+# LittleBot default configuration.
+#
+# Mode-specific overlays (simulation.yaml / pi.yaml / offline.yaml) are applied
+# on top of this file, then config/local.yaml (git-ignored, your machine only),
+# then environment variables LITTLEBOT__<SECTION>__<KEY>.
+#
+# API keys never go in YAML - use .env (see .env.example).
+# Parent-editable settings (privacy, volume, child profile...) are stored in
+# data/littlebot.db via the dashboard; the values here are only their defaults.
+
+robot_name: LittleBot
+data_dir: data
+
+logging:
+  level: INFO
+  format: console        # console | json
+  file: logs/littlebot.log
+
+display:
+  width: 480
+  height: 320
+  fps: 30
+  idle_fps: 20
+  scale: 2.0
+  fullscreen: false
+  show_debug: false
+  show_sim_panel: true
+
+face:
+  eye_color: [90, 210, 255]
+  background_color: [6, 8, 14]
+  glow: true
+
+camera:
+  backend: auto          # auto | real | mock | none
+  device: 0
+  capture_width: 640
+  capture_height: 480
+  capture_fps: 15
+  process_width: 320
+  detect_fps: 6.0
+  mirror: true
+
+vision:
+  detector: haar         # haar (built into OpenCV) | yunet | none
+  gestures_enabled: false
+
+audio:
+  half_duplex: true
+  store_recordings: false
+  microphone:
+    backend: auto        # auto | real | mock | none
+    device: null         # null = system default, or an index / name substring
+  speaker:
+    backend: auto        # auto | sounddevice | pygame | mock | none
+    device: null
+    volume: 0.5
+    max_volume: 0.8      # hard safety ceiling
+  tts:
+    provider: auto       # auto | mock | espeak | piper | openai
+    rate: 0.9
+  stt:
+    provider: auto       # auto | mock | vosk | openai
+
+ai:
+  provider: mock         # mock | anthropic | openai  (cloud needs parent opt-in in the dashboard)
+  max_output_tokens: 120
+  max_words: 30
+  timeout_seconds: 12
+  max_requests_per_hour: 60
+  max_requests_per_day: 200
+  daily_budget_usd: 0.50
+  min_age_months_for_cloud: 24
+  store_transcripts: false
+
+media:
+  player: auto           # auto | browser | kiosk | none
+  session_limit_minutes: 15
+  daily_limit_minutes: 30
+  min_age_months_for_video: 18
+
+motion:
+  backend: mock          # mock | pca9685
+  physical_enabled: false   # keep false until servos are wired, powered separately, and calibrated
+
+dashboard:
+  enabled: true
+  host: 127.0.0.1        # localhost only
+  port: 8765
+  lan_access: false      # set true (explicit opt-in) to allow phones on your home Wi-Fi
+
+activities:
+  time_scale: 1.0
+  caregiver_timeout_seconds: 45
+  record_history: false
+
+privacy:
+  camera_enabled: true
+  microphone_enabled: true
+  cloud_enabled: false

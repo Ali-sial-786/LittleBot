@@ -1,0 +1,19 @@
+# Offline demo: no internet, no API keys, no camera/microphone required.
+# Cloud AI is forced off in code regardless of other settings.
+camera:
+  backend: mock
+audio:
+  microphone:
+    backend: mock
+  speaker:
+    backend: auto       # still plays sounds if the computer has a speaker
+  tts:
+    provider: auto      # espeak-ng if installed, otherwise silent mock voice
+  stt:
+    provider: mock
+ai:
+  provider: mock
+privacy:
+  cloud_enabled: false
+media:
+  player: none          # YouTube needs the internet

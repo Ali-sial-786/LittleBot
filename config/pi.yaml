@@ -1,0 +1,30 @@
+# Raspberry Pi 5 (2 GB) with the 480x320 HDMI screen and USB camera/mic/speaker.
+# UNVERIFIED until the hardware arrives - see HARDWARE_ARRIVAL_CHECKLIST.md.
+display:
+  scale: 1.0
+  fullscreen: true
+  show_sim_panel: false
+  hide_cursor: true
+  fps: 30
+  idle_fps: 15
+camera:
+  backend: real
+  capture_width: 640
+  capture_height: 480
+  capture_fps: 15
+  process_width: 320
+  detect_fps: 5.0
+audio:
+  microphone:
+    backend: real
+    device: null        # set to a name substring, e.g. "USB PnP" after running scripts/check_audio.py
+  speaker:
+    backend: sounddevice
+    device: null        # e.g. "USB Audio"
+  tts:
+    provider: auto      # espeak-ng if installed; piper if a model is configured
+motion:
+  backend: mock         # switch to pca9685 only after calibration (docs/MOTION_SAFETY.md)
+  physical_enabled: false
+logging:
+  format: json
