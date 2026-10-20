@@ -36,6 +36,7 @@ KillSignal=SIGTERM
 KillMode=mixed
 TimeoutStopSec=20
 Restart=on-failure
+# The dashboard's "Restart" button exits with code 75, which counts as a failure -> restart.
 RestartSec=5
 RestartSteps=5
 RestartMaxDelaySec=60

@@ -38,6 +38,7 @@ KillMode=mixed
 TimeoutStopSec=20
 # Restart after crashes (not after a clean exit, e.g. a parent pressing "quit").
 Restart=on-failure
+# The dashboard's "Restart" button exits with code 75, which counts as a failure -> restart.
 RestartSec=5
 # Exponential backoff 5 s -> 60 s (systemd >= 254, i.e. Trixie; Bookworm's systemd 252
 # ignores these two lines with a harmless "unknown key" notice and keeps RestartSec=5).

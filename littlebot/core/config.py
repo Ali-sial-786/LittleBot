@@ -273,6 +273,7 @@ class DashboardConfig(_Section):
     host: str = "127.0.0.1"  # localhost only by default
     port: int = 8765
     lan_access: bool = False  # explicit opt-in: binds 0.0.0.0 so phones on the LAN can connect
+    show_setup_code_on_screen: bool = True  # first-run code on the robot's own screen (physical presence)
     session_hours: float = 12.0
     login_attempts_per_minute: int = 5
 

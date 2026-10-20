@@ -131,7 +131,10 @@ async def test_stop_all_event_cancels_dashboard_demo():
         await asyncio.sleep(0.05)
         assert not task.done()
         ctx.bus.publish(Topics.STOP_ALL, {"source": "button"})
-        await asyncio.sleep(0.05)
+        for _ in range(100):
+            if task.done():
+                break
+            await asyncio.sleep(0.02)
         assert task.cancelled() or task.done()
         assert ctx.face.eyes_closed is False
     finally:

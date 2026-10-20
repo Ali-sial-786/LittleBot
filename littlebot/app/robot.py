@@ -24,6 +24,9 @@ from littlebot.core.state import RobotState
 
 log = logging.getLogger("littlebot.robot")
 
+# Exit code asking the service manager to start LittleBot again (EX_TEMPFAIL).
+RESTART_EXIT_CODE = 75
+
 # (context attribute, module path) in start order. Later ones may use earlier ones.
 SUBSYSTEMS: tuple[tuple[str, str], ...] = (
     ("face", "littlebot.face"),
@@ -48,6 +51,7 @@ class LittleBot:
         self.dashboard: Any = None
         self.behaviours: Any = None
         self.shutdown_event = threading.Event()
+        self.restart_requested = False
         self._started = False
         self._stopped = False
         self.started_at = time.time()
@@ -164,9 +168,14 @@ class LittleBot:
             except Exception:  # noqa: BLE001
                 log.exception("%s failed to stop cleanly", name)
 
-    def request_shutdown(self, reason: str = "requested") -> None:
-        """Ask the main loop to exit (safe from any thread, including the dashboard)."""
-        log.info("shutdown requested: %s", reason)
+    def request_shutdown(self, reason: str = "requested", *, restart: bool = False) -> None:
+        """Ask the main loop to exit (safe from any thread, including the dashboard).
+
+        ``restart=True`` makes the process exit with RESTART_EXIT_CODE so a service manager
+        (systemd ``Restart=on-failure``) starts it again; a plain shutdown exits 0 and stays down.
+        """
+        log.info("%s requested: %s", "restart" if restart else "shutdown", reason)
+        self.restart_requested = self.restart_requested or restart
         self.shutdown_event.set()
 
     # ------------------------------------------------------------ parent ops

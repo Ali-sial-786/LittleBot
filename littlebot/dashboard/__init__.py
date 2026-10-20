@@ -88,7 +88,15 @@ class DashboardService(Service):
         self.set_status(ServiceStatus.RUNNING, where)
         self.log.info("parent dashboard at %s%s", where, "" if self.host == "0.0.0.0" else " (this computer only)")
         if self.auth.setup_required:
-            log_setup_code(self.auth.issue_setup_code(), self.dash.urls[0] if self.dash.urls else self.url)
+            url = self.dash.urls[0] if self.dash.urls else self.url
+
+            def announce(code: str | None) -> None:
+                if self.ctx.config.dashboard.show_setup_code_on_screen or code is None:
+                    self.ctx.bus.publish(Topics.DASHBOARD_SETUP,
+                                         {"active": code is not None, "code": code, "url": url}, source="dashboard")
+
+            self.auth.on_setup_code = announce
+            log_setup_code(self.auth.issue_setup_code(), url)
 
     async def _serve(self) -> None:
         try:

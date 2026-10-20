@@ -119,10 +119,24 @@ async def power(body: PowerBody, dash: DashState = Depends(get_dash)) -> dict[st
     reason = f"dashboard {body.action}"
     log.warning("parent requested %s from the dashboard", body.action)
     # Reply first, then exit, so the browser gets the confirmation.
-    asyncio.get_running_loop().call_later(0.5, _call_safely, request_shutdown, reason)
+    restart = body.action == "restart"
+    asyncio.get_running_loop().call_later(0.5, _call_safely, _shutdown_call(request_shutdown, restart), reason)
     detail = ("LittleBot is shutting down." if body.action == "shutdown" else
               "LittleBot is restarting. If it was started by hand (not as a service), start it again.")
     return {"ok": True, "action": body.action, "detail": detail}
+
+
+def _shutdown_call(request_shutdown: Any, restart: bool) -> Any:
+    """Pass ``restart=`` when the robot supports it (older facades only take a reason)."""
+    import functools
+    import inspect
+
+    try:
+        if restart and "restart" in inspect.signature(request_shutdown).parameters:
+            return functools.partial(request_shutdown, restart=True)
+    except (TypeError, ValueError):
+        pass
+    return request_shutdown
 
 
 def _call_safely(fn: Any, *args: Any) -> None:

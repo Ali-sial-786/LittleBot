@@ -116,6 +116,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         exit_code = 1
     finally:
         robot.shutdown("exit")
+    if exit_code == 0 and robot.restart_requested:
+        from littlebot.app.robot import RESTART_EXIT_CODE
+
+        log.info("exiting with code %d so the service manager restarts LittleBot", RESTART_EXIT_CODE)
+        return RESTART_EXIT_CODE
     return exit_code
 
 

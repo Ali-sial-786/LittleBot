@@ -192,6 +192,9 @@ class AuthManager:
         self._sessions: dict[str, Session] = {}
         self._setup_code_hash: str | None = None
         self._setup_failures = 0
+        # Called with the new code when one is issued, and with None once setup is complete
+        # (the dashboard service uses it to show the code on the robot's own screen).
+        self.on_setup_code: Callable[[str | None], None] | None = None
         self.login_limiter = RateLimiter(attempts_per_minute, 60.0, now=monotonic)
         self.setup_limiter = RateLimiter(attempts_per_minute, 60.0, now=monotonic)
         self.password_limiter = RateLimiter(attempts_per_minute, 60.0, now=monotonic)
@@ -213,7 +216,17 @@ class AuthManager:
         with self._lock:
             self._setup_code_hash = _sha256(code)
             self._setup_failures = 0
-        return f"{code[:4]}-{code[4:]}"
+        pretty = f"{code[:4]}-{code[4:]}"
+        self._notify_setup_code(pretty)
+        return pretty
+
+    def _notify_setup_code(self, code: str | None) -> None:
+        hook = self.on_setup_code
+        if hook is not None:
+            try:
+                hook(code)
+            except Exception:  # noqa: BLE001
+                log.exception("setup-code listener failed")
 
     @property
     def setup_code_active(self) -> bool:
@@ -248,6 +261,7 @@ class AuthManager:
                 raise SetupAlreadyDone("Setup has already been completed.")
             self._db.kv_set(PASSWORD_KEY, record)
             self._setup_code_hash = None
+        self._notify_setup_code(None)
         log.info("dashboard password set (first-run setup complete)")
 
     async def verify_password(self, password: str) -> bool:

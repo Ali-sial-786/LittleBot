@@ -557,7 +557,10 @@ async def test_power_requires_confirmation(authed, fakes):
     assert fakes["robot"].called("request_shutdown") == []
     r = await authed.post("/api/system/power", json={"action": "restart", "confirm": True})
     assert r.status_code == 200
-    await asyncio.sleep(0.7)
+    for _ in range(60):  # the request is sent ~0.5 s after the reply
+        if fakes["robot"].shutdown_requested:
+            break
+        await asyncio.sleep(0.1)
     assert fakes["robot"].shutdown_requested == "dashboard restart"
     assert (await authed.post("/api/system/power", json={"action": "reboot", "confirm": True})).status_code == 422
 

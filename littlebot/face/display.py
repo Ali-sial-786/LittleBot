@@ -135,6 +135,9 @@ class DisplayLoop:
         self._fonts: dict[int, Any] = {}
         self._errors = 0
         self.frames = 0
+        # First-run dashboard setup code, shown on the robot's own screen until a parent claims it.
+        self.setup_banner: dict[str, Any] | None = None
+        self._setup_sub: Any = None
 
     # ------------------------------------------------------------------ setup
     def open(self) -> None:
@@ -155,11 +158,15 @@ class DisplayLoop:
         attach = getattr(self.face, "attach_display", None)
         if callable(attach):
             attach()
+        self._watch_setup_code()
         self._opened = True
         log.info("face display open: %dx%d%s (driver %s)", *self.window.get_size(),
                  " fullscreen" if self.fullscreen else "", pygame.display.get_driver())
 
     def close(self) -> None:
+        if self._setup_sub is not None:
+            self._setup_sub.cancel()
+            self._setup_sub = None
         detach = getattr(self.face, "detach_display", None)
         if callable(detach):
             try:
@@ -173,6 +180,19 @@ class DisplayLoop:
             except Exception:  # noqa: BLE001
                 log.debug("display quit failed", exc_info=True)
         self._opened = False
+
+    def _watch_setup_code(self) -> None:
+        from littlebot.core.events import Topics
+
+        bus = self.ctx.bus
+        recent = bus.recent(300, Topics.DASHBOARD_SETUP)
+        if recent:
+            self._on_setup_code(recent[-1])
+        self._setup_sub = bus.subscribe(Topics.DASHBOARD_SETUP, self._on_setup_code)
+
+    def _on_setup_code(self, event: Any) -> None:
+        data = dict(event.data)
+        self.setup_banner = data if data.get("active") and data.get("code") else None
 
     def _set_mode(self) -> None:
         pg = self._pg
@@ -303,10 +323,37 @@ class DisplayLoop:
             self.panel.draw(win, self.panel_rect, self._status, self._motion, fps=self.measured_fps, caption=caption)
         elif self.demo is not None and self.show_debug:
             self._text(win, f"demo: {self.demo.caption}", (self.face_rect.x + 8, self.face_rect.bottom - 24), 20)
+        if self.setup_banner is not None and not self.face_hidden():
+            self._draw_setup_banner(win)
         if self.show_debug:
             self._draw_debug(win)
         if self.show_help:
             self._draw_help(win)
+
+    def face_hidden(self) -> bool:
+        try:
+            return not self.face.status().get("visible", True)
+        except Exception:  # noqa: BLE001
+            return False
+
+    def _draw_setup_banner(self, win: Any) -> None:
+        """Small strip at the bottom of the face: the one-time dashboard setup code."""
+        pg = self._pg
+        r = self.face_rect
+        s = r.h / self.native_size[1]
+        size = max(14, int(17 * s))
+        code = str(self.setup_banner.get("code", ""))
+        label = self._font(size).render("Parent setup code", True, (150, 170, 190))
+        value = self._font(int(size * 1.35)).render(code, True, (255, 214, 102))
+        pad = int(6 * s)
+        h = max(label.get_height(), value.get_height()) + 2 * pad
+        w = label.get_width() + value.get_width() + 5 * pad
+        box = pg.Surface((w, h), pg.SRCALPHA)
+        box.fill((0, 0, 0, 170))
+        x, y = r.centerx - w // 2, r.bottom - h - int(8 * s)
+        win.blit(box, (x, y))
+        win.blit(label, (x + 2 * pad, y + (h - label.get_height()) // 2))
+        win.blit(value, (x + 3 * pad + label.get_width(), y + (h - value.get_height()) // 2))
 
     def _poll(self, now: float) -> None:
         if now - self._status_t >= STATUS_POLL_SECONDS:

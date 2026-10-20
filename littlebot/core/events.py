@@ -92,6 +92,9 @@ class Topics:
     MOTION_GESTURE_FINISHED = "motion.gesture_finished"  # {gesture, cancelled}
     MOTION_ESTOP = "motion.estop"  # {active: bool, source}
 
+    # --- dashboard ---
+    DASHBOARD_SETUP = "dashboard.setup"  # {active, code, url} first-run setup code (shown on the robot's screen)
+
     # --- caregiver / simulator input ---
     CAREGIVER_RESPONSE = "caregiver.response"  # {response, prompt_id}
     SIM_INPUT = "sim.input"  # {kind, ...} simulator-injected input

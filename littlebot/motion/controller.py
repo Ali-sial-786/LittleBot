@@ -389,7 +389,10 @@ class MotionController(Service):
                 self._estop_source = str(source)
         self._all_off_now()
         if first:
-            self.log.warning("EMERGENCY STOP (source=%s): outputs off, motion latched", source)
+            if source == "shutdown":  # routine: the app makes the servos safe on every exit
+                self.log.info("servos de-energised for shutdown")
+            else:
+                self.log.warning("EMERGENCY STOP (source=%s): outputs off, motion latched", source)
             self.ctx.bus.publish(Topics.MOTION_ESTOP, {"active": True, "source": str(source)}, source="motion")
         self._update_health()
         self._dispatch(self._halt, "emergency stop")

@@ -133,3 +133,32 @@ async def test_idle_watch_gets_sleepy(monkeypatch):
         assert ctx.state.state == RobotState.SLEEPING
     finally:
         await b.stop()
+
+
+def test_restart_request_sets_flag_and_exit_code(monkeypatch):
+    from littlebot.app import main as main_mod
+    from littlebot.app.robot import RESTART_EXIT_CODE
+
+    bot = _robot()
+    bot.request_shutdown("dashboard restart", restart=True)
+    assert bot.shutdown_event.is_set() and bot.restart_requested
+    bot.request_shutdown("later plain shutdown")
+    assert bot.restart_requested  # a pending restart is not cancelled
+
+    class _Bot:
+        def __init__(self):
+            self.ctx = bot.ctx
+            self.shutdown_event = bot.shutdown_event
+            self.restart_requested = True
+
+        def start(self):
+            pass
+
+        def shutdown(self, reason=""):
+            pass
+
+        def request_shutdown(self, *a, **k):
+            pass
+
+    monkeypatch.setattr("littlebot.app.robot.LittleBot.create", classmethod(lambda cls, cfg: _Bot()))
+    assert main_mod.main(["--headless", "--no-dashboard", "--mode", "offline", "--data-dir", "/tmp/claude-0/lb-restart"]) == RESTART_EXIT_CODE

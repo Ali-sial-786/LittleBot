@@ -84,6 +84,16 @@ camera thread → detector → tracker → `vision.person_present` + `vision.fac
 face hidden → kiosk browser opens the local `/player?token=…` page which embeds the official IFrame player →
 the page reports `ended` → controller stops, browser closes, `face.visible` → the eyes come back.
 
+**First run**
+the dashboard generates a one-time setup code, logs it and publishes `dashboard.setup`; the face
+display shows it at the bottom of the screen until a parent claims the dashboard (physical presence
+= permission). Parent password → scrypt hash in SQLite; sessions are server-side; mutations need a
+CSRF token.
+
+**Restart from the dashboard**
+`robot.request_shutdown(restart=True)` → the process exits with code 75 → systemd
+(`Restart=on-failure`) starts it again. A plain shutdown exits 0 and stays down.
+
 **STOP**
 Dashboard STOP / keyboard X → `robot.stop_all()` → `system.stop_all` event, motion cancel, audio cut,
 activity + media stopped, all leases revoked, state IDLE, neutral face.
@@ -94,6 +104,8 @@ activity + media stopped, all leases revoked, state IDLE, neutral face.
 * Async subsystems never block the loop (blocking I/O in threads / `asyncio.to_thread`).
 * Device threads communicate only via bus events and thread-safe APIs.
 * Bounded queues everywhere; camera keeps only the latest frame.
+* Vision pauses detection during video (CPU for Chromium) and drops to ~1.5 Hz while asleep.
+* The face drops from 30 to 15–20 fps when nothing is animating.
 
 ## Modes
 
