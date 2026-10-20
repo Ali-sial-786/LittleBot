@@ -45,7 +45,7 @@ class Topics:
     FACE_EXPRESSION = "face.expression"  # {expression} (notification after it changed)
     FACE_BLINK = "face.blink"  # {double}
     FACE_GAZE = "face.gaze"  # {x, y}  (0..1 screen coords, 0.5,0.5 = centre)
-    FACE_VISIBLE = "face.visible"  # {visible} False while video owns the screen
+    FACE_VISIBLE = "face.visible"  # {visible} False while video owns the screen (published by the face only)
 
     # --- vision ---
     VISION_FACES = "vision.faces"  # {faces: [{x, y, w, h, gaze_x, gaze_y}], frame_w, frame_h}

@@ -34,6 +34,10 @@ docs/    guides
   (lazy-import heavy deps inside). It returns an object implementing the subsystem's
   protocol from `core/interfaces.py`; if it has a lifecycle it subclasses `core.service.Service`
   (`async start()`, `async stop()`, `health()`).
+* Lifecycle state lives in `Service.service_status` (not `status`, which every protocol uses
+  for its `status()` dict). Activities and media have protocol methods `start(id)` / `stop(reason)`
+  that share a name with `Service.start()` / `Service.stop()`: called with no arguments they act as
+  the lifecycle methods (the composition root always calls them that way).
 * `app/robot.py` builds subsystems in order: face, audio, vision, motion, media, brain,
   activities, then dashboard. Each factory may use the ones built before it via `ctx`.
 * Talk to other subsystems only through `ctx.<subsystem>` protocol methods and bus events
@@ -67,6 +71,10 @@ docs/    guides
   using the camera, microphone or any network service. Offline mode forces cloud off.
 * `ctx.age_policy()` gives age-aware rules (video gate, cloud AI gate, reply length).
 * Never store audio, images or transcripts by default. Never send camera data anywhere.
+* The `cloud_enabled` switch covers services that receive data about the child (cloud AI,
+  cloud speech-to-text / text-to-speech). YouTube playback is gated separately by `media.enabled`,
+  the allowlist, the age gate and offline mode: it only streams parent-approved videos and sends
+  nothing about the child.
 * API keys: only `ctx.config.anthropic_api_key` / `openai_api_key` (SecretStr). Never log them,
   never return them to the dashboard frontend.
 

@@ -224,7 +224,8 @@ function startShell(session) {
   const view = h('main', { class: 'view', id: 'view', tabindex: '-1' });
   const tabs = h('nav', { class: 'tabbar', 'aria-label': 'Main' },
     [...NAV.filter((n) => n.tab), PAGES.more].map((n) => h('a', { class: 'tab', href: `#/${n.id}`, dataset: { id: n.id } }, icon(n.icon), h('span', { text: n.id === 'more' ? 'More' : n.label }))));
-  root.append(h('div', { class: 'shell' }, topbar, offline, promptBar, alertsBox, h('div', { class: 'layout' }, side, view), tabs));
+  root.append(h('div', { class: 'shell' }, topbar, offline,
+    h('div', { class: 'layout' }, side, h('div', { class: 'main-col' }, promptBar, alertsBox, view)), tabs));
   shell = { face0, nameEl, dot, stateEl, view, side, tabs, offline, promptBar, alertsBox, alertsKey: '' };
   window.addEventListener('hashchange', route);
   document.addEventListener('visibilitychange', onVisibility);

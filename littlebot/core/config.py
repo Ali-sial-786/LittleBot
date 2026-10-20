@@ -116,6 +116,8 @@ class VisionConfig(_Section):
     gaze_vertical_offset: float = 0.0  # added to gaze_y (camera mounted above/below the eyes)
     simulated_face_seconds: float = 3.0  # simulate_face() expires unless refreshed
     gesture_fps: float = 10.0  # frame rate for the experimental gesture analyser (when enabled)
+    pause_during_media: bool = True  # PLAYING_MEDIA: no frame decoding / detection (video needs the CPU)
+    sleep_detect_fps: float = 1.5  # SLEEPING: reduced detection rate (a person can still wake the robot)
 
 
 class MicrophoneConfig(_Section):

@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 
 from littlebot.dashboard.deps import DashState, get_dash, log
 from littlebot.dashboard.models import (
-    MediaAddBody, MediaPlayBody, MediaSettingsBody, MediaUpdateBody, VolumeBody,
+    MediaAddBody, MediaPlayBody, MediaReorderBody, MediaSettingsBody, MediaUpdateBody, VolumeBody,
 )
 
 router = APIRouter(prefix="/api/media", tags=["media"])
@@ -44,6 +45,7 @@ async def media_info(dash: DashState = Depends(get_dash)) -> dict[str, Any]:
         "settings": _media_settings(dash),
         "policy": _policy(dash),
         "supports_update": media is not None and callable(getattr(media, "update_item", None)),
+        "supports_reorder": media is not None and callable(getattr(media, "reorder_items", None)),
     }
 
 
@@ -51,19 +53,29 @@ async def media_info(dash: DashState = Depends(get_dash)) -> dict[str, Any]:
 async def add_item(body: MediaAddBody, dash: DashState = Depends(get_dash)) -> dict[str, Any]:
     media = dash.need("media")
     # add_item may validate / look things up: keep it off the event loop.
-    item = await asyncio.to_thread(media.add_item, body.url, body.title)
+    call = functools.partial(media.add_item, body.url, body.title)
+    if body.kind is not None:
+        call = functools.partial(media.add_item, body.url, body.title, kind=body.kind)
+    item = await asyncio.to_thread(call)
     return {"ok": True, "item": item}
 
 
 @router.patch("/items/{item_id}")
 async def update_item(item_id: int, body: MediaUpdateBody, dash: DashState = Depends(get_dash)) -> dict[str, Any]:
     media = dash.need("media")
+    if body.title is None and body.enabled is None:
+        raise HTTPException(status_code=422, detail="Nothing to change.")
     updater = getattr(media, "update_item", None)
     if callable(updater):
-        item = await asyncio.to_thread(updater, item_id, title=body.title)
+        try:
+            item = await asyncio.to_thread(functools.partial(updater, item_id, title=body.title, enabled=body.enabled))
+        except KeyError as e:
+            raise HTTPException(status_code=404, detail="That video is not in the approved list.") from e
         if not item:
             raise HTTPException(status_code=404, detail="That video is not in the approved list.")
         return {"ok": True, "item": item}
+    if body.title is None:
+        raise HTTPException(status_code=501, detail="Switching single videos on/off is not supported by this player.")
     # Fallback for media modules without update_item(): re-add with the new title.
     existing = next((i for i in media.list_items() if int(i.get("id", -1)) == item_id), None)
     if existing is None:
@@ -77,6 +89,16 @@ async def update_item(item_id: int, body: MediaUpdateBody, dash: DashState = Dep
         await asyncio.to_thread(media.add_item, existing["url"], existing.get("title"))
         raise
     return {"ok": True, "item": item}
+
+
+@router.post("/reorder")
+async def reorder(body: MediaReorderBody, dash: DashState = Depends(get_dash)) -> dict[str, Any]:
+    media = dash.need("media")
+    fn = getattr(media, "reorder_items", None)
+    if not callable(fn):
+        raise HTTPException(status_code=501, detail="Reordering is not supported by this player.")
+    items = await asyncio.to_thread(fn, list(body.ids))
+    return {"ok": True, "items": items if isinstance(items, list) else media.list_items()}
 
 
 @router.delete("/items/{item_id}")

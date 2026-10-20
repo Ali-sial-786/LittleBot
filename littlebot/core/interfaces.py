@@ -184,8 +184,9 @@ class MediaAPI(Protocol):
     def list_items(self) -> list[dict[str, Any]]:
         """{id, kind: video|playlist, youtube_id, title, url, added_at}"""
 
-    def add_item(self, url: str, title: str | None = None) -> dict[str, Any]:
-        """Validate + add to allowlist. Raises ValueError for malformed/unsupported URLs."""
+    def add_item(self, url: str, title: str | None = None, *, kind: str | None = None) -> dict[str, Any]:
+        """Validate + add to allowlist. Raises ValueError for malformed/unsupported URLs.
+        ``kind="playlist"`` adds the whole playlist of a watch?v=..&list=.. link."""
 
     def remove_item(self, item_id: int) -> bool: ...
 

@@ -116,6 +116,8 @@ class ActivityPrefsBody(Body):
 class MediaAddBody(Body):
     url: str = Field(min_length=5, max_length=500)
     title: str | None = Field(default=None, max_length=120)
+    # "playlist" keeps the whole playlist of a watch?v=..&list=.. link; None lets the media module decide.
+    kind: Literal["video", "playlist"] | None = None
 
     @field_validator("url")
     @classmethod
@@ -134,15 +136,22 @@ class MediaAddBody(Body):
 
 
 class MediaUpdateBody(Body):
-    title: str = Field(min_length=1, max_length=120)
+    title: str | None = Field(default=None, min_length=1, max_length=120)
+    enabled: bool | None = None
 
     @field_validator("title")
     @classmethod
-    def _title(cls, v: str) -> str:
+    def _title(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
         v = clean_text(v, max_len=120, field="title")
         if not v:
             raise ValueError("title is empty")
         return v
+
+
+class MediaReorderBody(Body):
+    ids: list[int] = Field(min_length=1, max_length=500)
 
 
 class MediaPlayBody(Body):

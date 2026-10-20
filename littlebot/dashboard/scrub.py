@@ -40,10 +40,6 @@ def scrub(value: Any, depth: int = 0) -> Any:
 
 
 def scrub_status(st: dict[str, Any]) -> dict[str, Any]:
-    # Player URLs carry a kiosk token: keep them (parents may open the player), but scrub everything else.
-    media = st.get("media")
-    player = media.get("player") if isinstance(media, dict) else None
-    out = scrub(st)
-    if isinstance(player, dict) and isinstance(out.get("media"), dict):
-        out["media"]["player"] = {k: v for k, v in player.items() if isinstance(v, (str, int, float, bool, type(None)))}
-    return out
+    """Status for the browser: secrets hidden, everything else (e.g. ``media.player.last_event``,
+    the player URL/path with its kiosk token) kept so the parent sees the same hints."""
+    return scrub(st)
