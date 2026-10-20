@@ -82,9 +82,9 @@ def decide_backend(cfg: MotionConfig) -> BackendDecision:
         except CalibrationError as e:
             cal_error = str(e)
     if cfg.backend != "pca9685":
-        return BackendDecision(False, "simulation only: motion.backend is 'mock'", calibration, cal_error)
+        return BackendDecision(False, "simulation only: no servos connected yet (motion.backend is 'mock')", calibration, cal_error)
     if not cfg.physical_enabled:
-        return BackendDecision(False, "simulation only: motion.physical_enabled is false (see docs/MOTION_SAFETY.md)",
+        return BackendDecision(False, "simulation only: physical motion is switched off (motion.physical_enabled is false; see docs/MOTION_SAFETY.md)",
                                calibration, cal_error)
     if not path.is_file():
         return BackendDecision(False, f"simulation only: calibration file {cfg.calibration_file} not found "
@@ -527,6 +527,17 @@ class MotionController(Service):
                 holder = self.ctx.arbiter.holder(Resource.MOTION)
                 return self._refused(label, f"motion reserved by {holder.owner if holder else '?'}")
             mode, borrowed = admission
+            if kind == "gesture" and steps:
+                # A gesture interrupting another gesture also brings home the joints the old one
+                # was using but the new one doesn't (no arm left hanging mid-wave).
+                leftovers = frozenset().union(*(o.joints - joints for o in self._jobs
+                                                if o.kind == "gesture" and o.joints & joints)) or frozenset()
+                if leftovers:
+                    home = {j: self._specs[j].neutral for j in leftovers if j in self._specs}
+                    first = steps[0]
+                    steps = [_Step(targets={**home, **first.targets}, min_duration=first.min_duration,
+                                   hold=first.hold, speed=first.speed, speed_cap=first.speed_cap), *steps[1:]]
+                    joints = joints | frozenset(home)
             job = _Job(id=next(self._ids), kind=kind, name=name, joints=joints, steps=steps, priority=prio,
                        lease_mode=mode, borrowed=borrowed)
             job.future = self._loop.create_future()

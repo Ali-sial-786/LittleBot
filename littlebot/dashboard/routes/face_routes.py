@@ -107,4 +107,10 @@ async def demo(dash: DashState = Depends(get_dash)) -> dict[str, Any]:
 
 @router.post("/demo/stop")
 async def demo_stop(dash: DashState = Depends(get_dash)) -> dict[str, Any]:
-    return {"ok": True, "stopped": dash.cancel("face_demo")}
+    stopped = dash.cancel("face_demo")
+    face = dash.ctx.face
+    if face is not None:  # don't leave the face on whatever expression the demo had reached
+        face.open_eyes()
+        face.clear_gaze()
+        face.set_expression("neutral")
+    return {"ok": True, "stopped": stopped}

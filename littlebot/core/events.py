@@ -68,7 +68,8 @@ class Topics:
     # --- conversation ---
     BRAIN_REPLY = "brain.reply"  # {text, provider, filtered}
     BRAIN_STATUS = "brain.status"  # {provider, status: ready|ok|error|auth_error|attention, detail}
-    # (for "attention", detail is only a category label: hurt|emergency|scared|lost|safety - never the child's words)
+    # (for "attention", detail is only a category label: safety|water|swallowed|emergency|stranger|hurt|lost|scared|help|danger
+    #  - never the child's words)
 
     # --- activities ---
     ACTIVITY_STARTED = "activity.started"  # {id, name}

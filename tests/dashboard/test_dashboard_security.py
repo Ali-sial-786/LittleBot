@@ -437,3 +437,13 @@ async def test_global_setup_lockout(dctx):
         clock.t += GLOBAL_LOCKOUT_SECONDS + 1
         r = await parent.post("/api/setup", json={"setup_code": "ABCD-EFGH", "password": PASSWORD})
         assert r.status_code == 401
+
+
+def test_validation_messages_are_parent_friendly():
+    from littlebot.dashboard.app import friendly_validation_message as f
+
+    assert f("max_words", "less_than_equal", "Input should be less than or equal to 60", {"le": 60}) == \
+        "Reply length must be 60 or less"
+    assert f("url", "value_error", "the link must not contain spaces", {}) == "The link must not contain spaces"
+    assert f("nickname", "string_too_long", "x", {"max_length": 30}) == "Nickname is too long (at most 30 characters)"
+    assert f("", "missing", "Field required", {}) == "Is required"

@@ -116,7 +116,7 @@ async def test_face_expression_and_validation(authed, dctx):
     assert dctx.face.called("set_expression")[-1] == (("happy",), {"hold": None})
     r = await authed.post("/api/face/expression", json={"name": "angry"})
     assert r.status_code == 422
-    assert "unknown expression" in r.json()["detail"]
+    assert "unknown expression" in r.json()["detail"].lower()
     r = await authed.post("/api/face/expression", json={"name": "happy", "extra": 1})
     assert r.status_code == 422
     for name in EXPRESSIONS:

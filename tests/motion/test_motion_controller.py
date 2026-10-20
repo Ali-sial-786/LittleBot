@@ -624,3 +624,18 @@ async def test_status_is_thread_safe_during_motion(make_controller):
         stop.set()
         th.join()
     assert errors == []
+
+
+async def test_gesture_interrupting_a_gesture_brings_its_other_joints_home(make_controller, make_ctx):
+    """QA: Look Left during a wave left the right arm raised. The interrupted gesture's other
+    joints now return to neutral as part of the new gesture."""
+    ctx = make_ctx()
+    c = await make_controller(ctx)
+    wave = asyncio.create_task(c.run_gesture("wave"))
+    await run_until(lambda: c._joints["right_arm"].angle < c.specs["right_arm"].neutral - 30)  # noqa: SLF001
+    assert await c.run_gesture("look_left") is True
+    assert await wave is False
+    await run_until(lambda: not c.status()["moving"])
+    joints = c.status()["joints"]
+    assert joints["right_arm"]["angle"] == pytest.approx(c.specs["right_arm"].neutral, abs=0.5)
+    assert joints["head"]["angle"] == pytest.approx(c.specs["head"].neutral, abs=0.5)

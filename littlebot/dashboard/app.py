@@ -36,6 +36,41 @@ from littlebot.dashboard.deps import DashState
 
 log = logging.getLogger("littlebot.dashboard")
 
+# Parent-facing names for request fields (toasts read "Reply length must be 60 or less").
+FIELD_LABELS = {
+    "max_words": "Reply length", "max_requests_per_hour": "Requests per hour",
+    "max_requests_per_day": "Requests per day", "daily_budget_usd": "Daily budget",
+    "session_limit_minutes": "Session limit", "daily_limit_minutes": "Daily limit",
+    "url": "Link", "title": "Title", "nickname": "Nickname", "birth_month": "Birth month",
+    "age_months": "Age", "favourite_animals": "Favourite animals", "favourite_songs": "Favourite songs",
+    "interests": "Interests", "password": "Password", "new_password": "New password",
+    "current_password": "Current password", "setup_code": "Setup code", "volume": "Volume",
+    "tts_rate": "Speaking speed", "text": "Text", "angle": "Angle", "name": "Name", "seconds": "Seconds",
+}
+
+
+def friendly_validation_message(field: str, err_type: str, message: str, ctx: dict) -> str:
+    """Turn a pydantic error into a short sentence a parent understands."""
+    label = FIELD_LABELS.get(field.split(".")[-1] if field else "", "")
+    if not label and field:
+        label = field.split(".")[-1].replace("_", " ").capitalize()
+    lim = ctx.get("le", ctx.get("lt", ctx.get("ge", ctx.get("gt", ctx.get("max_length", ctx.get("min_length"))))))
+    phrases = {
+        "less_than_equal": f"must be {lim} or less", "less_than": f"must be less than {lim}",
+        "greater_than_equal": f"must be at least {lim}", "greater_than": f"must be more than {lim}",
+        "string_too_long": f"is too long (at most {lim} characters)",
+        "string_too_short": "is too short" if lim in (None, 1) else f"is too short (at least {lim} characters)",
+        "too_long": f"has too many entries (at most {lim})", "missing": "is required",
+        "float_parsing": "must be a number", "int_parsing": "must be a whole number",
+        "bool_parsing": "must be on or off", "string_type": "must be text",
+        "literal_error": "is not one of the allowed choices", "string_pattern_mismatch": "has an unexpected format",
+    }
+    if err_type == "value_error":  # our own validators already speak plain language
+        text = message.strip()
+        return text[:1].upper() + text[1:] if text else "Invalid value."
+    phrase = phrases.get(err_type, message)
+    return f"{label} {phrase}" if label else phrase[:1].upper() + phrase[1:]
+
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 PUBLIC_API_PATHS = frozenset({"/api/health", "/api/session", "/api/login", "/api/setup"})
@@ -169,8 +204,9 @@ def create_app(ctx: RobotContext, robot: Any = None, *, auth: AuthManager | None
                 msg = msg[len("Value error, "):]
             errors.append({"field": ".".join(loc), "message": msg})
         if errors:
-            first = errors[0]
-            detail = f"{first['field']}: {first['message']}" if first["field"] else first["message"]
+            raw = exc.errors()[0]
+            detail = friendly_validation_message(errors[0]["field"], str(raw.get("type", "")),
+                                                 errors[0]["message"], raw.get("ctx") or {})
         else:
             detail = "Invalid request."
         return JSONResponse({"detail": detail, "code": "invalid", "errors": errors}, status_code=422)
