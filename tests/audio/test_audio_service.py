@@ -12,7 +12,6 @@ import numpy as np
 import pytest
 
 from littlebot import audio as audio_pkg
-from littlebot.audio import devices as dev
 from littlebot.audio.devices import MockInput, MockOutput, NullInput, NullOutput, SoundDeviceInput, SoundDeviceOutput
 from littlebot.audio.service import MAX_QUEUE, AudioService
 from littlebot.audio.stt import MockSTT
