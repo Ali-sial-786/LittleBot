@@ -379,6 +379,17 @@ class MotionController(Service):
         """
         self._dispatch(self._cancel_jobs, False, "cancelled")
 
+    def _disarm(self, why: str) -> None:
+        """Any e-stop also withdraws the parent's arming: after a reset, physical motion
+        needs a fresh, deliberate re-arm (whatever triggered the stop: keyboard, panel,
+        dashboard or a driver fault)."""
+        try:
+            if self.ctx.settings.get(ARMED_KEY):
+                self.ctx.settings.set(ARMED_KEY, False, source="motion")
+                self.log.info("physical motion disarmed: %s", why)
+        except Exception:  # noqa: BLE001 - never let bookkeeping block an emergency stop
+            self.log.exception("could not clear %s", ARMED_KEY)
+
     def emergency_stop(self, source: str = "unknown") -> None:
         """Immediately de-energise every output (in the caller's thread), cancel everything
         and latch: all motion commands are refused until reset_emergency_stop()."""
@@ -393,6 +404,7 @@ class MotionController(Service):
                 self.log.info("servos de-energised for shutdown")
             else:
                 self.log.warning("EMERGENCY STOP (source=%s): outputs off, motion latched", source)
+                self._disarm(f"emergency stop ({source})")
             self.ctx.bus.publish(Topics.MOTION_ESTOP, {"active": True, "source": str(source)}, source="motion")
         self._update_health()
         self._dispatch(self._halt, "emergency stop")

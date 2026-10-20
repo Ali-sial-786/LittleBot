@@ -68,3 +68,24 @@ def test_real_mode_write_failure_is_reported(monkeypatch, capsys):
     _fake_smbus(monkeypatch, FailingWrites())
     assert off_cmd.main(["off"]) == 1
     assert "SERVO SUPPLY OFF" in capsys.readouterr().err
+
+
+def test_any_emergency_stop_disarms_physical_motion(ctx):
+    """Keyboard / panel / driver-fault e-stops must withdraw arming, not just the dashboard one."""
+    from littlebot.motion.controller import MotionController
+
+    ctrl = MotionController(ctx)
+    ctx.settings.set("motion.physical_armed", True)
+    ctrl.emergency_stop("keyboard")
+    assert ctx.settings.get("motion.physical_armed") is False
+    ctrl.reset_emergency_stop()
+    assert ctx.settings.get("motion.physical_armed") is False  # reset does not re-arm
+
+
+def test_shutdown_stop_is_quiet_and_keeps_setting(ctx, caplog):
+    from littlebot.motion.controller import MotionController
+
+    ctrl = MotionController(ctx)
+    with caplog.at_level("WARNING"):
+        ctrl.emergency_stop("shutdown")
+    assert not [r for r in caplog.records if "EMERGENCY" in r.getMessage()]

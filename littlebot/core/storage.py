@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import sqlite3
 import threading
 from pathlib import Path
@@ -30,6 +31,17 @@ class Database:
             self._conn.execute(
                 "CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated REAL DEFAULT (julianday('now')))"
             )
+        self._restrict_permissions()
+
+    def _restrict_permissions(self) -> None:
+        """Owner-only access: the DB holds the password hash, sessions and the child profile."""
+        if self.path == ":memory:":
+            return
+        for suffix in ("", "-wal", "-shm"):
+            try:
+                os.chmod(self.path + suffix, 0o600)
+            except OSError:
+                pass
 
     # -- generic helpers --------------------------------------------------
     def execute(self, sql: str, params: Sequence[Any] | dict[str, Any] = ()) -> sqlite3.Cursor:

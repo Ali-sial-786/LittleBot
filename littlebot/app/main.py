@@ -69,6 +69,8 @@ def overrides_from_args(args: argparse.Namespace) -> dict[str, Any]:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    # The database (password hash, sessions, child profile) and logs are private to this user.
+    os.umask(0o077)
 
     from littlebot.core.config import load_config
     from littlebot.core.logging_setup import setup_logging

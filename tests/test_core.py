@@ -242,3 +242,16 @@ def test_kv_store_roundtrip():
     with db.transaction():
         db.kv_set("b", 1)
     assert db.kv_items() == {"a": {"x": [1, 2]}, "b": 1}
+
+
+def test_database_file_is_owner_only(tmp_path):
+    import os
+    import stat
+
+    path = tmp_path / "x.db"
+    path.write_bytes(b"")
+    os.chmod(path, 0o644)
+    db = Database(path)
+    db.kv_set("a", 1)
+    assert stat.S_IMODE(os.stat(path).st_mode) == 0o600
+    db.close()
