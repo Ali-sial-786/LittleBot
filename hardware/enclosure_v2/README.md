@@ -41,6 +41,32 @@ v1 (`../enclosure/`) is smaller and simpler (212 mm, 11 parts). v2 is bigger, mo
   - 110° fails on purpose: the arm comes closer than 12 mm to the head.
 - **Not verified:** real-world fit. Clearances depend on your printer and the actual parts – see *Measure before you print*.
 
+## Print it in 9 jobs (build plates)
+
+The robot can't be printed as one piece:
+- It's 340 mm tall, taller than most printers.
+- The electronics have to go inside.
+- The head and arms have to move.
+
+Instead, `plates/` groups the parts into **9 ready-made build plates**, one STL per print job. Each fits a 220 × 220 mm bed, and the parts on each plate share a colour:
+
+| Plate | Parts | Filament |
+|---|---|---|
+| `01_base.stl` | base | main colour |
+| `02_torso.stl` | torso | main colour |
+| `03_head.stl` | head + camera pod | main colour |
+| `04_floor.stl` | floor + 2 well covers | main colour |
+| `05_back_cap.stl` | head back cap + shelf | main colour |
+| `06_arms.stl` | both arms + torso back cover | main colour |
+| `07_small_parts.stl` | neck coupler, both gears, servo frame, camera bracket, rear plate, display tabs | main colour, print slowly for the gears |
+| `08_visor.stl` | visor | **black** |
+| `09_glow.stl` | both ears + front plate | **white / natural / translucent** |
+| later: `10_mobile_floor.stl`, `11_sonar_plate.stl` | wheel-phase floor, HC-SR04 plate | |
+
+![plates](images/plates.png)
+
+Each plate is a single STL with several separate bodies. Most slicers can split it back into objects if you want different settings per part, such as more infill for the gears. On a bigger bed, run `python3 make_plates.py 256` (or your bed size) to check the layout still fits. Some plates could also be merged.
+
 ## Parts to print
 
 | STL | Qty | Notes |
