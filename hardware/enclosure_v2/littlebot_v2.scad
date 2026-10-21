@@ -92,6 +92,11 @@ cam_aperture = 17;
 spk_w = 84; spk_h = 43; spk_d = 32; spk_z = 41;   // MEASURE; spk_z = bottom of the speaker (torso coords)
 spk_y = 6;                                        // speaker front, behind the chest grille
 
+/* [Microphone - Adafruit 3367 mini USB mic, 22.2 x 18.3 x 7.0] */
+mic_l = 22.2; mic_w = 18.3; mic_t = 7.0; mic_body = 10.2;  // body = the part outside the USB plug
+mic_x0 = -34; mic_zc = 100;            // closed end of the sleeve / centre height (torso coords)
+mic_y0 = torso_wall + 1.5;             // mic face 1.5 mm behind the chest wall (leaves room for the socket)
+
 /* [Servos - MG90S] */
 sv_l = 22.8; sv_w = 12.2; sv_tab_l = 32.2; sv_tab_t = 2.5; sv_tab_z = 15.9;
 sv_case_h = 22.7; sv_boss_h = 28.5; sv_spline_h = 32.0; sv_shaft_off = 6.1;
@@ -363,8 +368,12 @@ module torso_shell() {
                         translate([0, spk_y + spk_d - 2, 0]) cube([3, 4, spk_h + 6]); }
                     // rear-cover columns
                     for (s = [-1, 1]) translate([s * 44, torso_d - torso_wall - 3.5, 8]) cylinder(d = 8, h = torso_top_in - 8 + eps);
-                    // microphone pocket (USB dongle on a short extension), upper left chest
-                    translate([-42 - 6, 2, 92]) difference() { cube([12, 28, torso_top_in - 92 + eps]); translate([2, -1, -1]) cube([8, 26, torso_top_in - 92 - 3]); }
+                    // microphone sleeve: the dongle lies flat behind the chest holes, its USB plug pointing
+                    // to the middle, where the extension cable's socket plugs on (open end, +x)
+                    difference() {
+                        translate([mic_x0 - 2, 0, mic_zc - mic_w/2 - 2.4]) cube([mic_body + 2, mic_y0 + mic_t + 2.5, torso_top_in - mic_zc + mic_w/2 + 2.4 + eps]);
+                        translate([mic_x0, torso_wall - 1, mic_zc - mic_w/2 - 0.4]) cube([30, mic_y0 + mic_t + 0.5 - torso_wall + 1, mic_w + 0.8]);
+                    }
                     // base fixing wedges (screws come up from inside the base)
                     for (p = torso_fix_pts()) let (sx = sign(p[0]), reach = 57 - (abs(p[0]) - 5)) translate([p[0], p[1], 0]) hull() {
                         translate([-5, -5, 0]) cube([10, 10, 9]); translate([sx * (57 - abs(p[0])) - 0.005, -5, 0]) cube([0.01, 10, 9 + reach]); }
@@ -384,12 +393,14 @@ module torso_shell() {
             for (ring = [1:4]) for (k = [0:6 * ring - 1]) rotate(k * 360 / (6 * ring)) translate([ring * 6, 0, 0]) cylinder(d = 3, h = 8, $fn = fn_small);
         }
         // microphone holes
-        if (detail) for (dz = [0, 5]) for (dx = [-5, 0, 5]) translate([-42 + dx, -1, 104 + dz]) rotate([-90, 0, 0]) cylinder(d = 2.2, h = 8, $fn = 10);
+        if (detail) for (dz = [-5, 0, 5]) for (dx = [2, 5.5, 9]) translate([mic_x0 + dx, -1, mic_zc + dz]) rotate([-90, 0, 0]) cylinder(d = 2.2, h = 8, $fn = 10);
         // rear opening (U-shaped, open at the bottom -> prints without bridging)
         translate([-46, torso_d - torso_wall - 1, -1]) cube([92, torso_wall + 2, 113]);
         for (s = [-1, 1]) for (zz = [22, 100]) translate([s * 44, torso_d - 9, zz]) rotate([-90, 0, 0]) cylinder(d = pilot_m3, h = 12, $fn = fn_small);
         // base fixing pilots
         for (p = torso_fix_pts()) translate([p[0], p[1], -1]) cylinder(d = pilot_m3, h = 10, $fn = fn_small);
+        // speaker cable windows through the ribs (whichever end the cable leaves from)
+        for (s = [-1, 1]) translate([s * (spk_w/2 + 1.8), spk_y + spk_d/2 + 1, spk_z + spk_h/2]) cube([5, 18, 14], center = true);
         // speaker zip-tie slots
         for (s = [-1, 1]) for (zz = [spk_z + 8, spk_z + spk_h - 8]) translate([s * (spk_w/2 + 1.8), spk_y + spk_d + 0.5, zz]) cube([5, 3, 3.5], center = true);
     }
@@ -705,7 +716,7 @@ module place_torso() { translate([0, torso_y0, torso_z0]) children(); }
 module place_head()  { translate([0, head_y0, head_z0]) children(); }
 module pi_dummy_t() {   // torso coordinates
     color("green") translate([-28, pi_spine_y + pi_standoff, pi_z_top - 85]) cube([56, 1.6, 85]);
-    color("#555") translate([-20, pi_spine_y + pi_standoff + 1.6, pi_z_top - 60]) cube([40, 12, 34]);                 // cooler
+    color("#555") translate([-22, pi_spine_y + pi_standoff + 1.6, pi_z_top - 68]) cube([43.5, 14.5, 64.5]);           // official Active Cooler (63.5 x 42.5 x 13.7)
     color("#999") translate([-27, pi_spine_y + pi_standoff + 1.6, pi_z_top - 85 - 2]) cube([53, 16, 21]);              // USB/Ethernet block
     color("#222") translate([-25, pi_spine_y + pi_standoff + 1.6, pi_z_top - 85 - 33]) cube([50, 14, 33]);             // USB plugs (down)
     for (px = [11.2, 25.8, 39.2]) color("#222") translate([28, pi_spine_y + pi_standoff + 1.6, pi_z_top - px - 4]) cube([22, 4, 8]); // USB-C + HDMI plugs
@@ -714,6 +725,7 @@ module electronics() {
     place_torso() {
         pi_dummy_t();
         color("#111") translate([-spk_w/2, spk_y, spk_z]) cube([spk_w, spk_d, spk_h]);
+        color("#333") translate([mic_x0 + 0.3, mic_y0, mic_zc - mic_w/2]) cube([mic_l, mic_t, mic_w]);
         translate([0, pinion_yt, hs_spline_z]) servo_dummy();
         for (s = [-1, 1]) translate([s * as_spline_x, shoulder_yt, shoulder_zt]) rotate(s > 0 ? [90, 0, 90] : [-90, 0, 90]) servo_dummy();
     }

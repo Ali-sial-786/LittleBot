@@ -88,7 +88,9 @@ v1 (`../enclosure/`) is smaller and simpler (212 mm, 11 parts). v2 is bigger, mo
 | servo screws (in the servo bags) | | servo tabs, horns |
 | PTFE tape or a drop of silicone grease | – | neck bearing ring |
 | 1 mm foam tape, 2 small zip ties | | display clamp tabs, speaker gasket, speaker cradle |
-| short USB-A extension (10–20 cm) | 1 | USB microphone dongle → chest pocket |
+| USB-A extension cable, male → female, 15–30 cm (socket end no bigger than about 18 × 9.5 mm) | 1 | Adafruit mini USB mic → chest sleeve |
+| **90° HDMI adapter, male → female** (buy a 2-pack with both the 90° and 270° versions) | 1 | turns the official cable's plug towards the back of the head (see *Head* below) |
+| male-to-female jumper wires, 30 cm | ~6 | display power (5 V + GND) now, PCA9685 later |
 | optional ballast, ~250 g, sealed in a bag and strapped in | | battery bay in the stationary phase (stability) |
 | **later:** 5.5 × 2.1 mm panel DC jack (8 mm hole) + mini toggle (6 mm hole) | 1 + 1 | separate 5 V servo supply ("SERVO 5V" on the back) |
 | **later:** 2 × 12-LED WS2812 rings (37 mm OD / 23 mm ID), ≤ 5 mm-wide addressable LED strip ~55 mm | | ears + light bar |
@@ -98,12 +100,26 @@ v1 (`../enclosure/`) is smaller and simpler (212 mm, 11 parts). v2 is bigger, mo
 
 | Area | What's there |
 |---|---|
-| **Head** | **Display:** the MPI3508 sits in locating ribs on the back of the visor, HDMI pointing **down**, held by four clamp tabs. The straight HDMI plug has 34.7 mm of clearance; the visor screws into the head from inside.<br>**Ears:** LED-ring pockets; the wires go into the head through a hole under each ring.<br>**Back cap:** the 4 screws locate it.<br>**Camera:** in the top pod on a tilting bracket. Its cable drops into the head through a small hole and then down the neck bore. |
+| **Head** | **Display:** the MPI3508 sits in locating ribs on the back of the visor, HDMI pointing **down**, held by four clamp tabs; the visor screws into the head from inside. The official Raspberry Pi cable's HDMI plug is about 45 mm long with its strain relief, too long to go straight down (34.7 mm of room). So it goes in through a **90° adapter** whose socket faces the back of the head, and the plug lies flat towards the neck (checked: adapter 24 × 15 × 22 mm + plug 22 × 50 × 12 mm).<br>**Ears:** LED-ring pockets; the wires go into the head through a hole under each ring.<br>**Back cap:** the 4 screws locate it.<br>**Camera:** in the top pod on a tilting bracket. Its cable drops into the head through a small hole and then down the neck bore. |
 | **Neck** | Same geared turntable as v1. The head screws onto a coupler that turns on a hollow spigot (26 mm cable bore). A 36-tooth ring gear under the torso top is driven by a 24-tooth pinion in front of it, so the servo never carries the head and lifting by the head can't pull the shaft out. **Head = 0.67 × servo angle**: the servo's full range gives about ±60°, and all of it is collision-free. |
-| **Torso** | **Front:** speaker behind the round chest grille, in a cradle with zip-tie slots; USB mic dongle in the upper-chest pocket (viewer's left) behind the small holes.<br>**Top:** head servo on its frame, gear guard, one arm servo per side on a rib (spline through the side wall).<br>**Middle:** the **Pi 5 stands upright** on a spine (cooler facing the back cover's slots). Its USB ports point down into the base, USB-C / micro-HDMI to the left, and the GPIO header to the right with room for jumper wires. |
+| **Torso** | **Front:** speaker behind the round chest grille, in a cradle with zip-tie slots; the Adafruit mini USB mic lies flat in a sleeve behind the small holes (viewer's left), holes facing out, its plug pointing to the middle where the extension cable's socket plugs on.<br>**Top:** head servo on its frame, gear guard, one arm servo per side on a rib (spline through the side wall).<br>**Middle:** the **Pi 5 stands upright** on a spine (cooler facing the back cover's slots). Its USB ports point down into the base, USB-C / micro-HDMI to the robot's left, and the GPIO header to its right with room for jumper wires. The official Active Cooler (63.5 × 42.5 × 13.7 mm) leaves about 11 mm of air in front of the back cover's slots. |
 | **Base** | **Under the torso:** the cable pass-through.<br>**Shelf:** PCA9685 now; ESP32 + TB6612FNG later.<br>**Battery bay:** under the shelf.<br>**Rear:** cable slot plate and the servo-supply jack + switch.<br>**Front:** sensor / light-bar plate.<br>**Sides:** two wheel wells (covered for now). |
 
 All openings for sound, the mic and cooling are 3 mm or smaller. The cable slot is 16 × 8 mm, in a 4.6 mm plate.
+
+## Checked against your parts
+
+| Part | Size used in the model | Source |
+|---|---|---|
+| Raspberry Pi 5 + official Active Cooler | 85 × 56 mm board, M2.5 holes 58 × 49; cooler 63.5 × 42.5 × 13.7 mm | official mechanical drawing; Raspberry Pi spec sheet for the cooler |
+| MPI3508 3.5" HDMI display | 85.51 × 56 mm glass, 7.32 mm stack, HDMI on the bottom edge | lcdwiki MPI3508 drawing |
+| Adafruit 3369 USB speaker | 84 × 43 × 32 mm | Adafruit product page |
+| Adafruit 3367 mini USB mic | 22.2 × 18.3 × 7.0 mm | Adafruit product page |
+| Official micro-HDMI → HDMI cable | HDMI plug ≈ 20 × 10 × 45 mm (with strain relief), 5 mm cable | typical plug size (no official drawing found); cable diameter from Adafruit |
+| U20CAM-1080P camera | 32 × 32 mm board, M2 holes 28 mm apart | InnoMaker lists its 1080P USB modules as 32 × 32 mm with M2 holes; the spacing is assumed |
+| MG90S servos | typical MG90S size | clones vary |
+
+All of these fit with every check passing. The dimensions come from listings, not from your actual parts, so still measure the camera and one servo before the long prints.
 
 ## Measure before you print (assumed values)
 
@@ -116,7 +132,8 @@ These values come from datasheets or typical parts. Check each with calipers, ch
 | `cam_board`, `cam_hole_sp`, `cam_board_y` | 32, 28, 26 | camera board size, M2 hole spacing, lens length (pod front → board) |
 | `sv_*` | MG90S typical | clones differ – measure one servo (`sv_spline_h`, `sv_tab_z`, `sv_tab_l`, `sv_hole_sp`) |
 | `horn_plate_t` | 1.6 | thickness of the horn's arms. Trim the head-servo horn to **≤ 12.5 mm radius** (pinion pocket) and the arm horns to ≤ 15 mm |
-| `spk_w/h/d` | 84 × 43 × 32 | **your USB speaker's box** – the cradle is sized from this |
+| `spk_w/h/d` | 84 × 43 × 32 | Adafruit 3369 *Mini External USB Stereo Speaker* (Adafruit's listed size). Its cable can leave from either end through the windows in the cradle ribs |
+| `mic_l/w/t` | 22.2 × 18.3 × 7.0 | Adafruit 3367 *Mini USB Microphone* (Adafruit's listed size) |
 | `bat_*`, `sonar_sp`, HC-SR04 holes | | only for the later phases |
 
 Test-print these first:
@@ -135,7 +152,7 @@ Then commit to the long prints: torso, base and head.
    3. Slide the pinion up into mesh with the ring gear.
    4. Screw the frame to the pillars (2 × M3 × 10), and the servo tabs to the frame.
 3. **Arm servos:** from inside, push each servo through its rib window so the round boss pokes out of the side-wall hole. Screw the tabs to the rib.
-4. **Speaker** into the chest cradle (foam ring towards the grille, 2 zip ties through the rib slots). **Mic dongle** on its extension into the chest pocket.
+4. **Speaker** into the chest cradle (foam ring towards the grille, 2 zip ties through the rib slots, cable out through a rib window). **Mic:** plug it into the extension cable and slide the dongle into its sleeve, holes facing the chest; tie the cable down behind the speaker.
 5. **Pi 5 + active cooler** onto the spine standoffs (4 × M2.5 × 6), USB ports down. Plug in:
    - USB: speaker, mic, camera.
    - Micro-HDMI → HDMI cable to the head.
@@ -153,7 +170,7 @@ Then commit to the long prints: torso, base and head.
    4. Push in the **well covers** from outside (4 screws each).
    5. Fit the **front and rear plates** (2 screws each, cable through the rear slot).
 8. **Head:**
-   1. Display into the visor frame, HDMI down; add the clamp tabs with foam.
+   1. Display into the visor frame, HDMI down; add the clamp tabs with foam. Plug the 90° HDMI adapter into the display so its socket faces the back of the head.
    2. Visor into the face seat (4 × M2.5 × 6 from inside).
    3. Ears: 2 × M3 × 20 each from inside; fit the LED rings later.
    4. Camera board onto the bracket, the bracket into the pod (2 × M2 × 8), the pod onto the head (2 × M3 × 10 from inside).

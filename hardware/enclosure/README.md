@@ -65,9 +65,12 @@ optional for the body. Print the gears slowly for accurate teeth.
 ## Where everything goes
 
 * **Head:** the MPI3508 display, HDMI port pointing **down**. It sits in a locating frame
-  behind the screen window, held by four clamp tabs with foam. The full-size HDMI plug has
-  34 mm of clearance below the display. With a 90° HDMI adapter you can set
-  `hdmi_clearance = 16` to make the head ~18 mm shorter. Power and (optional) touch go over
+  behind the screen window, held by four clamp tabs with foam. There are 34 mm of clearance
+  below the display. **Warning:** the official Raspberry Pi micro-HDMI cable's HDMI plug is
+  about 45 mm long with its strain relief, so it does **not** fit straight down. The head is
+  only 58 mm deep, so a plug turned towards the back doesn't fit either. Use a 90° adapter
+  that turns the plug **sideways** (along the head's width), or a flat FPC HDMI ribbon kit.
+  This route is not covered by the automated checks; v2 is checked with the official cable. Power and (optional) touch go over
   the display's 26-pin header with male–female jumper wires to the Pi GPIO (5 V on pin 2 or 4,
   GND on pin 6).
 * **Neck:** the head screws onto a **turntable** that turns on a hollow spigot in the body
@@ -102,7 +105,7 @@ your parts. Change them at the top of `littlebot_enclosure.scad`, then run `./bu
 | `sv_spline_h`, `sv_tab_z`, `sv_tab_l`, `sv_hole_sp` | 32, 15.9, 32.2, 27.6 | MG90S clones differ – measure one servo |
 | `horn_plate_t` | 1.6 | thickness of the horn's arms |
 | `pca_holes` | approx. | PCA9685 board mounting holes |
-| `spk_w/h/d` | 84 × 43 × 32 | Adafruit 3369 – check yours |
+| `spk_w/h/d` | 84 × 43 × 32 | Adafruit 3369 Mini External USB Stereo Speaker (Adafruit's listed size) |
 
 Fit test first: print `ring_gear` + `pinion` (and check they mesh), and the `servo_frame`
 with one servo, before committing to the 8-hour body print.

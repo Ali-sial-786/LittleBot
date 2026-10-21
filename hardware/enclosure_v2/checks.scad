@@ -24,20 +24,26 @@ module arm_servos_s() { for (k = [-1, 1]) translate([k * as_spline_x, shoulder_y
 module pi_s() {
     yb = pi_spine_y + pi_standoff;
     translate([-28 + s, yb + s, pi_z_top - 85 + s]) cube([56 - 2*s, 1.6 - 2*s, 85 - 2*s]);                 // board
-    translate([-20, yb + 1.6, pi_z_top - 60]) cube([40, 12, 34]);                                     // active cooler
+    translate([-22, yb + 1.6, pi_z_top - 68]) cube([43.5, 14.5, 64.5]);                               // official Active Cooler (63.5 x 42.5 x 13.7 + pad)
     translate([-27, yb + 1.6, pi_z_top - 85 - 2]) cube([53, 16, 21]);                                 // USB + Ethernet block
     translate([-25, yb + 1.6, pi_z_top - 85 - 36]) cube([50, 14, 36]);                                // USB plugs (pointing down)
     for (px = [11.2, 25.8, 39.2]) translate([28, yb + 1.6, pi_z_top - px - 4]) cube([24, 4, 8]);     // USB-C + 2 micro-HDMI plugs
     translate([-26.8, yb + 1.6, pi_z_top - 58]) cube([5.2, 22.5, 51]);                                // GPIO header + jumper wires
 }
+// Adafruit 3367 mic + a USB extension socket (about 18 x 9.5 x 32 mm) plugged onto it
+module mic_s() { translate([mic_x0 + s, mic_y0 + s, mic_zc - mic_w/2 + s]) cube([mic_l - 2*s, mic_t - 2*s, mic_w - 2*s]);
+                 translate([mic_x0 + mic_body + s, mic_y0 + mic_t/2 - 4.75, mic_zc - 9]) cube([32, 9.5, 18]); }
 module speaker_s() { translate([-spk_w/2 + s, spk_y + s, spk_z + s]) cube([spk_w - 2*s, spk_d - 2*s, spk_h - 2*s]); }
-module torso_electronics_s() { head_servo_s(); arm_servos_s(); pi_s(); speaker_s(); }
+module torso_electronics_s() { head_servo_s(); arm_servos_s(); pi_s(); speaker_s(); mic_s(); }
 
 // --- head electronics (head coordinates) ---
 module display_s() {
     translate([lcd_x0 + s, visor_back_y + 0.05 + s, lcd_z0 + s]) cube([lcd_w - 2*s, 5.7 - 2*s, lcd_h - 2*s]);
     translate([lcd_x0 + s, visor_back_y + 5.7 + s, lcd_z0 - pcb_overhang + s]) cube([75 - 2*s, 1.6 - 2*s, lcd_h + 2*pcb_overhang - 2*s]);
-    translate([lcd_x0 + 32 - 10.5, visor_back_y + 7.32, lcd_z0 - pcb_overhang - 31]) cube([21, 12, 31]);   // straight HDMI plug
+    // 90-degree HDMI adapter (male up into the display, socket facing the back) + the official
+    // cable's HDMI plug (about 20 x 10 x 45 mm with strain relief) running backwards
+    translate([lcd_x0 + 32 - 12, visor_back_y + 7.32, lcd_z0 - pcb_overhang - 22]) cube([24, 15, 22]);
+    translate([lcd_x0 + 32 - 11, visor_back_y + 7.32 + 15, lcd_z0 - pcb_overhang - 17]) cube([22, 50, 12]);
     translate([lcd_x0 + 2, visor_back_y + 7.32, lcd_z1 - 10]) cube([34, 9, 10]);                        // 26-pin header + jumpers
 }
 module camera_s() {
@@ -67,10 +73,11 @@ if (check == "electronics_vs_torso")  intersection() { torso_shell(); torso_elec
 if (check == "electronics_overlap")   place_torso() union() {
     intersection() { head_servo_s(); union() { arm_servos_s(); pi_s(); speaker_s(); } }
     intersection() { arm_servos_s(); union() { pi_s(); speaker_s(); } }
-    intersection() { pi_s(); speaker_s(); } }
+    intersection() { pi_s(); speaker_s(); }
+    intersection() { mic_s(); union() { head_servo_s(); arm_servos_s(); pi_s(); speaker_s(); } } }
 if (check == "torso_parts_vs_electronics") intersection() { union() { translate([0, pinion_yt, hs_tab_top - sv_tab_t - frame_t]) servo_frame();
     translate([0, neck_yt, gear_z0]) ring_gear(); translate([0, pinion_yt, gear_z0]) pinion(); translate([-46 + clr, torso_d - torso_wall, 0]) torso_back(); }
-    union() { arm_servos_s(); pi_s(); speaker_s(); } }
+    union() { arm_servos_s(); pi_s(); speaker_s(); mic_s(); } }
 if (check == "frame_vs_servo")        intersection() { translate([0, pinion_yt, hs_tab_top - sv_tab_t - frame_t]) servo_frame(); head_servo_s(); }
 if (check == "pinion_vs_torso")       intersection() { torso_shell(); translate([0, pinion_yt, gear_z0]) pinion(); }
 if (check == "gears_mesh_clear")      intersection() { translate([0, pinion_yt, gear_z0]) rotate(7.5) pinion(); translate([0, neck_yt, gear_z0]) ring_gear(); }

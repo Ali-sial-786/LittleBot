@@ -22,7 +22,7 @@ module arm_servos_s() { for (k = [-1, 1]) translate([k * as_spline_x, shoulder_y
 module pi_s() {
     translate([pi_x0 + s, pi_y1 - 56 + s, z_base_top + pi_standoff + s]) cube([85 - 2*s, 56 - 2*s, 1.6 - 2*s]);
     translate([pi_x0 + 85 - 21, pi_y1 - 56 + 2, z_base_top + pi_standoff + 1.6]) cube([21 + 2, 53, 16]);
-    translate([pi_x0 + 20, pi_y1 - 46, z_base_top + pi_standoff + 1.6]) cube([40, 34, 12]);
+    translate([pi_x0 + 2, pi_y1 - 48.5, z_base_top + pi_standoff + 1.6]) cube([63.5, 42.5, 14.5]);   // official Active Cooler (63.5 x 42.5 x 13.7 + pad)
     // plugs (USB-C power + two micro-HDMI)
     translate([pi_usbc_x() - 4.5, pi_y1 - 7, z_base_top + pi_standoff + 1.6]) cube([9, 22, 3.2]);
     for (hx = [25.8, 39.2]) translate([pi_x0 + hx - 4, pi_y1 - 5, z_base_top + pi_standoff + 1.6]) cube([8, 24, 4]);
