@@ -48,7 +48,8 @@ camera:
   mirror: true
 
 vision:
-  detector: haar           # haar | yunet | none - falls back automatically; see scripts/diagnose.py camera section
+  detector: yunet          # yunet | haar | none - falls back automatically. Measured on the Pi 5 (U20CAM, 320 px):
+                           # YuNet found the face in 100 % of frames at 7.9 ms each, Haar in 1 % at 13.6 ms
 
 # ---------------------------------------------------------------------------
 # Audio: mini USB microphone + mini USB speaker (the Pi 5 has no headphone jack).
