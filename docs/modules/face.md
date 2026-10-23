@@ -1,8 +1,9 @@
 # Module: face (animated eyes, display loop, simulator window)
 
-`littlebot/face/` is LittleBot's visual identity: two large, rounded, softly glowing eyes on
-a dark screen that blink, look around, follow faces, change expression and react to
-speech. It also owns the main-thread pygame window and the desktop simulator panel.
+`littlebot/face/` is LittleBot's visual identity: two big, round, softly glowing cartoon
+eyes on a dark screen (iris-coloured eyes with a darker "ink" rim, big dark pupils that look
+around inside them and two white catchlights) that blink, look around, follow faces, change
+expression and react to speech. It also owns the main-thread pygame window and the desktop simulator panel.
 
 ```
 littlebot/face/
@@ -18,7 +19,7 @@ littlebot/face/
   demo.py         DemoSequence: scripted tour of every expression / state / animation / gaze
 scripts/face_preview.py   standalone preview + --screenshot-dir PNG export
 scripts/benchmark_face.py update + render cost per frame (table or --json)
-tests/face/               158 tests (pure logic, controller, renderer, display with SDL dummy driver)
+tests/face/               196 tests (pure logic, eye geometry, controller, renderer, display with SDL dummy driver)
 ```
 
 Pipeline: **API call -> command queue -> FaceAnimator.update(dt) -> FaceFrame -> FaceRenderer**.
@@ -64,15 +65,15 @@ which would shadow `status()`; like audio/media the controller keeps it in `serv
 
 | Expression | Look |
 |---|---|
-| neutral | tall rounded "pill" eyes, glossy gradient, double highlight |
-| happy | "^ ^" crescents (lower edge curved up) |
-| excited | bigger eyes with a slight crescent, bouncy hop, twinkling sparkles |
+| neutral | big round eyes, dark pupils, two white catchlights |
+| happy | "^ ^" crescents (lower edge curved up): closed smiling eyes, so the pupils shrink away |
+| excited | bigger eyes and pupils with a slight crescent, bouncy hop, twinkling sparkles |
 | curious | left eye bigger + raised, right eye smaller with a tilted lid, gentle sway, glance to the side |
-| surprised | wide round eyes, brighter glow, eyes slightly apart |
-| sleepy | heavy arched lids (half-moon eyes), dimmer, looking down, slow heavy blinks, zzz |
-| sad | outer-drooping arched lids, bluer tint, looking down |
+| surprised | wide round eyes with small pupils, brighter glow, eyes slightly apart |
+| sleepy | heavy arched lids (pupils peek out below), dimmer, looking down, slow heavy blinks, zzz |
+| sad | outer-drooping arched lids, big soft "puppy" pupils, bluer tint, looking down |
 | thinking | eyes up and to the side, one lid lowered, "..." dots bouncing below |
-| listening | slightly bigger attentive eyes with a head-tilt, soft pulsing frame around the screen |
+| listening | slightly bigger attentive eyes (bigger pupils) with a head-tilt, soft pulsing frame around the screen |
 | speaking | friendly eyes + small mouth (closed smile / "D" mouth with tongue) moving with speech |
 | confused | asymmetric eyes, sway, floating "?" |
 | playful | wink-ish (one crescent, one big eye), bounce and sway |
@@ -91,8 +92,9 @@ bounce and pop open wide: "peek-a-boo!").
 Always-on life: randomised blinks (`face.blink_interval`, per-expression rate),
 double blinks (`face.double_blink_chance`), blinks with some big saccades, idle gaze
 wandering with micro-saccades (`face.idle_gaze`), critically-damped gaze springs (snappy
-saccades, smooth tracking), perspective (the eye nearer the gaze direction grows a
-little), breathing (`face.breathing`), a speech pulse on the eyes and mouth. While speaking
+saccades, smooth tracking; the eyes move and the pupils look inside them, while the
+catchlights stay put like a real reflection), perspective (the eye nearer the gaze
+direction grows a little), breathing (`face.breathing`), a speech pulse on the eyes and mouth. While speaking
 the mouth follows `audio.level` events; if none arrive for 0.25 s it synthesises a
 plausible syllable rhythm. A missing `speech_finished` is covered by a safety timeout
 (max(8 s, 1.5 x estimate + 4 s), extended by level events).
@@ -163,38 +165,60 @@ simulator window (`window.png`, `window_help.png`, `window_debug.png`).
 
 ## Design notes
 
-* Eyes are drawn 3x super-sampled with plain pygame primitives (rounded rect, lid polygons
-  with a gentle arch, a circle cut for the happy crescent) and smooth-scaled down: clean
-  anti-aliasing for any lid shape. A 40-band vertical gradient (lighter top) and a two-part
-  glossy highlight give depth; glow = the shape downscaled 4x, gaussian-blurred, upscaled.
-* Caches: eye surfaces keyed by the quantised shape (0.5 px / 0.01 / 0.5 deg), glows by a
+* Cartoon eye anatomy: the eye body is iris-coloured with a darker rim ("ink" outline,
+  also along lid and crescent edges) and a vertical gradient over its open part (deeper
+  under the lid, glowing lighter at the bottom). On top: a big near-black pupil and two
+  white catchlights. Where they go is pure geometry in `frame.py`
+  (`pupil_geometry`, `catchlights`, `open_span_at`, unit-tested without pygame): the pupil
+  sits in the middle of the open part of the eye, follows `EyeFrame.look_x/look_y`
+  (gaze) and always stays inside the rim (lids may cover it); it squashes with a blink and
+  is gone before the eye is a thin line, and shrinks away on happy crescents. Catchlights
+  stay put (screen-anchored, they do not spin with `spin_eyes`), are kept inside the open
+  eye and shrink as the eye closes. Per-expression `EyeParams.pupil` sets the pupil size
+  (small = wide-eyed surprise, big = soft sad / attentive eyes).
+* The body is drawn 3x super-sampled with plain pygame primitives (rounded rect built from
+  fills + circles, lid polygons with a gentle arch, a circle cut for the happy crescent)
+  and smooth-scaled down: clean anti-aliasing for any lid shape. The colour gradient is
+  multiplied in after the down-scale from a cached gradient column. Glow = the body
+  downscaled 4x, gaussian-blurred, upscaled.
+* Caches: eye bodies keyed by the quantised shape (0.5 px / 0.01 / 0.5 deg), glows by a
   coarser key (blur hides 3 px differences), sprites by (kind, size, colour, angle bucket),
   plus background vignette (with a 1-bit dither against banding) and the listening frame.
-  Surfaces are converted to the display format when a display exists.
+  Pupil and catchlight sprites are cached too and composited onto the cached body every
+  frame in a reused scratch surface (the pupil clipped with `BLEND_RGBA_MIN` against the
+  body), so gaze movement never re-renders an eye. Surfaces are converted to the display
+  format when a display exists.
 * Colours: `face.eye_color` / `face.background_color`; expressions mix in a tint
   (sad blue, affectionate pink, celebrating gold), the error state a soft lavender.
   `face.glow: false` disables the glow (cheaper).
 * Everything is deterministic for a seed: particles are pure functions of
   `(elapsed, seed)`; the animator owns one `random.Random`.
 
-## Performance (measured 2026-10-20, Xeon 2.8 GHz container, Python 3.13, pygame-ce 2.5.8)
+## Performance (Xeon 2.8 GHz container, Python 3.13, pygame-ce 2.5.8)
 
-`scripts/benchmark_face.py --frames 200` (headless, 480x320, update + render per frame):
+`scripts/benchmark_face.py --frames 150` (headless, 480x320, update + render per frame),
+measured 2026-10-23 with the cartoon eyes:
 
 | Scenario | mean ms | p95 ms | cpu @ 30 fps |
 |---|---|---|---|
-| calm neutral (cache warm, with blinks + wandering) | 0.72 | 1.9 | 2.2 % |
-| typical expressions (happy, sad, sleepy, thinking, listening ...) | 0.6 - 0.9 | 1.5 - 2.5 | 2 - 3 % |
-| busiest expressions (playful, celebrating with confetti) | 2.3 - 2.9 | 5 - 6.5 | 7 - 9 % |
-| one-shot animations (bounce ... spin_eyes) | 0.7 - 2.8 | 1.9 - 4.5 | 2 - 8.5 % |
-| sleeping / hidden | 0.36 / 0.25 | 0.5 / 0.3 | ~1 % |
-| expression changed every 0.4 s (worst case) | 3.3 | 6.5 | 9.9 % |
-| overall mean of all 31 scenarios | 1.23 | | |
+| calm neutral (cache warm, with blinks + wandering) | 0.63 | 1.6 | 1.9 % |
+| typical expressions (happy, sad, sleepy, thinking, listening ...) | 0.6 - 1.0 | 1.3 - 2.8 | 2 - 3 % |
+| busiest expressions (curious, confused, playful, celebrating with confetti) | 1.2 - 1.9 | 2.3 - 3.3 | 4 - 5.6 % |
+| one-shot animations (bounce ... spin_eyes) | 0.6 - 2.3 | 1.0 - 3.5 | 2 - 7 % |
+| sleeping / hidden | 0.22 / 0.11 | 0.3 / 0.15 | < 1 % |
+| expression changed every 0.4 s (worst case) | 2.2 | 3.8 | 6.5 % |
+| overall mean of all 31 scenarios | 0.96 | | |
+
+For the same eye shapes the cartoon renderer costs about the same as the previous glossy
+one: pupil + catchlights add ~0.02-0.04 ms per eye per frame, and an eye-body cache miss
+is ~0.4-0.9 ms, about the same as or less than before. The eyes themselves are a little
+bigger now.
 
 `--scale 2` (desktop window 960x640) adds ~2 ms/frame of smooth-scaling (desktop only;
 the Pi runs at scale 1 / fullscreen 480x320).
 
-Real-time run of the display loop (dummy video driver, scale 1, no panel, 6 s):
+Real-time run of the display loop (dummy video driver, scale 1, no panel, 6 s; measured
+2026-10-20, before the cartoon eyes):
 idle face ~22 fps average (20 fps calm, 30 during blinks / saccades) at **3.2 % of one
 core**; demo sequence ~25 fps at **4.2 %**. A Raspberry Pi 5 core is roughly 2-3x slower
 than this machine, so expect ~5-10 % of one core for an idle face and well under 25 % while

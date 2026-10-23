@@ -1,14 +1,22 @@
 """Pygame renderer: turns a :class:`FaceFrame` into pixels.
 
-Look: dark vignette background, two large rounded glowing eyes with a soft
-vertical gradient and a glossy highlight, optional cute extras.
+Look: dark vignette background and two big, round, softly glowing cartoon
+eyes: an iris-coloured body with a darker "ink" rim inside the outline (and
+along the lids), a soft vertical gradient, a big dark pupil that looks around
+inside the eye, and two bright white catchlights that stay put (they belong to
+the light, not the pupil). Plus optional cute extras.
 
 Performance notes (the Pi 5 must hold 30 fps at low CPU):
 
 * Eyes are drawn super-sampled (``supersample`` x) with plain pygame
   primitives and smooth-scaled down, which gives clean anti-aliased edges for
-  any lid / crescent shape. The result (plus its blurred glow) is cached in a
+  any lid / crescent shape. The eye body (plus its blurred glow) is cached in a
   small LRU keyed by the quantised shape, so a calm face costs only blits.
+* Pupil and catchlights are small cached sprites composited onto the cached
+  body every frame in a reused scratch surface; the pupil is clipped to the
+  body (``BLEND_RGBA_MIN`` against the body itself), the catchlights are kept
+  inside the open eye by geometry. Gaze changes never re-render the eye, and
+  nothing can poke outside the eye outline.
 * Glow = core shape downscaled 4x, gaussian-blurred, scaled back up.
 * Sprites (hearts, sparkles, Z's, confetti ...) are rendered once per
   (kind, size, colour, angle-bucket) and cached.
@@ -26,7 +34,10 @@ from typing import Any
 
 import pygame
 
-from littlebot.face.frame import MIN_LINE, NATIVE_H, NATIVE_W, Color, EyeFrame, FaceFrame, MouthFrame, Sprite
+from littlebot.face.frame import (
+    LID_BOW, MIN_LINE, NATIVE_H, NATIVE_W, RIM, SMILE_DEPTH, SMILE_RADIUS, Color, EyeFrame, FaceFrame, MouthFrame,
+    Sprite, catchlights, eye_span, pupil_geometry,
+)
 
 log = logging.getLogger("littlebot.face.renderer")
 
@@ -36,12 +47,10 @@ GLOW_MARGIN = 24
 GLOW_DOWNSCALE = 4
 GLOW_BLUR = 4
 GLOW_ALPHA = 0.9  # base glow opacity at glow=1
-LID_BOW = 0.10  # upper-lid arch as a fraction of eye height
-SMILE_RADIUS = 0.75  # happy crescent cut radius (fraction of eye width)
-SMILE_DEPTH = 0.8
-GRADIENT_BANDS = 40
-CLOSED_THICKNESS = 9.0  # px, sleeping / peekaboo closed-eye arcs
-CLOSED_SAG = 10.0  # px the closed-eye arc dips in the middle (content '‿')
+SHADE_ROWS = 96  # resolution of the eye's vertical colour gradient
+RIM_GRAY = 118  # rim brightness relative to the eye colour (255 = no rim)
+CLOSED_THICKNESS = 11.0  # px, sleeping / peekaboo closed-eye arcs (grows from MIN_LINE as they curve)
+CLOSED_SAG = 12.0  # px the closed-eye arc dips in the middle (content '‿')
 
 
 def _q(v: float, step: float) -> int:
@@ -54,6 +63,34 @@ def _lighten(c: Color, k: float) -> Color:
 
 def _scale(c: Color, k: float) -> Color:
     return (max(0, min(255, int(c[0] * k))), max(0, min(255, int(c[1] * k))), max(0, min(255, int(c[2] * k))))
+
+
+def _closed_thickness(e: EyeFrame) -> float:
+    return MIN_LINE + (CLOSED_THICKNESS - MIN_LINE) * max(0.0, min(1.0, e.closed_curve))
+
+
+def _mix(a: Color, b: Color, k: float) -> Color:
+    return (int(a[0] + (b[0] - a[0]) * k), int(a[1] + (b[1] - a[1]) * k), int(a[2] + (b[2] - a[2]) * k))
+
+
+def _pupil_color(c: Color) -> Color:
+    """Near-black navy with a hint of the eye colour: maximum contrast, still harmonious."""
+    return (int(4 + c[0] * 0.06), int(7 + c[1] * 0.06), int(18 + c[2] * 0.06))
+
+
+def _rrect(surf: pygame.Surface, col: tuple[int, ...], rect: pygame.Rect, radius: int) -> None:
+    """Filled rounded rect from two fills + four circles: same shape as ``draw.rect(border_radius=)``, ~6x faster."""
+    r = max(0, min(int(radius), rect.w // 2, rect.h // 2))
+    if rect.w <= 0 or rect.h <= 0:
+        return
+    if r <= 0:
+        surf.fill(col, rect)
+        return
+    surf.fill(col, pygame.Rect(rect.x + r, rect.y, rect.w - 2 * r, rect.h))
+    surf.fill(col, pygame.Rect(rect.x, rect.y + r, rect.w, rect.h - 2 * r))
+    for cx, cy in ((rect.x + r, rect.y + r), (rect.right - r - 1, rect.y + r),
+                   (rect.x + r, rect.bottom - r - 1), (rect.right - r - 1, rect.bottom - r - 1)):
+        pygame.draw.circle(surf, col, (cx, cy), r)
 
 
 def _fast(surf: pygame.Surface) -> pygame.Surface:
@@ -100,6 +137,8 @@ class FaceRenderer:
         self._glows = _LRU(EYE_CACHE_SIZE)
         self._sprites = _LRU(SPRITE_CACHE_SIZE)
         self._static: dict[Any, pygame.Surface] = {}
+        self._comp: dict[tuple[int, int], pygame.Surface] = {}  # per-size eye compositing scratch
+        self._tmp: pygame.Surface | None = None  # super-sampled scratch for rim bands (cache misses only)
         self._font: Any = None
         self._font_failed = False
         self.last_ms = 0.0
@@ -135,6 +174,8 @@ class FaceRenderer:
         self._glows.clear()
         self._sprites.clear()
         self._static.clear()
+        self._comp.clear()
+        self._tmp = None
 
     # ------------------------------------------------------------------ frame
     def _draw(self, f: FaceFrame, surf: pygame.Surface) -> None:
@@ -231,104 +272,200 @@ class FaceRenderer:
 
     # ------------------------------------------------------------------ eyes
     def _draw_eye(self, surf: pygame.Surface, e: EyeFrame, color: Color, glow: float) -> None:
+        # The eye body (outline, rim, gradient, lids) is cached by its quantised shape. The pupil and
+        # the catchlights move every frame, so they are composited on top per frame (a few small blits).
+        # The pupil is clipped to the body with BLEND_RGBA_MIN against the body itself: alpha becomes
+        # the body's alpha (lids / crescent cut hide it) and, as the pupil is darker than the body in
+        # every channel, its colour is kept. Catchlights are placed inside the open eye by geometry.
         key = (
             _q(e.w, 0.5), _q(e.h, 0.5), _q(e.radius, 0.5), _q(e.lid_top, 0.01), _q(e.lid_angle, 0.5),
-            _q(e.lid_bottom, 0.01), _q(e.smile, 0.01), _q(e.tilt % 360.0, 0.5), _q(e.shine, 0.05),
-            _q(e.closed_curve, 0.05), e.side, color, glow > 0.01,
+            _q(e.lid_bottom, 0.01), _q(e.smile, 0.01), _q(e.tilt % 360.0, 0.5), _q(e.closed_curve, 0.05),
+            e.side, color, glow > 0.01,
         )
-        core = self._eyes.get_or(key, lambda: self._make_eye(e, color))
-        cw, ch = core.get_size()
+        body = self._eyes.get_or(key, lambda: self._make_eye(e, color))
+        cw, ch = body.get_size()
         x, y = int(round(e.cx - cw / 2)), int(round(e.cy - ch / 2))
-        glow_s = None
         if glow > 0.01:
             # the glow is blurry, so a much coarser key is visually identical and saves most recomputes
             gkey = (_q(e.w, 3), _q(e.h, 3), _q(e.lid_top, 0.05), _q(e.lid_angle, 3), _q(e.lid_bottom, 0.05),
                     _q(e.smile, 0.05), _q(e.tilt % 360.0, 3), _q(e.closed_curve, 0.25), e.side, color)
-            glow_s = self._glows.get_or(gkey, lambda: self._make_glow(core))
-        if glow_s is not None:
+            glow_s = self._glows.get_or(gkey, lambda: self._make_glow(body))
             glow_s.set_alpha(int(255 * min(1.0, GLOW_ALPHA * glow)))
             gw, gh = glow_s.get_size()
             surf.blit(glow_s, (x - (gw - cw) // 2, y - (gh - ch) // 2))
-        surf.blit(core, (x, y))
+        closed = e.closed_curve > 0.0 and e.h <= MIN_LINE + 1.0
+        pupil = None if closed else self._pupil_overlay(e, color, cw, ch)
+        lights = [] if closed else self._catchlight_overlays(e, cw, ch)
+        if pupil is None and not lights:
+            surf.blit(body, (x, y))
+            return
+        comp = self._comp_surface(cw, ch)
+        comp.fill((0, 0, 0, 0))
+        comp.blit(body, (0, 0), special_flags=pygame.BLEND_RGBA_ADD)  # exact copy, alpha included
+        if pupil is not None:
+            comp.blit(*pupil)
+            comp.blit(body, (0, 0), special_flags=pygame.BLEND_RGBA_MIN)  # clip to the eye silhouette
+        for img, pos in lights:
+            comp.blit(img, pos)
+        surf.blit(comp, (x, y))
+
+    def _pupil_overlay(
+        self, e: EyeFrame, color: Color, cw: int, ch: int,
+    ) -> tuple[pygame.Surface, tuple[int, int]] | None:
+        """Pupil sprite and its top-left position inside the eye's canvas (None: no pupil)."""
+        pupil = pupil_geometry(e)
+        if pupil is None:
+            return None
+        ox, oy, rx, ry, alpha = pupil
+        img = self._pupil_sprite(rx, ry, e.tilt, color)
+        img.set_alpha(int(255 * alpha))
+        return img, (int(round(cw / 2 + ox - img.get_width() / 2)), int(round(ch / 2 + oy - img.get_height() / 2)))
+
+    def _catchlight_overlays(self, e: EyeFrame, cw: int, ch: int) -> list[tuple[pygame.Surface, tuple[int, int]]]:
+        out: list[tuple[pygame.Surface, tuple[int, int]]] = []
+        if e.shine > 0.02:
+            # catchlights stay crisp white; a dull expression (sleepy) only makes them a bit smaller / softer
+            alpha = int(255 * min(1.0, 0.55 + e.shine))
+            size = 0.8 + 0.2 * min(1.0, e.shine)
+            for ox, oy, r in catchlights(e):
+                img = self._catchlight_sprite(r * size)
+                img.set_alpha(alpha)
+                out.append((img, (int(round(cw / 2 + ox - img.get_width() / 2)),
+                                  int(round(ch / 2 + oy - img.get_height() / 2)))))
+        return out
+
+    def _comp_surface(self, w: int, h: int) -> pygame.Surface:
+        s = self._comp.get((w, h))
+        if s is None:
+            if len(self._comp) >= 16:
+                self._comp.clear()
+            s = self._comp[(w, h)] = _fast(pygame.Surface((w, h), pygame.SRCALPHA))
+        return s
 
     def _make_eye(self, e: EyeFrame, color: Color) -> pygame.Surface:
+        """Eye body (silhouette, rim, colour gradient, lids) or a closed eye's curved line."""
         ss = self.ss
         pad = 3
         w, h = max(2.0, e.w), max(2.0, e.h)
         closed = e.closed_curve > 0.0 and h <= MIN_LINE + 1.0
         # a closed eye is a thicker curved line: make room for its sag and thickness
-        canvas_h = max(h, CLOSED_THICKNESS + CLOSED_SAG * e.closed_curve + 2) if closed else h
+        canvas_h = max(h, _closed_thickness(e) + CLOSED_SAG * e.closed_curve + 2) if closed else h
         cw, ch = int(math.ceil(w + 2 * pad)), int(math.ceil(canvas_h + 2 * pad))
         big = pygame.Surface((cw * ss, ch * ss), pygame.SRCALPHA)
         rx = (cw * ss - w * ss) / 2
         ry = (ch * ss - h * ss) / 2
         rect = pygame.Rect(int(rx), int(ry), int(round(w * ss)), int(round(h * ss)))
+        # a nearly shut eye (blink) is a clean bright line: the rim and gradient fade out as it thins
+        thin = max(0.0, min(1.0, (h - MIN_LINE) / 24.0))
         if closed:
             self._draw_closed(big, rect, e, color)
         else:
-            self._draw_open(big, rect, e, color)
-        core = pygame.transform.smoothscale(big, (cw, ch))
+            self._draw_open(big, rect, e, thin)
+        body = pygame.transform.smoothscale(big, (cw, ch))
+        if not closed:
+            # the gradient runs over the open part of the eye, so crescents and lidded eyes get all of it
+            top, bottom = eye_span(e)
+            span = max(bottom - top, 0.35 * h)
+            self._shade(body, ch / 2 + top, span, color, thin)
         if abs(e.tilt % 360.0) > 0.25 and abs(e.tilt % 360.0 - 360.0) > 0.25:
-            core = pygame.transform.rotozoom(core, e.tilt, 1.0)
-        return _fast(core)
+            body = pygame.transform.rotozoom(body, e.tilt, 1.0)
+        return _fast(body)
 
-    def _draw_open(self, big: pygame.Surface, rect: pygame.Rect, e: EyeFrame, color: Color) -> None:
+    def _draw_open(self, big: pygame.Surface, rect: pygame.Rect, e: EyeFrame, thin: float) -> None:
+        """Eye silhouette in white with a grey "ink" rim inside the outline and along the lids.
+
+        The colour comes later (:meth:`_shade` multiplies it in at native size), so the rim
+        ends up a darker shade of the eye colour.
+        """
         ss = self.ss
-        radius = int(min(e.radius * ss, rect.h / 2, rect.w / 2))
-        pygame.draw.rect(big, (255, 255, 255, 255), rect, border_radius=max(0, radius))
-        # vertical gradient (lighter top, slightly deeper bottom) applied with cheap band fills
-        top, bottom = _lighten(color, 0.3), _scale(color, 0.84)
-        n = GRADIENT_BANDS
-        W = big.get_width()
-        for i in range(n):
-            y0 = rect.top + rect.h * i // n
-            y1 = rect.top + rect.h * (i + 1) // n
-            k = (i + 0.5) / n
-            k = k * k * (3 - 2 * k)
-            c = (int(top[0] + (bottom[0] - top[0]) * k), int(top[1] + (bottom[1] - top[1]) * k),
-                 int(top[2] + (bottom[2] - top[2]) * k))
-            big.fill(c, pygame.Rect(0, y0, W, max(1, y1 - y0)), special_flags=pygame.BLEND_RGB_MULT)
-        # glossy highlight (drawn before the lids so they clip it naturally)
-        if e.shine > 0.02 and rect.h > 18 * ss:
-            hl = self._highlight(rect.w, rect.h)
-            hl.set_alpha(int(min(255, 120 * e.shine)))
-            hy = rect.y + int(rect.h * (0.11 + 0.8 * e.lid_top))
-            big.blit(hl, (rect.x + int(rect.w * 0.17), hy))
-            # small secondary glint, lower right: the classic "kawaii" double highlight
-            if rect.h > 40 * ss and e.smile < 0.3:
-                r2 = max(2.0, min(rect.w, rect.h) * 0.055)
-                dot = pygame.Surface((int(r2 * 2) + 2, int(r2 * 2) + 2), pygame.SRCALPHA)
-                pygame.draw.circle(dot, (255, 255, 255, 255), (r2 + 1, r2 + 1), r2)
-                dot.set_alpha(int(min(255, 90 * e.shine)))
-                big.blit(dot, (rect.x + int(rect.w * 0.66), rect.y + int(rect.h * 0.62)))
-        clear = (0, 0, 0, 0)
         W, H = big.get_size()
-        # upper lid: straight edge, droops towards the outer corner for lid_angle > 0
+        radius = int(min(e.radius * ss, rect.h / 2, rect.w / 2))
+        rim = int(round(min(RIM * ss, rect.h * 0.18, rect.w * 0.18))) if thin > 0.0 else 0
+        g = int(255 - (255 - RIM_GRAY) * thin)
+        if rim >= 1:
+            _rrect(big, (g, g, g, 255), rect, radius)
+            _rrect(big, (255, 255, 255, 255), rect.inflate(-2 * rim, -2 * rim), radius - rim)
+        else:
+            _rrect(big, (255, 255, 255, 255), rect, radius)
+        # upper lid: gently arched edge (higher in the middle), droops towards the outer corner for
+        # lid_angle > 0. Lids and the happy crescent get the same rim along their cut edge.
+        lid: list[tuple[float, float]] | None = None
         if e.lid_top > 0.003:
-            # gently arched lid edge (higher in the middle) reads softer than a ruler line
             y0 = rect.top + e.lid_top * rect.h
             slope = math.tan(math.radians(e.lid_angle)) * e.side
             cx = rect.centerx
             half = rect.w / 2
             bow = LID_BOW * rect.h * min(1.0, e.lid_top * 3)
-            pts = [(-2.0, -2.0), (W + 2.0, -2.0)]
+            lid = []
             n = 16
             for i in range(n + 1):
                 x = W + 2.0 - (W + 4.0) * i / n
                 u = max(-1.0, min(1.0, (x - cx) / half))
-                pts.append((x, y0 + slope * (x - cx) - bow * (1 - u * u)))
-            pygame.draw.polygon(big, clear, pts)
-        if e.lid_bottom > 0.003:
-            y1 = rect.bottom - e.lid_bottom * rect.h
+                lid.append((x, y0 + slope * (x - cx) - bow * (1 - u * u)))
+        y1 = rect.bottom - e.lid_bottom * rect.h if e.lid_bottom > 0.003 else None
+        smile_r = rect.w * SMILE_RADIUS
+        smile_cy = rect.bottom + smile_r - e.smile * rect.h * SMILE_DEPTH if e.smile > 0.003 else None
+        if rim >= 1 and (lid is not None or y1 is not None or smile_cy is not None):
+            # paint the rim bands on a white scratch and darken the body with it (alpha untouched)
+            tmp = self._tmp_surface(W, H)
+            area = pygame.Rect(0, 0, W, H)
+            tmp.fill((255, 255, 255), area)
+            grey = (g, g, g)
+            if lid is not None:
+                pygame.draw.polygon(tmp, grey, [(-2.0, -2.0), (W + 2.0, -2.0)] + [(x, y + rim) for x, y in lid])
+            if y1 is not None:
+                pygame.draw.rect(tmp, grey, pygame.Rect(0, int(y1 - rim), W, H))
+            if smile_cy is not None:
+                pygame.draw.circle(tmp, grey, (rect.centerx, int(smile_cy)), int(smile_r + rim))
+            big.blit(tmp, (0, 0), area, special_flags=pygame.BLEND_RGB_MIN)
+        clear = (0, 0, 0, 0)
+        if lid is not None:
+            pygame.draw.polygon(big, clear, [(-2.0, -2.0), (W + 2.0, -2.0)] + lid)
+        if y1 is not None:
             pygame.draw.polygon(big, clear, [(-2, y1), (W + 2, y1), (W + 2, H + 2), (-2, H + 2)])
-        if e.smile > 0.003:
-            r = rect.w * SMILE_RADIUS
-            cy = rect.bottom + r - e.smile * rect.h * SMILE_DEPTH
-            pygame.draw.circle(big, clear, (rect.centerx, int(cy)), int(r))
+        if smile_cy is not None:
+            pygame.draw.circle(big, clear, (rect.centerx, int(smile_cy)), int(smile_r))
+
+    def _shade(self, body: pygame.Surface, y0: float, h: float, color: Color, thin: float) -> None:
+        """Multiply the eye colour in: deeper under the lid, glowing lighter towards the bottom.
+
+        Done after the down-scale (same result, ~9x fewer pixels) by stretching a cached
+        gradient column (keyed by colour only) over the eye: smooth, and a few blits per miss.
+        """
+        W, H = body.get_size()
+        tq = _q(thin, 0.05)
+        col = self._sprites.get_or(("shade", color, tq), lambda: self._shade_column(color, tq * 0.05))
+        ya, yb = max(0, int(round(y0))), min(H, int(round(y0 + h)))
+        mult = pygame.BLEND_RGB_MULT
+        if ya > 0:
+            body.fill(col.get_at((0, 0)), pygame.Rect(0, 0, W, ya), special_flags=mult)
+        if yb > ya:
+            body.blit(pygame.transform.scale(col, (W, yb - ya)), (0, ya), special_flags=mult)
+        if yb < H:
+            body.fill(col.get_at((0, SHADE_ROWS - 1)), pygame.Rect(0, yb, W, H - yb), special_flags=mult)
+
+    @staticmethod
+    def _shade_column(color: Color, thin: float) -> pygame.Surface:
+        line = _lighten(color, 0.25)
+        top = _mix(line, _scale(color, 0.8), thin)
+        bottom = _mix(line, _lighten(color, 0.32), thin)
+        col = pygame.Surface((1, SHADE_ROWS))
+        for y in range(SHADE_ROWS):
+            k = (y + 0.5) / SHADE_ROWS
+            col.set_at((0, y), _mix(top, bottom, k * k * (3 - 2 * k)))
+        return col
+
+    def _tmp_surface(self, w: int, h: int) -> pygame.Surface:
+        """Reusable opaque scratch surface at least ``w`` x ``h`` (grows, never shrinks)."""
+        s = self._tmp
+        if s is None or s.get_width() < w or s.get_height() < h:
+            ow, oh = s.get_size() if s is not None else (0, 0)
+            s = self._tmp = pygame.Surface((max(w, ow), max(h, oh)))
+        return s
 
     def _draw_closed(self, big: pygame.Surface, rect: pygame.Rect, e: EyeFrame, color: Color) -> None:
         ss = self.ss
-        th = max(2.0, CLOSED_THICKNESS * ss)
+        th = max(2.0, _closed_thickness(e) * ss)
         sag = e.closed_curve * CLOSED_SAG * ss
         col = (*_lighten(color, 0.1), 255)
         half = rect.w / 2 - th / 2
@@ -339,18 +476,34 @@ class FaceRenderer:
             y = cy + sag * (1 - (x / max(1.0, half)) ** 2)
             pygame.draw.circle(big, col, (rect.centerx + x, y), th / 2)
 
-    def _highlight(self, rw: int, rh: int) -> pygame.Surface:
-        key = ("hl", rw // 6, rh // 6)
-        s = self._static.get(key)
-        if s is None:
-            w, h = max(4, int(rw * 0.30)), max(4, int(rh * 0.26))
-            s = pygame.Surface((w, h), pygame.SRCALPHA)
-            pygame.draw.ellipse(s, (255, 255, 255, 255), pygame.Rect(0, 0, w, h))
-            # small secondary sparkle dot
-            self._static[key] = s
-            if len(self._static) > 300:
-                self._static = {k: v for k, v in self._static.items() if k[0] != "hl"}
-        return s
+    def _pupil_sprite(self, rx: float, ry: float, tilt: float, color: Color) -> pygame.Surface:
+        qx, qy = _q(rx, 0.5), _q(ry, 0.5)
+        ang = 0 if abs(rx - ry) < 1.0 else (_q(tilt % 180.0, 5) * 5) % 180
+        pc = _pupil_color(color)
+        return self._sprites.get_or(("pupil", qx, qy, ang, pc), lambda: self._make_pupil(qx * 0.5, qy * 0.5, ang, pc))
+
+    def _make_pupil(self, rx: float, ry: float, angle: float, pc: Color) -> pygame.Surface:
+        ss = self.ss
+        w, h = int(math.ceil(2 * rx)) + 2, int(math.ceil(2 * ry)) + 2
+        big = pygame.Surface((w * ss, h * ss), pygame.SRCALPHA)
+        r = pygame.Rect(0, 0, int(round(2 * rx * ss)), int(round(2 * ry * ss)))
+        r.center = (w * ss // 2, h * ss // 2)
+        pygame.draw.ellipse(big, (*pc, 255), r)
+        img = pygame.transform.smoothscale(big, (w, h))
+        if angle:
+            img = pygame.transform.rotozoom(img, angle, 1.0)
+        return _fast(img)
+
+    def _catchlight_sprite(self, r: float) -> pygame.Surface:
+        qr = _q(r, 0.25)
+        return self._sprites.get_or(("catchlight", qr), lambda: self._make_dot(qr * 0.25, (255, 255, 255)))
+
+    def _make_dot(self, r: float, col: Color) -> pygame.Surface:
+        ss = self.ss
+        d = int(math.ceil(2 * r)) + 2
+        big = pygame.Surface((d * ss, d * ss), pygame.SRCALPHA)
+        pygame.draw.circle(big, (*col, 255), (d * ss / 2, d * ss / 2), r * ss)
+        return _fast(pygame.transform.smoothscale(big, (d, d)))
 
     def _make_glow(self, core: pygame.Surface) -> pygame.Surface:
         cw, ch = core.get_size()

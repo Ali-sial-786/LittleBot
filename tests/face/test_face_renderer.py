@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import dataclasses
+
 import pytest
 from face_stubs import make_animator, step
 
 from littlebot.core.interfaces import EXPRESSIONS, FACE_ANIMATIONS, FACE_STATES
 from littlebot.face.effects import ANIMATION_DURATIONS
-from littlebot.face.frame import EyeFrame, FaceFrame, MouthFrame, Sprite
+from littlebot.face.frame import EyeFrame, FaceFrame, MouthFrame, Sprite, catchlights, open_span_at, rotate
 
 pygame = pytest.importorskip("pygame")
 
@@ -143,7 +145,7 @@ def test_config_colours_and_glow_off(renderer):
     surf = pygame.Surface((480, 320))
     renderer.render(f, surf)
     e = f.eyes[0]
-    c = surf.get_at((int(e.cx), int(e.cy + e.h * 0.2)))
+    c = surf.get_at((int(e.cx), int(e.cy + e.h * 0.42)))  # iris, below the (dark) pupil
     assert c.r > c.b  # orange eyes
     corner = surf.get_at((1, 1))
     assert corner.r >= corner.g and corner.r >= corner.b  # reddish background
@@ -156,3 +158,77 @@ def test_renderer_handles_partial_hidden_fade(renderer):
     f = a.frame()
     assert 0 < f.hidden < 1
     renderer.render(f, pygame.Surface((480, 320)))
+
+
+# ------------------------------------------------------------------ cartoon eyes: pupils + catchlights
+def _dark_centroid(surf, e: EyeFrame, threshold=90):
+    """Mean offset from the eye centre of the dark (pupil) pixels inside the eye's box."""
+    xs, ys = [], []
+    for x in range(int(e.cx - e.w / 2) + 6, int(e.cx + e.w / 2) - 6):
+        for y in range(int(e.cy - e.h / 2) + 6, int(e.cy + e.h / 2) - 6):
+            c = surf.get_at((x, y))
+            if c.r + c.g + c.b < threshold:
+                xs.append(x - e.cx)
+                ys.append(y - e.cy)
+    assert len(xs) > 200, "no pupil drawn"
+    return sum(xs) / len(xs), sum(ys) / len(ys)
+
+
+def test_pupils_are_drawn_and_follow_the_gaze(renderer):
+    offsets = {}
+    for name, (x, y) in {"left": (0.0, 0.5), "right": (1.0, 0.5), "up": (0.5, 0.0), "down": (0.5, 1.0)}.items():
+        a = _settled()
+        a.look_at(x, y, hold=10)
+        step(a, 1.0, 1 / 30)
+        f = a.frame()
+        surf = pygame.Surface((480, 320))
+        renderer.render(f, surf)
+        offsets[name] = [_dark_centroid(surf, e) for e in f.eyes]
+    for i in range(2):  # both eyes: the pupil moves inside the eye, not just the whole eye
+        assert offsets["left"][i][0] < -6 < 6 < offsets["right"][i][0]
+        assert offsets["up"][i][1] < offsets["down"][i][1] - 12
+
+
+def test_catchlights_are_white_and_stay_put_while_the_pupil_moves(renderer):
+    spots = []
+    for x in (0.0, 1.0):
+        a = _settled()
+        a.look_at(x, 0.5, hold=10)
+        step(a, 1.0, 1 / 30)
+        f = a.frame()
+        surf = pygame.Surface((480, 320))
+        renderer.render(f, surf)
+        e = f.eyes[0]
+        lights = catchlights(e)
+        assert len(lights) == 2
+        for ox, oy, _r in lights:
+            c = surf.get_at((int(round(e.cx + ox)), int(round(e.cy + oy))))
+            assert min(c.r, c.g, c.b) > 225, c  # crisp white
+        spots.append([(round(ox), round(oy)) for ox, oy, _r in lights])
+    left, right = spots
+    for (ax, ay), (bx, by) in zip(left, right):
+        assert abs(ax - bx) <= 4 and abs(ay - by) <= 4  # only the eye's perspective changes them
+
+
+@pytest.mark.parametrize("name", ["neutral", "sleepy", "thinking", "curious", "sad", "excited", "happy"])
+def test_pupil_and_catchlights_never_draw_outside_the_eye(renderer, name):
+    a = _settled(expression=name)
+    a.look_at(1.0, 0.0, hold=10)  # extreme gaze, pushes the pupil towards the lids / outline
+    step(a, 1.0, 1 / 30)
+    f = a.frame()
+    bare = dataclasses.replace(f, eyes=tuple(dataclasses.replace(e, pupil=0.0, shine=0.0) for e in f.eyes))
+    with_parts, without = pygame.Surface((480, 320)), pygame.Surface((480, 320))
+    renderer.render(f, with_parts)
+    renderer.render(bare, without)
+    changed = 0
+    for e in f.eyes:
+        box = _eye_rect(e).inflate(40, 40).clip(with_parts.get_rect())
+        for x in range(box.left, box.right):
+            for y in range(box.top, box.bottom):
+                if with_parts.get_at((x, y)) == without.get_at((x, y)):
+                    continue
+                changed += 1
+                lx, ly = rotate(x + 0.5 - e.cx, y + 0.5 - e.cy, -e.tilt)
+                top, bottom = open_span_at(e, lx)
+                assert abs(lx) <= e.w / 2 + 1.5 and top - 1.5 <= ly <= bottom + 1.5, (name, x, y)
+    assert changed > 50  # the overlays really were drawn

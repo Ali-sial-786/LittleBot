@@ -593,7 +593,7 @@ class FaceAnimator:
                 side=side, lid_top=clamp01(ep.lid_top) * lid_fade, lid_angle=ep.lid_angle,
                 lid_bottom=clamp01(ep.lid_bottom) * lid_fade, smile=clamp01(ep.smile) * lid_fade,
                 tilt=-side * ep.tilt + rot + m.eye_rot, shine=max(0.0, p.shine) * clamp01(openness * 1.6),
-                closed_curve=closed_curve, full_h=h,
+                closed_curve=closed_curve, full_h=h, look_x=gx, look_y=gy, pupil=max(0.0, ep.pupil),
             ))
 
         color = self.eye_color()

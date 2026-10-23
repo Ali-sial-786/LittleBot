@@ -60,6 +60,7 @@ EYE_RANGES: dict[str, tuple[float, float]] = {
     "lid_bottom": (0.0, 0.9),
     "smile": (0.0, 1.0),
     "tilt": (-30.0, 30.0),
+    "pupil": (0.0, 1.5),
     "dx": (-60.0, 60.0),
     "dy": (-60.0, 60.0),
 }
@@ -72,13 +73,14 @@ class EyeParams:
     width: float = 1.0  # multiplier of the base eye width
     height: float = 1.0  # multiplier of the base eye height
     scale: float = 1.0  # uniform multiplier (applied on top of width/height)
-    roundness: float = 0.40  # corner radius as a fraction of the smaller side (0.5 = pill / circle)
+    roundness: float = 0.50  # corner radius as a fraction of the smaller side (0.5 = pill / circle)
     openness: float = 1.0  # vertical squash: 1 open .. 0 closed line
     lid_top: float = 0.0  # fraction covered by the upper lid
     lid_angle: float = 0.0  # degrees, + droops towards the outer corner (mirrored per eye)
     lid_bottom: float = 0.0  # fraction covered by a flat lower lid (squint)
     smile: float = 0.0  # happy "^" crescent: lower edge curves up
     tilt: float = 0.0  # degrees, + leans the top of the eye outwards (mirrored per eye)
+    pupil: float = 1.0  # pupil size multiplier (big = soft "puppy" eyes, small = wide-eyed)
     dx: float = 0.0  # screen offset px
     dy: float = 0.0
 
@@ -135,59 +137,59 @@ EXPRESSION_PARAMS: dict[str, ExpressionParams] = {
         glow=1.15, shine=0.6, wander=0.8,
     ),
     "excited": _expr(
-        _sym(width=1.08, height=1.10, scale=1.08, smile=0.34, roundness=0.48, dy=-4),
+        _sym(width=1.08, height=1.10, scale=1.08, smile=0.34, pupil=1.08, dy=-4),
         glow=1.3, shine=1.3, bob=5.0, bob_hz=1.9, blink_rate=1.3, extras=("sparkles",),
     ),
     "curious": _expr(
         (
-            EyeParams(scale=1.14, roundness=0.46, tilt=-4, dy=-6),
-            EyeParams(scale=0.88, lid_top=0.16, lid_angle=-5, tilt=4, dy=2),
+            EyeParams(scale=1.14, pupil=1.08, tilt=-4, dy=-6),
+            EyeParams(scale=0.88, lid_top=0.16, lid_angle=-5, pupil=0.95, tilt=4, dy=2),
         ),
         gaze_x=0.22, gaze_y=-0.12, wander=0.5, sway=2.5, shine=1.2,
     ),
     "surprised": _expr(
-        _sym(width=1.05, height=1.16, scale=1.12, roundness=0.5, dy=-6),
+        _sym(width=1.05, height=1.16, scale=1.12, pupil=0.78, dy=-6),
         glow=1.35, shine=1.4, spacing=10, wander=0.15, blink_rate=1.8,
     ),
     "sleepy": _expr(
-        _sym(height=0.92, lid_top=0.5, lid_angle=4, roundness=0.5, dy=6),
+        _sym(height=0.92, lid_top=0.5, lid_angle=4, pupil=0.86, dy=6),
         brightness=0.78, glow=0.65, shine=0.3, gaze_y=0.35, wander=0.25,
         blink_rate=0.7, blink_speed=2.2, extras=("zzz",),
     ),
     "sad": _expr(
-        _sym(height=0.9, width=0.96, lid_top=0.28, lid_angle=16, roundness=0.46, dy=8),
+        _sym(height=0.9, width=0.96, lid_top=0.28, lid_angle=16, pupil=1.15, dy=8),
         tint=SAD_BLUE, tint_mix=0.55, brightness=0.9, glow=0.8, shine=1.1,
         gaze_y=0.4, wander=0.3, blink_speed=1.4,
     ),
     "thinking": _expr(
         (
-            EyeParams(lid_top=0.2, lid_angle=-6),
-            EyeParams(scale=1.04, roundness=0.44),
+            EyeParams(lid_top=0.2, lid_angle=-6, pupil=0.95),
+            EyeParams(scale=1.04, pupil=0.95),
         ),
         gaze_x=0.5, gaze_y=-0.6, wander=0.0, sway=0.0, extras=("dots",),
     ),
     "listening": _expr(
         (
-            EyeParams(scale=1.06, height=1.05, roundness=0.44, dy=-3, tilt=3),
-            EyeParams(scale=1.06, height=1.05, roundness=0.44, dy=3, tilt=-3),
+            EyeParams(scale=1.06, height=1.05, pupil=1.1, dy=-3, tilt=3),
+            EyeParams(scale=1.06, height=1.05, pupil=1.1, dy=3, tilt=-3),
         ),
         glow=1.15, shine=1.2, wander=0.25, blink_rate=1.2, extras=("ring",),
     ),
     "speaking": _expr(
-        _sym(height=0.98, roundness=0.44, dy=-8),
+        _sym(height=0.98, dy=-8),
         glow=1.05, wander=0.5, extras=("mouth",),
     ),
     "confused": _expr(
         (
-            EyeParams(scale=0.88, lid_top=0.24, lid_angle=-8, dy=4),
-            EyeParams(scale=1.1, roundness=0.46, dy=-8, tilt=5),
+            EyeParams(scale=0.88, lid_top=0.24, lid_angle=-8, pupil=0.9, dy=4),
+            EyeParams(scale=1.1, dy=-8, tilt=5),
         ),
         gaze_x=-0.2, gaze_y=-0.15, wander=0.4, sway=3.0, extras=("question",),
     ),
     "playful": _expr(
         (
             EyeParams(width=1.1, height=0.92, smile=0.68, roundness=0.5, dy=-2, tilt=-4),
-            EyeParams(scale=1.08, roundness=0.46, dy=-6, tilt=4),
+            EyeParams(scale=1.08, pupil=1.08, dy=-6, tilt=4),
         ),
         gaze_x=0.15, glow=1.15, shine=1.2, bob=3.0, bob_hz=1.4, sway=4.0, wander=0.6,
     ),

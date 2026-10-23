@@ -111,10 +111,44 @@ export function icon(name, cls) {
 }
 
 // ---------------------------------------------------------------- face drawing
+// Mirrors the robot's cartoon eyes (littlebot/face/renderer.py): iris-coloured eyes with a darker
+// rim, big dark pupils that look around inside them and two white catchlights that stay put.
 const EYE_L = 40, EYE_R = 80, EYE_Y = 45;
+const INK = { stroke: 'rgba(8, 14, 24, .38)', 'stroke-width': 1.8 };
 
-function roundEye(cx, cy, w, hgt) {
-  return s('rect', { class: 'mf-eye', x: cx - w / 2, y: cy - hgt / 2, width: w, height: hgt, rx: Math.min(w, hgt) / 2 });
+function eye(cx, cy, w, hgt, { pupil = 1, look = [0, 0], lid = 0, droop = null } = {}) {
+  const parts = [s('rect', { class: 'mf-eye', x: cx - w / 2, y: cy - hgt / 2, width: w, height: hgt, rx: Math.min(w, hgt) / 2, ...INK })];
+  // the open part of the eye (below a lid): the pupil rests in its middle, the catchlights sit in it
+  const top = cy - hgt / 2 + Math.max(lid, droop ? 0.3 : 0) * hgt;
+  const vc = (top + cy + hgt / 2) / 2, vh = (cy + hgt / 2 - top) / 2;
+  const rx = w * 0.3 * pupil, ry = Math.min(rx * 1.08, hgt / 2 - 2.5);
+  const tx = Math.max(0, w / 2 - rx - 2.5), ty = Math.max(0, hgt / 2 - ry - 2.5);
+  const py = Math.max(cy - ty, Math.min(cy + ty, vc));
+  parts.push(s('ellipse', {
+    class: 'mf-bg mf-pupil', cx, cy: py, rx, ry,
+    dataset: { tx, ty, lx: look[0], ly: look[1], miny: cy - ty - py, maxy: cy + ty - py },
+    style: { transition: 'transform .35s ease-out' },
+  }));
+  if (lid > 0) parts.push(topLid(cx, cy, w, hgt, lid));
+  if (droop) parts.push(sideLid(cx, cy, w, hgt, droop));
+  const r1 = Math.min(w * 0.13, vh * 0.5), r2 = Math.min(w * 0.06, vh * 0.25);
+  parts.push(s('circle', { cx: cx - w * 0.2, cy: Math.max(top + r1 + 1.5, vc - vh * 0.4), r: r1, fill: '#fff' }));
+  parts.push(s('circle', { cx: cx + w * 0.19, cy: vc + vh * 0.3, r: r2, fill: '#fff' }));
+  return parts;
+}
+function topLid(cx, cy, w, hgt, frac) {
+  // Covers the top of an eye with a gently arched edge (sleepy / thinking / curious).
+  const l = cx - w / 2 - 3, r = cx + w / 2 + 3, y = cy - hgt / 2 + frac * hgt, arch = hgt * 0.2;
+  return [
+    s('path', { class: 'mf-bg', d: `M${l} ${cy - hgt / 2 - 3} H${r} V${y} Q${cx} ${y - arch} ${l} ${y}z` }),
+    s('path', { d: `M${cx - w / 2 + 1} ${y - 0.4} Q${cx} ${y - arch} ${cx + w / 2 - 1} ${y - 0.4}`, fill: 'none', ...INK }),
+  ];
+}
+function sideLid(cx, cy, w, hgt, side) {
+  // Covers the outer-top corner of an eye (sad look).
+  const top = cy - hgt / 2 - 2, l = cx - w / 2 - 3, r = cx + w / 2 + 3;
+  const pts = side === 'left' ? `${l},${top} ${r},${top} ${l},${cy + 2}` : `${l},${top} ${r},${top} ${r},${cy + 2}`;
+  return s('polygon', { class: 'mf-bg', points: pts });
 }
 function arcEye(cx, cy, up = true) {
   const d = up ? `M${cx - 11} ${cy + 5} Q${cx} ${cy - 15} ${cx + 11} ${cy + 5}` : `M${cx - 11} ${cy - 2} Q${cx} ${cy + 10} ${cx + 11} ${cy - 2}`;
@@ -128,11 +162,8 @@ function heartEye(cx, cy) {
 function sparkle(x, y, r) {
   return s('path', { class: 'mf-eye', d: `M${x} ${y - r} L${x + r * .3} ${y - r * .3} L${x + r} ${y} L${x + r * .3} ${y + r * .3} L${x} ${y + r} L${x - r * .3} ${y + r * .3} L${x - r} ${y} L${x - r * .3} ${y - r * .3}z` });
 }
-function lid(cx, cy, w, hgt, side) {
-  // Covers the outer-top corner of an eye (sad look).
-  const top = cy - hgt / 2 - 2, l = cx - w / 2 - 3, r = cx + w / 2 + 3;
-  const pts = side === 'left' ? `${l},${top} ${r},${top} ${l},${cy + 2}` : `${l},${top} ${r},${top} ${r},${cy + 2}`;
-  return s('polygon', { class: 'mf-bg', points: pts });
+function smile() {
+  return s('path', { class: 'mf-line', d: 'M53 70 Q60 76 67 70', 'stroke-width': 3.5, 'stroke-linecap': 'round', fill: 'none' });
 }
 
 function eyesFor(expr, closed) {
@@ -142,18 +173,31 @@ function eyesFor(expr, closed) {
   switch (expr) {
     case 'happy': return [arcEye(EYE_L, EYE_Y), arcEye(EYE_R, EYE_Y)];
     case 'celebrating': return [arcEye(EYE_L, EYE_Y), arcEye(EYE_R, EYE_Y), sparkle(18, 20, 6), sparkle(103, 24, 5), sparkle(98, 70, 4)];
-    case 'excited': return [roundEye(EYE_L, EYE_Y, 22, 40), roundEye(EYE_R, EYE_Y, 22, 40), sparkle(103, 20, 5), sparkle(17, 22, 4)];
-    case 'surprised': return [s('circle', { class: 'mf-eye', cx: EYE_L, cy: EYE_Y, r: 14 }), s('circle', { class: 'mf-eye', cx: EYE_R, cy: EYE_Y, r: 14 })];
-    case 'curious': return [roundEye(EYE_L, EYE_Y + 3, 18, 28), roundEye(EYE_R, EYE_Y - 2, 22, 40)];
-    case 'confused': return [roundEye(EYE_L, EYE_Y + 4, 16, 20), roundEye(EYE_R, EYE_Y - 3, 20, 36)];
-    case 'sleepy': return [roundEye(EYE_L, EYE_Y + 8, 22, 10), roundEye(EYE_R, EYE_Y + 8, 22, 10)];
-    case 'sad': return [roundEye(EYE_L, EYE_Y + 3, 18, 30), lid(EYE_L, EYE_Y + 3, 18, 30, 'left'), roundEye(EYE_R, EYE_Y + 3, 18, 30), lid(EYE_R, EYE_Y + 3, 18, 30, 'right')];
-    case 'thinking': return [roundEye(EYE_L + 5, EYE_Y - 6, 18, 22), roundEye(EYE_R + 5, EYE_Y - 8, 18, 30)];
-    case 'listening': return [roundEye(EYE_L, EYE_Y, 20, 38), roundEye(EYE_R, EYE_Y, 20, 38)];
-    case 'speaking': return [roundEye(EYE_L, EYE_Y, 18, 30), roundEye(EYE_R, EYE_Y, 18, 30)];
-    case 'playful': return [arcEye(EYE_L, EYE_Y), roundEye(EYE_R, EYE_Y, 19, 34)];
+    case 'excited': return [eye(EYE_L, EYE_Y - 2, 25, 32, { pupil: 1.1 }), eye(EYE_R, EYE_Y - 2, 25, 32, { pupil: 1.1 }), sparkle(106, 18, 5), sparkle(14, 22, 4)];
+    case 'surprised': return [eye(EYE_L - 1, EYE_Y - 2, 27, 34, { pupil: 0.75 }), eye(EYE_R + 1, EYE_Y - 2, 27, 34, { pupil: 0.75 })];
+    case 'curious': return [eye(EYE_L, EYE_Y - 2, 26, 32, { look: [0.5, -0.3] }), eye(EYE_R, EYE_Y + 2, 20, 25, { lid: 0.18, look: [0.5, -0.3] })];
+    case 'confused': return [eye(EYE_L, EYE_Y + 3, 19, 24, { lid: 0.25, look: [-0.4, -0.3] }), eye(EYE_R, EYE_Y - 3, 25, 31, { look: [-0.4, -0.3] })];
+    case 'sleepy': return [eye(EYE_L, EYE_Y + 5, 24, 27, { lid: 0.48, pupil: 0.86, look: [0, 0.4] }), eye(EYE_R, EYE_Y + 5, 24, 27, { lid: 0.48, pupil: 0.86, look: [0, 0.4] })];
+    case 'sad': return [eye(EYE_L, EYE_Y + 3, 22, 28, { pupil: 1.15, droop: 'left', look: [0, 0.5] }), eye(EYE_R, EYE_Y + 3, 22, 28, { pupil: 1.15, droop: 'right', look: [0, 0.5] })];
+    case 'thinking': return [eye(EYE_L, EYE_Y - 2, 22, 27, { lid: 0.2, look: [0.7, -0.7] }), eye(EYE_R, EYE_Y - 3, 23, 29, { look: [0.7, -0.7] })];
+    case 'listening': return [eye(EYE_L, EYE_Y - 1, 24, 31, { pupil: 1.1 }), eye(EYE_R, EYE_Y + 1, 24, 31, { pupil: 1.1 })];
+    case 'speaking': return [eye(EYE_L, EYE_Y - 4, 23, 27), eye(EYE_R, EYE_Y - 4, 23, 27), smile()];
+    case 'playful': return [arcEye(EYE_L, EYE_Y), eye(EYE_R, EYE_Y - 2, 24, 30, { pupil: 1.08, look: [0.25, 0] })];
     case 'affectionate': return [heartEye(EYE_L, EYE_Y), heartEye(EYE_R, EYE_Y)];
-    default: return [roundEye(EYE_L, EYE_Y, 18, 34), roundEye(EYE_R, EYE_Y, 18, 34)];
+    default: return [eye(EYE_L, EYE_Y, 23, 28), eye(EYE_R, EYE_Y, 23, 28)];
+  }
+}
+
+function lookPupils(g, gz) {
+  // Live gaze moves the pupils inside the eyes; without one each expression's own look is shown.
+  for (const p of g.querySelectorAll('.mf-pupil')) {
+    let lx = gz ? (gz.x - 0.5) * 2 : Number(p.dataset.lx);
+    let ly = gz ? (gz.y - 0.5) * 2 : Number(p.dataset.ly);
+    const n = Math.hypot(lx, ly);
+    if (n > 1) { lx /= n; ly /= n; }
+    const dx = lx * Number(p.dataset.tx);
+    const dy = Math.max(Number(p.dataset.miny), Math.min(Number(p.dataset.maxy), ly * Number(p.dataset.ty)));
+    p.style.transform = `translate(${dx.toFixed(1)}px, ${dy.toFixed(1)}px)`;
   }
 }
 
@@ -173,9 +217,11 @@ export function miniFace({ expression = 'neutral', size = 64, gaze = null, close
       append(g, eyesFor(expr, isClosed));
       last = key;
     }
-    const gx = gz && typeof gz.x === 'number' ? gz.x : 0.5;
-    const gy = gz && typeof gz.y === 'number' ? gz.y : 0.5;
-    g.style.transform = `translate(${((gx - 0.5) * 18).toFixed(1)}px, ${((gy - 0.5) * 12).toFixed(1)}px)`;
+    const live = gz && typeof gz.x === 'number' && typeof gz.y === 'number' ? gz : null;
+    const gx = live ? live.x : 0.5;
+    const gy = live ? live.y : 0.5;
+    g.style.transform = `translate(${((gx - 0.5) * 12).toFixed(1)}px, ${((gy - 0.5) * 8).toFixed(1)}px)`;
+    lookPupils(g, live);
     if (title && lbl) title.textContent = lbl;
   };
   root.update(expression, gaze, closed, label);
