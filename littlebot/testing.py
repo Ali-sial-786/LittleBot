@@ -9,6 +9,7 @@ implementation would, so integration-style tests stay realistic.
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 from typing import Any
 
 from littlebot.core.config import LittleBotConfig, load_config
@@ -213,6 +214,14 @@ def make_test_context(*, fakes: bool = True, **config_overrides: Any) -> RobotCo
     """In-memory DB, mock monitor and (optionally) fake face/audio/motion."""
     cfg = make_test_config(**config_overrides)
     ctx = build_core_context(cfg, db_path=":memory:", monitor=MockSystemMonitor())
+    # Never read or write a real ChatGPT sign-in: a file path that only exists if a test signs in.
+    import tempfile  # noqa: PLC0415
+    import uuid  # noqa: PLC0415
+
+    from littlebot.chatgpt.auth import ChatGPTAuth  # noqa: PLC0415
+
+    ctx.extras["chatgpt_auth"] = ChatGPTAuth(Path(tempfile.gettempdir()) / f"littlebot-test-{uuid.uuid4().hex}" /
+                                             "chatgpt_auth.json")
     if fakes:
         ctx.face = FakeFace(ctx.bus)
         ctx.audio = FakeAudio(ctx.bus)

@@ -253,7 +253,7 @@ class ProfileBody(Body):
 # ----------------------------------------------------------------- AI
 class AISettingsBody(Body):
     enabled: bool | None = None
-    provider: Literal["mock", "anthropic", "openai"] | None = None
+    provider: Literal["mock", "anthropic", "openai", "chatgpt"] | None = None
     max_words: int | None = Field(default=None, ge=3, le=60)
     max_requests_per_hour: int | None = Field(default=None, ge=0, le=600)
     max_requests_per_day: int | None = Field(default=None, ge=0, le=5000)
@@ -263,7 +263,7 @@ class AISettingsBody(Body):
 
 
 class ProviderTestBody(Body):
-    provider: Literal["mock", "anthropic", "openai"]
+    provider: Literal["mock", "anthropic", "openai", "chatgpt"]
 
 
 # ----------------------------------------------------------------- privacy
@@ -362,3 +362,9 @@ class CameraSimBody(Body):
 class PowerBody(Body):
     action: Literal["shutdown", "restart"]
     confirm: bool = False
+
+
+# ----------------------------------------------------------------- live voice
+class LiveStartBody(Body):
+    # The parent confirms they are with the child for the whole conversation.
+    parent_present: bool = False

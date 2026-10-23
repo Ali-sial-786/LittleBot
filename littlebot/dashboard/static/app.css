@@ -611,3 +611,10 @@ details.disclosure > summary { cursor: pointer; font-weight: 650; padding: 4px 0
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
 }
+
+/* ChatGPT sign-in code + live voice */
+.sign-in-code { font-family: var(--mono); font-size: 1.8rem; font-weight: 700; letter-spacing: .14em; text-align: center; padding: 10px; border-radius: 12px; background: var(--surface-2, rgba(127,127,127,.12)); user-select: all; }
+.check-row { display: flex; gap: 10px; align-items: flex-start; cursor: pointer; }
+.check-row input { margin-top: 3px; width: 18px; height: 18px; flex: none; }
+.captions { display: grid; gap: 4px; max-height: 220px; overflow-y: auto; font-size: .92rem; padding: 8px 10px; border-radius: 10px; background: var(--surface-2, rgba(127,127,127,.08)); }
+.captions p { margin: 0; }

@@ -23,6 +23,7 @@ from playwright.sync_api import Error as PlaywrightError  # noqa: E402
 from playwright.sync_api import expect, sync_playwright  # noqa: E402
 
 from littlebot.app.robot import LittleBot  # noqa: E402
+from littlebot.chatgpt.auth import ChatGPTAuth  # noqa: E402
 from littlebot.core.context import build_core_context  # noqa: E402
 from littlebot.hardware.system import MockSystemMonitor  # noqa: E402
 from littlebot.testing import make_test_config  # noqa: E402
@@ -62,10 +63,11 @@ def browser():
 
 
 @pytest.fixture(scope="module")
-def robot(browser):
+def robot(browser, tmp_path_factory):
     cfg = make_test_config(dashboard={"enabled": True, "port": 0})
     ctx = build_core_context(cfg, db_path=":memory:", monitor=MockSystemMonitor())
     ctx.clock.scale = 1.0  # activities run in real time, like for a parent
+    ctx.extras["chatgpt_auth"] = ChatGPTAuth(tmp_path_factory.mktemp("chatgpt") / "chatgpt_auth.json")  # never a real sign-in
     bot = LittleBot(ctx)
     bot.build_subsystems()
     bot.start()
@@ -213,3 +215,19 @@ def test_turning_videos_off_shows_why_they_will_not_play(desktop):
     switch.locator(".switch").click()
     expect(page.locator(".banner", has_text="Videos are turned off")).to_have_count(0)
     assert desktop.bot.ctx.settings.get("media.enabled") is True
+
+
+def test_ai_page_offers_chatgpt_sign_in_and_live_voice(phone):
+    page = phone.open("ai")
+    expect(page.get_by_role("heading", name="ChatGPT account")).to_be_visible()
+    expect(page.get_by_role("button", name="Sign in with ChatGPT")).to_be_visible()
+    expect(page.get_by_role("heading", name="Live voice (GPT-Live)")).to_be_visible()
+    expect(page.get_by_text("I am with my child and will stay for the whole conversation.")).to_be_visible()
+    # Cloud off (the default): starting is refused with a plain explanation, and nothing is started.
+    page.get_by_label("I am with my child and will stay for the whole conversation.").check()
+    page.get_by_role("button", name="Start live voice").click()
+    expect(page.get_by_text("Cloud communication is turned off in Privacy.").first).to_be_visible()
+    assert phone.api("GET", "/chatgpt")["live"]["active"] is False
+    if os.environ.get("LITTLEBOT_AI_SCREENSHOT"):  # for eyeballing the layout
+        page.screenshot(path=os.environ["LITTLEBOT_AI_SCREENSHOT"], full_page=True)
+    assert page.locator("#ai-provider option[value=chatgpt]").count() == 1

@@ -39,6 +39,7 @@ SUBSYSTEM_LABELS = {
     "media": "The video player",
     "brain": "The conversation system",
     "activities": "The activities engine",
+    "live": "Live voice",
 }
 
 # Alerts older than this are no longer shown.
@@ -101,6 +102,12 @@ class DashState:
                                  "key": key, "ts": now, "count": 1, "dismissed": False})
 
     def _on_brain_status(self, event: Event) -> None:
+        if event.get("status") == "live_safety_stop":
+            category = str(event.get("detail") or "safety")[:40]
+            self._add_alert("attention", "Live voice stopped",
+                            f"LittleBot cut off the ChatGPT voice and ended the call because what it was saying broke "
+                            f"a safety rule ({category}). You can start a new conversation from the AI page.",
+                            f"live_safety:{category}")
         if event.get("status") == "attention":
             category = str(event.get("detail") or "safety")[:40]
             self._add_alert("attention", "Your child may need you",

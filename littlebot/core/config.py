@@ -174,7 +174,7 @@ class AudioConfig(_Section):
 
 
 class AIConfig(_Section):
-    provider: Literal["mock", "anthropic", "openai"] = "mock"
+    provider: Literal["mock", "anthropic", "openai", "chatgpt"] = "mock"
     anthropic_model: str = "claude-haiku-5-5"
     openai_model: str = "gpt-4o-mini"
     timeout_seconds: float = 12.0
@@ -206,6 +206,31 @@ class AIConfig(_Section):
     # Personal info is NOT sent to cloud providers unless a parent opts in.
     share_child_name: bool = False
     share_interests: bool = False
+
+
+class ChatGPTConfig(_Section):
+    """Sign in with ChatGPT: the parent's own ChatGPT plan, no API key (see docs/CHATGPT.md).
+
+    Uses OpenAI's Codex sign-in and the undocumented Codex endpoints (as the Codex CLI and
+    WatchGPT do). They are not a public API and may change or stop working without notice.
+    """
+    originator: str = "littlebot"  # how requests identify themselves to OpenAI
+    token_file: str = "chatgpt_auth.json"  # under data_dir, mode 0600; never sent to the browser
+    # Text model for typed / push-to-talk replies and live-voice look-ups: the first one that works.
+    models: list[str] = Field(default_factory=lambda: ["gpt-6-luna", "gpt-6-sol", "gpt-5.6-luna"])
+    reasoning_effort: Literal["minimal", "low", "medium", "high"] = "low"
+    # --- live voice (GPT-Live speech-to-speech over WebRTC; needs the "live" extra: aiortc) ---
+    live_model: str = "gpt-live-1-codex"
+    live_voice: str = "cove"  # cove | arbor | breeze | ember | juniper | maple | sol | spruce | vale
+    live_session_minutes: float = 10.0  # hard limit per conversation
+    live_idle_hangup_seconds: float = 90.0  # hang up after this long with nobody talking
+    live_connect_timeout_seconds: float = 20.0
+    # The Pi has no echo cancellation: don't send the microphone while LittleBot's voice plays
+    # (and for live_echo_tail_ms after), or the model hears itself. Grown-ups can't talk over it.
+    live_half_duplex: bool = True
+    live_echo_tail_ms: int = 450
+    live_voice_level: float = 0.012  # RMS (0..1) above which the model's audio counts as speaking
+    live_volume: float | None = None  # None = the speaker volume setting (always capped at max_volume)
 
 
 class MediaConfig(_Section):
@@ -323,6 +348,7 @@ class LittleBotConfig(BaseModel):
     vision: VisionConfig = Field(default_factory=VisionConfig)
     audio: AudioConfig = Field(default_factory=AudioConfig)
     ai: AIConfig = Field(default_factory=AIConfig)
+    chatgpt: ChatGPTConfig = Field(default_factory=ChatGPTConfig)
     media: MediaConfig = Field(default_factory=MediaConfig)
     motion: MotionConfig = Field(default_factory=MotionConfig)
     dashboard: DashboardConfig = Field(default_factory=DashboardConfig)

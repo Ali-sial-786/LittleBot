@@ -1,13 +1,21 @@
-// AI: optional cloud conversation. Keys are never shown - only whether one is configured.
+// AI: optional cloud conversation. Keys and ChatGPT sign-in tokens are never shown - only whether one is set up.
 
 import { get, post, put } from '../api.js';
-import { banner, button, clear, h, icon, pageHead, setText, switchRow, titleCase, toast } from '../ui.js';
+import { banner, button, clear, fmtDuration, h, icon, pageHead, setText, switchRow, titleCase, toast } from '../ui.js';
 
 const PROVIDERS = [
   { value: 'mock', label: 'Built-in scripted replies (no internet)' },
   { value: 'anthropic', label: 'Anthropic Claude' },
   { value: 'openai', label: 'OpenAI' },
+  { value: 'chatgpt', label: 'ChatGPT (sign in with your plan)' },
 ];
+
+const LIVE_PHASES = { connecting: 'Connecting…', listening: 'Listening', speaking: 'Talking', thinking: 'Looking something up…', ended: 'Ended' };
+
+function fmtClock(sec) {
+  const s = Math.max(0, Math.round(Number(sec) || 0));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+}
 
 const PTT_ERRORS = { nothing_heard: "LittleBot didn't hear anything. Try again and speak close to it.", microphone_disabled: 'The microphone is turned off in Privacy.', no_audio: 'No speaker or microphone is available.' };
 
@@ -67,6 +75,9 @@ export default {
     const testResult = h('div', { class: 'stack-sm' });
     const usage = h('dl', { class: 'kv' });
     const brainState = h('dl', { class: 'kv' });
+    const account = h('div', { class: 'stack-sm' }, h('p', { class: 'muted', text: 'Loading…' }));
+    const live = h('div', { class: 'stack-sm' });
+    const present = h('input', { type: 'checkbox', id: 'live-present' });
 
     const save = button('Save AI settings', {
       kind: 'primary',
@@ -90,10 +101,18 @@ export default {
         h('section', { class: 'card info' },
           h('div', { class: 'stack-sm' },
             h('h2', {}, 'How cloud AI works'),
-            h('p', { text: 'Cloud AI needs a separate, paid API key from Anthropic or OpenAI. A Claude.ai or ChatGPT subscription does not include API access.' }),
-            h('p', {}, 'Put the key in the ', h('code', { text: '.env' }), ' file on the robot (', h('code', { text: 'ANTHROPIC_API_KEY' }), ' or ', h('code', { text: 'OPENAI_API_KEY' }), ') and restart LittleBot. Keys stay on the robot and are never shown here.'),
+            h('p', { text: 'Easiest: sign in with your ChatGPT account below and pick “ChatGPT” as the provider. It uses your own ChatGPT plan, no API key. It relies on OpenAI endpoints that are not officially documented, so it may stop working if OpenAI changes them.' }),
+            h('p', {}, 'Or use a separate, paid API key from Anthropic or OpenAI: put it in the ', h('code', { text: '.env' }), ' file on the robot (', h('code', { text: 'ANTHROPIC_API_KEY' }), ' or ', h('code', { text: 'OPENAI_API_KEY' }), ') and restart LittleBot. Keys and sign-ins stay on the robot and are never shown here.'),
             h('p', { text: 'For babies and young toddlers (under 2 years) LittleBot only ever uses scripted, age-appropriate responses - even when cloud AI is on. Every AI reply is length-limited and safety-checked before it is spoken.' }))),
         notices,
+        h('div', { class: 'grid two' },
+          h('section', { class: 'card' },
+            h('div', { class: 'card-head' }, h('h2', {}, icon('key'), 'ChatGPT account')),
+            account),
+          h('section', { class: 'card' },
+            h('div', { class: 'card-head' }, h('h2', {}, icon('wave'), 'Live voice (GPT-Live)')),
+            h('p', { class: 'muted', text: 'A real-time spoken conversation with ChatGPT’s voice, on your plan. You start and stop it here; it ends by itself after the time limit or when nobody talks. Everything it says is checked against LittleBot’s safety rules while it talks: a rule break cuts the voice, ends the call and alerts you. Some words may already be heard by then, so stay with your child. Your voices go to OpenAI; nothing is recorded on LittleBot.' }),
+            live)),
         h('div', { class: 'grid two' },
           h('section', { class: 'card' },
             h('div', { class: 'card-head' }, h('h2', {}, icon('cloud'), 'Cloud AI')),
@@ -124,6 +143,90 @@ export default {
           h('section', { class: 'card' },
             h('div', { class: 'card-head' }, h('h2', {}, icon('history'), 'Usage today')),
             usage, h('div', { class: 'divider mt-2' }), h('div', { class: 'mt-2' }, brainState)))));
+
+    function renderAccount(d) {
+      const a = d.account || {};
+      clear(account);
+      if (a.signed_in) {
+        account.append(
+          h('p', {}, 'Signed in as ', h('strong', { text: a.email || 'your ChatGPT account' }), a.plan ? ` (${titleCase(a.plan)} plan)` : ''),
+          h('p', { class: 'muted', text: 'The sign-in is stored only on LittleBot and is never sent to this page.' }),
+          h('div', { class: 'btn-row' }, button('Sign out', { kind: 'soft', iconName: 'logout', onClick: () => act(() => post('/chatgpt/sign-out', {}), 'Signed out of ChatGPT.') })));
+      } else if (a.pending) {
+        const url = a.pending.verification_url;
+        account.append(
+          h('p', { text: 'On your phone or computer, open this page, log in to ChatGPT and enter the code:' }),
+          h('p', {}, h('a', { href: url, target: '_blank', rel: 'noopener noreferrer', text: url.replace(/^https:\/\//, '') })),
+          h('p', { class: 'sign-in-code', text: a.pending.user_code }),
+          h('p', { class: 'muted', text: `Waiting for your approval… the code expires in ${fmtDuration(a.pending.expires_in)}.` }),
+          h('div', { class: 'btn-row' }, button('Cancel', { kind: 'soft', iconName: 'x', onClick: () => act(() => post('/chatgpt/sign-in/cancel', {})) })));
+      } else {
+        account.append(
+          h('p', { class: 'muted', text: 'Uses your own ChatGPT plan instead of a paid API key. LittleBot shows a code; you approve it on OpenAI’s website with your ChatGPT login.' }),
+          h('div', { class: 'btn-row' }, button('Sign in with ChatGPT', { kind: 'primary', iconName: 'key', onClick: () => act(() => post('/chatgpt/sign-in', {})) })));
+        if (d.privacy && !d.privacy.cloud_enabled) account.append(banner('info', 'lock', 'Cloud communication is off', 'Turn it on in Privacy before signing in.'));
+      }
+      if (a.error) account.append(banner('warn', 'alert', 'Sign-in did not finish', a.error));
+    }
+
+    function renderLive(d) {
+      const l = d.live || {};
+      clear(live);
+      if (l.active) {
+        live.append(
+          h('dl', { class: 'kv' },
+            h('dt', { text: 'Now' }), h('dd', { text: LIVE_PHASES[l.phase] || l.phase || '–' }),
+            h('dt', { text: 'Time left' }), h('dd', { text: fmtClock(l.remaining_s) })),
+          l.captions?.length
+            ? h('div', { class: 'captions', 'aria-live': 'polite' }, l.captions.map((c) => h('p', {}, h('strong', { text: c.who === 'heard' ? 'Heard: ' : 'LittleBot: ' }), c.text)))
+            : null,
+          h('div', { class: 'btn-row' }, button('Stop live voice', { kind: 'danger', iconName: 'stop', onClick: () => act(() => post('/chatgpt/live/stop', {}), 'Live voice stopped.') })));
+        return;
+      }
+      if (!l.available) live.append(banner('info', 'info', 'Not installed on this robot yet', 'Live voice needs the “live” extra (aiortc). See docs/CHATGPT.md.'));
+      live.append(
+        h('label', { class: 'check-row' }, present, h('span', { text: 'I am with my child and will stay for the whole conversation.' })),
+        h('div', { class: 'btn-row' }, button('Start live voice', {
+          kind: 'primary', iconName: 'mic',
+          onClick: () => {
+            if (!present.checked) { toast('Please confirm you are with your child.', 'error'); return null; }
+            return act(() => post('/chatgpt/live/start', { parent_present: true }, { timeout: 30000 }), 'Live voice starting…');
+          },
+        })));
+      if (l.blocked && !['parent_not_present', 'already_running'].includes(l.blocked) && l.blocked_detail) live.append(h('p', { class: 'muted', text: l.blocked_detail }));
+      const last = l.last_call;
+      if (last) {
+        if (last.safety_stop) live.append(banner('danger', 'shield', 'Last call was stopped by the safety rules', `It broke the “${last.safety_stop}” rule, so LittleBot cut it off.`));
+        else if (last.error) live.append(banner('warn', 'alert', 'Last call', last.error));
+        else live.append(h('p', { class: 'muted', text: `Last call: ${last.ended_reason} after ${fmtDuration(last.duration_s)}.` }));
+      }
+    }
+
+    async function act(fn, ok) {
+      const r = await app.act(fn, ok);
+      if (r && (r.account || r.live)) fillChatGPT(r);
+      schedule(300);
+      return r;
+    }
+
+    function fillChatGPT(d) {
+      const fast = Boolean(d.account?.pending || d.live?.active);
+      renderAccount(d);
+      renderLive(d);
+      if (fast !== wasFast) { wasFast = fast; schedule(fast ? 1000 : 10000); }
+    }
+
+    let pollTimer = null;
+    let wasFast = false;
+    function schedule(ms) {
+      clearTimeout(pollTimer);
+      pollTimer = setTimeout(async () => {
+        if (!document.hidden) {
+          try { fillChatGPT(await get('/chatgpt')); } catch { /* shown on the next successful poll */ }
+        }
+        schedule(wasFast ? 1000 : 10000);
+      }, ms);
+    }
 
     async function runTest() {
       clear(testResult).append(h('p', { class: 'muted', text: 'Testing…' }));
@@ -166,6 +269,7 @@ export default {
         notices.append(h('div', { class: 'banner warn' }, icon('alert'), h('div', {}, h('strong', { text: 'Cloud communication is off' }), h('span', {}, 'Cloud AI is on, but nothing will be sent until you also allow cloud communication in ', link, '.'))));
       }
       if (st.enabled && st.provider === 'anthropic' && !d.keys?.has_anthropic_key) notices.append(banner('warn', 'key', 'No Anthropic key', 'Add ANTHROPIC_API_KEY to the .env file on the robot, then restart LittleBot.'));
+      if (st.enabled && st.provider === 'chatgpt' && d.brain?.provider_status?.chatgpt === 'not_configured') notices.append(banner('warn', 'key', 'Not signed in with ChatGPT', 'Sign in with ChatGPT below to use your plan.'));
       if (st.enabled && st.provider === 'openai' && !d.keys?.has_openai_key) notices.append(banner('warn', 'key', 'No OpenAI key', 'Add OPENAI_API_KEY to the .env file on the robot, then restart LittleBot.'));
       if (!d.policy?.cloud_ai_age_ok) notices.append(banner('info', 'shield', 'Scripted replies only for now', `Your child is under ${Math.round((d.policy?.min_age_months_for_cloud ?? 24) / 12)} years (or no age is set). LittleBot answers with gentle scripted responses of up to ${d.policy?.max_reply_words ?? 8} words.`));
       kvRows(usage, d.brain?.usage);
@@ -175,6 +279,8 @@ export default {
 
     get('/ai').then(fill).catch((e) => notices.append(banner('danger', 'alert', 'Could not load AI settings', e.message)));
     const timer = setInterval(() => { if (!document.hidden) get('/ai').then((d) => { data = d; kvRows(usage, d.brain?.usage); }).catch(() => {}); }, 15000);
-    return { destroy() { clearInterval(timer); } };
+    get('/chatgpt').then(fillChatGPT).catch((e) => { clear(account).append(banner('danger', 'alert', 'Could not load the ChatGPT account', e.message)); });
+    schedule(10000);
+    return { destroy() { clearInterval(timer); clearTimeout(pollTimer); } };
   },
 };

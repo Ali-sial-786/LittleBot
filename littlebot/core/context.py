@@ -47,6 +47,7 @@ class RobotContext:
     media: MediaAPI | None = None
     brain: BrainAPI | None = None
     activities: ActivityAPI | None = None
+    live: Any = None  # live voice (littlebot.chatgpt.live.LiveVoiceService)
     extras: dict[str, Any] = field(default_factory=dict)
 
     def age_policy(self) -> AgePolicy:

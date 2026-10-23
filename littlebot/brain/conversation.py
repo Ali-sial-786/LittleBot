@@ -49,7 +49,7 @@ from littlebot.safety.content import (
 log = logging.getLogger("littlebot.brain")
 
 OWNER = "conversation"
-CLOUD_PROVIDERS = ("anthropic", "openai")
+CLOUD_PROVIDERS = ("anthropic", "openai", "chatgpt")
 
 ERROR_FALLBACKS: tuple[str, ...] = (
     "Hmm, my thinking cap is sleepy. Let's play instead!",
@@ -107,7 +107,9 @@ class ConversationEngine(Service):
         self.cfg = ctx.config.ai
         self._providers: dict[str, BaseProvider] = providers or self._build_providers(http_transport)
         self._providers.setdefault("mock", self._make_mock())
-        self.usage = usage or UsageTracker(ctx.db, prices=self.cfg.price_per_mtok, now=now)
+        # ChatGPT sign-in uses the parent's plan: no per-token cost (the plan's own limits apply).
+        prices = {**{m: (0.0, 0.0) for m in ctx.config.chatgpt.models}, **self.cfg.price_per_mtok}
+        self.usage = usage or UsageTracker(ctx.db, prices=prices, now=now)
         self._lock = threading.RLock()
         self._context: collections.deque[tuple[str, str]] = collections.deque(maxlen=max(0, self.cfg.context_turns))
         self._context_at = 0.0
@@ -146,7 +148,17 @@ class ConversationEngine(Service):
             ),
             "openai": OpenAIProvider(api_key=root.openai_api_key, model=cfg.openai_model,
                                      base_url=cfg.openai_base_url, transport=transport),
+            "chatgpt": self._make_chatgpt(transport),
         }
+
+    def _make_chatgpt(self, transport: httpx.AsyncBaseTransport | None) -> BaseProvider:
+        from littlebot.chatgpt import get_auth  # noqa: PLC0415
+        from littlebot.chatgpt.responses import ChatGPTProvider  # noqa: PLC0415
+
+        auth = get_auth(self.ctx)
+        auth.on_change(lambda: self._auth_errors.discard("chatgpt"))  # signed in (again): try it again
+        cfg = self.ctx.config.chatgpt
+        return ChatGPTProvider(auth, models=list(cfg.models), effort=cfg.reasoning_effort, transport=transport)
 
     def _ensure_transcript_table(self) -> None:
         if self.cfg.store_transcripts:
@@ -232,9 +244,10 @@ class ConversationEngine(Service):
         if not ctx.privacy.cloud_enabled:
             return use_mock("cloud access disabled in privacy settings")
         if not provider.configured():
-            return use_mock("no API key")
+            return use_mock("not signed in with ChatGPT" if requested == "chatgpt" else "no API key")
         if requested in self._auth_errors:
-            return use_mock("API key rejected (check the key)")
+            return use_mock("ChatGPT sign-in rejected (sign in again)" if requested == "chatgpt"
+                            else "API key rejected (check the key)")
         if check_usage:
             block = self.usage.check(self._limits(), projected_cost)
             if block:
@@ -302,7 +315,8 @@ class ConversationEngine(Service):
         if self.ctx.config.is_offline or not self.ctx.privacy.cloud_enabled:
             return {"ok": False, "latency_ms": None, "error": "cloud_disabled", "provider": name, "model": p.model}
         if not p.configured():
-            return {"ok": False, "latency_ms": None, "error": "no_api_key", "provider": name, "model": p.model}
+            return {"ok": False, "latency_ms": None, "error": "not_signed_in" if name == "chatgpt" else "no_api_key",
+                    "provider": name, "model": p.model}
         block = self.usage.check(self._limits())
         if block:
             return {"ok": False, "latency_ms": None, "error": block, "provider": name, "model": p.model}

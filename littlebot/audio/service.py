@@ -187,6 +187,8 @@ class AudioService(Service):
         self._listen_session: _ListenSession | None = None
         self._listening = False
         self.mic_level = 0.0
+        # Who has borrowed the speaker + microphone (live voice); None = this service owns them.
+        self._suspended: str | None = None
 
         self._subs: list[Subscription] = []
         self._subscribe()
@@ -409,7 +411,7 @@ class AudioService(Service):
     async def _enqueue(self, item: _Item, wait: bool) -> bool:
         self._ensure_worker()
         with self._cv:
-            if self._shutdown:
+            if self._shutdown or self._suspended:
                 return False
             if len(self._pending) >= MAX_QUEUE:
                 log.warning("audio output queue full; dropping %s %r", item.kind, item.label[:40])
@@ -423,6 +425,43 @@ class AudioService(Service):
         except asyncio.CancelledError:
             item.stop.set()  # the caller went away: do not keep talking
             raise
+
+    # ================================================================ hand-over
+    @property
+    def suspended(self) -> str | None:
+        return self._suspended
+
+    async def suspend(self, owner: str, wait: float = 1.5) -> None:
+        """Lend the speaker and microphone to ``owner`` (live voice) until ``resume(owner)``.
+
+        Stops playback, cancels a listen and closes both device streams, so another stream can
+        open the same (often exclusive, hw:) ALSA device. Meanwhile sounds and speech are dropped
+        (they return False) and listen() returns None.
+        """
+        self._suspended = owner
+        self.stop_output()
+        self._cancel_listen(f"suspended for {owner}")
+        await asyncio.to_thread(self._release_devices, wait)
+        log.info("audio: speaker and microphone lent to %s", owner)
+
+    def _release_devices(self, wait: float) -> None:
+        deadline = time.monotonic() + max(0.0, wait)
+        while time.monotonic() < deadline:
+            with self._cv:
+                if self._current is None:
+                    break
+            time.sleep(0.02)
+        out = self._out
+        if out is not None:
+            with contextlib.suppress(Exception):
+                out.release()
+            self._released = True
+        self._close_input()
+
+    def resume(self, owner: str) -> None:
+        if self._suspended == owner:
+            self._suspended = None
+            log.info("audio: speaker and microphone back from %s", owner)
 
     def stop_output(self) -> None:
         with self._cv:
@@ -501,7 +540,7 @@ class AudioService(Service):
         return True
 
     def _play_item(self, item: _Item) -> bool:
-        if item.stop.is_set():
+        if item.stop.is_set() or self._suspended:
             return False
         out = self._out
         if out is None or isinstance(out, NullOutput):
@@ -729,6 +768,8 @@ class AudioService(Service):
     async def listen(self, *, timeout: float | None = None) -> str | None:
         if not self._mic_allowed():
             self._close_input()
+            return None
+        if self._suspended:
             return None
         loop = asyncio.get_running_loop()
         with self._inject_lock:
@@ -1007,6 +1048,8 @@ class AudioService(Service):
                 return {**base, "detail": "No real microphone found (simulated microphone in use). " + MIC_HINT}
             if self._listening:
                 return {**base, "detail": "LittleBot is listening right now; try again in a moment."}
+            if self._suspended:
+                return {**base, "detail": f"The microphone is in use by {self._suspended}; try again after it ends."}
             if self.cfg.half_duplex:
                 await self._wait_output_idle(None, limit=10.0)
             stats = await asyncio.to_thread(self._measure_input, secs)
@@ -1086,6 +1129,7 @@ class AudioService(Service):
             "listening": self._listening,
             "mic_muted": self._mic_muted(),
             "half_duplex": bool(self.cfg.half_duplex),
+            "lent_to": self._suspended,
             "tts_provider": self._provider_label(self._active_tts(), self._tts),
             "stt_provider": self._provider_label(self._active_stt(), self._stt),
             "tts_rate": self._tts_rate,

@@ -36,6 +36,7 @@ SUBSYSTEMS: tuple[tuple[str, str], ...] = (
     ("media", "littlebot.media"),
     ("brain", "littlebot.brain"),
     ("activities", "littlebot.activities"),
+    ("live", "littlebot.chatgpt"),
 )
 
 

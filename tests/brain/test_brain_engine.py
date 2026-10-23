@@ -44,7 +44,7 @@ async def test_create_service_implements_brain_api_and_service(make_brain):
             assert key in st["usage"]
         assert st["models"]["anthropic"] == "claude-haiku-5-5"
         names = {p["name"] for p in brain.providers()}
-        assert names == {"mock", "anthropic", "openai"}
+        assert names == {"mock", "anthropic", "openai", "chatgpt"}
         assert all({"name", "configured", "available", "model"} <= set(p) for p in brain.providers())
     finally:
         await brain.stop()
