@@ -588,3 +588,29 @@ async def test_everyday_words_do_not_change_the_face(live, ctx):
     server.send({"type": "turn.done", "turn": {"role": "user", "transcript": "make a surprised face"}})
     await wait_for(lambda: ctx.face.expression == "surprised")
     assert before != "sad" and ctx.face.called("set_expression")[0][0][0] == "surprised"
+
+
+async def test_a_crashing_or_hanging_look_up_still_answers_the_voice(live, monkeypatch):
+    import littlebot.chatgpt.live as live_mod
+    from littlebot.chatgpt import wire
+
+    svc, server, _audio, provider, _alerts = live
+    await connect(svc, server)
+
+    async def boom(*_a, **_k):
+        raise RuntimeError("unexpected")
+
+    monkeypatch.setattr(provider, "reply", boom)
+    delegate(server, "h1", "What is the capital of France?")
+    await wait_for(lambda: answers(server, "h1"))
+    assert answers(server, "h1") == [wire.FAILED_RESULT]
+
+    async def hang(*_a, **_k):
+        await asyncio.sleep(60)
+
+    monkeypatch.setattr(provider, "reply", hang)
+    monkeypatch.setattr(live_mod, "HANDOFF_TIMEOUT_S", 0.3)
+    delegate(server, "h2", "How tall is a giraffe?")
+    await wait_for(lambda: answers(server, "h2"), timeout=5)
+    assert answers(server, "h2") == [wire.FAILED_RESULT]
+    assert svc.status()["active"]

@@ -132,6 +132,7 @@ GOODBYE_QUIET_S = 0.8
 GOODBYE_MAX_S = 10.0
 FIRST_WORDS_MIN_S = 30.0
 MAX_CAPTIONS = 8
+HANDOFF_TIMEOUT_S = 25.0  # a hand-off the voice waits on always gets an answer within this
 CHECK_WINDOW = 320  # characters of a reply in progress checked at a time
 NOT_SURE = "Say you are not sure, and suggest asking a grown-up."
 
@@ -688,11 +689,20 @@ class LiveCall:
                 self._play_face(action, "delegation")
                 return
             if kind == "empty":
-                text = wire.NO_INPUT_RESULT
+                work = None
             elif kind == "look":
-                text = await self._look_for_voice(question)
+                work = self._look_for_voice(question)
             else:
-                text = await self._look_up(sanitize_user_text(question, max_chars=600))
+                work = self._look_up(sanitize_user_text(question, max_chars=600))
+            # The voice waits silently for every hand-off until it gets an answer, so it always gets one.
+            try:
+                text = wire.NO_INPUT_RESULT if work is None else await asyncio.wait_for(work, HANDOFF_TIMEOUT_S)
+            except asyncio.TimeoutError:
+                log.warning("live voice: hand-off took too long (kind=%s); answered anyway", kind)
+                text = wire.FAILED_RESULT
+            except Exception:  # noqa: BLE001
+                log.warning("live voice: hand-off failed (kind=%s); answered anyway", kind, exc_info=True)
+                text = wire.FAILED_RESULT
             self._send_result(d.id, text)
         finally:
             self._delegations -= 1
