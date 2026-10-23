@@ -486,6 +486,16 @@ export function fmtDuration(sec) {
   return `${Math.floor(hrs / 24)} days`;
 }
 
+// A video paused for a chat ("Hey LittleBot" while it played; media status `held`), in words.
+export function heldText(held) {
+  if (!held) return '';
+  const pos = Math.max(0, Math.round(Number(held.position_seconds) || 0));
+  const at = `${Math.floor(pos / 60)}:${String(pos % 60).padStart(2, '0')}`;
+  if (held.chat_active) return `Paused at ${at} while LittleBot talks; its face is on the screen. Say “keep watching” or tap Resume to carry on.`;
+  const left = Number(held.stops_in_seconds);
+  return `Paused at ${at} for a chat. It stops ${left > 0 ? `in ${fmtDuration(left)}` : 'now'} unless someone taps Resume (or says “Hey LittleBot, keep watching”).`;
+}
+
 export function fmtAge(months) {
   if (months === null || months === undefined) return 'Age not set';
   if (months < 24) return `${months} month${months === 1 ? '' : 's'}`;

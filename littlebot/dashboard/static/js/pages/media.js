@@ -2,7 +2,8 @@
 
 import { del, get, patch, post, put } from '../api.js';
 import {
-  banner, button, clear, confirmDialog, fmtDuration, h, icon, pageHead, promptDialog, rangeField, setText, switchRow, titleCase, toast,
+  banner, button, clear, confirmDialog, fmtDuration, h, heldText, icon, pageHead, promptDialog, rangeField, setText, switchRow,
+  titleCase, toast,
 } from '../ui.js';
 
 const YT_RE = /^(https?:\/\/)?((www|m|music)\.)?(youtube\.com\/(watch\?(.*&)?v=[\w-]{11}|shorts\/[\w-]{11}|live\/[\w-]{11}|embed\/[\w-]{11}|playlist\?(.*&)?list=[\w-]+)|youtu\.be\/[\w-]{11}|youtube-nocookie\.com\/embed\/[\w-]{11})/i;
@@ -41,6 +42,7 @@ export default {
     // ---- policy + now playing
     const policyBox = h('div');
     const npTitle = h('div', { class: 'title' });
+    const npHeld = h('p', { class: 'muted', hidden: true });
     const npState = h('span', { class: 'badge' });
     const npSession = h('span', { class: 'tnum' });
     const npDaily = h('span', { class: 'tnum' });
@@ -54,7 +56,7 @@ export default {
     });
     const nowCard = h('section', { class: 'card now-playing' },
       h('div', { class: 'card-head' }, h('h2', {}, icon('play'), 'Now playing'), npState),
-      h('div', { class: 'stack' }, npTitle, npControls,
+      h('div', { class: 'stack' }, npTitle, npHeld, npControls,
         h('div', { class: 'limit-line' }, h('div', { class: 'row' }, h('span', { text: 'This session' }), npSession), h('div', { class: 'progress' }, npSessionBar)),
         h('div', { class: 'limit-line' }, h('div', { class: 'row' }, h('span', { text: 'Today' }), npDaily), h('div', { class: 'progress' }, npDailyBar)),
         volume.el, h('div', { class: 'btn-row' }, playerLink)));
@@ -251,6 +253,8 @@ export default {
       setText(npState, titleCase(state));
       npState.className = `badge ${state === 'playing' ? 'ok' : state === 'paused' ? 'warn' : state === 'error' ? 'danger' : ''}`;
       setText(npTitle, unavailable ? 'The video player is not available.' : m.item?.title || 'Nothing playing');
+      npHeld.hidden = !m.held;
+      setText(npHeld, heldText(m.held));
       const sess = m.session_seconds || 0, sessLim = m.session_limit_seconds || 0;
       const day = m.daily_used_seconds || 0, dayLim = m.daily_limit_seconds || 0;
       setText(npSession, sessLim ? `${fmtDuration(sess)} of ${fmtDuration(sessLim)}` : fmtDuration(sess));

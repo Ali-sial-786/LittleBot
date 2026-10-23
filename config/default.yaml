@@ -111,6 +111,7 @@ media:
   oembed_titles: false   # optional title lookup from youtube.com/oembed when the parent gives none
   connect_timeout_seconds: 60
   max_pause_minutes: 10
+  chat_pause_minutes: 2  # a video paused for a chat ("Hey LittleBot" while it plays) stops this long after the chat
 
 motion:
   # Servos are SIMULATED unless backend=pca9685 AND physical_enabled=true AND a valid

@@ -349,6 +349,42 @@ ask LittleBot to do something (the volume, a video, an activity, a game, sleep) 
 hot it is, its memory, Wi-Fi, what it can do): use your tools for that too, then answer with one short sentence \
 for the voice to say."""
 HANDOVER_WHAT = {"video": "the video starts", "activity": "the activity starts", "sleep": "LittleBot goes to sleep"}
+# A video paused for this chat ("Hey LittleBot" while it played: littlebot/audio/wakeword.py, MediaController.hold).
+# The person's own words, or the voice's hand-off, carry on with it (once the voice said goodbye, as a hand-over)
+# or stop it (the chat goes on). Matched on plain words (_plain_words), only while a video is paused for a chat.
+_VID = r"(?:videos?|cartoons?|shows?|movies?|films?|programmes?|programs?|episodes?)"
+VIDEO_RESUME = re.compile(r"\b(?:" + "|".join((
+    r"(?:keep|carry on|continue|go on|start) watching",
+    rf"(?:resume|unpause|continue|carry on(?: with)?|restart|finish) (?:the |my |that |this |our )?{_VID}(?: again)?",
+    rf"(?:play|put on|start) (?:the |my |that |this |our ){_VID}(?: again| back)?"
+    r"(?! (?:of|about|with|where|for|from|called)\b)",  # "play the video of the cat" asks for a new one
+    r"(?:resume|unpause|continue|carry on)(?: it| that)?(?: please)?$",
+    r"(?:play|put|turn|start) (?:it|that) (?:back on|again|on again)",
+    rf"(?:go |get |going )?back to (?:the |my |our |that )?{_VID}",
+    rf"(?:i|we) want (?:my |the |our )?{_VID}(?: back| again)?$",
+    rf"(?:can|could|may) (?:i|we) (?:have|watch|see) (?:my |the |our |that )?{_VID} (?:back|again)",
+    rf"watch (?:it|that|the {_VID}|my {_VID}) again",
+    r"(?:i|we) want to (?:keep )?watch(?:ing)?(?: it| that| my \w+| the \w+)?(?: again)?$",
+)) + r")\b")
+VIDEO_STOP = re.compile(r"\b(?:" + "|".join((
+    rf"(?<!don't )(?<!do not )(?:stop|end|close|finish|cancel|pause) (?:the |that |this |my )?{_VID}",
+    rf"(?<!don't )(?<!do not )(?:turn|switch) (?:it|that|the {_VID}|the tv) off",
+    rf"(?<!don't )(?<!do not )(?:turn|switch) off (?:the |that |this )?(?:{_VID}|tv)",
+    rf"no more (?:{_VID}|tv|watching)",
+    r"(?:stop|done|finished|enough) watching",
+    rf"enough (?:{_VID}|tv)",
+    rf"(?:i|we) don'?t want (?:to watch )?(?:the |that |this |my )?{_VID}(?: any ?more)?",
+)) + r")\b")
+VIDEO_REPEAT_S = 20.0  # a hand-off asking again for what their own words just did gets "done" at once
+VIDEO_NOTE = ("While you talk, the video \u201c{title}\u201d is paused on LittleBot's screen and your face is "
+              "showing. If they want to keep watching (\"keep watching\", \"play it again\", \"go back to the "
+              "video\"), delegate \"resume the video\" to the client: the video then carries on where it stopped and "
+              "this voice chat ends. If they want it off, delegate \"stop the video\" and keep talking. If they "
+              "want something else, help them as usual.")
+VIDEO_RESUMING = ("LittleBot heard them: the video \u201c{title}\u201d carries on where it stopped as soon as you have "
+                  "said this, and this voice chat ends then. Say a very short goodbye now.")
+VIDEO_STOPPED = ("LittleBot stopped the video \u201c{title}\u201d, as they asked; your face stays on the screen. "
+                 "Say so in a few words, then carry on talking.")
 
 
 def _speakable(text: str, relaxed: Any = ()) -> str | None:
@@ -596,6 +632,7 @@ class LiveCall:
         self._stop_words = ""  # what they are saying, while it is only a stop ("stop talking")
         self._game_hold: _Hold | None = None  # the voice waits for the game (a move made, a game starting)
         self._game_started: tuple[str, float] | None = None  # (id, when) of a game started from their words
+        self._video_done: tuple[str, float] | None = None  # ("resume" | "stop", when) for a video paused for the chat
         self._hush_job: _LookJob | None = None  # the voice's sound is held back until this look's answer
         self._hush_release = False  # the voice has that answer: let its sound through at the next pause
         self._hush_quiet_since: float | None = None
@@ -627,13 +664,14 @@ class LiveCall:
         return {"phase": self.phase, "detail": self.detail, "error": self.error,
                 "elapsed_s": int(now - base), "remaining_s": max(0, int(limit - (now - base))),
                 "captions": list(self._captions), "connect_ms": self.connect_ms, "voice_in_use": self.voice,
-                "photos": self.photos}
+                "photos": self.photos, "heard_user": self._heard_user}
 
     def summary(self) -> dict[str, Any]:
         base = self._connected_at or self._started
         return {"ended_reason": self.end_reason or "ended", "error": self.error, "safety_stop": self.safety_stop,
                 "duration_s": int(self.svc._now() - base), "connected": self._connected_at is not None,
-                "ended_at": time.time(), "voice": self.voice, "photos": self.photos}
+                "ended_at": time.time(), "voice": self.voice, "photos": self.photos, "heard_user": self._heard_user,
+                "video": self._video_done[0] if self._video_done else None}  # a paused video: resume | stop
 
     def end(self, reason: str) -> None:
         if self.end_reason is None:
@@ -709,6 +747,7 @@ class LiveCall:
         self.pc.addTrack(MicTrack(self.audio))
         self.channel = self.pc.createDataChannel("oai-events")
         self.channel.on("message", self._on_message)
+        self.channel.on("open", self._tell_paused_video)
         self.pc.on("track", self._on_track)
         offer = await self.pc.createOffer()
         await self.pc.setLocalDescription(offer)  # gathers candidates (no trickle ICE with this endpoint)
@@ -875,7 +914,7 @@ class LiveCall:
                                                         "detail": concern.category})
                 # The person's own words: only when clearly about the face, so everyday talk
                 # ("that makes me sad", "give me a hug") doesn't change it.
-                if not self._game_words(event.text):
+                if not (self._video_words(event.text) or self._game_words(event.text)):
                     action = _face_request(event.text) if USER_FACE_CUE.search(event.text) \
                         and not self._is_control(event.text) else None  # "start the peekaboo activity": tools
                     if action is None:
@@ -891,6 +930,79 @@ class LiveCall:
             if event.reason != "close_requested":
                 self.error = "ChatGPT ended the call."
             self.end(f"closed by ChatGPT ({event.reason or 'no reason'})")
+
+    # ------------------------------------------------------------ a video paused for this chat
+    def _held_video(self) -> dict[str, Any] | None:
+        """The media status while a video is paused for a chat (``MediaController.hold``), else None."""
+        media = getattr(self.ctx, "media", None)
+        try:
+            st = media.status() if media is not None else None
+        except Exception:  # noqa: BLE001
+            return None
+        return st if isinstance(st, dict) and st.get("held") else None
+
+    def _video_title(self, st: dict[str, Any] | None) -> str:
+        from littlebot.chatgpt.tools import speakable_title  # noqa: PLC0415
+
+        return speakable_title(((st or {}).get("item") or {}).get("title"))
+
+    def _tell_paused_video(self) -> None:
+        """The data channel is open: tell the voice about a video paused for this chat (and what to do)."""
+        st = self._held_video()
+        if st is not None:
+            log.info("live voice: a video is paused for this chat; the voice was told")
+            self._note(VIDEO_NOTE.format(title=self._video_title(st)))
+
+    def _video_words(self, text: str) -> bool:
+        """Their own words about the video paused for this chat: "keep watching" carries on with it once the
+        voice said goodbye; "stop the video" stops it and the chat goes on."""
+        want = _video_request(text)
+        if want is None or self._held_video() is None:
+            return False
+        self._spawn(self._video_from_words(want))
+        return True
+
+    async def _video_from_words(self, want: str) -> None:
+        text = await self._video_action(want, "their words")
+        self._note(text)
+        if want == "resume":
+            self._arm_handover()
+
+    async def _video_hand_off(self, delegation_id: str, question: str) -> bool:
+        """A hand-off to carry on with or stop the paused video: done here, without the text model."""
+        want = _video_request(question)
+        if want is None:
+            return False
+        done = self._video_done
+        if done is not None and done[0] == want and self.svc._now() - done[1] < VIDEO_REPEAT_S:
+            self._send_result(delegation_id, "Done already: LittleBot did that a moment ago."
+                              + (" Say a very short goodbye." if want == "resume" else ""))
+            return True
+        if self._held_video() is None:
+            return False  # nothing paused for the chat: the tools answer (a new video, a paused one ...)
+        log.info("live voice: hand-off received (kind=video)")
+        self._send_result(delegation_id, await self._video_action(want, "a hand-off"))
+        if want == "resume":
+            self._arm_handover()
+        return True
+
+    async def _video_action(self, want: str, via: str) -> str:
+        """Carry on with (after the call, as a hand-over) or stop the paused video; what to tell the voice."""
+        from littlebot.chatgpt.tools import RobotToolbox  # noqa: PLC0415
+
+        title = self._video_title(self._held_video())
+        box = RobotToolbox(self.ctx, mode="live", defer=True)
+        result = await box.run("resume_video" if want == "resume" else "stop_video", {})
+        ok = result.startswith("ok") and (want != "resume" or bool(box.pending))
+        log.info("live voice: %s the paused video (from %s)%s", "carrying on with" if want == "resume" else
+                 "stopping", via, "" if ok else f" didn't work: {result[:80]}")
+        if not ok:
+            return f"That didn't work this time ({result[:120]}). Say so briefly."
+        self._video_done = (want, self.svc._now())
+        if want == "stop":
+            return VIDEO_STOPPED.format(title=title)
+        self._handover = box  # LiveVoiceService._run carries on with the video once this call ended
+        return VIDEO_RESUMING.format(title=title)
 
     # ------------------------------------------------------------ games on the screen
     def _game_words(self, text: str) -> bool:
@@ -1015,6 +1127,8 @@ class LiveCall:
             if started is not None and self.svc._now() - started[1] < 20 and \
                     _game_wanted(_plain_words(question)) == started[0]:
                 self._send_result(d.id, "Done: that game is on the screen already (LittleBot started it).")
+                return
+            if await self._video_hand_off(d.id, question):
                 return
             control = self._is_control(question) and not (
                 seeing and SEE_FIRST.search(question) and not CONTROL_ACTS.search(question))
@@ -1668,6 +1782,16 @@ class _Hold:
     """The voice is held back for a game (see LiveCall._hush, which only needs ``started``)."""
 
     started: float
+
+
+def _video_request(text: str) -> str | None:
+    """"stop" or "resume" when the words ask to stop / carry on with the video ("keep watching"), else None."""
+    plain = _plain_words(text)
+    if VIDEO_STOP.search(plain):
+        return "stop"
+    if VIDEO_RESUME.search(plain):
+        return "resume"
+    return None
 
 
 def _game_wanted(plain: str) -> str | None:

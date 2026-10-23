@@ -2,7 +2,8 @@
 
 import { get, post } from '../api.js';
 import {
-  append, button, cameraState, clear, deviceState, fmtAge, fmtDuration, h, icon, miniFace, setText, stateLabel, titleCase,
+  append, button, cameraState, clear, deviceState, fmtAge, fmtDuration, h, heldText, icon, miniFace, setText, stateLabel,
+  titleCase,
 } from '../ui.js';
 
 function stat(label, iconName) {
@@ -141,7 +142,8 @@ export default {
       const m = s.media || {};
       const unavailable = m.status === 'unavailable' || m.state === 'unavailable';
       const used = m.daily_used_seconds, limit = m.daily_limit_seconds;
-      const key = unavailable ? 'na' : `${m.state}|${m.item?.id}|${Math.floor((used || 0) / 30)}|${limit}`;
+      const held = m.held ? `${m.held.chat_active}|${Math.ceil((m.held.stops_in_seconds || 0) / 30)}` : '';
+      const key = unavailable ? 'na' : `${m.state}|${m.item?.id}|${Math.floor((used || 0) / 30)}|${limit}|${held}`;
       if (key === mediaKey) return;
       mediaKey = key;
       clear(mediaBody);
@@ -153,6 +155,7 @@ export default {
       if (active) {
         mediaBody.append(
           h('div', { class: 'row between' }, h('strong', { text: m.item?.title || 'Video' }), h('span', { class: `badge ${m.state === 'paused' ? 'warn' : 'ok'}`, text: titleCase(m.state) })),
+          m.held ? h('p', { class: 'muted', text: heldText(m.held) }) : null,
           h('div', { class: 'btn-row' },
             m.state === 'paused'
               ? button('Resume', { kind: 'primary', iconName: 'play', onClick: () => app.act(() => post('/media/resume')) })

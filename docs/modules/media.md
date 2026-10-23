@@ -47,7 +47,9 @@ All decisions (gating, limits, what plays next) are made in Python.
 | `update_item(id, *, title=None, enabled=None)` | extra; `KeyError` if unknown; disabling a playing item stops it |
 | `reorder_items(ids)`, `get_item(id)` | extras |
 | `await play(id, *, parent_override=False)` | `KeyError` unknown; `PermissionError` with a friendly message for: item disabled, stored ids that today's rules refuse (e.g. a channel uploads list added before it was refused), `media.enabled` off, offline mode, age gate, limits, lease refused, state refused, player window could not open. Playing another item during a session switches item (same session). Returns `status()` |
-| `await pause()` / `await resume()` | `bool`; paused time does not count; resume re-checks limits |
+| `await pause()` / `await resume()` | `bool`; paused time does not count; resume re-checks limits. `resume` of a held video (below) opens the player again where it was (2 s earlier) once the screen is free |
+| `await hold(reason, *, wait=1.0)` | extra: pause for a chat ("Hey LittleBot" while a video plays). Waits up to `wait` s for the page's `paused` report (exact position), then closes the player and gives the screen, speaker and face back (`PLAYING_MEDIA -> IDLE`); the session lives on with `status()["held"]`. It stops `media.chat_pause_minutes` (2) after the voice chat ended unless resumed; `stop`, STOP ALL and the settings stop it as usual. Details: YOUTUBE_ON_PI.md section 10 |
+| `duck(factor, seconds)` | extra: turn the playing video down to `factor` of its volume for `seconds` (nothing saved; any thread) - the wake word's `wake.video_duck` |
 | `await stop(reason="stopped")` | idempotent; terminates the kiosk Chromium (SIGTERM to its process group, SIGKILL after 2 s) **before returning**; also the `Service.stop` lifecycle hook (after `system.shutdown` it also tears down subscriptions/tasks) |
 | `await skip()` | next **enabled approved** item in list order, wrapping (a single item restarts; items whose stored ids are refused are passed over); never anything else |
 | `set_volume(v)` | clamps to `[0, media.max_volume]`, persists `media.volume`, pushes to the page. `ValueError` for non-numbers/NaN |
@@ -60,6 +62,7 @@ All decisions (gating, limits, what plays next) are made in Python.
 ```
 {state: idle|loading|playing|paused, item, session_id, session_seconds, session_limit_seconds,
  daily_used_seconds, daily_limit_seconds, daily_remaining_seconds, paused_seconds, volume,
+ held: {reason, position_seconds, since_seconds, chat_active, stops_in_seconds} | None,
  enabled, offline, age_gate: {video_allowed, min_age_months, age_months, parent_allowed_under_min_age},
  player: {backend, available, detail, running, url, path, connected, last_event, info},
  last_error: {item_id, title, code, message, at} | None, items}
@@ -70,8 +73,9 @@ and the robot itself; never put it anywhere public.
 
 ## Events
 
-Published: `media.started {item_id, title, kind, session_id, skipped}`, `media.paused {item_id}`,
-`media.resumed {item_id}`, `media.stopped {item_id, reason, title, session_id, session_seconds,
+Published: `media.started {item_id, title, kind, session_id, skipped}`, `media.paused {item_id}`
+(`+ held, reason, position_seconds` for a hold), `media.resumed {item_id}` (`+ held, position_seconds`),
+`media.stopped {item_id, reason, title, session_id, session_seconds,
 detail?}` with `reason` one of `ended | stopped | limit | error`, `media.error {item_id, error, code}`.
 State: `IDLE -> PLAYING_MEDIA -> IDLE` via `ctx.state.release(PLAYING_MEDIA)` (never clobbers a
 newer state). The screen hand-over is expressed only through that state: `PLAYING_MEDIA` maps to

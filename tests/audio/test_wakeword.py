@@ -35,6 +35,7 @@ class FakeRecognizer:
         self.fed = 0
         self.resets = 0
         self.lock = threading.Lock()
+        self.partial_text = ""  # the words so far (VoskKeywordRecognizer.partial)
 
     def say(self, text: str, conf: float = 1.0) -> None:
         with self.lock:
@@ -47,6 +48,9 @@ class FakeRecognizer:
 
     def reset(self) -> None:
         self.resets += 1
+
+    def partial(self) -> str:
+        return self.partial_text
 
 
 class ExclusiveMic(MockInput):
@@ -78,10 +82,19 @@ class FakeLive:
         self.active = False
         self.phase: str | None = None
         self.last_call: dict[str, Any] | None = None
+        self.heard_user = True  # the person said something in the call
+        self.video: str | None = None  # what they asked about a paused video: resume | stop
+        self.stopped: list[str] = []
         self._task: asyncio.Task[Any] | None = None
 
     def status(self) -> dict[str, Any]:
-        return {"active": self.active, "phase": self.phase, "last_call": self.last_call}
+        return {"active": self.active, "phase": self.phase, "last_call": self.last_call,
+                "heard_user": self.heard_user}
+
+    async def stop_session(self, reason: str = "stopped by parent") -> dict[str, Any]:
+        self.stopped.append(reason)
+        await self.end()
+        return {"ok": True}
 
     async def start_session(self, *, parent_present: bool) -> dict[str, Any]:
         self.calls.append(parent_present)
@@ -105,6 +118,7 @@ class FakeLive:
     async def end(self) -> None:
         if self.active:
             self.ctx.audio.resume("live voice")
+            self.last_call = {"connected": True, "heard_user": self.heard_user, "video": self.video}
         self.active, self.phase = False, None
 
 
@@ -395,8 +409,8 @@ async def test_pauses_while_live_voice_is_active(rig):
     await _listening(r)
 
 
-async def test_pauses_while_a_video_plays(rig):
-    r = await rig()
+async def test_pauses_while_a_video_plays_when_switched_off_for_videos(rig):
+    r = await rig(wake={"during_videos": False})
     await _listening(r)
     assert r.ctx.state.transition(RobotState.PLAYING_MEDIA, "test video")
     await _not_listening(r, "video")

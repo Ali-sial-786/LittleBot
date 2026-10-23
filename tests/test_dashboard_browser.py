@@ -217,6 +217,31 @@ def test_turning_videos_off_shows_why_they_will_not_play(desktop):
     assert desktop.bot.ctx.settings.get("media.enabled") is True
 
 
+def test_a_video_paused_for_a_chat_shows_on_home_and_videos_and_resumes(desktop):
+    bot = desktop.bot
+    media, settings = bot.ctx.media, bot.ctx.settings
+    profile = settings.get("profile")
+    settings.set("profile", {**(profile or {}), "age_months": 30})
+    item = media.add_item("https://www.youtube.com/watch?v=dQw4w9WgXcQ", "Bus Song")
+    try:
+        bot.runtime.run(media.play(item["id"]))
+        assert bot.runtime.run(media.hold("wake word", wait=0.0))  # "Hey LittleBot" while it played
+        page = desktop.open("home")
+        expect(page.get_by_text(re.compile(r"Paused at 0:00 for a chat\. It stops in [12] min"))).to_be_visible()
+        page = desktop.open("media")
+        held = page.locator(".now-playing").get_by_text(re.compile("Paused at 0:00 for a chat"))
+        expect(held).to_be_visible()
+        page.locator(".now-playing").get_by_role("button", name="Resume").click()
+        expect(held).to_be_hidden()
+        assert media.status()["state"] == "loading" and media.status()["held"] is None
+    finally:
+        bot.runtime.run(media.stop())
+        media.remove_item(item["id"])
+        settings.set("profile", profile)
+    # the approved item's YouTube thumbnail is blocked on purpose (no external requests in these tests)
+    desktop.errors[:] = [e for e in desktop.errors if e != "Failed to load resource: net::ERR_FAILED"]
+
+
 def test_ai_page_offers_chatgpt_sign_in_and_live_voice(phone):
     page = phone.open("ai")
     expect(page.get_by_role("heading", name="ChatGPT account")).to_be_visible()

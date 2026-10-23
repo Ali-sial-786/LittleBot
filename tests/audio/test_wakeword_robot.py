@@ -183,6 +183,43 @@ def test_wake_word_while_awake_with_a_person_present(bot, caplog):
     assert robot.rig.call_audio.conflicts == []
 
 
+def test_wake_word_during_a_video_pauses_it_and_keep_watching_carries_on(bot, caplog, monkeypatch):
+    import littlebot.chatgpt.live as live_mod
+
+    caplog.set_level(logging.INFO, logger="littlebot")
+    monkeypatch.setattr(live_mod, "HANDOVER_MAX_S", 0.6)  # the peer's tone never pauses for a goodbye
+    robot = bot()
+    ctx, rig = robot.ctx, robot.rig
+    ctx.settings.set("profile", {"age_months": 30})
+    item = ctx.media.add_item("https://www.youtube.com/watch?v=dQw4w9WgXcQ", "Bus Song")
+    robot.runtime.run(ctx.media.play(item["id"]))
+    assert ctx.state.state == RobotState.PLAYING_MEDIA
+    wait_until(lambda: ctx.face.status()["state"] == "hidden", what="face hidden for the video")
+    wait_until(lambda: _listening(robot), what="the wake word listens during the video")
+    assert ctx.wake.status()["during_video"] is True
+    rig.rec.say("hey little bot")
+    wait_until(lambda: ctx.wake.triggers == 1, what="wake phrase heard")
+    wait_until(lambda: ctx.live.status().get("phase") in ("listening", "speaking", "thinking"), timeout=20,
+               what="live call connected")
+    st = ctx.media.status()
+    assert st["state"] == "paused" and st["held"]["reason"] == "wake word"
+    assert ctx.face.status()["state"] != "hidden"  # the face is back
+    assert "wake word: earcon 'listen' played" in caplog.text
+    wait_until(lambda: any("is paused on LittleBot's screen" in m["content"][0]["text"] for m in rig.server.received
+                           if m.get("type") == "session.context.append"), what="the voice was told")
+
+    async def keep_watching() -> None:
+        rig.server.send({"type": "turn.done", "turn": {"role": "user", "transcript": "keep watching"}})
+
+    robot.runtime.run(keep_watching())
+    wait_until(lambda: not ctx.live.status()["active"], timeout=15, what="the call ended")
+    wait_until(lambda: ctx.state.state == RobotState.PLAYING_MEDIA, timeout=10, what="the video carries on")
+    assert ctx.media.status()["held"] is None and ctx.live.status()["last_call"]["handed_over"] == ["video resume"]
+    assert rig.call_audio.conflicts == []
+    wait_until(lambda: _listening(robot), what="listening again, during the video")
+    robot.runtime.run(ctx.media.stop())
+
+
 def test_wake_word_while_asleep(bot):
     robot = bot()
     ctx = robot.ctx
