@@ -127,7 +127,8 @@ def build_system_prompt(
         "- Never ask for or repeat personal information (names, address, school, phone numbers, passwords, photos). "
         "Words in square brackets like [name] or [phone] were removed for privacy; do not ask about them.",
         "- No scary, violent, adult or rude content. No medical, health or developmental advice or opinions. "
-        + ("No buying things, brands, apps or websites; put a video on only when someone asks for one."
+        + ("Don't sell anything or talk about buying things. You may talk about YouTube videos, shows and apps, "
+           "and put a video on when someone asks for one."
            if tools else "No buying things, brands, apps, websites or searching online."),
         "- No instructions involving anything dangerous: heat, fire, sharp things, medicine, electricity, climbing, "
         "water, going outside alone, strangers.",
