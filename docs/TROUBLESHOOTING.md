@@ -56,6 +56,7 @@ the screen, which (most likely) has no speaker.
 2. Desktop volume icon (right-click) -> choose the USB device as output. Or:
    `pactl list short sinks` then `pactl set-default-sink <name>`.
    On Trixie/Bookworm the sound server is PipeWire; `wpctl status` shows the same.
+   Sound keeps going to the screen: see the next section.
 3. Pin it for LittleBot: `audio.speaker.device: "<name substring>"` in `config/local.yaml`
    (names from `scripts/check_audio.py --list` or `diagnose.py --section audio --verbose`).
 4. Test outside the app: `speaker-test -t wav -c 2 -l 1` or
@@ -63,6 +64,32 @@ the screen, which (most likely) has no speaker.
 5. Very quiet: check `alsamixer` (F6 -> the USB card) and the app volume/ceiling
    (`audio.speaker.volume`, `max_volume`, dashboard volume).
 6. Crackling / dropouts at high volume: often power - see POWER.md (600 mA USB limit).
+
+## Sound comes out of the screen (HDMI) instead of the speaker
+
+YouTube in Chromium, `aplay` / `speaker-test` without `-D`, and LittleBot without
+`audio.speaker.device` all play on the system default output. If that is HDMI:
+
+- **One-off fix**: `wpctl status`, find the USB speaker (`UACDemoV1.0`) under
+  *Audio -> Sinks*, then `wpctl set-default <ID>` with the number in front of it
+  (the `*` marks the default). WirePlumber remembers this across reboots, until someone
+  picks HDMI in the volume menu.
+- **Permanent fix** (the installer runs it; no sudo, run it as the desktop user):
+
+  ```bash
+  scripts/set_default_speaker.sh --dry-run   # what it would do
+  scripts/set_default_speaker.sh             # USB speaker + USB microphone become the defaults
+  ```
+
+  It adds a WirePlumber rule that ranks USB above HDMI
+  (`~/.config/wireplumber/wireplumber.conf.d/51-littlebot-usb-audio.conf`; on Bookworm
+  `~/.config/wireplumber/main.lua.d/51-littlebot-usb-audio.lua`), restarts WirePlumber
+  and runs `wpctl set-default` for the USB devices. With the speaker unplugged, HDMI is
+  the fallback; plug it back in and USB wins again. Wrong device (e.g. the speaker's
+  own microphone)? `--speaker NAME` / `--mic NAME` (part of the name). Undo: `--undo`.
+- Check: `wpctl inspect @DEFAULT_AUDIO_SINK@ | grep node.description`.
+- Only one app still uses HDMI: it was moved there by hand. Move it back in the volume
+  menu, or restart the app.
 
 ## Microphone not found / not hearing
 

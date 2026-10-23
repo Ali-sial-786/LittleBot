@@ -26,6 +26,7 @@ WITH_DEV=0
 ALLOW_NON_PI=0
 NO_MODELS=0
 NO_LIVE=0
+NO_AUDIO_DEFAULT=0
 
 usage() {
     cat <<'EOF'
@@ -51,6 +52,8 @@ Options:
   --no-models          do not download the YuNet face-detection model (scripts/download_models.py)
   --no-live            do not install live voice (the "live" extra: aiortc WebRTC, ~40 MB of
                        prebuilt wheels; docs/CHATGPT.md). Sign in with ChatGPT text works without it
+  --no-audio-default   do not make the USB speaker / USB microphone the default sound devices
+                       (scripts/set_default_speaker.sh; otherwise sound may go to the HDMI screen)
   --allow-non-pi       allow running on a non-Raspberry-Pi Debian system (testing)
   -h, --help           show this help
 EOF
@@ -69,6 +72,7 @@ while (($#)); do
         --dev) WITH_DEV=1 ;;
         --no-models) NO_MODELS=1 ;;
         --no-live) NO_LIVE=1 ;;
+        --no-audio-default) NO_AUDIO_DEFAULT=1 ;;
         --allow-non-pi) ALLOW_NON_PI=1 ;;
         -h | --help) usage; exit 0 ;;
         *) echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;
@@ -287,6 +291,12 @@ if ((NO_MODELS == 0)) && [[ -f "$REPO_DIR/scripts/download_models.py" ]]; then
     info "models: YuNet face detector via scripts/download_models.py (skipped if already verified)"
 fi
 ((ENABLE_I2C)) && info "i2c: enable the I2C bus with raspi-config (servos remain disabled in config)"
+if ((NO_AUDIO_DEFAULT)); then
+    info "audio default: skipped (--no-audio-default)"
+else
+    info "audio default: USB speaker + USB microphone before HDMI, for $CURRENT_USER (WirePlumber rule in"
+    info "               ~/.config/wireplumber, scripts/set_default_speaker.sh; a failure only warns)"
+fi
 ((WITH_SERVICE)) && info "autostart: systemd user service + ~/.config/autostart/littlebot.desktop"
 ((HEADLESS_SERVICE)) && info "autostart: HEADLESS system service /etc/systemd/system/littlebot.service"
 if ((DRY_RUN)); then
@@ -462,7 +472,19 @@ if ((HEADLESS_SERVICE)); then
 fi
 
 # ---------------------------------------------------------------------------
-# 8. Next steps
+# 8. Default sound devices: USB speaker / microphone instead of the HDMI screen
+# ---------------------------------------------------------------------------
+# User-level only (a WirePlumber rule in ~/.config plus `wpctl set-default`), run as this user
+# like the `systemctl --user` steps above. Needs PipeWire running for this user: on the desktop,
+# or over SSH (the script finds /run/user/<uid> itself). A failure only warns.
+if ((NO_AUDIO_DEFAULT == 0)); then
+    step "Default sound devices (USB speaker and microphone, not HDMI)"
+    run bash "$REPO_DIR/scripts/set_default_speaker.sh" \
+        || warn "The USB speaker is not the default sound output yet (plugged in? desktop session running?). Later: scripts/set_default_speaker.sh"
+fi
+
+# ---------------------------------------------------------------------------
+# 9. Next steps
 # ---------------------------------------------------------------------------
 step "Done$( ((DRY_RUN)) && echo ' (dry run - nothing was changed)')"
 cat <<EOF

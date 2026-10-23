@@ -84,7 +84,7 @@ def test_shellcheck_clean() -> None:
 
 
 def test_my_shell_scripts_exist_and_are_executable() -> None:
-    for rel in ("install_pi.sh", "safe_shutdown.sh", "systemd/littlebot-launch.sh",
+    for rel in ("install_pi.sh", "safe_shutdown.sh", "set_default_speaker.sh", "systemd/littlebot-launch.sh",
                 "autostart/littlebot-session-start.sh"):
         p = SCRIPTS / rel
         assert p.is_file(), rel
@@ -98,7 +98,8 @@ def test_my_shell_scripts_exist_and_are_executable() -> None:
 def test_install_help() -> None:
     res = subprocess.run([BASH, str(SCRIPTS / "install_pi.sh"), "--help"], capture_output=True, text=True)
     assert res.returncode == 0
-    for opt in ("--dry-run", "--with-service", "--enable-i2c", "--system-opencv", "--headless-service", "--no-live"):
+    for opt in ("--dry-run", "--with-service", "--enable-i2c", "--system-opencv", "--headless-service", "--no-live",
+                "--no-audio-default"):
         assert opt in res.stdout
 
 
@@ -159,6 +160,29 @@ def test_install_live_voice_extra(stub_path, tmp_path: Path, no_live: bool) -> N
     assert not [c for c in _calls(log) if c.split()[0] in ("sudo", "apt-get", "apt")]
 
 
+@pytest.mark.skipif(BASH is None, reason="bash not installed")
+@pytest.mark.parametrize("skip", [False, True], ids=["default", "no-audio-default"])
+def test_install_audio_default_step(stub_path, tmp_path: Path, skip: bool) -> None:
+    """The USB-speaker default runs by default as a late, non-fatal step; --no-audio-default skips it."""
+    env, log = stub_path
+    env["HOME"] = str(tmp_path / "home")
+    args = ["--dry-run", "--allow-non-pi", "--skip-apt", "--no-chromium", "--no-models", "--no-live"]
+    res = subprocess.run([BASH, str(SCRIPTS / "install_pi.sh"), *args, *(["--no-audio-default"] if skip else [])],
+                         capture_output=True, text=True, env=env, cwd=ROOT, timeout=120)
+    if "This installer is for Raspberry Pi OS / Debian" in res.stderr:
+        pytest.skip("not a Debian-family system")
+    assert res.returncode == 0, res.stdout + res.stderr
+    step = [line for line in res.stdout.splitlines() if "[dry-run]" in line and "set_default_speaker.sh" in line]
+    if skip:
+        assert not step and "audio default: skipped (--no-audio-default)" in res.stdout
+    else:
+        assert len(step) == 1, res.stdout
+        assert "audio default: USB speaker" in res.stdout
+        assert res.stdout.index("Default sound devices") < res.stdout.index("Next steps")
+    assert not (tmp_path / "home" / ".config").exists()
+    assert not [c for c in _calls(log) if c.split()[0] in ("sudo", "apt-get", "apt")]
+
+
 def test_live_extra_matches_the_installer() -> None:
     """The installer's `[live]` step needs the extra in pyproject.toml (aiortc 1.x)."""
     import tomllib
@@ -175,6 +199,215 @@ def test_templates_use_only_known_placeholders() -> None:
         text = (SCRIPTS / rel).read_text()
         assert "@REPO_DIR@" in text, rel
         assert set(re.findall(r"@[A-Z_]+@", text)) <= {"@REPO_DIR@", "@USER@", "@UID@"}, rel
+
+
+# ----------------------------------------------------------------- default speaker (PipeWire)
+# A fake PipeWire for scripts/set_default_speaker.sh: `pw-dump` prints a Raspberry Pi 5 graph
+# (two HDMI outputs, the "UACDemoV1.0" USB speaker - which also has a microphone - and the
+# "USB PnP Sound Device" microphone), `wpctl` keeps the default in a JSON file, and
+# `systemctl --user restart wireplumber` makes the drop-in's priorities "active".
+HDMI0 = "alsa_output.platform-107c701400.hdmi.hdmi-stereo"
+USB_SPK = "alsa_output.usb-Jieli_Technology_UACDemoV1.0_4150344B32373916-00.analog-stereo"
+USB_SPK_MIC = "alsa_input.usb-Jieli_Technology_UACDemoV1.0_4150344B32373916-00.mono-fallback"
+USB_MIC = "alsa_input.usb-C-Media_Electronics_Inc._USB_PnP_Sound_Device-00.mono-fallback"
+USB_MIC_OUT = "alsa_output.usb-C-Media_Electronics_Inc._USB_PnP_Sound_Device-00.analog-stereo"
+FAKE_NODES = {
+    40: (HDMI0, "Audio/Sink", "Built-in Audio Digital Stereo (HDMI)", 30, 1500),
+    41: ("alsa_output.platform-107c706400.hdmi.hdmi-stereo", "Audio/Sink", "Built-in Audio Digital Stereo (HDMI 2)",
+         31, 1500),
+    52: (USB_SPK, "Audio/Sink", "UACDemoV1.0 Analog Stereo", 50, 1009),
+    53: (USB_SPK_MIC, "Audio/Source", "UACDemoV1.0 Mono", 50, 2009),
+    61: (USB_MIC, "Audio/Source", "USB PnP Sound Device Mono", 60, 2009),
+    62: (USB_MIC_OUT, "Audio/Sink", "USB PnP Sound Device Analog Stereo", 60, 1009),
+}
+
+_FAKE_PW_DUMP = r'''
+import json, os, pathlib
+d = pathlib.Path(os.environ["FAKE_PW_DIR"])
+g = json.loads((d / "graph.json").read_text())
+st = json.loads((d / "state.json").read_text()) if (d / "state.json").exists() else {}
+active = (d / "restarted").exists()  # WirePlumber restarted -> the drop-in's priorities apply
+out = [{"id": 70, "type": "PipeWire:Interface:Node",
+        "info": {"props": {"node.name": "Chromium", "media.class": "Stream/Output/Audio"}}}]
+for n in g["nodes"]:
+    prio = n["prio"]
+    if active:
+        prio = 1500 if n["name"].startswith("alsa_output.usb-") else 2100 if n["name"].startswith(
+            "alsa_input.usb-") else 100 if "hdmi" in n["name"] else prio
+    out.append({"id": n["id"], "type": "PipeWire:Interface:Node", "info": {"props": {
+        "node.name": n["name"], "media.class": n["cls"], "node.description": n["desc"],
+        "device.id": n["device"], "priority.session": prio, "priority.driver": prio}}})
+configured = st.get("configured_sink", g.get("configured_sink"))
+meta = [{"subject": 0, "key": "default.configured.audio.sink", "type": "Spa:String:JSON",
+         "value": {"name": configured}}] if configured else []
+out.append({"id": 30, "type": "PipeWire:Interface:Metadata", "props": {"metadata.name": "default"},
+            "metadata": meta})
+print(json.dumps(out, indent=2))
+'''
+
+_FAKE_WPCTL = r'''
+import json, os, pathlib, sys
+d = pathlib.Path(os.environ["FAKE_PW_DIR"])
+args = sys.argv[1:]
+with open(d / "calls.log", "a") as f:
+    f.write("wpctl " + " ".join(args) + "\n")
+if os.environ.get("FAKE_PW_DOWN"):
+    sys.exit("Could not connect to PipeWire")
+g = json.loads((d / "graph.json").read_text())
+sf = d / "state.json"
+st = json.loads(sf.read_text()) if sf.exists() else {}
+by_id = {str(n["id"]): n for n in g["nodes"]}
+if args[0] == "set-default":
+    n = by_id[args[1]]
+    kind = "sink" if n["cls"] == "Audio/Sink" else "source"
+    st["default_" + kind] = st["configured_" + kind] = n["name"]
+elif args[0] == "clear-default":
+    st["configured_sink"] = None
+elif args[0] == "inspect":
+    kind = "sink" if args[1] == "@DEFAULT_AUDIO_SINK@" else "source"
+    name = st.get("default_" + kind) or g.get("default_" + kind)
+    n = next((n for n in g["nodes"] if n["name"] == name), None)
+    if n is None:
+        sys.exit("Object not found")
+    print("id %s, type PipeWire:Interface:Node" % n["id"])
+    print('    device.id = "%s"' % n["device"])
+    print('  * node.description = "%s"' % n["desc"])
+    print('  * node.name = "%s"' % n["name"])
+sf.write_text(json.dumps(st))
+'''
+
+_FAKE_SYSTEMCTL = r'''
+import os, pathlib, sys
+d = pathlib.Path(os.environ["FAKE_PW_DIR"])
+with open(d / "calls.log", "a") as f:
+    f.write("systemctl " + " ".join(sys.argv[1:]) + "\n")
+if sys.argv[1:] == ["--user", "restart", "wireplumber"]:
+    (d / "restarted").touch()
+'''
+
+_FAKE_WIREPLUMBER = r'''
+import os
+v = os.environ.get("FAKE_WP_VERSION", "0.5.8")
+print("wireplumber\nCompiled with libwireplumber %s\nLinked with libwireplumber %s" % (v, v))
+'''
+
+
+@pytest.fixture
+def fake_pw(tmp_path: Path):
+    """Returns run(node_ids, *args, **env) -> (CompletedProcess, calls, home)."""
+    state, bindir, home = tmp_path / "pw", tmp_path / "pwbin", tmp_path / "home"
+    for p in (state, bindir, home):
+        p.mkdir()
+    for name, body in (("pw-dump", _FAKE_PW_DUMP), ("wpctl", _FAKE_WPCTL), ("systemctl", _FAKE_SYSTEMCTL),
+                       ("wireplumber", _FAKE_WIREPLUMBER)):
+        (bindir / name).write_text(f"#!{sys.executable}\n{body}")
+        (bindir / name).chmod(0o755)
+
+    def run(node_ids, *args: str, **extra_env: str):
+        nodes = [dict(zip(("id", "name", "cls", "desc", "device", "prio"), (i, *FAKE_NODES[i]))) for i in node_ids]
+        (state / "graph.json").write_text(json.dumps({
+            "nodes": nodes, "configured_sink": HDMI0, "default_sink": HDMI0, "default_source": USB_SPK_MIC}))
+        env = {k: v for k, v in os.environ.items() if k not in ("SUDO_USER", "XDG_CONFIG_HOME")}
+        env.update(PATH=f"{bindir}{os.pathsep}{env.get('PATH', '')}", HOME=str(home), FAKE_PW_DIR=str(state),
+                   XDG_RUNTIME_DIR=str(tmp_path), **extra_env)
+        res = subprocess.run([BASH, str(SCRIPTS / "set_default_speaker.sh"), *args], capture_output=True, text=True,
+                             env=env, timeout=60)
+        calls = _calls(state / "calls.log")
+        (state / "calls.log").unlink(missing_ok=True)
+        return res, [c for c in calls if not c.startswith(("wpctl status", "wpctl inspect"))], home
+
+    return run
+
+
+DROPIN_05 = Path(".config/wireplumber/wireplumber.conf.d/51-littlebot-usb-audio.conf")
+DROPIN_04 = Path(".config/wireplumber/main.lua.d/51-littlebot-usb-audio.lua")
+PI5 = (40, 41, 52, 53, 61)
+
+
+@pytest.mark.skipif(BASH is None, reason="bash not installed")
+def test_set_default_speaker_help() -> None:
+    res = subprocess.run([BASH, str(SCRIPTS / "set_default_speaker.sh"), "--help"], capture_output=True, text=True)
+    assert res.returncode == 0
+    for opt in ("--dry-run", "--speaker", "--mic", "--undo", "wpctl set-default"):
+        assert opt in res.stdout
+    res = subprocess.run([BASH, str(SCRIPTS / "set_default_speaker.sh"), "--bogus"], capture_output=True, text=True)
+    assert res.returncode == 2
+
+
+@pytest.mark.skipif(BASH is None, reason="bash not installed")
+def test_set_default_speaker_dry_run_without_pipewire_changes_nothing(fake_pw) -> None:
+    res, calls, home = fake_pw(PI5, "--dry-run", FAKE_PW_DOWN="1")
+    assert res.returncode == 0, res.stdout + res.stderr
+    assert "Cannot reach PipeWire" in res.stderr
+    assert f"[dry-run] write {home / DROPIN_05}" in res.stdout
+    assert "[dry-run] systemctl --user restart wireplumber" in res.stdout
+    assert not (home / ".config").exists() and calls == []
+
+
+@pytest.mark.skipif(BASH is None, reason="bash not installed")
+@pytest.mark.parametrize("nodes,args,speaker,mic", [
+    (PI5, [], 52, 61),                        # the speaker's own microphone is not chosen
+    ((40, 41, 52, 61, 62), [], 52, 61),       # the microphone's headphone output is not chosen
+    ((40, 52, 53), [], 52, 53),               # only the speaker's microphone: better than none
+    (PI5, ["--mic", "uacdemo"], 52, 53),      # explicit choice by name (case-insensitive)
+    ((40, 41, 52, 53, 61, 62), ["--speaker", "PnP"], 62, 53),
+], ids=["pi5", "mic-has-output", "speaker-mic-only", "mic-override", "speaker-override"])
+def test_set_default_speaker_dry_run_picks_usb_nodes(fake_pw, nodes, args, speaker: int, mic: int) -> None:
+    res, calls, home = fake_pw(nodes, "--dry-run", *args)
+    assert res.returncode == 0, res.stdout + res.stderr
+    assert f"[dry-run] wpctl set-default {speaker}\n" in res.stdout
+    assert f"[dry-run] wpctl set-default {mic}\n" in res.stdout
+    assert "[dry-run] systemctl --user restart wireplumber" in res.stdout  # priorities not active yet
+    assert not (home / ".config").exists() and calls == []
+
+
+@pytest.mark.skipif(BASH is None, reason="bash not installed")
+def test_set_default_speaker_full_run_is_idempotent_and_undoable(fake_pw) -> None:
+    res, calls, home = fake_pw(PI5, "--wait", "2")
+    assert res.returncode == 0, res.stdout + res.stderr
+    assert calls == ["systemctl --user restart wireplumber", "wpctl set-default 52", "wpctl set-default 61"]
+    assert "default speaker:    UACDemoV1.0 Analog Stereo" in res.stdout
+    assert "default microphone: USB PnP Sound Device Mono" in res.stdout
+    conf = (home / DROPIN_05).read_text()
+    assert "monitor.alsa.rules = [" in conf and "update-props = {" in conf
+    for rule in ('node.name = "~^alsa_output[.].*hdmi"', "priority.session = 100",
+                 'node.name = "~^alsa_output[.]usb-"', "priority.session = 1500",
+                 'node.name = "~^alsa_input[.]usb-"', "priority.session = 2100"):
+        assert rule in conf
+    assert conf.index("hdmi") < conf.index("usb-")  # USB rules come last, so they win
+    assert conf.count("{") == conf.count("}") and conf.count("[") == conf.count("]")
+
+    res, calls, _ = fake_pw(PI5)  # second run: rule unchanged and active -> no restart
+    assert res.returncode == 0, res.stdout + res.stderr
+    assert calls == ["wpctl set-default 52", "wpctl set-default 61"]
+    assert "is up to date" in res.stdout and "no restart needed" in res.stdout
+
+    res, calls, _ = fake_pw(PI5, "--undo")
+    assert res.returncode == 0, res.stdout + res.stderr
+    assert not (home / DROPIN_05).exists()
+    assert calls == ["systemctl --user restart wireplumber"]
+
+
+@pytest.mark.skipif(BASH is None, reason="bash not installed")
+def test_set_default_speaker_wireplumber_04_lua(fake_pw) -> None:
+    res, calls, home = fake_pw(PI5, "--wait", "2", FAKE_WP_VERSION="0.4.13")
+    assert res.returncode == 0, res.stdout + res.stderr
+    assert not (home / DROPIN_05).exists()
+    lua = (home / DROPIN_04).read_text()
+    assert lua.count("table.insert(alsa_monitor.rules, {") == 3
+    for rule in ('"alsa_output.*hdmi*"', '"alsa_output.usb-*"', '"alsa_input.usb-*"', '["priority.session"] = 1500'):
+        assert rule in lua
+    assert "wpctl set-default 52" in calls
+
+
+@pytest.mark.skipif(BASH is None, reason="bash not installed")
+def test_set_default_speaker_without_usb_speaker_warns(fake_pw) -> None:
+    res, calls, home = fake_pw((40, 41, 61), "--wait", "1")
+    assert res.returncode == 1
+    assert "No USB speaker found" in res.stderr and "Sound still goes to HDMI" in res.stderr
+    assert "wpctl clear-default 0" in calls  # the saved HDMI choice must not beat the USB speaker later
+    assert "wpctl set-default 61" in calls
+    assert (home / DROPIN_05).exists()  # the rule still prefers USB once it is plugged in
 
 
 # ----------------------------------------------------------------- systemd units

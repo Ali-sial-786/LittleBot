@@ -110,11 +110,12 @@ What it does (idempotent - safe to run again after `git pull`):
 | Live voice | `pip install -e ".[live]"` as its own step: aiortc for GPT-Live voice ([CHATGPT.md](CHATGPT.md)), prebuilt aarch64 wheels (~40 MB, nothing compiled). A failure only warns; `--no-live` skips it |
 | Face model | `scripts/download_models.py yunet` (vision module; ~0.3 MB into `models/`, skipped when already verified; needs internet; `--no-models` skips) |
 | Files | `data/logs/`; `config/local.yaml` from `config/hardware.example.yaml` and `.env` from `.env.example` **only if missing**; `.env` set to mode 600 |
+| Sound output | `scripts/set_default_speaker.sh`: the USB speaker and USB microphone become the default sound devices instead of the HDMI screen (a WirePlumber rule in `~/.config/wireplumber` + `wpctl set-default`; no sudo). A failure only warns; `--no-audio-default` skips it |
 | Never | edits `config.txt`/`cmdline.txt`, enables I2C (unless `--enable-i2c`), enables servos |
 
 Options: `--with-service` (autostart, section 10), `--headless-service`, `--enable-i2c`
 (later, for the servo board), `--system-opencv`, `--dev` (pytest on the Pi),
-`--skip-apt`, `--no-chromium`, `--no-models`, `--no-live`, `--yes`. See `scripts/install_pi.sh --help`.
+`--skip-apt`, `--no-chromium`, `--no-models`, `--no-live`, `--no-audio-default`, `--yes`. See `scripts/install_pi.sh --help`.
 
 ### Why a plain venv with pip wheels (and when to use `--system-opencv`)
 
@@ -153,6 +154,11 @@ first; diagnose.py runs their `--list` mode automatically when they support it):
 .venv/bin/python scripts/check_camera.py --help   # list/test the camera
 .venv/bin/python scripts/face_preview.py --help   # face rendering on this screen
 ```
+
+Sound from the screen (HDMI) instead of the USB speaker: `wpctl status`, then
+`wpctl set-default <ID>` with the number in front of the USB speaker under *Audio -> Sinks*
+(one-off), or `scripts/set_default_speaker.sh` to make USB the default for good - details in
+[TROUBLESHOOTING.md](TROUBLESHOOTING.md#sound-comes-out-of-the-screen-hdmi-instead-of-the-speaker).
 
 ## 7. Configure `config/local.yaml`
 
