@@ -77,6 +77,10 @@ COUNT_HEAD_START_S = 0.15
 LOOK_EFFORT = "none"  # most questions: "what colour is this?", "how many fingers?", "what am I holding?"
 COUNT_EFFORT = "minimal"  # reading and tiny things: a little thinking helps
 KEEP_ALIVE_S = 50.0  # while warm: re-touch the ChatGPT connection this often so it is never cold
+# ChatGPT's first word usually comes 0.9-2.1 s after the photo is sent; now and then it takes 10 s or more
+# (seen on the robot). With no word after HEDGE_AFTER_S the same question goes again on a second connection,
+# and whichever starts answering first is used (the other is cancelled). It costs a request only then.
+HEDGE_AFTER_S = 2.5
 
 # Questions that need the photo's fine detail: reading and small things. Counting doesn't: on the robot,
 # "how many fingers?" with high detail and a little thinking took 1.7-2.1 s to ChatGPT's first word, with
@@ -146,6 +150,7 @@ class CameraLook:
                  effort: str | None = None, count_effort: str | None = None) -> None:
         self.ctx = ctx
         self._provider = provider
+        self._spare: BaseProvider | None = None  # a second connection for slow answers (HEDGE_AFTER_S)
         self._busy = False
         self._day = _dt.date.today()
         self._photos_today = 0
@@ -169,6 +174,20 @@ class CameraLook:
             models = list(dict.fromkeys([*getattr(cfg, "look_models", []), *cfg.models]))  # look_models first
             self._provider = ChatGPTProvider(get_auth(self.ctx), models=models, effort=cfg.reasoning_effort)
         return self._provider
+
+    def _spare_provider(self) -> BaseProvider:
+        """The provider for a second try: its own connection when it is ChatGPT's (the slow one may be stuck)."""
+        if self._spare is None:
+            from littlebot.chatgpt.responses import ChatGPTProvider  # noqa: PLC0415
+
+            main = self.provider
+            if isinstance(main, ChatGPTProvider):
+                cfg = self.ctx.config.chatgpt
+                self._spare = ChatGPTProvider(get_auth(self.ctx), models=list(main.models),
+                                              effort=cfg.reasoning_effort)
+            else:
+                self._spare = main
+        return self._spare
 
     # ------------------------------------------------------------ gates
     def blocked_reason(self) -> str | None:
@@ -434,11 +453,58 @@ class CameraLook:
                       effort=kwargs.get("effort", "default"), photo_kb=round(len(photo) / 1024))
         log.info("photo sent to ChatGPT (asked_by=%s)", asked_by)
         t_req = stream.t0 = time.monotonic()  # first_token_ms / first_sentence_ms count from here too
+        winner: list[str] = []  # the request whose words come first: only its words reach ``stream``
+        spoke = asyncio.Event()
+
+        def feed_for(name: str) -> Callable[[str], None]:
+            def feed(piece: str) -> None:
+                if not winner:
+                    winner.append(name)
+                    spoke.set()
+                if winner[0] == name:
+                    stream.feed(piece)
+            return feed
+
+        def request(provider: BaseProvider, name: str) -> "asyncio.Task[Any]":
+            opts = {**kwargs, "on_delta": feed_for(name)} if "on_delta" in kwargs else kwargs
+            task = asyncio.ensure_future(provider.reply(
+                [{"role": "user", "content": QUESTION.format(question=text)}], system=self._system_prompt(),
+                max_tokens=200, timeout=REPLY_TIMEOUT_S, images=[photo], **opts))
+            task.add_done_callback(lambda t: t.cancelled() or t.exception())  # a loser's error is not news
+            return task
+
+        first = request(self.provider, "first")
+        second: asyncio.Task[Any] | None = None
+        waiting = asyncio.ensure_future(spoke.wait())
         try:
-            reply = await self.provider.reply([{"role": "user", "content": QUESTION.format(question=text)}],
-                                              system=self._system_prompt(), max_tokens=200,
-                                              timeout=REPLY_TIMEOUT_S, images=[photo], **kwargs)
+            if "on_delta" in kwargs:  # without streaming there's no first word to wait for
+                await asyncio.wait({first, waiting}, timeout=HEDGE_AFTER_S, return_when=asyncio.FIRST_COMPLETED)
+            if not first.done() and not winner and "on_delta" in kwargs:
+                log.info("camera look: no word from ChatGPT after %.1f s; asking again on a second connection",
+                         HEDGE_AFTER_S)
+                timing["hedge"] = "sent"
+                second = request(self._spare_provider(), "second")
+                pending: set[asyncio.Future[Any]] = {first, second, waiting}
+                while not winner:
+                    done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+                    ok = [t for t in (first, second) if t in done and not t.cancelled() and t.exception() is None]
+                    if ok:  # it finished without streaming a word (a short reply): use it
+                        winner.append("first" if ok[0] is first else "second")
+                    elif pending <= {waiting}:
+                        break  # both failed: the first one's error is the answer
+                pick = second if winner and winner[0] == "second" else first
+                (first if pick is second else second).cancel()
+                timing["hedge"] = "won" if pick is second else "lost"
+                if pick is second:  # the old connection was the slow one: use the new one from now on
+                    self._provider, self._spare = self._spare, self._provider
+                reply = await pick
+            else:
+                reply = await first
         finally:
+            waiting.cancel()
+            for task in (first, second):
+                if task is not None and not task.done():
+                    task.cancel()  # this look ended (or was cancelled): no request outlives it
             photo = b""  # drop the image right away (nothing else holds it)
             timing["chatgpt_ms"] = _ms(t_req)
             self._last_request = time.monotonic()

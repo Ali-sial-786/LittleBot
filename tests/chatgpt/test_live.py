@@ -1054,7 +1054,8 @@ async def test_the_voice_is_never_held_back_for_long(live, ctx, monkeypatch):
 
 
 @pytest.mark.parametrize("words", ["Stop listening.", "Stop talking!", "Never mind", "I wasn't talking to you.",
-                                   "Okay, bye bye!"])
+                                   "Okay, bye bye!", "Can you stop talking?", "Please stop talking and listening.",
+                                   "You can stop listening now."])
 async def test_saying_stop_ends_the_call(live, words):
     svc, server, _audio, _provider, _alerts = live
     await connect(svc, server)
@@ -1069,4 +1070,31 @@ async def test_stop_inside_a_sentence_doesnt_end_the_call(live):
     hear(server, "Can you stop the video?")
     hear(server, "Let's play stop and go.")
     await asyncio.sleep(0.2)
+    assert svc.status()["active"]
+
+
+def partly_hear(server: FakeOpenAI, text: str) -> None:
+    server.send({"type": "input_transcript.added", "item": {"text": text}})
+
+
+async def test_stop_works_even_when_their_final_words_come_late(live, monkeypatch):
+    monkeypatch.setattr(live_mod, "STOP_SETTLE_S", 0.2)
+    svc, server, _audio, _provider, _alerts = live
+    await connect(svc, server)
+    partly_hear(server, "Stop ")
+    partly_hear(server, "talking.")
+    await wait_for(lambda: not svc.status()["active"])
+    assert svc.status()["last_call"]["ended_reason"] == "asked to stop"
+
+
+async def test_more_words_after_stop_keep_the_call(live, monkeypatch):
+    monkeypatch.setattr(live_mod, "STOP_SETTLE_S", 0.2)
+    svc, server, _audio, _provider, _alerts = live
+    await connect(svc, server)
+    partly_hear(server, "Stop ")
+    partly_hear(server, "the video")
+    await asyncio.sleep(0.4)
+    partly_hear(server, "Stop")  # a new turn begins with "stop" ...
+    hear(server, "Stop the music please.")  # ... and ends as something else
+    await asyncio.sleep(0.4)
     assert svc.status()["active"]

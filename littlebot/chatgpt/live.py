@@ -148,12 +148,16 @@ HUSH_QUIET_LEVEL = 0.01  # RMS (full scale 1.0) below which a 20 ms frame is qui
 # Said on their own, these end the call at once (a wake word heard by mistake, "stop talking"); the wake
 # word listens again afterwards. The whole utterance must be one of them, so "can you stop the video?" or
 # "stop that, Emma" don't hang up.
-STOP_CALL = re.compile(
-    r"^(?:(?:ok|okay|oh|um+|uh+|no|hey|please|littlebot|little bot|bot)\s+)*"
-    r"(?:stop(?: (?:talking|listening|it|now))*|be quiet|quiet|shh+|hush|shush|never ?mind|cancel(?: that)?|"
-    r"go away|that'?s (?:all|it)|(?:good ?)?bye(?: bye)?|i'?m done|we'?re done|false alarm|"
-    r"(?:i was )?not talking to you|i wasn'?t talking to you|wrong (?:person|robot))"
-    r"(?: (?:please|now|thanks|thank you|littlebot|little bot|bot|robot))*$")
+_STOP_LEAD = (r"(?:ok|okay|oh|um+|uh+|no|hey|please|just|alright|all right|littlebot|little bot|bot|robot|"
+              r"(?:can|could|would|will) you(?: please)?|you can|i want you to|i need you to)")
+_STOP_WHAT = (r"(?:stop(?: (?:talking|listening|it|now|that|for now))*(?: and (?:stop )?(?:talking|listening))?|"
+              r"stop talking to me|stop listening to me|be quiet|quiet|shh+|hush|shush|shut up|never ?mind|"
+              r"cancel(?: that)?|go away|hang up|end (?:the )?call|that'?s (?:all|it|enough)|enough|"
+              r"(?:good ?)?bye(?: bye)?|i'?m done|we'?re done|false alarm|"
+              r"(?:i was )?not talking to you|i wasn'?t talking to you|wrong (?:person|robot))")
+STOP_CALL = re.compile(rf"^(?:{_STOP_LEAD} )*{_STOP_WHAT}"
+                       r"(?: (?:please|now|thanks|thank you|littlebot|little bot|bot|robot))*$")
+STOP_SETTLE_S = 0.8  # their words so far say stop and nothing more came: stop (the final words may come late)
 PARTIAL_MAX_CHARS = 300  # what the person is still saying, kept to start a look before they finish
 CANT_SEE = "You couldn't look. Say you can't see right now, and suggest the grown-up shows you again later; " \
            "don't guess what is there."
@@ -555,6 +559,7 @@ class LiveCall:
         self.voice: str | None = None
         self.photos = 0
         self._look_job: _LookJob | None = None
+        self._stop_words = ""  # what they are saying, while it is only a stop ("stop talking")
         self._hush_job: _LookJob | None = None  # the voice's sound is held back until this look's answer
         self._hush_release = False  # the voice has that answer: let its sound through at the next pause
         self._hush_quiet_since: float | None = None
@@ -825,6 +830,8 @@ class LiveCall:
                     log.info("live voice: asked to stop")
                     self.end("asked to stop")
                     return
+                if event.text.strip():
+                    self._stop_words = ""  # the turn ended with more than a stop: carry on
                 concern = classify_child_input(event.text)
                 if concern is not None:
                     log.warning("live voice: worrying words heard (category=%s)", concern.category)
@@ -1151,7 +1158,17 @@ class LiveCall:
             self._words_began_at = self.svc._now()
         self._heard_partial = (text if prev and text.startswith(prev) else prev + text)[-PARTIAL_MAX_CHARS:]
         if not self._ended.is_set():
+            if STOP_CALL.match(_plain_words(self._heard_partial)):
+                self._stop_words = self._heard_partial
+                self._spawn(self._stop_if_nothing_more(self._heard_partial))
             self._look_if_asked(self._heard_partial, partial=True)
+
+    async def _stop_if_nothing_more(self, words: str) -> None:
+        """Their words so far are a stop ("stop talking"): stop unless more words follow (STOP_SETTLE_S)."""
+        await asyncio.sleep(STOP_SETTLE_S)
+        if self._stop_words == words and self._heard_partial in ("", words) and not self._ended.is_set():
+            log.info("live voice: asked to stop (before their words were final)")
+            self.end("asked to stop")
 
     def _start_look(self, question: str, *, source: str) -> "_LookJob":
         # a look started while the person is still talking belongs to the turn their words will end

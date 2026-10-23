@@ -900,3 +900,63 @@ def test_the_warm_photo_is_refreshed_with_every_frame_the_camera_reads(ctx):
     every_frame = 1.0 / float(ctx.config.camera.detect_fps)
     assert look_mod.WARM_EVERY_S < every_frame  # so it is never two frames old ...
     assert 2 * every_frame < look_mod.WARM_MAX_AGE_HANDS_S  # ... and a hand question finds it (a frame late, even)
+
+
+class SlowThenFast(FastProvider):
+    """The first request says nothing for ``stall`` seconds (a stuck connection); later ones answer at once."""
+
+    def __init__(self, stall: float, *pieces: str) -> None:
+        super().__init__(*pieces)
+        self.stall = stall
+        self.calls_started = 0
+        self.cancelled = 0
+
+    async def reply(self, messages, *, system, max_tokens, timeout, images=None, tools=None, run_tool=None,
+                    max_tool_rounds=6, detail=None, effort=None, on_delta=None) -> ProviderReply:
+        self.calls_started += 1
+        if self.calls_started == 1:
+            try:
+                await asyncio.sleep(self.stall)
+            except asyncio.CancelledError:
+                self.cancelled += 1
+                raise
+            return ProviderReply(text="Too late!", model="slow")
+        return await super().reply(messages, system=system, max_tokens=max_tokens, timeout=timeout, images=images,
+                                   detail=detail, effort=effort, on_delta=on_delta)
+
+
+async def test_a_slow_answer_is_asked_again_on_a_second_connection(fast, monkeypatch, caplog):
+    ctx, look, _provider, _events = fast
+    caplog.set_level(logging.INFO)
+    monkeypatch.setattr(look_mod, "HEDGE_AFTER_S", 0.1)
+    slow = look._provider = SlowThenFast(5.0, "Three ", "fingers!")
+    look._spare = slow  # the same fake stands in for the second connection
+    firsts: list[str] = []
+    t = time.monotonic()
+    out = await look.look("how many fingers am I holding up?", on_first=firsts.append)
+    assert out["ok"] and out["answer"] == "Three fingers!" and time.monotonic() - t < 2.0
+    assert slow.calls_started == 2 and slow.cancelled == 1  # the stuck one was dropped
+    assert out["timing"]["hedge"] == "won" and firsts == ["Three fingers!"]
+    assert "asking again on a second connection" in caplog.text
+
+
+async def test_a_quick_answer_sends_only_one_request(fast, monkeypatch):
+    ctx, look, provider, _events = fast
+    monkeypatch.setattr(look_mod, "HEDGE_AFTER_S", 0.5)
+    out = await look.look("what colour is my hat?")
+    assert out["ok"] and len(provider.options) == 1 and "hedge" not in out["timing"]
+
+
+async def test_when_both_tries_fail_the_look_says_so(fast, monkeypatch):
+    ctx, look, _provider, _events = fast
+    monkeypatch.setattr(look_mod, "HEDGE_AFTER_S", 0.05)
+
+    class Broken(FastProvider):
+        async def reply(self, messages, *, system, max_tokens, timeout, images=None, tools=None, run_tool=None,
+                        max_tool_rounds=6, detail=None, effort=None, on_delta=None):
+            await asyncio.sleep(0.1)
+            raise ProviderTimeoutError("slow")
+
+    look._provider = look._spare = Broken()
+    out = await look.look("what colour is my hat?")
+    assert not out["ok"] and out["error"] == "timeout"
