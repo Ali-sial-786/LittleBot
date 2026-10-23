@@ -68,32 +68,74 @@ VOICES = ("cove", "arbor", "breeze", "ember", "juniper", "maple", "sol", "spruce
 # A look-up the voice hands over that needs the camera ("how many fingers am I holding up?");
 # "look up the weather" is a look-up, not a look.
 WANTS_LOOK = re.compile(r"\b(?:look(?:ing)?\b(?!\s+(?:it\s+)?up\b)|(?:camera|see|seeing|sees|fingers?|holding|"
-                        r"hold(?:s|ing)? up|show(?:s|ing)?|colou?rs?|wearing|what(?:'s| is) (?:this|that))\b)", re.I)
+                        r"hold(?:s|ing)? up|show(?:s|ing)?|colou?rs?|wearing|what(?:'s| is) (?:this|that)|"
+                        r"what (?:this|that|these|those) (?:is|are)|in (?:[\w']+ ){0,2}hands?)\b)", re.I)
 # Hand-offs clearly about the camera: when looking isn't allowed they get the reason, not the text model.
 LOOK_WORDS = re.compile(r"\b(?:look(?:ing)?\b(?!\s+(?:it\s+)?up\b)|camera\b|fingers?\b)", re.I)
-_WHO = r"(?:i|we|he|she|they|it|baby|the baby|daddy|mummy|mommy|mama|papa|dad|mum|mom)"
-_POSS = r"(?:my|our|his|her|their|the baby's)"
+# A hand-off that is about the camera even though it names a game, a video or an activity ("look: what game
+# is the child holding?"): it is looked at, not handed to the tools, unless it also asks for something done.
+SEE_FIRST = re.compile(r"\b(?:camera|fingers?|look(?:ing)?\b(?!\s+(?:it\s+)?(?:up|for|around|after)\b)|"
+                       r"(?:can|could|do|did) you see|what (?:do|can|did) you see|holding|wearing)\b", re.I)
+CONTROL_ACTS = re.compile(r"\b(?:play|put on|start|open|turn|stop|search|find|volume|louder|quieter|sleep|bed|"
+                          r"wake)\b", re.I)
+# A hand-off with words like these, while a look the person's own words asked for is under way or just
+# done, is about that look ("what is that thing?"): it gets that answer instead of the text model's guess.
+SEEN_HINT = re.compile(r"\b(?:this|that|these|those|here|hands?|holding|showing|wearing|colou?rs?|shapes?|"
+                       r"front of you|picture|photo|see|seeing|looks?)\b", re.I)
+_WHO = (r"(?:i|we|he|she|they|it|baby|the baby|daddy|mummy|mommy|mama|papa|dad|mum|mom|"
+        r"the (?:child|kid|person|boy|girl|grown-up|parent))")
+_POSS = r"(?:my|our|his|her|their|the (?:baby|child|kid|person|boy|girl|grown-up|parent)'s)"
 # The person's own words asking LittleBot to look (matched on a final transcript normalised by
 # asks_to_see). The voice may say "let me look" without handing the question over; LittleBot then
 # looks anyway. Kept narrow: "see you later" or "how many fingers does a cat have" take no photo.
 USER_WANTS_LOOK = re.compile(r"\b(?:" + "|".join((
     r"how many fingers\b(?! (?:does|do|did|has|have) (?!i\b|we\b|you see\b))",
     rf"how many(?: \w+){{0,3}} (?:am|are|is|do|have) {_WHO} (?:holding|showing|got)\b",
+    r"how many(?: \w+){0,3} (?:can|do|did|could) you see\b",
     rf"what (?:am|are|is) {_WHO} (?:holding|wearing|showing|pointing at)\b",
     rf"what {_WHO} (?:am|are|is) (?:holding|wearing|showing|pointing at)\b",
+    rf"what (?:is|are) (?:this|that|these|those) {_WHO} (?:am|are|is) (?:holding|wearing|showing)\b",
+    rf"what colou?r(?: \w+){{0,2}} (?:am|are|is) {_WHO} (?:holding|wearing|showing)\b",
     rf"what is in {_POSS} hands?\b",
     rf"what (?:do|does|did) {_WHO} (?:have|hold) in {_POSS} hands?\b",
+    rf"what (?:have|has) {_WHO} got (?:here|in {_POSS} hands?)\b",
     rf"(?:can|could|do|did) you see (?:me|us|this|that|these|those|it|him|her|them|{_POSS}|anything|something)\b",
+    rf"(?:can|could|do|did) you see what {_WHO} (?:am|are|is) (?:holding|doing|showing|wearing|making|drawing|"
+    r"pointing)\b",
+    r"(?:(?:do|can|could|did) you (?:know|tell(?: me)?|guess|say|see)|tell me|guess) what (?:this|that|these|those) "
+    r"(?:is|are)\b",
     r"are you seeing (?:this|that|me|us)\b",
     r"what (?:do|can|did|could) you see\b",
     r"what are you looking at\b",
-    rf"what colou?rs? (?:is|are|am) (?:this|that|these|those|it|i|we|he|she|they|{_POSS})\b",
+    rf"(?:what|which) colou?rs? (?:is|are|am) (?:this|that|these|those|it|i|we|he|she|they|{_POSS})\b",
+    rf"what (?:shapes?|animals?|letters?|numbers?|kind of \w+|sort of \w+) (?:is|are) (?:this|that|these|those|"
+    rf"{_POSS})\b",
+    r"what does (?:this|that) (?:say|spell)\b",
+    r"can you read (?:this|that|these|those)\b",
     rf"look(?:ing)? at (?:me|us|this|that|these|those|it|him|her|what|{_POSS})\b",
+    rf"look what {_WHO} (?:made|drew|did|built|found|got|have|has)\b",
     r"(?:take|have) a look\b",
     rf"count (?:{_POSS}|these|those) \w+",
 )) + r")")
+# Short questions that ask to look only when they are the whole sentence ("What's this?", but not "what is
+# this song?"; a bare "what's that?" is as often about a noise): matched per sentence, after greetings such
+# as "hey LittleBot". FOLLOW_UPS count only right after a look ("and now?" in a finger game).
+SEE_SENTENCES = re.compile(r"what (?:is|are) (?:(?:this|these)(?: (?:thing|things|one|ones|here|now|called))?|"
+                           r"(?:that|those) (?:thing|things|one|ones))")
+FOLLOW_UPS = re.compile(r"(?:and|what about|how about) (?:this|that|these|those|now)(?: one| ones| time)?|"
+                        r"how many (?:now|this time)|(?:what about|how about|and) (?:this|that) (?:one )?now")
+_FILLERS = re.compile(r"^(?:(?:hey|hi|oh|ooh|wow|look|so|ok|okay|um|uh|littlebot|little bot|robot) )+|"
+                      r"(?: (?:littlebot|little bot|robot|please))+$")
+FOLLOW_UP_S = 30.0  # "and now?" this soon after a look asks to look again
 LOOK_REUSE_S = 8.0  # a look this recent answers the same question again: one photo per question
-NOTE_GRACE_S = 1.0  # a hand-off on its way gets a look's answer instead of a note, so the voice hears it once
+# The voice usually hands a seeing question over a moment after the person's last words, and then gets the
+# answer at once. A look started from their own words therefore tells the voice itself (a note) only when the
+# voice starts talking without handing it over, or NOTE_GRACE_S after their last words with no hand-off
+# (never while they are still talking, unless NOTE_TURN_WAIT_S passed). A hand-off after such a note is told
+# it already had the answer (ALREADY_TOLD), so the voice says it once.
+NOTE_GRACE_S = 0.5
+NOTE_TURN_WAIT_S = 4.0
+ALREADY_TOLD = "(You were told this a moment ago too: if you already said it, don't say it again.)"
 PARTIAL_MAX_CHARS = 300  # what the person is still saying, kept to start a look before they finish
 CANT_SEE = "You couldn't look. Say you can't see right now, and suggest the grown-up shows you again later; " \
            "don't guess what is there."
@@ -462,6 +504,10 @@ class LiveCall:
         self._look_job: _LookJob | None = None
         self._heard_partial = ""  # what the person is saying right now (before the final transcript)
         self._user_turns = 0  # final things the person said; a look is shared only within one of them
+        self._words_began_at: float | None = None  # their first partial words this turn (None: none came yet)
+        self._turn_ended_at = self._started  # their latest final words
+        self._voice_spoke_at: float | None = None  # the voice's latest words (a caption in progress)
+        self._news: set[asyncio.Future[None]] = set()  # notes waiting for a hand-off (_wait_for_news)
         self._told_blocked: set[str] = set()
         self._recent_face: tuple[str, float] | None = None  # (name, when) the latest face played
         self._voice_face_this_turn = False
@@ -496,6 +542,7 @@ class LiveCall:
         if self.audio is not None:
             self.audio.mute()
         self._ended.set()
+        self._poke()
 
     def _spawn(self, coro: Any) -> asyncio.Task[Any]:
         t = asyncio.get_running_loop().create_task(coro)
@@ -648,6 +695,9 @@ class LiveCall:
         now = self.svc._now()
         if isinstance(event, wire.AssistantText):
             self._last_activity = now
+            if not event.final:  # words it is saying now (a turn's final caption may come a little late)
+                self._voice_spoke_at = now
+                self._poke()  # a look's answer held for a hand-off may go now: the voice is talking instead
             if event.final:
                 text, self._assistant_turn = event.text, ""
                 self._caption("robot", text)
@@ -672,6 +722,8 @@ class LiveCall:
                 self._caption("heard", event.text)
                 if event.text.strip():
                     self._user_turns += 1
+                    self._turn_ended_at = now
+                    self._poke()  # their words are finished: a held look answer may go soon
                 concern = classify_child_input(event.text)
                 if concern is not None:
                     log.warning("live voice: worrying words heard (category=%s)", concern.category)
@@ -685,6 +737,7 @@ class LiveCall:
                     self._look_if_asked(event.text)
                 elif self._play_face(action, "user"):
                     self._note(f"LittleBot is showing {action.name.replace('_', ' ')} on its face now.")
+                self._words_began_at = None  # the next words are a new turn
         elif isinstance(event, wire.Delegation):
             self._spawn(self._answer(event))
         elif isinstance(event, wire.Failure):
@@ -731,11 +784,17 @@ class LiveCall:
             if not question:
                 heard = [c["text"] for c in self._captions if c["who"] == "heard"]
                 question = heard[-1] if heard else ""
-            control = self._is_control(question)  # "start the peekaboo activity", "show me a video": tools
+            seeing = bool(question) and self._needs_camera(question)
+            # "start the peekaboo activity", "show me a video": tools. But a look stays a look whatever it
+            # names ("look: what game is the child holding?"): the tools would only ask the camera themselves,
+            # two text-model requests later.
+            control = self._is_control(question) and not (
+                seeing and SEE_FIRST.search(question) and not CONTROL_ACTS.search(question))
             action = None if control else _face_request(question)
+            hinted = not (seeing or control or action is not None) and self._about_the_look(question)
             kind = ("face" if action is not None else "empty" if not question else "control" if control
-                    else "look" if self._needs_camera(question) else "lookup")
-            log.info("live voice: hand-off received (kind=%s)", kind)
+                    else "look" if seeing or hinted else "lookup")
+            log.info("live voice: hand-off received (kind=%s%s)", kind, ", from the person's words" if hinted else "")
             if action is not None:
                 # Local and instant: answer first so the voice isn't kept waiting, then play it
                 # (not again if the person's or the voice's own words just played it).
@@ -904,7 +963,7 @@ class LiveCall:
 
     def _needs_camera(self, question: str) -> bool:
         """A hand-off answered by looking, or, when looking isn't allowed, by saying why."""
-        if not WANTS_LOOK.search(question):
+        if not (WANTS_LOOK.search(question) or asks_to_see(question)):
             return False
         look = self._camera()
         if look is None:
@@ -913,26 +972,37 @@ class LiveCall:
             return True
         return bool(LOOK_WORDS.search(question) or asks_to_see(question))  # else the text model answers
 
+    def _about_the_look(self, question: str) -> bool:
+        """A hand-off about the look the person's own words just asked for ("what is that thing?")."""
+        job = self._shared_look()
+        return job is not None and job.by_user and bool(SEEN_HINT.search(question))
+
     async def _look_for_voice(self, question: str) -> str:
         """A seeing hand-off: use the look already taken for this question, else take one.
 
-        Answers as soon as the camera answer's first sentence is ready; any rest follows as a note."""
+        Answers as soon as the camera answer's first sentence is ready; any rest follows as a note. If
+        a note already gave the voice this answer, it is told so (it says the answer once)."""
         t0 = self.svc._now()
         job = self._shared_look()
         if job is not None:
             job.claimed = True
+            self._poke()
             log.info("live voice: look shared (from=delegation; the %s look started %d ms earlier)", job.source,
                      int((t0 - job.started) * 1000))
+            why = f"the hand-off came at +{int((t0 - job.started) * 1000)} ms"
         else:
             job = self._start_look(question, source="delegation")
+            why = "the hand-off asked for it"
         await asyncio.shield(job.progress.wait())
         if job.blocked:
             self._told_blocked.add(job.blocked)
         text, more = job.for_voice()
         if more:
             self._spawn(self._tell_rest(job))
-        log.info("live voice: hand-off answered %d ms after it arrived (%s)", int((self.svc._now() - t0) * 1000),
-                 "first sentence" if more else job.outcome)
+        if "note" in job.told:
+            text, why = f"{text} {ALREADY_TOLD}", f"{why}, after the note"
+        job.told.append("hand-off")
+        self._log_told(job, "hand-off", f"{why}; {'first sentence' if more else job.outcome}")
         return text
 
     def _shared_look(self) -> "_LookJob | None":
@@ -949,10 +1019,15 @@ class LiveCall:
 
         ``partial``: they are still talking ("how many fingers am I ..."): the look starts right away,
         well before the voice hands the question over, and is shared with that hand-off."""
-        if not asks_to_see(text, partial=partial):
+        job, began = self._look_job, self._words_began_at
+        # The last look was for words of theirs that had ended, and it was over before these words began:
+        # these are a new question. (A hand-off's look may be for these very words: their transcript can lag.)
+        since = began - job.ended if job is not None and job.ended is not None and began is not None \
+            and job.by_user and self._user_turns >= job.turn else None
+        earlier = since is not None and since >= 0
+        if not asks_to_see(text, partial=partial, follow_up=since is not None and 0 <= since < FOLLOW_UP_S):
             return
-        job = self._look_job
-        if job is not None and (job.ended is None or self.svc._now() - job.ended < LOOK_REUSE_S):
+        if job is not None and not earlier and (job.ended is None or self.svc._now() - job.ended < LOOK_REUSE_S):
             return  # a look for this question is under way or just happened
         if self._camera() is None:
             return
@@ -961,6 +1036,8 @@ class LiveCall:
     def _look_if_asked_early(self, text: str) -> None:
         """A piece of what the person is saying (``input_transcript.added``): look once the words ask to."""
         prev = self._heard_partial
+        if not prev:
+            self._words_began_at = self.svc._now()
         self._heard_partial = (text if prev and text.startswith(prev) else prev + text)[-PARTIAL_MAX_CHARS:]
         if not self._ended.is_set():
             self._look_if_asked(self._heard_partial, partial=True)
@@ -980,28 +1057,83 @@ class LiveCall:
             log.warning("live voice: looking failed", exc_info=True)
         finally:
             job.ended = self.svc._now()
-            job.progress.set()
-            log.info("live voice: look triggered (from=%s) -> %s in %d ms", job.source, job.outcome,
-                     int((job.ended - job.started) * 1000))
+            job.ready(job.ended)
+            # Where the time went: the photo (warm or new, its age), the robot's count, ChatGPT (model,
+            # detail, effort, first sentence, all); "look answer told" lines say when the voice got it.
+            steps = ""
+            if job.timing:
+                from littlebot.chatgpt.look import timing_text  # noqa: PLC0415
+
+                steps = f" | {timing_text(job.timing)}"
+            log.info("live voice: look triggered (from=%s) -> %s in %d ms%s", job.source, job.outcome,
+                     int((job.ended - job.started) * 1000), steps)
 
     async def _tell_voice(self, job: "_LookJob") -> None:
-        """After a look the person asked for in their own words: tell the voice, unless it asked itself."""
+        """After a look the person asked for in their own words: tell the voice, unless a hand-off asks for it."""
         await asyncio.shield(job.progress.wait())  # the answer's first sentence, or the whole look
-        wait = NOTE_GRACE_S - (self.svc._now() - job.started)
-        if wait > 0:
-            await asyncio.sleep(wait)
+        why = await self._hold_for_hand_off(job)
         if job.claimed or self._ended.is_set():
             return  # the hand-off got the answer
         text, more = job.for_voice()
         if job.ok or more:
             self._note(f"You just looked through your camera. {text} Tell them right away, starting with the answer.")
+            job.told.append("note")
+            self._log_told(job, "note", why)
             if more:
                 self._spawn(self._tell_rest(job))
         elif job.blocked is None or job.blocked not in self._told_blocked:
             if job.blocked:
                 self._told_blocked.add(job.blocked)  # say why once per call, not on every "look at me!"
             self._note(f"They asked you to look. {job.text}")
+            job.told.append("note")
+            self._log_told(job, "note", why)
         self._last_activity = self.svc._now()
+
+    async def _hold_for_hand_off(self, job: "_LookJob") -> str:
+        """Wait while a hand-off may still come for ``job`` (see NOTE_GRACE_S); why the wait ended, for the log.
+
+        The voice hands seeing questions over a moment after the person's last words. It doesn't when it
+        starts talking without doing so: then the note goes at once. A note never goes while they are
+        still talking (unless their words never seem to end)."""
+        while not (job.claimed or self._ended.is_set()):
+            now = self.svc._now()
+            if self._voice_spoke_at is not None and self._voice_spoke_at > max(job.started, self._turn_ended_at):
+                return "the voice talked without handing it over"  # so they had stopped talking too
+            if self._user_turns >= job.turn:  # their words are finished
+                left = self._turn_ended_at + NOTE_GRACE_S - now
+                if left <= 0:
+                    return f"no hand-off {NOTE_GRACE_S:g} s after their last words"
+            else:
+                left = job.started + NOTE_TURN_WAIT_S - now
+                if left <= 0:
+                    return f"their words had not ended after {NOTE_TURN_WAIT_S:g} s"
+            await self._wait_for_news(left)
+        return "a hand-off came"
+
+    def _poke(self) -> None:
+        """Something a held look answer waits for happened: their words ended, the voice spoke, a hand-off came."""
+        for waiter in self._news:
+            if not waiter.done():
+                waiter.set_result(None)
+        self._news.clear()
+
+    async def _wait_for_news(self, timeout: float) -> None:
+        waiter: asyncio.Future[None] = asyncio.get_running_loop().create_future()
+        self._news.add(waiter)
+        try:
+            await asyncio.wait_for(waiter, timeout)
+        except asyncio.TimeoutError:
+            pass
+        finally:
+            self._news.discard(waiter)
+
+    def _log_told(self, job: "_LookJob", via: str, why: str) -> None:
+        """When the voice got a look's answer, and how long it was held after it was ready (never content)."""
+        now = self.svc._now()
+        ready = job.ready_at if job.ready_at is not None else now
+        log.info("live voice: look answer told via %s at +%d ms (ready at +%d ms, held %d ms: %s)", via,
+                 int((now - job.started) * 1000), int((ready - job.started) * 1000),
+                 int(max(0.0, now - ready) * 1000), why)
 
     async def _tell_rest(self, job: "_LookJob") -> None:
         """The rest of a camera answer whose first sentence the voice already has (once, if there is any)."""
@@ -1036,13 +1168,16 @@ class LiveCall:
             job.text, job.blocked, job.outcome = CANT_LOOK.get(reason, CANT_SEE), reason, f"blocked:{reason}"
             return
         self._caption("note", "LittleBot is taking a photo to answer (not kept)")
-        result = await _ask_camera(look, question, job)
+        result = await _ask_camera(look, question, job, self.svc._now)
         answer = str(result.get("answer") or "").strip()
         if result.get("ok") and answer:
             self.photos += 1
             job.ok, job.text, job.outcome = True, answer, "ok"
             job.rest = (str(result.get("rest") or "").strip() or None) if job.first is not None else None
-            where = " (counted on the robot; the photo was not sent)" if result.get("source") == "robot" else ""
+            where = ""
+            if result.get("source") == "robot":  # sent: the robot was slow, so ChatGPT was asked too
+                where = " (counted on the robot)" if result.get("sent") else \
+                    " (counted on the robot; the photo was not sent)"
             self._caption("note", f"Camera answer{where}: {answer}")  # the parent sees what the camera said
             return
         code = job.outcome = str(result.get("error") or "no_answer")[:40]
@@ -1172,41 +1307,61 @@ def _face_menu() -> str:
         return "happy, surprised, sleepy, curious, excited, sad, playful, celebrating, wink, spin_eyes, peekaboo"
 
 
-def asks_to_see(text: str, *, partial: bool = False) -> bool:
+def asks_to_see(text: str, *, partial: bool = False, follow_up: bool = False) -> bool:
     """True when the person's own words ask LittleBot to look ("how many fingers am I holding up?").
 
     ``partial``: words still being said. A plain "how many fingers" then waits for two more words, so
-    "how many fingers does a cat have" never takes a photo; every other phrase is already a clear ask
-    and later words can't undo it."""
+    "how many fingers does a cat have" never takes a photo, and a short whole-sentence question
+    ("what's this?") waits for the end of its sentence; every other phrase is already a clear ask and
+    later words can't undo it. ``follow_up``: a look was just answered, so "and now?" asks again."""
+    t = _normalised(text)
+    for m in USER_WANTS_LOOK.finditer(t):
+        if partial and m.group(0) == "how many fingers" and len(t[m.end():].split()) < 2:
+            continue  # its "not about a cat" check needs the next words
+        return True
+    return any(SEE_SENTENCES.fullmatch(s) or (follow_up and FOLLOW_UPS.fullmatch(s))
+               for s in _sentences(text, partial=partial))
+
+
+def _normalised(text: str) -> str:
     t = str(text or "").lower().replace("\u2019", "'")
     t = re.sub(r"\b(what|that|it|who)'s\b|\bwhats\b", lambda m: f"{m.group(1) or 'what'} is", t)
     t = re.sub(r"\bi'?m\b", "i am", t)
     t = re.sub(r"\b(you|we|they)'re\b", r"\1 are", t)
     t = re.sub(r"[^a-z0-9' ]+", " ", t)
-    t = re.sub(r"\s+", " ", t)
-    for m in USER_WANTS_LOOK.finditer(t):
-        if partial and m.group(0) == "how many fingers" and len(t[m.end():].split()) < 2:
-            continue  # its "not about a cat" check needs the next words
-        return True
-    return False
+    return re.sub(r"\s+", " ", t)
 
 
-async def _ask_camera(look: Any, question: str, job: "_LookJob") -> dict[str, Any]:
-    """``look.look`` for the live voice, passing each answer's first sentence on to ``job`` as it arrives."""
+def _sentences(text: str, *, partial: bool) -> list[str]:
+    """The sentences of ``text``, normalised, without greetings ("hey LittleBot, what's this?" -> "what is
+    this"). While the words are still coming, the last one only once it has ended (".", "?" or "!")."""
+    parts = re.split(r"[.?!]+", str(text or ""))
+    if partial and not re.search(r"[.?!][\"')\]]*\s*$", str(text or "")):
+        parts = parts[:-1]  # it may still go on: "what is this ..." could become "what is this song"
+    return [s for s in (_FILLERS.sub("", _normalised(p).strip()).strip() for p in parts) if s]
+
+
+async def _ask_camera(look: Any, question: str, job: "_LookJob", now: Callable[[], float]) -> dict[str, Any]:
+    """``look.look`` for the live voice, passing each answer's first sentence on to ``job`` as it arrives
+    (and its ``timing`` to ``job.timing``, for the log)."""
     import inspect  # noqa: PLC0415
 
     def first(text: str) -> None:
         if job.first is None and job.ended is None:
             job.first = text
-            job.progress.set()  # a waiting hand-off or note can go ahead with this sentence
+            job.ready(now())  # a waiting hand-off or note can go ahead with this sentence
 
     try:
         streams = "on_first" in inspect.signature(look.look).parameters
     except (TypeError, ValueError):
         streams = False
     if streams:
-        return await look.look(question, asked_by="live", on_first=first)
-    return await look.look(question, asked_by="live")
+        result = await look.look(question, asked_by="live", on_first=first)
+    else:
+        result = await look.look(question, asked_by="live")
+    if isinstance(result.get("timing"), dict):
+        job.timing = result["timing"]
+    return result
 
 
 def _look_note(code: str) -> str:
@@ -1239,6 +1394,14 @@ class _LookJob:
     rest: str | None = None  # what the answer says after ``first`` (told as a note, once)
     rest_told: bool = False
     progress: asyncio.Event = dataclasses.field(default_factory=asyncio.Event)  # first sentence ready, or ended
+    ready_at: float | None = None  # when ``progress`` was set
+    told: list[str] = dataclasses.field(default_factory=list)  # how the voice got the answer: note, hand-off
+    timing: dict[str, Any] = dataclasses.field(default_factory=dict)  # CameraLook.look's, for the log
+
+    def ready(self, now: float) -> None:
+        if self.ready_at is None:
+            self.ready_at = now
+        self.progress.set()
 
     def for_voice(self) -> tuple[str, bool]:
         """What to tell the voice now, and whether more will follow (only a first sentence is ready yet)."""

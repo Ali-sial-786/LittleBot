@@ -177,6 +177,20 @@ def draw_cartoon_face(frame: np.ndarray, cx: float, cy: float, width: float,
     draw_ellipse(frame, cx, cy + ry * 0.45, width * 0.18, max(1.0, width * 0.04), (60, 50, 120))
 
 
+def shrink_jpeg(jpeg: bytes, width: int, quality: int = 75) -> bytes:
+    """``jpeg`` re-encoded at most ``width`` pixels wide (e.g. a 640 px photo for a vision model that only
+    looks at 512 px: ~40% fewer bytes to upload, ~3 ms on x86). Unchanged when it is already small enough,
+    or when it can't be decoded or OpenCV is missing. In memory only."""
+    cv2 = get_cv2()
+    if cv2 is None or not jpeg or width <= 0:
+        return jpeg
+    img = cv2.imdecode(np.frombuffer(jpeg, dtype=np.uint8), cv2.IMREAD_COLOR)
+    if img is None or img.shape[1] <= width:
+        return jpeg
+    ok, buf = cv2.imencode(".jpg", resize_to_width(img, width), [int(cv2.IMWRITE_JPEG_QUALITY), int(quality)])
+    return buf.tobytes() if ok else jpeg
+
+
 def brighten_if_dark(img: Any, *, dark_below: float = 70.0, target: float = 115.0) -> Any:
     """Lift a dim photo (mean brightness < ``dark_below`` of 255) with a gamma curve so a vision model
     can make out hands and toys in a dim room. Bright enough photos are returned unchanged."""

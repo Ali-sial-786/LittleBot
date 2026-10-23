@@ -114,6 +114,10 @@ motion:
 #   live_half_duplex: true         # no echo cancellation on the Pi: mic sends silence while LittleBot talks
 #   live_echo_tail_ms: 450         # ...and for this long after; raise it if the voice hears itself
 #   live_volume: null              # null = the speaker volume; always capped at audio.speaker.max_volume
+#   look_models: []                # camera looks: models tried first (e.g. a faster one), then `models`
+#   look_effort: null              # simple looks ("what colour is this?"): null = none
+#   look_count_effort: null        # counting / reading looks: null = minimal
+#   look_detail: auto              # auto | low | high: photo detail (auto: high only for counting / reading)
 
 # ---------------------------------------------------------------------------
 # Parent dashboard.

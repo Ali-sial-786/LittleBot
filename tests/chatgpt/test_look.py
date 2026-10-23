@@ -321,9 +321,14 @@ import json  # noqa: E402
 import httpx  # noqa: E402
 from chatgpt_helpers import signed_in_auth  # noqa: E402
 
+import time  # noqa: E402
+
+import numpy as np  # noqa: E402
+
 from littlebot.chatgpt import look as look_mod  # noqa: E402
 from littlebot.chatgpt.responses import ChatGPTProvider  # noqa: E402
 from littlebot.vision.hands import HandCount  # noqa: E402
+from littlebot.vision.imaging import get_cv2  # noqa: E402
 
 WARM = b"\xff\xd8\xff\xe0 warm photo"
 
@@ -674,3 +679,222 @@ async def test_a_one_word_exclamation_waits_for_the_real_answer(ctx):
     seen: list[str] = []
     out = await look.look("how many fingers?", on_first=seen.append)
     assert seen == ["Oh! Three fingers!"] and out["rest"] == "Well done."
+
+
+# --------------------------------------------------------------------------- the robot's count vs ChatGPT
+class SlowCounter(FakeCounter):
+    """Counts in its thread for ``delay`` seconds (a cold or busy robot)."""
+
+    def __init__(self, result: HandCount, delay: float) -> None:
+        super().__init__(result)
+        self.delay = delay
+        self.done_at: float | None = None
+
+    def count_jpeg(self, jpeg: bytes) -> HandCount:
+        time.sleep(self.delay)
+        self.done_at = time.monotonic()
+        return super().count_jpeg(jpeg)
+
+
+class SlowProvider(FastProvider):
+    """Streams ``pieces`` with ``gap`` seconds before each; records when it was asked and if it was cancelled."""
+
+    def __init__(self, *pieces: str, gap: float = 0.0, error: BaseException | None = None) -> None:
+        super().__init__(*pieces)
+        self.gap, self.fail = gap, error
+        self.asked_at: list[float] = []
+        self.cancelled = False
+
+    async def reply(self, messages, *, system, max_tokens, timeout, images=None, tools=None, run_tool=None,
+                    max_tool_rounds=6, detail=None, effort=None, on_delta=None) -> ProviderReply:
+        self.asked_at.append(time.monotonic())
+        self.calls.append({"messages": messages, "system": system, "images": list(images or [])})
+        if self.fail is not None:
+            raise self.fail
+        try:
+            for piece in self.pieces:
+                await asyncio.sleep(self.gap)
+                if on_delta is not None:
+                    on_delta(piece)
+        except asyncio.CancelledError:
+            self.cancelled = True
+            raise
+        return ProviderReply(text="".join(self.pieces), model="fake")
+
+
+@pytest.fixture
+def race(ctx):
+    allow(ctx)
+    ctx.vision = WarmVision()
+    return ctx
+
+
+async def test_a_quick_sure_count_answers_alone(race):
+    provider = SlowProvider("Three fingers!")
+    look = CameraLook(race, provider=provider, finger_counter=SlowCounter(HandCount(2, 1, True), delay=0.01))
+    out = await look.look("how many fingers am I holding up?")
+    assert out["source"] == "robot" and out["sent"] is False and provider.calls == []
+    assert out["timing"]["count"] == "sure:2" and "chatgpt_ms" not in out["timing"]
+
+
+async def test_a_slow_count_asks_chatgpt_too_and_a_sure_count_still_wins(race, caplog):
+    caplog.set_level(logging.INFO)
+    provider = SlowProvider("You are holding ", "up two fingers.", gap=1.0)
+    look = CameraLook(race, provider=provider, finger_counter=SlowCounter(HandCount(2, 1, True), delay=0.4))
+    firsts: list[str] = []
+    rewarmed: list[int] = []
+
+    async def warm() -> bool:
+        rewarmed.append(1)
+        return True
+
+    provider.warm = warm  # type: ignore[attr-defined]
+    look.keep_warm(True)  # a live call: the connection is kept open
+    await asyncio.sleep(0.05)
+    assert rewarmed == [1]
+    try:
+        out = await look.look("how many fingers am I holding up?", on_first=firsts.append)
+        assert out["source"] == "robot" and out["answer"] == "I see two fingers held up!" and firsts == [out["answer"]]
+        assert out["sent"] is True and provider.cancelled  # ChatGPT was asked after the head start, then not needed
+        assert out["timing"]["chatgpt"] == "cancelled" and out["latency_ms"] < 900
+        await asyncio.sleep(0.05)
+        assert rewarmed == [1, 1]  # cancelling closed the connection: a new one is opened for the next look
+        assert "ChatGPT's answer was not needed" in caplog.text
+    finally:
+        look.keep_warm(False)
+
+
+async def test_an_unsure_slow_count_costs_nothing_chatgpt_was_already_asked(race):
+    provider = SlowProvider("Three fingers!")
+    counter = SlowCounter(HandCount(0, 1, False, "unclear_finger"), delay=0.4)
+    look = CameraLook(race, provider=provider, finger_counter=counter)
+    t0 = time.monotonic()
+    out = await look.look("how many fingers am I holding up?")
+    assert out["source"] == "chatgpt" and out["answer"] == "Three fingers!" and out["latency_ms"] < 350
+    (asked,) = provider.asked_at
+    assert look_mod.COUNT_HEAD_START_S <= asked - t0 < 0.35  # asked after the head start, not after the count
+    await asyncio.sleep(0.4)
+    assert counter.done_at is not None and asked < counter.done_at
+
+
+async def test_chatgpt_saying_it_first_wins_over_a_late_sure_count(race):
+    provider = SlowProvider("Three fingers! ", "Well done.", gap=0.05)
+    look = CameraLook(race, provider=provider, finger_counter=SlowCounter(HandCount(2, 1, True), delay=0.5))
+    firsts: list[str] = []
+    out = await look.look("how many fingers?", on_first=firsts.append)
+    assert firsts == ["Three fingers!"] and out["source"] == "chatgpt"  # the voice never hears two answers
+    assert out["answer"] == "Three fingers! Well done." and not provider.cancelled
+
+
+async def test_when_chatgpt_fails_a_slow_sure_count_still_answers(race):
+    provider = SlowProvider(error=NetworkError("down"))
+    look = CameraLook(race, provider=provider, finger_counter=SlowCounter(HandCount(3, 1, True), delay=0.3))
+    out = await look.look("how many fingers?")
+    assert out["ok"] and out["source"] == "robot" and out["answer"] == "I see three fingers held up!"
+    assert out["timing"]["chatgpt"] == "failed:network"
+
+
+async def test_a_zero_head_start_asks_both_at_once(race, monkeypatch):
+    monkeypatch.setattr(look_mod, "COUNT_HEAD_START_S", 0.0)
+    provider = SlowProvider("Three fingers!", gap=0.5)
+    look = CameraLook(race, provider=provider, finger_counter=SlowCounter(HandCount(1, 1, True), delay=0.05))
+    t0 = time.monotonic()
+    out = await look.look("how many fingers?")
+    assert out["source"] == "robot" and out["sent"] is True and provider.asked_at[0] - t0 < 0.04
+
+
+# --------------------------------------------------------------------------- smaller uploads, the knobs, the log
+async def test_low_detail_looks_send_a_512_px_photo(race):
+    cv2 = get_cv2()
+    if cv2 is None:
+        pytest.skip("OpenCV needed")
+    img = (np.random.default_rng(1).random((480, 640, 3)) * 255).astype("uint8")
+    big = cv2.imencode(".jpg", img, [int(cv2.IMWRITE_JPEG_QUALITY), 75])[1].tobytes()  # a warm 640 px photo
+    race.vision.latest_photo = lambda max_age=1.0: (big, 0.05)  # type: ignore[method-assign]
+    provider = FastProvider("A red ball!")
+    look = CameraLook(race, provider=provider)
+    look.keep_warm(True)
+    try:
+        await look.look("what colour is this ball?")  # low detail
+        await look.look("can you read this word?")  # high detail
+    finally:
+        look.keep_warm(False)
+    low, high = (cv2.imdecode(np.frombuffer(c["images"][0], np.uint8), cv2.IMREAD_COLOR) for c in provider.calls)
+    assert low.shape[:2] == (384, 512) and high.shape[:2] == (480, 640)
+    assert len(provider.calls[0]["images"][0]) < len(big)
+
+
+async def test_a_new_photo_is_taken_at_the_size_the_question_needs(fast):
+    ctx, look, provider, events = fast
+    look._counter = FakeCounter(HandCount(0, 0, False, "no_hand"))
+    await look.look("what colour is my hat?")
+    await look.look("how many fingers am I holding up?")
+    await look.look("what does this say?")
+    assert [p["max_width"] for p in ctx.vision.photos] == [look_mod.LOW_DETAIL_WIDTH, 640, 640]
+
+
+async def test_the_config_picks_the_look_models_detail_and_effort(ctx):
+    allow(ctx)
+    ctx.vision = FakeVision()
+    cfg = ctx.config.chatgpt
+    cfg.look_models = ["quick-model", cfg.models[0]]
+    cfg.look_effort, cfg.look_count_effort, cfg.look_detail = "minimal", "low", "low"
+    look = CameraLook(ctx)
+    assert look.provider.models == ["quick-model", *cfg.models]  # tried first, then the usual ones (once each)
+    assert (look.effort, look.count_effort, look.detail) == ("minimal", "low", "low")
+    look._provider = provider = FastProvider()
+    await look.look("how many fingers am I holding up?")
+    assert provider.options == [{"detail": "low", "effort": "low", "streams": True}]
+
+
+def test_the_config_rejects_unknown_look_settings():
+    from pydantic import ValidationError
+
+    from littlebot.core.config import ChatGPTConfig
+
+    assert ChatGPTConfig().look_models == [] and ChatGPTConfig().look_detail == "auto"
+    with pytest.raises(ValidationError):
+        ChatGPTConfig(look_detail="ultra")
+
+
+async def test_the_timing_says_where_the_time_went(fast, caplog):
+    ctx, look, provider, events = fast
+    caplog.set_level(logging.INFO)
+    look.keep_warm(True)
+    look._counter = FakeCounter(HandCount(0, 1, False, "fist"))
+    out = await look.look("how many fingers am I holding up?", on_first=lambda _s: None)
+    t = out["timing"]
+    assert t["photo"] == "warm" and t["photo_age_ms"] == 100 and t["count"] == "unsure:fist" and "count_ms" in t
+    assert t["model"] == "fake" and t["detail"] == "high" and t["effort"] == look_mod.COUNT_EFFORT
+    assert {"photo_kb", "first_token_ms", "first_sentence_ms", "chatgpt_ms"} <= set(t)
+    line = next(r.getMessage() for r in caplog.records if "camera look timing" in r.getMessage())
+    assert line.endswith(look_mod.timing_text(t)) and "fingers" not in line
+
+
+async def test_a_failed_photo_is_in_the_timing_too(setup, caplog):
+    ctx, look, provider, events = setup
+    caplog.set_level(logging.INFO)
+    ctx.vision.error = PhotoUnavailable("timeout")
+    out = await look.look("what is this?")
+    assert out["timing"] == {"photo": "failed:photo_failed"} and "photo=failed:photo_failed" in caplog.text
+
+
+async def test_keeping_warm_renews_the_sign_in_ahead_of_time(fast):
+    ctx, look, provider, events = fast
+    renewed: list[int] = []
+
+    class Auth:
+        async def bearer(self) -> str:
+            renewed.append(1)
+            return "token"
+
+    provider.auth = Auth()  # type: ignore[attr-defined]
+    look.keep_warm(True)
+    await asyncio.sleep(0.05)
+    assert renewed == [1]  # a token about to expire is refreshed now, not during the next look
+
+
+def test_the_warm_photo_is_refreshed_with_every_frame_the_camera_reads(ctx):
+    every_frame = 1.0 / float(ctx.config.camera.detect_fps)
+    assert look_mod.WARM_EVERY_S < every_frame  # so it is never two frames old ...
+    assert 2 * every_frame < look_mod.WARM_MAX_AGE_HANDS_S  # ... and a hand question finds it (a frame late, even)

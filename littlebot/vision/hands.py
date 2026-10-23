@@ -17,9 +17,11 @@ ChatGPT answers instead.
 
 Checked on MediaPipe's sample hand photos (0, 1, 2 and 2x5 fingers) placed in a 640x480 frame in
 1,800 variants (shrunk to a quarter, turned +-30 degrees, mirrored, dark, blurred, noisy): it was sure
-for 68% and wrong for 4 of those 1,216 (all small AND dark or noisy). Time on an x86 VM: ~60-80 ms
-per photo with 2 OpenCV threads (palm ~45 ms + ~16 ms per hand); YuNet runs 1.5x slower on the Pi 5
-than on that VM, so expect ~90-130 ms there. Memory: ~26 MB once loaded (~0.1 s to load).
+for 68% and wrong for 4 of those 1,216 (all small AND dark or noisy). Time on an x86 VM: ~40-80 ms
+per photo with 2 OpenCV threads (palm ~30-45 ms + ~10-16 ms per hand); YuNet runs 1.5x slower on the
+Pi 5 than on that VM, so expect ~60-130 ms there. The first count after loading takes ~1.5-2x that
+(far more with cold disk caches), so ``load_finger_counter`` warms both networks up; a live call loads
+it when it starts. Memory: ~26 MB once loaded (~20 ms to load, ~70 ms to warm up on that VM).
 """
 
 from __future__ import annotations
@@ -156,6 +158,14 @@ class FingerCounter:
         ms = (time.perf_counter() - t0) * 1000
         return HandCount(out.fingers, out.hands, out.sure, out.why, round(ms, 1), out.per_hand)
 
+    def warm_up(self) -> None:
+        """Run both networks once on blank input, so the first real count isn't the slow one (OpenCV
+        sets up each network on its first run: ~1.5-2x a normal count, far more with cold caches)."""
+        with self._lock:
+            for net, size in ((self._palm, PALM_INPUT), (self._hand, HAND_INPUT)):
+                net.setInput(np.zeros((1, size, size, 3), dtype=np.float32))
+                net.forward(self._palm_out if net is self._palm else self._hand_out)
+
     # ------------------------------------------------------------ internals
     def _count(self, img: np.ndarray) -> HandCount:
         found = self.palms(img, floor=PALM_DOUBT)
@@ -267,7 +277,8 @@ _load_failed = False
 
 
 def load_finger_counter(root: Path | None = None) -> FingerCounter | None:
-    """The shared counter, loaded once (~50 ms); None when the models or OpenCV are missing."""
+    """The shared counter, loaded and warmed up once (~50-100 ms; a live call does it when it starts);
+    None when the models or OpenCV are missing."""
     global _shared, _load_failed
     with _shared_lock:
         if _shared is not None or _load_failed:
@@ -277,8 +288,12 @@ def load_finger_counter(root: Path | None = None) -> FingerCounter | None:
             return None  # checked again next time: the models may be downloaded while running
         try:
             t0 = time.perf_counter()
-            _shared = FingerCounter(palm, hand)
-            log.info("finger counter loaded in %.0f ms", (time.perf_counter() - t0) * 1000)
+            counter = FingerCounter(palm, hand)
+            t1 = time.perf_counter()
+            counter.warm_up()
+            _shared = counter
+            log.info("finger counter loaded in %.0f ms, warmed up in %.0f ms", (t1 - t0) * 1000,
+                     (time.perf_counter() - t1) * 1000)
         except Exception as e:  # noqa: BLE001 - a broken model must never break looking
             _load_failed = True
             log.warning("finger counter unavailable (%s)", type(e).__name__)

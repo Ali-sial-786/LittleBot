@@ -11,14 +11,23 @@ Speed (a look used to take ~0.1 s for the photo + 1.2-1.8 s for ChatGPT, after t
 look"):
 
 * during a live conversation the camera keeps one recent photo warm in memory
-  (``keep_warm``/``VisionService.keep_photo_warm``, only while the switches above allow looking), so
-  a look doesn't wait for the camera; the connection to ChatGPT is opened ahead of time too;
+  (``keep_warm``/``VisionService.keep_photo_warm``, only while the switches above allow looking),
+  refreshed with every frame it reads, so a look doesn't wait for the camera; the connection to
+  ChatGPT is opened ahead of time (and the sign-in renewed ahead of time), and the finger counter is
+  loaded and warmed up;
 * "how many fingers?" is counted on the robot when the optional hand models are installed
-  (``littlebot.vision.hands``, ~0.1 s): the photo then never leaves the robot. When the counter is not
-  sure, ChatGPT answers as before;
-* ChatGPT gets a lighter request: low image detail and no reasoning for simple questions, high
-  detail (and minimal reasoning) for counting or reading; the answer comes first in the reply and
-  ``on_first`` hands over the first sentence while the rest is still streaming.
+  (``littlebot.vision.hands``, ~0.1 s): when it is sure within ``COUNT_HEAD_START_S`` the photo never
+  leaves the robot. When it is not sure, ChatGPT answers as before; when it is slow, ChatGPT is asked
+  at the same time and the first sure answer wins;
+* ChatGPT gets a lighter request: low image detail (a 512 px photo: that is all "low" looks at) and
+  no reasoning for simple questions, high detail (and minimal reasoning) for counting or reading
+  (``chatgpt.look_models`` / ``look_effort`` / ``look_count_effort`` / ``look_detail`` tune this); the
+  answer comes first in the reply and ``on_first`` hands over the first sentence while the rest is
+  still streaming.
+
+Every look logs one ``camera look timing`` line (labels and milliseconds only) and returns the same
+figures as ``timing``: where the photo came from and how old it was, the robot's count, and ChatGPT's
+model, detail, effort, upload size, time to the first sentence and in all.
 """
 
 from __future__ import annotations
@@ -45,7 +54,8 @@ _KEY = "camera_look"
 MAX_WORDS = 40
 DEFAULT_QUESTION = "What do you see?"
 FALLBACK = "I'm not sure what I see. Let's ask a grown-up."
-PHOTO_MAX_WIDTH = 640  # the camera gives 640x480; ChatGPT's "low" detail looks at 512 px, "high" at 512 px tiles
+PHOTO_MAX_WIDTH = 640  # the camera gives 640x480: the finger counter and "high" detail (512 px tiles) use it all
+LOW_DETAIL_WIDTH = 512  # "low" detail looks at one 512 px view: 640 px would only be ~60% more bytes to upload
 PHOTO_QUALITY = 75
 PHOTO_TIMEOUT_S = 3.0
 REPLY_TIMEOUT_S = 20.0
@@ -53,10 +63,17 @@ REPLY_TIMEOUT_S = 20.0
 # someone asks "how many fingers?", so for questions about hands only a very recent one will do.
 WARM_MAX_AGE_S = 1.0
 WARM_MAX_AGE_HANDS_S = 0.35
-WARM_EVERY_S = 0.3  # refresh period of the warm photo (frames come at camera.detect_fps, 6/s by default)
+# Refresh period of the warm photo: every frame the camera loop reads (camera.detect_fps, 6/s by default:
+# one ~1 ms JPEG encode each). At 0.3 s it was refreshed every other frame (0.33 s), just under
+# WARM_MAX_AGE_HANDS_S, so any delay made a hand question wait for a new photo (~50-100 ms with a 15 fps camera).
+WARM_EVERY_S = 0.15
+# "How many fingers?": the robot's own count gets this long on its own (a warm count takes ~0.05-0.1 s on a
+# Pi 5). Sure by then: the answer, and the photo never leaves the robot. Not sure: ChatGPT is asked at once.
+# Still counting (a cold or busy robot): ChatGPT is asked too, and the first sure answer wins. 0 asks both at
+# once every time (an unsure count then costs nothing more, but every finger photo is sent to ChatGPT).
+COUNT_HEAD_START_S = 0.15
 # Reasoning effort per look (the endpoint falls back to the next costlier one when a model refuses
-# one, see ChatGPTProvider.reply); chatgpt.look_effort / chatgpt.look_count_effort in the config
-# override them when such keys exist.
+# one, see ChatGPTProvider.reply); chatgpt.look_effort / chatgpt.look_count_effort override them.
 LOOK_EFFORT = "none"  # simple questions: "what colour is this?", "what am I holding?"
 COUNT_EFFORT = "minimal"  # counting and reading: a little thinking helps
 KEEP_ALIVE_S = 50.0  # while warm: re-touch the ChatGPT connection this often so it is never cold
@@ -134,6 +151,7 @@ class CameraLook:
         cfg = getattr(ctx.config, "chatgpt", None)
         self.effort = effort or getattr(cfg, "look_effort", None) or LOOK_EFFORT
         self.count_effort = count_effort or getattr(cfg, "look_count_effort", None) or COUNT_EFFORT
+        self.detail = getattr(cfg, "look_detail", None) or "auto"  # auto | low | high
         self._warm_owners: set[str] = set()
         self._keep_alive: asyncio.Task[None] | None = None
         self._background: set[asyncio.Task[Any]] = set()
@@ -145,7 +163,8 @@ class CameraLook:
             from littlebot.chatgpt.responses import ChatGPTProvider  # noqa: PLC0415
 
             cfg = self.ctx.config.chatgpt
-            self._provider = ChatGPTProvider(get_auth(self.ctx), models=list(cfg.models), effort=cfg.reasoning_effort)
+            models = list(dict.fromkeys([*getattr(cfg, "look_models", []), *cfg.models]))  # look_models first
+            self._provider = ChatGPTProvider(get_auth(self.ctx), models=models, effort=cfg.reasoning_effort)
         return self._provider
 
     # ------------------------------------------------------------ gates
@@ -197,7 +216,8 @@ class CameraLook:
 
         On: the camera keeps one recent photo in memory while the consent switches allow looking
         (checked before every refresh), the connection to ChatGPT is opened and kept open, and the
-        finger counter is loaded. Off (last owner): the photo is dropped and the keep-alive stops."""
+        finger counter is loaded and warmed up. Off (last owner): the photo is dropped and the
+        keep-alive stops."""
         vision = self.ctx.vision
         if on:
             self._warm_owners.add(owner)
@@ -227,20 +247,39 @@ class CameraLook:
             self._run_background(asyncio.to_thread(self._finger_counter))
 
     async def _keep_connection_alive(self) -> None:
-        """While warm: open the ChatGPT connection now, then touch it whenever it sat idle for KEEP_ALIVE_S."""
+        """While warm: open the ChatGPT connection now, then touch it whenever it sat idle for KEEP_ALIVE_S.
+        The sign-in is renewed here too when it is about to expire, so a look never waits for that."""
         while True:
             try:
-                if self.may_keep_warm() and time.monotonic() - self._last_request >= KEEP_ALIVE_S:
-                    warm = getattr(self.provider, "warm", None)
-                    if warm is not None and self.provider.configured():
-                        t0 = time.monotonic()
-                        ok = await warm()
-                        self._last_request = time.monotonic()
-                        log.info("camera look: ChatGPT connection %s in %d ms", "ready" if ok else "not opened",
-                                 int((self._last_request - t0) * 1000))
+                if self.may_keep_warm() and self.provider.configured():
+                    await self._renew_sign_in()
+                    if time.monotonic() - self._last_request >= KEEP_ALIVE_S:
+                        await self._open_connection()
             except Exception:  # noqa: BLE001 - only a head start; looking works without it
                 log.debug("camera look: keeping the connection open failed", exc_info=True)
             await asyncio.sleep(KEEP_ALIVE_S / 5)
+
+    async def _renew_sign_in(self) -> None:
+        auth = getattr(self.provider, "auth", None)
+        if auth is None or not hasattr(auth, "bearer"):
+            return
+        try:
+            await auth.bearer()  # refreshes the token only in its last 5 minutes; otherwise instant
+        except Exception:  # noqa: BLE001 - the look itself reports a sign-in problem
+            log.debug("camera look: renewing the sign-in ahead of time failed", exc_info=True)
+
+    async def _open_connection(self) -> None:
+        warm = getattr(self.provider, "warm", None)
+        if warm is None:
+            return
+        t0 = time.monotonic()
+        try:
+            ok = await warm()
+        except Exception:  # noqa: BLE001 - only a head start
+            ok = False
+        self._last_request = time.monotonic()
+        log.info("camera look: ChatGPT connection %s in %d ms", "ready" if ok else "not opened",
+                 int((self._last_request - t0) * 1000))
 
     def _run_background(self, coro: Any) -> None:
         t = asyncio.get_running_loop().create_task(coro)
@@ -259,21 +298,32 @@ class CameraLook:
     # ------------------------------------------------------------ look
     async def look(self, question: str, *, asked_by: str = "parent",
                    on_first: Callable[[str], Any] | None = None) -> dict[str, Any]:
-        """Answer ``question`` from one photo: ``{ok, answer, error, detail, latency_ms, source, first, rest}``.
+        """Answer ``question`` from one photo:
+        ``{ok, answer, error, detail, latency_ms, source, sent, first, rest, timing}``.
 
         ``on_first(text)``: called once, as early as possible, with the answer's first sentence
         (already checked by ``validate_reply``) while ChatGPT is still writing the rest. Then
         ``first`` is that sentence and ``rest`` the checked remainder (or None): the two together say
-        what ``answer`` says. ``source``: "robot" (counted here, no photo sent) or "chatgpt"."""
+        what ``answer`` says. ``source``: "robot" (counted here) or "chatgpt"; ``sent``: whether the
+        photo went to ChatGPT. ``timing``: where the time went (labels and milliseconds only, also
+        logged; ``timing_text`` makes it one line)."""
         t0 = time.monotonic()
         asked_by = asked_by if isinstance(asked_by, str) and _ASKED_BY.fullmatch(asked_by) else "other"
         timing: dict[str, Any] = {}
-        extra: dict[str, Any] = {"source": None, "first": None, "rest": None}
+        extra: dict[str, Any] = {"source": None, "sent": False, "first": None, "rest": None, "timing": timing}
 
         def result(answer: str | None = None, error: str | None = None) -> dict[str, Any]:
             return {"ok": error is None, "answer": answer if error is None else None, "error": error,
                     "detail": ERRORS.get(error) if error else None, "latency_ms": int((time.monotonic() - t0) * 1000),
                     **extra}
+
+        def robot(answer: str) -> dict[str, Any]:
+            extra.update(source="robot", first=answer)
+            log.info("camera look: fingers counted on the robot, %s (asked_by=%s)",
+                     "ChatGPT's answer was not needed" if extra["sent"] else "no photo sent", asked_by)
+            if on_first is not None:
+                _call(on_first, answer)
+            return result(answer=answer)
 
         reason = self.blocked_reason()
         if reason:
@@ -281,57 +331,75 @@ class CameraLook:
         if self._busy:
             return result(error="busy")
         self._busy = True
+        counting: asyncio.Task[str | None] | None = None
+        asking: asyncio.Task[Any] | None = None
         try:
             text = sanitize_user_text(question or "", max_chars=300).strip() or DEFAULT_QUESTION
+            fingers = bool(COUNT_FINGERS.search(text) and not NOT_FINGERS.search(text))
+            detailed = bool(NEEDS_DETAIL.search(text))
+            detail = self.detail if self.detail in ("low", "high") else "high" if detailed else "low"
             warm = self._warm_photo(WARM_MAX_AGE_HANDS_S if ABOUT_HANDS.search(text) else WARM_MAX_AGE_S)
             photo = warm[0] if warm else None
-            timing["photo"] = f"warm(age={int(warm[1] * 1000)}ms)" if warm else "new"
+            timing["photo"] = "warm" if warm else "new"
+            if warm:
+                timing["photo_age_ms"] = int(warm[1] * 1000)
+            # the counter and "high" detail use the whole frame; "low" detail only looks at 512 px
+            width = PHOTO_MAX_WIDTH if warm or fingers or detail == "high" else LOW_DETAIL_WIDTH
             if photo is None:
                 try:
-                    photo = await self.ctx.vision.capture_photo(
-                        max_width=PHOTO_MAX_WIDTH, quality=PHOTO_QUALITY, timeout=PHOTO_TIMEOUT_S)
+                    photo = await self.ctx.vision.capture_photo(max_width=width, quality=PHOTO_QUALITY,
+                                                                timeout=PHOTO_TIMEOUT_S)
                 except Exception as e:  # noqa: BLE001 - PhotoUnavailable(reason) or a broken camera
                     code = getattr(e, "reason", None)
                     code = code if code in ("camera_off", "no_camera") else "photo_failed"
                     log.warning("camera look: no photo (%s)", getattr(e, "reason", type(e).__name__))
+                    timing["photo"] = f"failed:{code}"
                     return result(error=code)
             if not photo:
                 return result(error="photo_failed")
             timing["photo_ms"] = _ms(t0)
             self._count_photo()
             self._show(asked_by)
-            if COUNT_FINGERS.search(text) and not NOT_FINGERS.search(text):
-                answer = await self._count_fingers(photo, timing)
-                if answer is not None:
-                    extra["source"] = "robot"
-                    photo = None  # dropped: it never left the robot
-                    log.info("camera look: fingers counted on the robot, no photo sent (asked_by=%s)", asked_by)
-                    self._log_timing(t0, timing)
-                    if on_first is not None:
-                        _call(on_first, answer)
-                    extra["first"] = answer
-                    return result(answer=answer)
+            if fingers:
+                counting = asyncio.ensure_future(self._count_fingers(photo, timing))
+                await asyncio.wait({counting}, timeout=COUNT_HEAD_START_S)  # the robot's head start
+                if counting.done():
+                    answer, counting = counting.result(), None
+                    if answer is not None:
+                        return robot(answer)
             extra["source"] = "chatgpt"
-            detailed = bool(NEEDS_DETAIL.search(text))
-            stream = _FirstSentence(on_first, t0, timing)
-            kwargs = self._request_options(detail="high" if detailed else "low",
-                                           effort=self.count_effort if detailed else self.effort,
-                                           on_delta=stream.feed)
-            timing.update(detail=kwargs.get("detail", "default"), effort=kwargs.get("effort", "default"))
+            told: list[str] = []  # who handed over the first sentence while racing: only one of them ever does
+
+            def first_sentence(sentence: str) -> None:
+                if not told:
+                    told.append("chatgpt")
+                    on_first(sentence)  # type: ignore[misc]  # (only used when on_first is set)
+
+            stream = _FirstSentence(first_sentence if counting is not None and on_first is not None else on_first,
+                                    t0, timing)
+            asking = asyncio.ensure_future(self._ask(photo, width, text, detail, detailed, stream, timing, asked_by))
+            extra["sent"], photo = True, None  # the request holds the image now, and drops it when done
+            if counting is not None:  # the robot is still counting: the first sure answer wins
+                await asyncio.wait({counting, asking}, return_when=asyncio.FIRST_COMPLETED)
+                if counting.done() and not asking.done() and not told and counting.result() is not None:
+                    told.append("robot")
+                    asking.cancel()
+                    await asyncio.gather(asking, return_exceptions=True)
+                    timing["chatgpt"] = "cancelled"
+                    if self._warm_owners:  # cancelling it closed the connection: open the next look's now
+                        self._run_background(self._open_connection())
+                    return robot(counting.result())
             try:
-                log.info("photo sent to ChatGPT (asked_by=%s)", asked_by)
-                t_req = stream.t0 = time.monotonic()  # first_token_ms / first_sentence_ms count from here too
-                reply = await self.provider.reply([{"role": "user", "content": QUESTION.format(question=text)}],
-                                                  system=self._system_prompt(), max_tokens=200,
-                                                  timeout=REPLY_TIMEOUT_S, images=[photo], **kwargs)
-                timing["chatgpt_ms"] = _ms(t_req)
+                reply = await asking
             except (ProviderError, asyncio.TimeoutError, TimeoutError) as e:
                 code = _error_code(e)
                 log.warning("camera look: ChatGPT failed (%s)%s", code, _why(e))
+                timing["chatgpt"] = f"failed:{code}"
+                if counting is not None and not told:  # the robot may still be sure
+                    answer = await counting
+                    if answer is not None:
+                        return robot(answer)
                 return result(error=code)
-            finally:
-                photo = None  # drop the image right away (nothing else holds it)
-                self._last_request = time.monotonic()
             answer = _checked(reply.text or "", MAX_WORDS)
             if answer is None:  # say why in the log (rule names only, never the words)
                 checked = validate_reply(_untagged(reply.text or ""), max_words=MAX_WORDS)
@@ -341,10 +409,39 @@ class CameraLook:
                 extra["first"] = stream.sent
                 extra["rest"] = _checked(stream.rest(reply.text or ""), MAX_WORDS - len(stream.sent.split())) \
                     if answer != FALLBACK else None
-            self._log_timing(t0, timing)
             return result(answer=answer)
         finally:
             self._busy = False
+            if asking is not None and not asking.done():
+                asking.cancel()  # this look was cancelled itself: no request outlives it
+            if timing:
+                self._log_timing(t0, timing)
+
+    async def _ask(self, photo: bytes, width: int, text: str, detail: str, detailed: bool, stream: "_FirstSentence",
+                   timing: dict[str, Any], asked_by: str) -> Any:
+        """The ChatGPT request for one look (a ``width`` px photo, made smaller first when ChatGPT only looks
+        at 512 px)."""
+        kwargs = self._request_options(detail=detail, effort=self.count_effort if detailed else self.effort,
+                                       on_delta=stream.feed)
+        if kwargs.get("detail") == "low" and width > LOW_DETAIL_WIDTH:
+            from littlebot.vision.imaging import shrink_jpeg  # noqa: PLC0415
+
+            photo = await asyncio.to_thread(shrink_jpeg, photo, LOW_DETAIL_WIDTH, PHOTO_QUALITY)
+        timing.update(model=getattr(self.provider, "model", None) or "default", detail=kwargs.get("detail", "default"),
+                      effort=kwargs.get("effort", "default"), photo_kb=round(len(photo) / 1024))
+        log.info("photo sent to ChatGPT (asked_by=%s)", asked_by)
+        t_req = stream.t0 = time.monotonic()  # first_token_ms / first_sentence_ms count from here too
+        try:
+            reply = await self.provider.reply([{"role": "user", "content": QUESTION.format(question=text)}],
+                                              system=self._system_prompt(), max_tokens=200,
+                                              timeout=REPLY_TIMEOUT_S, images=[photo], **kwargs)
+        finally:
+            photo = b""  # drop the image right away (nothing else holds it)
+            timing["chatgpt_ms"] = _ms(t_req)
+            self._last_request = time.monotonic()
+        if getattr(reply, "model", None):
+            timing["model"] = reply.model  # the one that answered
+        return reply
 
     async def _count_fingers(self, photo: bytes, timing: dict[str, Any]) -> str | None:
         """The robot's own answer to "how many fingers?", or None (no counter, or it isn't sure)."""
@@ -352,19 +449,22 @@ class CameraLook:
         try:
             counter = self._counter if self._counter is not None else await asyncio.to_thread(self._finger_counter)
             if counter is None:
+                timing["count"] = "no_models"
                 return None
             count = await asyncio.to_thread(counter.count_jpeg, photo)
         except Exception:  # noqa: BLE001 - the counter is optional: ChatGPT answers instead
             log.warning("camera look: finger counter failed", exc_info=True)
+            timing["count"] = "failed"
             return None
         finally:
             timing["count_ms"] = _ms(t)
-        timing["count"] = "sure" if count.sure else f"unsure:{count.why}"
         if not count.sure or count.fingers <= 0:
+            timing["count"] = f"unsure:{count.why}"
             return None
         from littlebot.vision.hands import number_word  # noqa: PLC0415
 
         n = int(count.fingers)
+        timing["count"] = f"sure:{n}"
         return f"I see {number_word(n)} finger{'' if n == 1 else 's'} held up!"
 
     def _warm_photo(self, max_age: float) -> tuple[bytes, float] | None:
@@ -388,8 +488,7 @@ class CameraLook:
 
     def _log_timing(self, t0: float, timing: dict[str, Any]) -> None:
         """One line per look: where the time went (labels and milliseconds only, never content)."""
-        log.info("camera look timing: total %d ms | %s", _ms(t0),
-                 " ".join(f"{k}={v}" for k, v in timing.items()))
+        log.info("camera look timing: total %d ms | %s", _ms(t0), timing_text(timing))
 
     # ------------------------------------------------------------ helpers
     def _system_prompt(self) -> str:
@@ -478,6 +577,15 @@ def _ms(since: float) -> int:
     return int((time.monotonic() - since) * 1000)
 
 
+def timing_text(timing: dict[str, Any]) -> str:
+    """A look's ``timing`` as ``key=value`` pairs, in the order the steps happened. ``photo``: warm (with
+    ``photo_age_ms``) or new; ``photo_ms``: until the photo was ready; ``count`` / ``count_ms``: the robot's
+    finger count; ``model`` / ``detail`` / ``effort`` / ``photo_kb``: the ChatGPT request; ``first_token_ms`` /
+    ``first_sentence_ms`` / ``chatgpt_ms``: counted from that request's start; ``chatgpt``: cancelled or
+    failed:<code> when it gave no answer."""
+    return " ".join(f"{k}={v}" for k, v in timing.items())
+
+
 def _error_code(e: BaseException) -> str:
     if isinstance(e, (ProviderTimeoutError, asyncio.TimeoutError, TimeoutError)):
         return "timeout"
@@ -515,4 +623,4 @@ def get_look(ctx: Any) -> CameraLook:
     return look
 
 
-__all__ = ["ERRORS", "CameraLook", "get_look"]
+__all__ = ["ERRORS", "CameraLook", "get_look", "timing_text"]
