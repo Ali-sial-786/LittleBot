@@ -517,7 +517,9 @@ class SoundBank:
             mine = self.user_dir / "voice" if self.user_dir is not None else None
             if mine is not None and mine.is_dir():
                 found = [str(p) for p in sorted(mine.glob(f"{name}_*.wav"))]
-            if not found:
+            if found:
+                log.info("sound '%s': using your %d recording(s) in %s", name, len(found), mine)
+            else:
                 folder = self.sounds_dir / "voice"
                 found = [f"voice/{p.name}" for p in sorted(folder.glob(f"{name}_*.wav"))] if folder.is_dir() else []
             self._variants[name] = found
