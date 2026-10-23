@@ -7,6 +7,9 @@ LittleBot can use **your own ChatGPT plan** instead of a paid API key, in two wa
 * **Live voice (GPT-Live):** a real-time spoken conversation with ChatGPT's voice through
   LittleBot's microphone and speaker. **A grown-up starts it from the dashboard and stays
   for the whole call.**
+* **Letting the AI see (camera), optional and off by default:** ask "how many fingers am I
+  holding up?" and LittleBot takes **one photo** and sends it with the question to ChatGPT
+  ([section 4](#4-letting-the-ai-see-camera)).
 
 > **Unofficial and untested against OpenAI.** This uses OpenAI's public Codex sign-in (the one
 > the Codex CLI uses) and **undocumented** Codex endpoints on chatgpt.com, the same approach as the
@@ -40,7 +43,7 @@ If OpenAI says code sign-in is off, open ChatGPT → **Settings** → **Security
 **device code login**, and press **Sign in with ChatGPT** again.
 
 Which ChatGPT plans and countries can use this is up to OpenAI. If yours is not included you
-will see "not available for this account" (see [Troubleshooting](#5-troubleshooting)).
+will see "not available for this account" (see [Troubleshooting](#6-troubleshooting)).
 
 **Where the sign-in is kept.** The tokens stay on the robot in `data/chatgpt_auth.json`, which
 only LittleBot's user account can read (mode 0600). They are never shown in the dashboard, never
@@ -86,8 +89,15 @@ peekaboo or says a few lines of a nursery rhyme, and it helps the grown-up play.
 2. **AI** → **Live voice (GPT-Live)**: tick **I am with my child and will stay for the whole
    conversation**.
 3. Press **Start live voice**. The card shows "Connecting…", then **Listening**. Just talk.
-   It also shows **Talking**, **Looking something up…**, the time left and live captions
-   ("Heard:" / "LittleBot:").
+   It also shows **Talking**, **Looking something up…**, the time left, the voice in use, the
+   photos taken this call and live captions ("Heard:" / "LittleBot:", plus grey notes such as
+   "LittleBot took a photo to answer").
+
+**Asking what LittleBot sees.** If you turned on **Let the AI look through the camera when
+asked** in Privacy, you can ask during the call "how many fingers am I holding up?" or "what
+colour is my cup?": LittleBot takes **one photo**, ChatGPT answers, and the voice says the answer.
+With the switch off, no photo is taken and the voice says it can't see right now. See
+[section 4](#4-letting-the-ai-see-camera).
 
 The provider choice, the "Use cloud AI" switch and your child's age don't matter here. You
 start every call yourself, and you are there for all of it.
@@ -151,6 +161,8 @@ why live voice only runs while you are there.
   old"), and the day and time. It does not send the nickname or interests.
 * Look-ups send the question, with personal info removed, plus the last few caption lines to the
   ChatGPT text model.
+* **Photos** are sent only if you turned on **Let the AI look through the camera when asked**,
+  and only one photo each time someone asks what LittleBot sees (section 4).
 * **Nothing is recorded on LittleBot:** no audio and no transcripts. The captions on the dashboard
   (the last 8 lines) exist only in memory during the call and are cleared when it ends. Logs hold
   only timings, end reasons and categories.
@@ -170,14 +182,73 @@ to download, nothing to compile). `scripts/install_pi.sh` installs it by default
 skips it). Without it, the card says **Not installed on this robot yet**, and everything else,
 including ChatGPT text answers, still works.
 
-## 4. Settings you may want to change
+## 4. Letting the AI see (camera)
+
+ChatGPT can look through LittleBot's camera to answer a question about what is in front of it:
+"how many fingers am I holding up?", "what colour is this ball?", "what animal is on my
+shirt?". It is **off by default**.
+
+### Turn it on
+
+1. Sign in with ChatGPT (section 1).
+2. In **Privacy**, turn on **Camera**, **Cloud communication** and **Let the AI look through the
+   camera when asked**. That last switch is off by default and can't be turned on in offline
+   mode.
+
+### Ask
+
+* **From the dashboard:** **AI** → **Ask what LittleBot sees**. Type a question (or leave it
+  empty for "What do you see?"), press **Look and answer**, and the answer appears below the
+  button. Tick **Say the answer out loud** to have LittleBot say it too. The card also shows
+  **Photos sent today** and, while it can't look, why (for example "turn it on in Privacy").
+* **During live voice:** just ask out loud. When the voice hands LittleBot a question about what
+  it sees, LittleBot takes one photo for it, and the captions show the grey note "LittleBot took a
+  photo to answer (sent to ChatGPT, not kept)". The live card counts **Photos this call**.
+
+### What happens
+
+* LittleBot grabs **one still frame** from the camera at the moment of the question (a small
+  JPEG, at most 768 pixels wide) and sends it with the question to the ChatGPT text model on your
+  plan. **Nothing is filmed or streamed**, and no photo is ever taken on a timer or in the
+  background. LittleBot's face does a little "peek" when it takes the photo, so everyone can see
+  it happened.
+* The answer comes back as text (at most 40 words) and is checked with LittleBot's safety rules
+  before it is shown or spoken. If it fails the check, LittleBot says "I'm not sure what I see.
+  Let's ask a grown-up." instead. Only one photo is taken at a time.
+* The photo exists **only in memory** while the question is being answered. It is **never saved**
+  on LittleBot, never put in logs, and never sent to the dashboard: your browser only ever gets
+  the answer text and a count of photos sent today.
+
+### Privacy
+
+* **OpenAI receives the photo.** Whatever is in front of the camera goes with it: your child,
+  you, other people and the room. What OpenAI keeps is governed by OpenAI's terms and your
+  ChatGPT account settings, not by LittleBot.
+* A photo is taken **only when someone asks**, **only if you turned the switch on**, and only
+  while the **Camera** and **Cloud communication** switches are on (and not in offline mode).
+  Turning any of them off stops further photos at once.
+* The everyday typed / push-to-talk conversation doesn't take photos. Only the **Look and
+  answer** button and live voice do.
+
+### Limits
+
+* Like everything here it uses undocumented endpoints and your plan's limits, and it is **not
+  yet tested against OpenAI's real service or with the Pi's real camera** (only with mocked
+  responses and a simulated camera). How well it counts fingers or reads small things depends on
+  the light, the distance and the model.
+* In live voice it depends on the voice handing the question to LittleBot. If it answers on its
+  own instead, it has not seen anything (it is told never to pretend), so ask again: "look and
+  tell me how many fingers I'm holding up".
+
+## 5. Settings you may want to change
 
 In `config/local.yaml` (or with `LITTLEBOT__CHATGPT__<KEY>=value` environment variables).
 Restart LittleBot afterwards.
 
 ```yaml
 chatgpt:
-  live_voice: cove                # cove | arbor | breeze | ember | juniper | maple | sol | spruce | vale
+  live_voice: bubbie              # asked for first; any name is passed to OpenAI as is
+  live_voice_fallbacks: [sol]     # tried in order if OpenAI refuses the voice (HTTP 400/422)
   live_session_minutes: 10        # hard limit per call
   live_idle_hangup_seconds: 90    # hang up after this long with nobody talking (0 = never)
   live_echo_tail_ms: 450          # microphone stays shut this long after LittleBot's voice stops
@@ -186,7 +257,9 @@ chatgpt:
 
 All keys and defaults are listed in the [technical section](#configuration).
 
-## 5. Troubleshooting
+<a id="5-troubleshooting"></a>
+
+## 6. Troubleshooting
 
 | What you see | What it means | What to do |
 |---|---|---|
@@ -197,6 +270,7 @@ All keys and defaults are listed in the [technical section](#configuration).
 | Live: "Live voice is not available for this ChatGPT account or region…"; text: Test shows `forbidden` (HTTP 403) | OpenAI doesn't offer this endpoint to your account, plan or country. Having a subscription doesn't guarantee access | Nothing LittleBot can fix. Use scripted replies or an API key provider |
 | Live: "ChatGPT voice usage limit reached…"; text: Test shows `usage_limit` (HTTP 429) | Your plan's allowance is used up | Wait until it resets. LittleBot uses scripted replies meanwhile. `plan_not_included` means your plan doesn't include it at all |
 | Live: "The undocumented ChatGPT voice endpoint is unavailable or changed."; text: Test shows `endpoint_changed` (HTTP 404) | OpenAI changed or removed the undocumented endpoint | Update LittleBot (`git pull`, then `scripts/install_pi.sh --yes`). If no fix exists yet, it has stopped working |
+| **Ask what LittleBot sees** says "Can't look right now" | A switch is off, you're not signed in, or there is no camera. The card says which | Turn on **Camera**, **Cloud communication** and **Let the AI look through the camera when asked** in **Privacy**, and sign in (section 4) |
 | Test shows `model_unavailable` | None of the models in `chatgpt.models` is offered to your account | Put a model your plan offers in `chatgpt.models` |
 | **Not installed on this robot yet** (Live voice card) | The `live` extra (aiortc) is missing | On the robot: `cd ~/LittleBot && .venv/bin/python -m pip install --prefer-binary -e '.[live]'` (or re-run `scripts/install_pi.sh --yes`), then restart LittleBot: `systemctl --user restart littlebot` |
 | "Could not reach OpenAI…" / "Could not connect to ChatGPT live voice…" / "The connection to ChatGPT was lost." | Internet problem (or OpenAI is down) | Check the robot's Wi-Fi. A network that blocks outgoing UDP can stop the call's audio |
@@ -213,7 +287,7 @@ contains what was said.
 
 ---
 
-## 6. Technical details
+## 7. Technical details
 
 ### How it works
 
@@ -287,7 +361,8 @@ plan, the one-time code and the live status, never tokens.
 | `models` | `[gpt-6-luna, gpt-6-sol, gpt-5.6-luna]` | text model for replies and look-ups: the first one that works |
 | `reasoning_effort` | `low` | `minimal` / `low` / `medium` / `high` |
 | `live_model` | `gpt-live-1-codex` | the voice model |
-| `live_voice` | `cove` | `cove`, `arbor`, `breeze`, `ember`, `juniper`, `maple`, `sol`, `spruce`, `vale` (anything else → `cove`) |
+| `live_voice` | `bubbie` | the voice asked for first. Any name is passed to OpenAI as is (no list is enforced). Known voices: `cove`, `arbor`, `breeze`, `ember`, `juniper`, `maple`, `sol`, `spruce`, `vale` |
+| `live_voice_fallbacks` | `[sol]` | if OpenAI refuses a voice (HTTP 400/422), the next one in this list is tried. The card shows the voice in use |
 | `live_session_minutes` | `10` | hard limit per call, counted from connection. Then a goodbye and hang-up |
 | `live_idle_hangup_seconds` | `90` | hang up after this long with nobody talking. `0` = never. Until the first words are heard, at least 30 s |
 | `live_connect_timeout_seconds` | `20` | waiting for OpenAI's SDP answer |
@@ -305,7 +380,8 @@ plan, the one-time code and the live status, never tokens.
 | `littlebot/chatgpt/wire.py` | GPT-Live data-channel events |
 | `littlebot/chatgpt/live.py` | `LiveVoiceService` (`ctx.live`): gates, safety checks, limits, delegations, clean-up |
 | `littlebot/chatgpt/live_audio.py` | microphone / speaker bridge with the half-duplex gate |
-| `littlebot/dashboard/routes/chatgpt_routes.py`, `static/js/pages/ai.js` | the "ChatGPT account" and "Live voice (GPT-Live)" cards |
+| `littlebot/chatgpt/look.py` | `CameraLook`: one photo + question to ChatGPT, with the privacy gates (section 4) |
+| `littlebot/dashboard/routes/chatgpt_routes.py`, `static/js/pages/ai.js` | the "ChatGPT account", "Live voice (GPT-Live)" and "Ask what LittleBot sees" cards (`POST /api/chatgpt/look` returns the answer text only, never the photo) |
 | `data/chatgpt_auth.json` | the sign-in (secret; not in the backups listed in PI_SETUP.md: just sign in again) |
 
 ### Testing status
@@ -322,5 +398,8 @@ plan, the one-time code and the live status, never tokens.
   tested separately (`test_live_audio.py`) against a fake PortAudio: device and rate choice,
   resampling to 48 kHz, the half-duplex gate and echo tail, mute on a safety cut, and the
   playback backlog cap.
-* **Not yet tested:** OpenAI's real service (sign-in, text or live voice), the Pi's real
-  microphone and speaker, echo in a real room, latency, and real plan limits.
+* **Letting the AI see:** the dashboard route and card are tested with a stand-in for the camera
+  look (answer text only reaches the browser, blocked → a plain reason, "say it out loud", the
+  Privacy switch off by default) and in a phone-sized browser.
+* **Not yet tested:** OpenAI's real service (sign-in, text, live voice or photos), the Pi's real
+  microphone, speaker and camera, echo in a real room, latency, and real plan limits.

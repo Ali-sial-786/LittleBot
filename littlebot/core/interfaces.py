@@ -150,6 +150,11 @@ class VisionAPI(Protocol):
 
     def simulate_no_face(self) -> None: ...
 
+    async def capture_photo(self, *, max_width: int = 768, quality: int = 80, timeout: float = 3.0) -> bytes:
+        """One JPEG of the NEXT camera frame (downscaled to ``max_width``), kept in memory only and
+        never stored. Raises ``littlebot.vision.service.PhotoUnavailable(reason)`` with reason
+        camera_off | no_camera | timeout | unavailable. Callers check their own consent switches."""
+
     def status(self) -> dict[str, Any]:
         """{camera: ok|disconnected|disabled|unavailable, detail, backend, detector, detector_detail,
         device, resolution ("640x480"), fourcc, fps, detect_fps, detect_ms, faces, person_present,

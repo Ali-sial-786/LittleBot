@@ -272,6 +272,8 @@ class PrivacyBody(Body):
     microphone_enabled: bool | None = None
     cloud_enabled: bool | None = None
     record_history: bool | None = None
+    # Lets the AI take one photo when someone asks it about what LittleBot sees (off by default).
+    ai_camera_enabled: bool | None = None
 
 
 # ----------------------------------------------------------------- audio
@@ -368,3 +370,14 @@ class PowerBody(Body):
 class LiveStartBody(Body):
     # The parent confirms they are with the child for the whole conversation.
     parent_present: bool = False
+
+
+class LookBody(Body):
+    # "How many fingers am I holding up?" - one photo is taken and sent with this question.
+    question: str | None = Field(default=None, max_length=300)
+    speak: bool = False
+
+    @field_validator("question")
+    @classmethod
+    def _clean(cls, v: str | None) -> str | None:
+        return None if v is None else (clean_text(v, max_len=300, field="question") or None)

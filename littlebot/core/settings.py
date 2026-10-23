@@ -33,6 +33,9 @@ def build_defaults(cfg: LittleBotConfig) -> dict[str, Any]:
         "privacy.microphone_enabled": cfg.privacy.microphone_enabled,
         "privacy.cloud_enabled": cfg.privacy.cloud_enabled and not cfg.is_offline,
         "privacy.record_history": cfg.activities.record_history,
+        # Let ChatGPT see one still photo when someone asks a question that needs it. Off until a
+        # parent opts in; also needs the camera and cloud switches (never in offline mode).
+        "privacy.ai_camera_enabled": False,
         # audio
         "audio.volume": cfg.audio.speaker.volume,
         "audio.tts_rate": cfg.audio.tts.rate,

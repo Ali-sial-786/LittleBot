@@ -221,7 +221,10 @@ class ChatGPTConfig(_Section):
     reasoning_effort: Literal["minimal", "low", "medium", "high"] = "low"
     # --- live voice (GPT-Live speech-to-speech over WebRTC; needs the "live" extra: aiortc) ---
     live_model: str = "gpt-live-1-codex"
-    live_voice: str = "cove"  # cove | arbor | breeze | ember | juniper | maple | sol | spruce | vale
+    # The voice to ask for first; if OpenAI refuses it, each of live_voice_fallbacks in turn.
+    # Known GPT-Live voices: cove | arbor | breeze | ember | juniper | maple | sol | spruce | vale.
+    live_voice: str = "bubbie"
+    live_voice_fallbacks: list[str] = Field(default_factory=lambda: ["sol"])
     live_session_minutes: float = 10.0  # hard limit per conversation
     live_idle_hangup_seconds: float = 90.0  # hang up after this long with nobody talking
     live_connect_timeout_seconds: float = 20.0

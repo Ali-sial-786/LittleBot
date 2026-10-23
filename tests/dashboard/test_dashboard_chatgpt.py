@@ -118,3 +118,121 @@ async def test_live_safety_stop_becomes_a_parent_alert(authed, signed, dctx):
     dctx.bus.publish(Topics.BRAIN_STATUS, {"provider": "live", "status": "live_safety_stop", "detail": "secrecy"})
     alerts = (await authed.get("/api/status")).json()["alerts"]
     assert any(a["title"] == "Live voice stopped" and "secrecy" in a["detail"] for a in alerts)
+
+
+# ------------------------------------------------------------ ask what LittleBot sees (camera look)
+class FakeLook:
+    """Stands in for littlebot.chatgpt.look.CameraLook (injected as ctx.extras["camera_look"])."""
+
+    def __init__(self, result: dict[str, Any] | None = None, blocked: str | None = None) -> None:
+        self.result = result or {"ok": True, "answer": "You are holding up three fingers.", "error": None,
+                                 "detail": None, "latency_ms": 1234.0,
+                                 "image_b64": "SECRET-PHOTO-BYTES"}  # must never reach the browser
+        self.blocked = blocked
+        self.asked: list[tuple[str, str]] = []
+        self.photos_today = 0
+
+    def blocked_reason(self) -> str | None:
+        return self.blocked
+
+    def status(self) -> dict[str, Any]:
+        return {"enabled": self.blocked is None, "blocked": self.blocked,
+                "blocked_detail": "Turn it on in Privacy." if self.blocked else None,
+                "photos_today": self.photos_today, "last_at": None}
+
+    async def look(self, question: str, *, asked_by: str = "parent") -> dict[str, Any]:
+        self.asked.append((question, asked_by))
+        if self.blocked:
+            return {"ok": False, "answer": None, "error": self.blocked,
+                    "detail": "Let the AI look through the camera in Privacy first.", "latency_ms": None}
+        self.photos_today += 1
+        return dict(self.result)
+
+
+@pytest.fixture
+def fake_look(dctx):
+    look = FakeLook()
+    dctx.extras["camera_look"] = look
+    return look
+
+
+async def test_look_returns_only_the_answer_text(authed, signed, fake_look):
+    r = await authed.post("/api/chatgpt/look", json={"question": "How many fingers am I holding up?"})
+    assert r.status_code == 200, r.text
+    d = r.json()
+    assert d["ok"] is True and d["result"]["ok"] is True
+    assert d["result"]["answer"] == "You are holding up three fingers."
+    assert d["spoken"] is False and d["look"]["photos_today"] == 1
+    assert "SECRET-PHOTO-BYTES" not in r.text and "image" not in r.text
+    assert fake_look.asked == [("How many fingers am I holding up?", "parent")]
+
+
+async def test_look_without_a_question_leaves_the_default_to_camera_look(authed, signed, fake_look):
+    r = await authed.post("/api/chatgpt/look", json={"question": "   "})
+    assert r.status_code == 200
+    assert fake_look.asked == [("", "parent")]
+
+
+async def test_look_question_is_limited(authed, signed, fake_look):
+    r = await authed.post("/api/chatgpt/look", json={"question": "x" * 301})
+    assert r.status_code == 422 and fake_look.asked == []
+
+
+async def test_look_speaks_the_answer_only_when_asked(authed, signed, fake_look, dctx):
+    await authed.post("/api/chatgpt/look", json={"question": "What colour is my cup?"})
+    assert "You are holding up three fingers." not in dctx.audio.spoken
+    r = await authed.post("/api/chatgpt/look", json={"question": "What colour is my cup?", "speak": True})
+    assert r.status_code == 200
+    assert dctx.audio.spoken[-1] == "You are holding up three fingers."
+
+
+async def test_look_blocked_is_403_with_a_friendly_reason(authed, signed, dctx):
+    look = FakeLook(blocked="ai_camera_off")
+    dctx.extras["camera_look"] = look
+    r = await authed.post("/api/chatgpt/look", json={"question": "Hi", "speak": True})
+    assert r.status_code == 403 and "Privacy" in r.json()["detail"]
+    assert dctx.audio.spoken == []
+    assert look.photos_today == 0
+
+
+async def test_look_failure_is_502(authed, signed, dctx):
+    dctx.extras["camera_look"] = FakeLook(result={"ok": False, "answer": None, "error": "request_failed",
+                                                  "detail": "ChatGPT didn't answer. Try again.", "latency_ms": 900.0})
+    r = await authed.post("/api/chatgpt/look", json={"question": "Hi"})
+    assert r.status_code == 502 and r.json()["detail"] == "ChatGPT didn't answer. Try again."
+
+
+async def test_chatgpt_view_includes_look_status(authed, signed, fake_look):
+    fake_look.blocked = "camera_off"
+    d = (await authed.get("/api/chatgpt")).json()
+    assert d["look"]["blocked"] == "camera_off" and d["look"]["photos_today"] == 0
+    assert d["privacy"]["ai_camera_enabled"] is False
+
+
+async def test_look_needs_login(client, signed, fake_look):
+    r = await client.post("/api/chatgpt/look", json={"question": "Hi"})
+    assert r.status_code == 401 and fake_look.asked == []
+
+
+async def test_privacy_switch_for_the_ai_camera(authed, dctx):
+    if not hasattr(dctx.privacy, "ai_camera_enabled"):
+        pytest.skip("privacy.ai_camera_enabled is not in this build yet")
+    d = (await authed.get("/api/privacy")).json()
+    assert d["ai_camera_enabled"] is False  # off by default
+    r = await authed.put("/api/privacy", json={"ai_camera_enabled": True})
+    assert r.status_code == 200 and r.json()["ai_camera_enabled"] is True
+    assert dctx.privacy.ai_camera_enabled is True
+    r = await authed.put("/api/privacy", json={"ai_camera_enabled": False})
+    assert r.json()["ai_camera_enabled"] is False and dctx.privacy.ai_camera_enabled is False
+
+
+async def test_real_camera_look_stays_off_until_the_parent_allows_it(authed, signed, dctx):
+    pytest.importorskip("littlebot.chatgpt.look")
+    d = (await authed.get("/api/chatgpt")).json()
+    assert d["look"]["enabled"] is False and d["look"]["blocked"] == "cloud_off" and d["look"]["photos_today"] == 0
+    dctx.privacy.set(cloud_enabled=True, camera_enabled=True)
+    d = (await authed.get("/api/chatgpt")).json()
+    assert d["look"]["blocked"] == "ai_camera_off" and "Privacy" in d["look"]["blocked_detail"]
+    r = await authed.post("/api/chatgpt/look", json={"question": "How many fingers am I holding up?"})
+    assert r.status_code == 403 and "Privacy" in r.json()["detail"]
+    assert (await authed.get("/api/chatgpt")).json()["look"]["photos_today"] == 0

@@ -16,6 +16,7 @@ UNDOCUMENTED endpoint; tested here only against mocked responses.
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import re
 import time
@@ -70,12 +71,20 @@ class ChatGPTProvider(BaseProvider):
             await self._client.aclose()
         self._client = None
 
-    def build_body(self, messages: list[Message], *, system: str, model: str) -> dict[str, Any]:
-        items = []
+    def build_body(self, messages: list[Message], *, system: str, model: str,
+                   images: list[bytes] | None = None) -> dict[str, Any]:
+        items: list[dict[str, Any]] = []
         for m in messages:
             user = m.get("role") == "user"
             items.append({"type": "message", "role": "user" if user else "assistant",
                           "content": [{"type": "input_text" if user else "output_text", "text": str(m.get("content", ""))}]})
+        parts = [_image_part(img) for img in images or () if img]
+        if parts:
+            last_user = next((it for it in reversed(items) if it["role"] == "user"), None)
+            if last_user is None:
+                last_user = {"type": "message", "role": "user", "content": []}
+                items.append(last_user)
+            last_user["content"].extend(parts)
         return {
             "model": model,
             "instructions": system.strip() or "You are a friendly toy robot.",
@@ -88,7 +97,9 @@ class ChatGPTProvider(BaseProvider):
             "prompt_cache_key": self._session_id,
         }
 
-    async def reply(self, messages: list[Message], *, system: str, max_tokens: int, timeout: float) -> ProviderReply:
+    async def reply(self, messages: list[Message], *, system: str, max_tokens: int, timeout: float,
+                    images: list[bytes] | None = None) -> ProviderReply:
+        """``images``: JPEG bytes added to the LAST user message (sent once, never kept here)."""
         t0 = time.monotonic()
         try:
             bearer = await self.auth.bearer()
@@ -99,7 +110,8 @@ class ChatGPTProvider(BaseProvider):
             model = self.model
             try:
                 text, usage, stop = await asyncio.wait_for(
-                    self._stream(bearer, self.build_body(messages, system=system, model=model)), timeout)
+                    self._stream(bearer, self.build_body(messages, system=system, model=model, images=images)),
+                    timeout)
             except asyncio.TimeoutError:
                 raise ProviderTimeoutError(f"chatgpt: no answer within {timeout:.0f}s") from None
             except _Unauthorized:
@@ -155,6 +167,17 @@ class ChatGPTProvider(BaseProvider):
         if not out and stop == "end_turn" and not usage:
             raise ProviderError("chatgpt: the stream ended without an answer", kind="malformed")
         return "".join(out), usage, stop
+
+
+def _image_part(jpeg: bytes) -> dict[str, Any]:
+    """A Responses API ``input_image`` content part with the JPEG inlined as a data URL.
+
+    Same shape the Codex CLI sends for attached images: codex-rs/protocol/src/models.rs
+    ``ContentItem::InputImage { image_url }`` (serde tag "type", snake_case) with
+    ``image_url = "data:{mime};base64,{data}"``; see also the OpenAI Responses API docs
+    (input item content type ``input_image``). No ``detail`` field: the server default applies.
+    """
+    return {"type": "input_image", "image_url": "data:image/jpeg;base64," + base64.b64encode(jpeg).decode("ascii")}
 
 
 class _Unauthorized(Exception):

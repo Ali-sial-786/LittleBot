@@ -5,20 +5,23 @@ import { banner, button, confirmDialog, h, icon, pageHead, switchRow } from '../
 
 export default {
   mount(view, app) {
-    const flag = (key, title, text) => switchRow({
+    const flag = (key, title, text, okText) => switchRow({
       title, text,
       onChange: async (v) => {
-        const r = await app.act(() => put('/privacy', { [key]: v }), `${title} ${v ? 'on' : 'off'}.`);
+        const r = await app.act(() => put('/privacy', { [key]: v }), okText ? okText(v) : `${title} ${v ? 'on' : 'off'}.`);
         if (r) fill(r);
         return r !== null;
       },
     });
     const camera = flag('camera_enabled', 'Camera',
-      'Lets LittleBot notice a face and look at your child. Pictures are analysed on the robot, in memory, and thrown away straight after - never saved, never sent.');
+      'Lets LittleBot notice a face and look at your child. Pictures are analysed on the robot, in memory, and thrown away straight after - never saved, and never sent (unless you let the AI look, below).');
     const mic = flag('microphone_enabled', 'Microphone',
       'Lets LittleBot hear simple words during games and conversations. Sound is never recorded or stored. LittleBot does not listen while it is talking.');
     const cloud = flag('cloud_enabled', 'Cloud communication',
       'Allows online services that receive information about your child - cloud AI conversation and cloud speech - to be used. Off by default: while it is off, nothing about your child leaves the robot. (YouTube videos are controlled separately on the Videos page; they only stream the videos you approved.)');
+    const aiCamera = flag('ai_camera_enabled', 'Let the AI look through the camera when asked',
+      'When someone asks ChatGPT about what LittleBot sees - for example “how many fingers am I holding up?”, during live voice or with the button on the AI page - LittleBot takes one photo and sends it with the question to ChatGPT. Only when asked, one photo at a time; it is never stored on the robot, but OpenAI receives it. Also needs Camera and Cloud communication on and a ChatGPT sign-in. Off by default.',
+      (v) => (v ? 'The AI may now look through the camera when asked.' : 'The AI can no longer look through the camera.'));
     const history = flag('record_history', 'Remember activity history',
       'Keeps a simple list of which activities were played (names and times only), stored on the robot.');
     const offlineNote = h('div');
@@ -30,10 +33,10 @@ export default {
           h('div', { class: 'hero-note' }, icon('shield'),
             h('div', {},
               h('h2', { text: 'LittleBot never stores audio or video' }),
-              h('p', { class: 'mt-1', text: 'Camera frames and microphone sound are processed on the robot and discarded immediately. Nothing is uploaded unless you turn on cloud communication, and camera images are never sent anywhere.' })))),
+              h('p', { class: 'mt-1', text: 'Camera frames and microphone sound are processed on the robot and discarded immediately. Nothing is uploaded unless you turn on cloud communication, and camera images are never sent anywhere - unless you also let the AI look through the camera, and then only one photo each time someone asks.' })))),
         offlineNote,
         h('div', { class: 'grid two' },
-          h('section', { class: 'card' }, h('div', { class: 'card-head' }, h('h2', {}, icon('eye'), 'Sensors & sharing')), camera.el, mic.el, cloud.el, history.el),
+          h('section', { class: 'card' }, h('div', { class: 'card-head' }, h('h2', {}, icon('eye'), 'Sensors & sharing')), camera.el, mic.el, cloud.el, aiCamera.el, history.el),
           h('div', { class: 'stack' },
             h('section', { class: 'card' },
               h('div', { class: 'card-head' }, h('h2', {}, icon('history'), 'Clear history')),
@@ -56,7 +59,9 @@ export default {
       mic.set(d.microphone_enabled);
       cloud.set(d.cloud_enabled);
       history.set(d.record_history);
+      aiCamera.set(!!d.ai_camera_enabled);
       cloud.setDisabled(!!d.offline_mode);
+      aiCamera.setDisabled(!!d.offline_mode && !d.ai_camera_enabled);
       offlineNote.replaceChildren(...(d.offline_mode ? [banner('info', 'info', 'Offline mode', 'LittleBot is running in offline mode: cloud communication is switched off and cannot be turned on.')] : []));
     }
 

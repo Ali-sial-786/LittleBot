@@ -125,3 +125,38 @@ async def test_403_is_not_treated_as_a_bad_sign_in(tmp_path):
     with pytest.raises(ProviderError) as e:
         await provider(tmp_path, forbidden).reply([{"role": "user", "content": "hi"}], system="x", max_tokens=10, timeout=5)
     assert e.value.kind == "forbidden" and not isinstance(e.value, AuthenticationError)
+
+
+async def test_images_become_input_image_parts_on_the_last_user_message(tmp_path):
+    import base64
+
+    seen = {}
+
+    def handler(r: httpx.Request) -> httpx.Response:
+        seen["body"] = json.loads(r.content)
+        return httpx.Response(200, text=OK)
+
+    p = provider(tmp_path, handler)
+    jpeg = b"\xff\xd8\xff\xe0fake-jpeg"
+    history = [{"role": "user", "content": "hi"}, {"role": "assistant", "content": "Hello!"},
+               {"role": "user", "content": "how many fingers am I holding?"}]
+    await p.reply(history, system="x", max_tokens=10, timeout=5, images=[jpeg])
+    items = seen["body"]["input"]
+    assert items[0]["content"] == [{"type": "input_text", "text": "hi"}]  # earlier turns: text only
+    assert items[1]["content"] == [{"type": "output_text", "text": "Hello!"}]
+    assert items[2]["content"] == [
+        {"type": "input_text", "text": "how many fingers am I holding?"},
+        {"type": "input_image", "image_url": "data:image/jpeg;base64," + base64.b64encode(jpeg).decode()},
+    ]
+    assert len(items) == 3 and history[2] == {"role": "user", "content": "how many fingers am I holding?"}
+
+
+async def test_no_images_keeps_the_body_unchanged(tmp_path):
+    p = provider(tmp_path, lambda r: httpx.Response(200, text=OK))
+    msgs = [{"role": "user", "content": "hi"}]
+    assert p.build_body(msgs, system="x", model="m") == p.build_body(msgs, system="x", model="m", images=[])
+    assert p.build_body(msgs, system="x", model="m", images=None)["input"] == [
+        {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "hi"}]}]
+    # images without any user message still go in a user message
+    body = p.build_body([{"role": "assistant", "content": "Hello!"}], system="x", model="m", images=[b"\xff\xd8"])
+    assert body["input"][-1]["role"] == "user" and body["input"][-1]["content"][0]["type"] == "input_image"

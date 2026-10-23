@@ -109,8 +109,9 @@ def tone_track() -> Any:
 class FakeOpenAI:
     """httpx handler that answers the call like OpenAI would: a real local WebRTC peer + data channel."""
 
-    def __init__(self, status: int = 201) -> None:
+    def __init__(self, status: int = 201, reject_voices: tuple[str, ...] = ()) -> None:
         self.status = status
+        self.reject_voices = reject_voices
         self.requests: list[dict[str, Any]] = []
         self.received: list[dict[str, Any]] = []
         self.pc: Any = None
@@ -125,6 +126,8 @@ class FakeOpenAI:
         self.requests.append({"url": str(request.url), "headers": dict(request.headers), "body": body})
         if self.status >= 400:
             return httpx.Response(self.status, json={"error": {"code": "nope"}})
+        if body["session"]["audio"]["output"]["voice"] in self.reject_voices:
+            return httpx.Response(400, json={"error": {"code": "invalid_value", "param": "session.audio.output.voice"}})
         pc = self.pc = RTCPeerConnection(RTCConfiguration(iceServers=[]))
 
         @pc.on("datachannel")

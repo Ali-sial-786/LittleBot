@@ -618,3 +618,6 @@ details.disclosure > summary { cursor: pointer; font-weight: 650; padding: 4px 0
 .check-row input { margin-top: 3px; width: 18px; height: 18px; flex: none; }
 .captions { display: grid; gap: 4px; max-height: 220px; overflow-y: auto; font-size: .92rem; padding: 8px 10px; border-radius: 10px; background: var(--surface-2, rgba(127,127,127,.08)); }
 .captions p { margin: 0; }
+.captions .caption-note { color: var(--text-3); font-style: italic; }
+.look-answer { display: grid; gap: 4px; padding: 10px 12px; border-radius: 10px; background: var(--surface-2, rgba(127,127,127,.08)); overflow-wrap: anywhere; }
+.look-answer p { margin: 0; font-size: 1.05rem; }

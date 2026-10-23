@@ -78,6 +78,12 @@ export default {
     const account = h('div', { class: 'stack-sm' }, h('p', { class: 'muted', text: 'Loading…' }));
     const live = h('div', { class: 'stack-sm' });
     const present = h('input', { type: 'checkbox', id: 'live-present' });
+    const lookQuestion = h('input', { type: 'text', id: 'look-question', maxlength: 300, autocomplete: 'off', placeholder: 'How many fingers am I holding up?' });
+    const lookSpeak = h('input', { type: 'checkbox', id: 'look-speak' });
+    const lookState = h('div', { class: 'stack-sm' });
+    const lookResult = h('div', { class: 'stack-sm', 'aria-live': 'polite' });
+    const lookButton = button('Look and answer', { kind: 'primary', iconName: 'camera', onClick: runLook });
+    lookQuestion.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); lookButton.click(); } });
 
     const save = button('Save AI settings', {
       kind: 'primary',
@@ -113,6 +119,15 @@ export default {
             h('div', { class: 'card-head' }, h('h2', {}, icon('wave'), 'Live voice (GPT-Live)')),
             h('p', { class: 'muted', text: 'A real-time spoken conversation with ChatGPT’s voice, on your plan. You start and stop it here; it ends by itself after the time limit or when nobody talks. Everything it says is checked against LittleBot’s safety rules while it talks: a rule break cuts the voice, ends the call and alerts you. Some words may already be heard by then, so stay with your child. Your voices go to OpenAI; nothing is recorded on LittleBot.' }),
             live)),
+        h('section', { class: 'card' },
+          h('div', { class: 'card-head' }, h('h2', {}, icon('camera'), 'Ask what LittleBot sees')),
+          h('p', { class: 'muted', text: 'LittleBot takes one photo with its camera and sends it with your question to ChatGPT - only when you press the button, or when someone asks during live voice (for example “how many fingers am I holding up?”). The photo is kept in memory just long enough to send, never stored on LittleBot and never shown here; you only see the answer. Needs “Let the AI look through the camera when asked” on in Privacy (off by default).' }),
+          h('div', { class: 'stack-sm mt-1' },
+            h('div', { class: 'field' }, h('label', { for: 'look-question', text: 'Your question' }), lookQuestion),
+            h('label', { class: 'check-row' }, lookSpeak, h('span', { text: 'Say the answer out loud' })),
+            h('div', { class: 'btn-row' }, lookButton),
+            lookResult,
+            lookState)),
         h('div', { class: 'grid two' },
           h('section', { class: 'card' },
             h('div', { class: 'card-head' }, h('h2', {}, icon('cloud'), 'Cloud AI')),
@@ -176,9 +191,13 @@ export default {
         live.append(
           h('dl', { class: 'kv' },
             h('dt', { text: 'Now' }), h('dd', { text: LIVE_PHASES[l.phase] || l.phase || '–' }),
-            h('dt', { text: 'Time left' }), h('dd', { text: fmtClock(l.remaining_s) })),
+            h('dt', { text: 'Time left' }), h('dd', { text: fmtClock(l.remaining_s) }),
+            l.voice_in_use ? [h('dt', { text: 'Voice' }), h('dd', { text: titleCase(l.voice_in_use) })] : null,
+            l.photos != null ? [h('dt', { text: 'Photos this call' }), h('dd', { text: String(l.photos) })] : null),
           l.captions?.length
-            ? h('div', { class: 'captions', 'aria-live': 'polite' }, l.captions.map((c) => h('p', {}, h('strong', { text: c.who === 'heard' ? 'Heard: ' : 'LittleBot: ' }), c.text)))
+            ? h('div', { class: 'captions', 'aria-live': 'polite' }, l.captions.map((c) => (c.who === 'note'
+              ? h('p', { class: 'caption-note', text: c.text })
+              : h('p', {}, h('strong', { text: c.who === 'heard' ? 'Heard: ' : 'LittleBot: ' }), c.text))))
             : null,
           h('div', { class: 'btn-row' }, button('Stop live voice', { kind: 'danger', iconName: 'stop', onClick: () => act(() => post('/chatgpt/live/stop', {}), 'Live voice stopped.') })));
         return;
@@ -198,7 +217,10 @@ export default {
       if (last) {
         if (last.safety_stop) live.append(banner('danger', 'shield', 'Last call was stopped by the safety rules', `It broke the “${last.safety_stop}” rule, so LittleBot cut it off.`));
         else if (last.error) live.append(banner('warn', 'alert', 'Last call', last.error));
-        else live.append(h('p', { class: 'muted', text: `Last call: ${last.ended_reason} after ${fmtDuration(last.duration_s)}.` }));
+        else {
+          const extra = [last.voice ? `voice: ${titleCase(last.voice)}` : '', last.photos ? `${last.photos} photo${last.photos === 1 ? '' : 's'}` : ''].filter(Boolean).join(', ');
+          live.append(h('p', { class: 'muted', text: `Last call: ${last.ended_reason} after ${fmtDuration(last.duration_s)}${extra ? ` (${extra})` : ''}.` }));
+        }
       }
     }
 
@@ -209,10 +231,45 @@ export default {
       return r;
     }
 
+    const LOOK_FIX = { ai_camera_off: true, camera_off: true, cloud_off: true };
+    function renderLook(st) {
+      clear(lookState);
+      if (!st) return;
+      if (st.blocked) {
+        const why = st.blocked_detail || 'LittleBot can’t look right now.';
+        lookState.append(LOOK_FIX[st.blocked]
+          ? h('div', { class: 'banner info' }, icon('lock'), h('div', {}, h('strong', { text: 'Can’t look right now' }), h('span', {}, `${why} `, h('a', { href: '#/privacy', text: 'Open Privacy' }))))
+          : banner('info', 'info', 'Can’t look right now', why));
+      }
+      lookState.append(h('p', { class: 'muted look-count', text: `Photos sent today: ${Number(st.photos_today) || 0}` }));
+    }
+
+    async function runLook() {
+      const question = lookQuestion.value.trim();
+      clear(lookResult).append(h('p', { class: 'muted', text: 'Taking one photo and asking ChatGPT…' }));
+      let r;
+      try {
+        r = await post('/chatgpt/look', { ...(question ? { question } : {}), speak: lookSpeak.checked }, { timeout: 90000 });
+      } catch (e) {
+        clear(lookResult);
+        if (e.status !== 401) lookResult.append(banner('warn', 'alert', 'No answer', e.message || 'Something went wrong.'));
+        schedule(300);
+        return;
+      }
+      const res = r.result || {};
+      clear(lookResult).append(h('div', { class: 'look-answer' },
+        h('span', { class: 'muted', text: question ? `“${question}”` : 'What LittleBot sees' }),
+        h('p', { text: res.answer || '(no answer)' }),
+        res.latency_ms != null ? h('span', { class: 'muted', text: `Answered in ${(res.latency_ms / 1000).toFixed(1)} s${r.spoken ? ', and said out loud' : ''}.` }) : null));
+      if (r.look) renderLook(r.look);
+      schedule(300);
+    }
+
     function fillChatGPT(d) {
       const fast = Boolean(d.account?.pending || d.live?.active);
       renderAccount(d);
       renderLive(d);
+      renderLook(d.look);
       if (fast !== wasFast) { wasFast = fast; schedule(fast ? 1000 : 10000); }
     }
 

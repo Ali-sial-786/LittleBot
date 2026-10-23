@@ -249,3 +249,76 @@ async def test_unsafe_words_late_in_a_long_answer_are_caught(live):
         server.send({"type": "output_transcript.added", "item": {"text": part}})
     await wait_for(lambda: not svc.status()["active"])
     assert svc.status()["last_call"]["safety_stop"] == "secrecy" and audio.muted
+
+
+async def test_default_voice_is_bubbie(live):
+    svc, server, _audio, _provider, _alerts = live
+    await connect(svc, server)
+    assert server.requests[0]["body"]["session"]["audio"]["output"]["voice"] == "bubbie"
+    assert svc.status()["voice_in_use"] == "bubbie"
+
+
+async def test_unavailable_voice_falls_back_to_sol(ctx, tmp_path):
+    ctx.privacy.set(cloud_enabled=True)
+    ctx.audio = LendingAudio()
+    server = FakeOpenAI(reject_voices=("bubbie",))
+    svc = LiveVoiceService(ctx, auth=signed_in_auth(tmp_path), transport=httpx.MockTransport(server),
+                           audio_factory=FakeLiveAudio, provider=FakeProvider())
+    await svc.start()
+    try:
+        await connect(svc, server)
+        assert [r["body"]["session"]["audio"]["output"]["voice"] for r in server.requests] == ["bubbie", "sol"]
+        assert svc.status()["voice_in_use"] == "sol"
+    finally:
+        await svc.stop()
+        await server.close()
+
+
+class FakeLook:
+    def __init__(self, blocked: str | None = None, answer: str = "You are holding up three fingers.") -> None:
+        self.blocked, self.answer = blocked, answer
+        self.asked: list[tuple[str, str]] = []
+
+    def blocked_reason(self) -> str | None:
+        return self.blocked
+
+    async def look(self, question: str, *, asked_by: str = "parent") -> dict[str, Any]:
+        self.asked.append((question, asked_by))
+        return {"ok": True, "answer": self.answer, "error": None, "detail": None, "latency_ms": 5}
+
+
+def delegate(server: FakeOpenAI, did: str, text: str) -> None:
+    server.send({"type": "delegation.created", "item": {"id": did, "type": "delegation", "target": "client",
+                                                        "content": [{"type": "input_text", "text": text}]}})
+
+
+def answers(server: FakeOpenAI, did: str) -> list[str]:
+    return [m["content"][0]["text"] for m in server.received
+            if m.get("type") == "delegation.context.append" and m.get("delegation_item_id") == did]
+
+
+async def test_seeing_questions_take_one_photo(live, ctx):
+    pytest.importorskip("littlebot.chatgpt.look")
+    svc, server, _audio, provider, _alerts = live
+    look = ctx.extras["camera_look"] = FakeLook()
+    await connect(svc, server)
+    delegate(server, "v1", "Look at the camera: how many fingers is the person holding up?")
+    await wait_for(lambda: answers(server, "v1"))
+    assert answers(server, "v1") == ["You are holding up three fingers."]
+    assert look.asked == [("Look at the camera: how many fingers is the person holding up?", "live")]
+    assert provider.calls == []  # answered from the photo, not the text model
+    st = svc.status()
+    assert st["photos"] == 1 and any(c["who"] == "note" for c in st["captions"])
+    delegate(server, "v2", "What is the capital of France?")  # not about seeing: no photo
+    await wait_for(lambda: answers(server, "v2"))
+    assert len(look.asked) == 1 and len(provider.calls) == 1
+
+
+async def test_no_photo_when_the_parent_has_not_allowed_it(live, ctx):
+    pytest.importorskip("littlebot.chatgpt.look")
+    svc, server, _audio, provider, _alerts = live
+    look = ctx.extras["camera_look"] = FakeLook(blocked="ai_camera_off")
+    await connect(svc, server)
+    delegate(server, "v3", "Look: how many fingers am I holding?")
+    await wait_for(lambda: answers(server, "v3"))
+    assert look.asked == [] and svc.status()["photos"] == 0

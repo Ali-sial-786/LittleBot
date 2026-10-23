@@ -231,3 +231,24 @@ def test_ai_page_offers_chatgpt_sign_in_and_live_voice(phone):
     if os.environ.get("LITTLEBOT_AI_SCREENSHOT"):  # for eyeballing the layout
         page.screenshot(path=os.environ["LITTLEBOT_AI_SCREENSHOT"], full_page=True)
     assert page.locator("#ai-provider option[value=chatgpt]").count() == 1
+
+
+def test_ask_what_littlebot_sees_card_and_privacy_switch(phone):
+    page = phone.open("ai")
+    card = page.locator("section.card", has=page.get_by_role("heading", name="Ask what LittleBot sees"))
+    card.scroll_into_view_if_needed()
+    expect(card).to_be_visible()
+    expect(card.get_by_label("Your question")).to_have_attribute("placeholder", "How many fingers am I holding up?")
+    expect(card.get_by_label("Say the answer out loud")).not_to_be_checked()
+    expect(card.get_by_text("Photos sent today: 0")).to_be_visible()
+    expect(card.locator(".banner", has_text="Can’t look right now")).to_be_visible()  # off by default
+    # Pressing the button anyway explains why, and no photo is taken.
+    card.get_by_label("Your question").fill("How many fingers am I holding up?")
+    card.get_by_role("button", name="Look and answer").click()
+    expect(card.locator(".banner", has_text="No answer")).to_be_visible()
+    expect(card.get_by_text("Photos sent today: 0")).to_be_visible()
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")  # no sideways scroll
+    page = phone.open("privacy")
+    row = page.locator(".switch-row", has_text="Let the AI look through the camera when asked")
+    expect(row).to_be_visible()
+    expect(row.get_by_role("switch")).not_to_be_checked()  # off by default

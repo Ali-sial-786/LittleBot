@@ -53,6 +53,7 @@ class Topics:
     VISION_PERSON_LEFT = "vision.person_left"  # {}
     VISION_GESTURE = "vision.gesture"  # {gesture: "wave"|"motion", confidence}
     VISION_CAMERA_STATUS = "vision.camera_status"  # {status: "ok"|"disconnected"|"disabled"|"unavailable", detail, backend}
+    VISION_PHOTO = "vision.photo"  # {asked_by} one still photo was taken for ChatGPT (never the question or image)
 
     # --- audio ---
     AUDIO_SPEECH_STARTED = "audio.speech_started"  # {text, duration_estimate}

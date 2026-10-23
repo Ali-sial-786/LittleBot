@@ -107,7 +107,8 @@ motion:
 # The defaults suit the robot; uncomment to change them.
 # ---------------------------------------------------------------------------
 # chatgpt:
-#   live_voice: cove               # cove | arbor | breeze | ember | juniper | maple | sol | spruce | vale
+#   live_voice: bubbie             # asked for first; if OpenAI refuses it, live_voice_fallbacks in order
+#   live_voice_fallbacks: [sol]    # known voices: cove | arbor | breeze | ember | juniper | maple | sol | spruce | vale
 #   live_session_minutes: 10       # hard limit per call (the voice says goodbye, then hangs up)
 #   live_idle_hangup_seconds: 90   # hang up after this long with nobody talking (0 = never)
 #   live_half_duplex: true         # no echo cancellation on the Pi: mic sends silence while LittleBot talks

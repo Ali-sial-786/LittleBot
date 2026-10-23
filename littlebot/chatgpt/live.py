@@ -34,6 +34,7 @@ import datetime as _dt
 import fractions
 import logging
 import time
+import re
 import uuid
 from typing import Any, Callable
 
@@ -53,7 +54,11 @@ log = logging.getLogger("littlebot.chatgpt.live")
 
 OWNER = "live_voice"
 CALL_URL = "https://chatgpt.com/backend-api/codex/realtime/calls?intent=quicksilver&architecture=avas"
-VOICES = ("cove", "arbor", "breeze", "ember", "juniper", "maple", "sol", "spruce", "vale")
+VOICES = ("cove", "arbor", "breeze", "ember", "juniper", "maple", "sol", "spruce", "vale")  # known; others are tried too
+# A look-up the voice hands over that needs the camera ("how many fingers am I holding up?").
+WANTS_LOOK = re.compile(r"\b(?:look(?:ing)?|camera|see|seeing|sees|fingers?|holding|hold(?:s|ing)? up|show(?:s|ing)?|"
+                        r"colou?rs?|wearing|what(?:'s| is) (?:this|that))\b", re.I)
+CANT_SEE = "Say you can't see right now, and suggest the grown-up shows you again later."
 POLL_S = 0.05
 GOODBYE_QUIET_S = 0.8
 GOODBYE_MAX_S = 10.0
@@ -108,7 +113,11 @@ suggest asking a doctor instead.
 - If anyone might be hurt or in danger, say: "Let's get a grown-up right now."
 
 When a question needs facts you are not sure of, delegate it to the client and wait for the result, \
-then say it simply in your own words. If you don't know, say so."""
+then say it simply in your own words. If you don't know, say so.
+
+You have a camera, but you only see when the client looks for you. When someone asks what you see, shows you \
+something, or asks how many fingers they are holding up, what colour something is, or similar, delegate it to the \
+client with the word "look" and their question, wait, then say the answer. Never pretend to see without that."""
 
 LOOKUP_NOTE = """
 You are answering a question that LittleBot's voice will say out loud to a family with a very young child; \
@@ -332,6 +341,8 @@ class LiveCall:
         self._suspended_audio = False
         self.connect_ms: int | None = None
         self.safety_stop: str | None = None
+        self.voice: str | None = None
+        self.photos = 0
 
     # ------------------------------------------------------------ views
     def snapshot(self) -> dict[str, Any]:
@@ -340,13 +351,14 @@ class LiveCall:
         base = self._connected_at or self._started
         return {"phase": self.phase, "detail": self.detail, "error": self.error,
                 "elapsed_s": int(now - base), "remaining_s": max(0, int(limit - (now - base))),
-                "captions": list(self._captions), "connect_ms": self.connect_ms}
+                "captions": list(self._captions), "connect_ms": self.connect_ms, "voice_in_use": self.voice,
+                "photos": self.photos}
 
     def summary(self) -> dict[str, Any]:
         base = self._connected_at or self._started
         return {"ended_reason": self.end_reason or "ended", "error": self.error, "safety_stop": self.safety_stop,
                 "duration_s": int(self.svc._now() - base), "connected": self._connected_at is not None,
-                "ended_at": time.time()}
+                "ended_at": time.time(), "voice": self.voice, "photos": self.photos}
 
     def end(self, reason: str) -> None:
         if self.end_reason is None:
@@ -424,13 +436,23 @@ class LiveCall:
         await self.pc.setLocalDescription(offer)  # gathers candidates (no trickle ICE with this endpoint)
         sdp = self.pc.localDescription.sdp
         timeout = self.cfg.live_connect_timeout_seconds
-        try:
-            answer = await asyncio.wait_for(self._post_offer(sdp, bearer), timeout)
-        except CallFailed as e:
-            if e.status != 401:
-                raise
-            bearer = await self.svc.auth.on_unauthorized(bearer)
-            answer = await asyncio.wait_for(self._post_offer(sdp, bearer), timeout)
+        voices = list(dict.fromkeys(v.strip().lower() for v in [self.cfg.live_voice, *self.cfg.live_voice_fallbacks]
+                                    if v and v.strip())) or ["sol"]
+        refreshed = False
+        while True:
+            self.voice = voices[0]
+            try:
+                answer = await asyncio.wait_for(self._post_offer(sdp, bearer, self.voice), timeout)
+                break
+            except CallFailed as e:
+                if e.status == 401 and not refreshed:
+                    refreshed = True
+                    bearer = await self.svc.auth.on_unauthorized(bearer)
+                elif e.status in (400, 422) and len(voices) > 1:
+                    log.info("live voice: voice %r not accepted (HTTP %s); trying %r", voices[0], e.status, voices[1])
+                    voices.pop(0)
+                else:
+                    raise
         if self._ended.is_set():
             return
         if not answer.lstrip().startswith("v=0"):
@@ -440,7 +462,7 @@ class LiveCall:
         self._last_activity = self._connected_at
         self.connect_ms = int((self._connected_at - t0) * 1000)
         self.phase, self.detail = "listening", "Connected. Just talk."
-        log.info("live voice: connected in %d ms", self.connect_ms)
+        log.info("live voice: connected in %d ms (voice %s)", self.connect_ms, self.voice)
 
     def _instructions(self) -> str:
         from littlebot.brain.prompts import age_description  # noqa: PLC0415
@@ -450,10 +472,10 @@ class LiveCall:
         now = _dt.datetime.now()
         return f"{text}\nAt the start of this call it is {now:%A}, {now:%H:%M} local time."
 
-    async def _post_offer(self, sdp: str, bearer: Any) -> str:
+    async def _post_offer(self, sdp: str, bearer: Any, voice: str) -> str:
         body = {"sdp": sdp, "session": {
             "model": self.cfg.live_model, "instructions": self._instructions(),
-            "audio": {"output": {"voice": self.cfg.live_voice if self.cfg.live_voice in VOICES else "cove"}},
+            "audio": {"output": {"voice": voice}},
             "delegation": {"type": "client"}}}
         headers = {**self.svc.auth.headers(bearer), "OpenAI-Alpha": "quicksilver=v2",
                    "session-id": str(uuid.uuid4()), "thread-id": str(uuid.uuid4()), "x-session-id": str(uuid.uuid4())}
@@ -556,6 +578,8 @@ class LiveCall:
                 question = heard[-1] if heard else ""
             if not question:
                 text = wire.NO_INPUT_RESULT
+            elif WANTS_LOOK.search(question) and self._camera() is not None:
+                text = await self._look(question)
             else:
                 text = await self._look_up(sanitize_user_text(question, max_chars=600))
             if not self._ended.is_set() and self.channel is not None and self.channel.readyState == "open":
@@ -565,12 +589,32 @@ class LiveCall:
             self._delegations -= 1
             self._last_activity = self.svc._now()
 
+    def _camera(self) -> Any:
+        """The camera look-up, when the parent allowed the AI to see (privacy switch); else None."""
+        try:
+            from littlebot.chatgpt.look import get_look  # noqa: PLC0415
+        except ImportError:
+            return None
+        look = get_look(self.ctx)
+        return look if look.blocked_reason() is None else None
+
+    async def _look(self, question: str) -> str:
+        """One photo, answered by the ChatGPT text model (validated there); never kept."""
+        look = self._camera()
+        if look is None:
+            return CANT_SEE
+        self._caption("note", "LittleBot took a photo to answer (sent to ChatGPT, not kept)")
+        result = await look.look(question, asked_by="live")
+        if result.get("ok"):
+            self.photos += 1
+        return str(result.get("answer") or "") if result.get("ok") and result.get("answer") else CANT_SEE
+
     async def _look_up(self, question: str) -> str:
         policy = self.ctx.age_policy()
         system = build_system_prompt(robot_name=self.ctx.config.robot_name, age_months=policy.age_months,
                                      max_words=40) + LOOKUP_NOTE
         history = []
-        for c in list(self._captions)[-6:]:
+        for c in [c for c in self._captions if c["who"] != "note"][-6:]:
             history.append({"role": "user" if c["who"] == "heard" else "assistant", "content": c["text"]})
         while history and history[0]["role"] != "user":
             history.pop(0)

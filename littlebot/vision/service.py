@@ -14,12 +14,16 @@ never blocked. Per cycle the thread:
    publishes ``vision.*`` events.
 
 Frames live only in local variables for one cycle: nothing is buffered,
-stored, sent anywhere, or used for identification.
+stored, sent anywhere, or used for identification. The one exception is
+``capture_photo``: on request (one at a time, e.g. a parent asks ChatGPT "how many
+fingers?") the thread JPEG-encodes a downscaled copy of the NEXT frame and hands
+the bytes to that one caller; nothing is kept here or written anywhere.
 """
 
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import threading
 import time
 from typing import Any, Callable
@@ -33,13 +37,26 @@ from littlebot.vision.detector import (
     Detection, FaceDetector, MockDetector, NullDetector, configure_opencv_threads, detector_from_config,
 )
 from littlebot.vision.gestures import GestureDetector
-from littlebot.vision.imaging import RateMeter, resize_to_width
+from littlebot.vision.imaging import RateMeter, get_cv2, resize_to_width
 from littlebot.vision.tracker import FaceTracker, TrackedFace, TrackerUpdate
 
 CameraFactory = Callable[[str], CameraDevice]
 
 MAX_FACES_EVENT_HZ = 15.0  # hard cap for vision.faces events
 IDLE_WAIT = 1.0  # longest sleep when nothing is going on (events wake the thread earlier)
+PHOTO_RETRY = 0.05  # retry interval while a photo request waits for a frame
+
+
+class PhotoUnavailable(Exception):
+    """``capture_photo`` could not take a photo. ``reason``: camera_off | no_camera | timeout | unavailable."""
+
+    def __init__(self, reason: str, detail: str = "") -> None:
+        super().__init__(f"{reason}: {detail}" if detail else reason)
+        self.reason = reason
+        self.detail = detail
+
+
+PhotoRequest = tuple["concurrent.futures.Future[bytes]", int, int]  # (future, max_width, jpeg quality)
 
 
 def _clamp01(v: float) -> float:
@@ -114,6 +131,8 @@ class VisionService(Service):
         self._faces_visible = False
         self._last_faces_count = 0
         self._snapshot: dict[str, Any] = {}
+        # one-shot photo requests, fulfilled by the vision thread from the next frame (guarded by _lock)
+        self._photo_requests: list[PhotoRequest] = []
         self._refresh_snapshot(self._clock())
 
     # ------------------------------------------------------------------ setup
@@ -199,6 +218,7 @@ class VisionService(Service):
                 return
         self._thread = None
         self._close_camera()  # no-op if the thread already released it
+        self._fail_photos("no_camera", "vision stopped")
         self.set_status(ServiceStatus.STOPPED)
 
     @property
@@ -275,6 +295,79 @@ class VisionService(Service):
             self._sim_dirty = True
         self._wake.set()
 
+    async def capture_photo(self, *, max_width: int = 768, quality: int = 80, timeout: float = 3.0) -> bytes:
+        """JPEG bytes of the NEXT camera frame, downscaled to ``max_width`` (never upscaled).
+
+        Taken by the vision thread only because of this call; the bytes go to the caller alone and
+        are never kept, logged or written to disk here. Raises ``PhotoUnavailable`` when the camera
+        privacy switch is off (camera_off), there is no open camera (no_camera), no frame arrives
+        within ``timeout`` (timeout) or OpenCV cannot encode (unavailable)."""
+        if not self.ctx.privacy.camera_enabled or not self._camera_allowed:
+            raise PhotoUnavailable("camera_off", "camera turned off in privacy settings")
+        if self._kind == "none":
+            raise PhotoUnavailable("no_camera", "disabled in config (camera.backend: none)")
+        status, detail = self._cam_status
+        if self._camera is None and status in ("unavailable", "disconnected"):
+            raise PhotoUnavailable("no_camera", detail)
+        if get_cv2() is None:
+            raise PhotoUnavailable("unavailable", "OpenCV is required to take photos")
+        fut: concurrent.futures.Future[bytes] = concurrent.futures.Future()
+        req: PhotoRequest = (fut, max(64, int(max_width)), min(95, max(20, int(quality))))
+        with self._lock:
+            self._photo_requests.append(req)
+        self._wake.set()
+        try:
+            return await asyncio.wait_for(asyncio.wrap_future(fut), timeout)
+        except asyncio.TimeoutError:
+            raise PhotoUnavailable("timeout", f"no camera frame within {timeout:g}s") from None
+        finally:
+            with self._lock:
+                if req in self._photo_requests:
+                    self._photo_requests.remove(req)
+            fut.cancel()  # no-op when done; a late frame is then simply dropped
+
+    def _photo_pending(self) -> bool:
+        return bool(self._photo_requests)
+
+    def _serve_photos(self, frame: Any) -> None:
+        """Vision thread: encode ``frame`` for every waiting request, then forget it."""
+        with self._lock:
+            reqs, self._photo_requests = self._photo_requests, []
+        if not reqs:
+            return
+        cv2 = get_cv2()
+        for fut, width, quality in reqs:
+            if fut.done():
+                continue
+            try:
+                if cv2 is None:
+                    raise RuntimeError("OpenCV unavailable")
+                ok, buf = cv2.imencode(".jpg", resize_to_width(frame, width), [int(cv2.IMWRITE_JPEG_QUALITY), quality])
+                if not ok:
+                    raise RuntimeError("imencode failed")
+                _resolve(fut, buf.tobytes())
+                del buf
+            except Exception as e:  # noqa: BLE001 - a photo must never break vision
+                _reject(fut, PhotoUnavailable("unavailable", f"could not encode the photo ({type(e).__name__})"))
+
+    def _fail_photos(self, reason: str, detail: str = "") -> None:
+        if not self._photo_requests:
+            return
+        with self._lock:
+            reqs, self._photo_requests = self._photo_requests, []
+        for fut, _w, _q in reqs:
+            _reject(fut, PhotoUnavailable(reason, detail))
+
+    def _photo_while_paused(self, cam: CameraDevice) -> None:
+        try:
+            frame = cam.read(timeout=self._read_timeout)
+        except Exception as e:  # noqa: BLE001
+            self.log.warning("camera read failed: %s", e)
+            return
+        if frame is not None:
+            self._serve_photos(frame)
+            del frame
+
     def status(self) -> dict[str, Any]:
         with self._lock:
             out = dict(self._snapshot)
@@ -294,14 +387,19 @@ class VisionService(Service):
             cam = self._camera
             if cam is not None and (cam.failed or not cam.is_open):
                 self._camera_lost(now, "camera stopped delivering frames")
+            elif cam is not None and self._photo_pending():
+                self._photo_while_paused(cam)  # one frame for a requested photo, nothing else
             self._refresh_snapshot(now)
+            if self._camera is not None and self._photo_pending():
+                return PHOTO_RETRY
             if self._camera is None and self._kind != "none" and self._camera_allowed:
                 return min(IDLE_WAIT, max(0.0, self._next_open_at - now))
             return IDLE_WAIT
         detected = False
         cam = self._camera
-        if cam is not None and now >= self._next_frame_at:
-            self._next_frame_at = self._advance(self._next_frame_at, self.frame_interval, now)
+        if cam is not None and (now >= self._next_frame_at or self._photo_pending()):
+            if now >= self._next_frame_at:  # a requested photo reads one extra frame right away
+                self._next_frame_at = self._advance(self._next_frame_at, self.frame_interval, now)
             detected = self._capture(cam, now)
 
         sim = self._active_sim(now)
@@ -358,6 +456,8 @@ class VisionService(Service):
             return False
         self._read_fail_since = None
         self._frame_size = (int(frame.shape[1]), int(frame.shape[0]))
+        if self._photo_pending():
+            self._serve_photos(frame)
         small = resize_to_width(frame, int(self.cam_cfg.process_width))
         del frame  # never keep full frames around
         detected = False
@@ -395,6 +495,8 @@ class VisionService(Service):
         cands: list[float] = []
         if self._camera is not None:
             cands.append(self._next_frame_at)
+            if self._photo_pending():
+                cands.append(now + PHOTO_RETRY)
         elif self._kind != "none" and self._camera_allowed:
             cands.append(self._next_open_at)
         if self._sim_face is not None:
@@ -414,6 +516,7 @@ class VisionService(Service):
                       else "camera turned off in privacy settings")
             self._set_cam_status("disabled", detail)
             self._next_open_at = now  # reopen right away when re-enabled
+            self._fail_photos("no_camera" if self._kind == "none" else "camera_off", detail)
             return
         if self._camera is None and now >= self._next_open_at and not self._stop_evt.is_set():
             self._open_camera(now)
@@ -433,6 +536,7 @@ class VisionService(Service):
             reconnect = max(0.1, float(self.cam_cfg.reconnect_seconds))
             self._set_cam_status(status, f"{e} (retrying every {reconnect:g}s)")
             self._next_open_at = now + reconnect
+            self._fail_photos("no_camera", status)
             return
         if not self._camera_allowed or self._stop_evt.is_set():  # privacy flipped while opening
             cam.release()
@@ -478,6 +582,7 @@ class VisionService(Service):
         if self._camera is None:
             return
         self._close_camera()
+        self._fail_photos("no_camera", reason)
         reconnect = max(0.1, float(self.cam_cfg.reconnect_seconds))
         self.log.warning("camera lost: %s; retrying every %gs", reason, reconnect)
         self._set_cam_status("disconnected", f"{reason} (retrying every {reconnect:g}s)")
@@ -565,3 +670,17 @@ class VisionService(Service):
         }
         with self._lock:
             self._snapshot = snap
+
+
+def _resolve(fut: "concurrent.futures.Future[bytes]", data: bytes) -> None:
+    try:
+        fut.set_result(data)
+    except concurrent.futures.InvalidStateError:  # the caller gave up (timeout / cancelled)
+        pass
+
+
+def _reject(fut: "concurrent.futures.Future[bytes]", exc: BaseException) -> None:
+    try:
+        fut.set_exception(exc)
+    except concurrent.futures.InvalidStateError:
+        pass

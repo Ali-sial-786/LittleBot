@@ -217,6 +217,15 @@ the main safeguard; the code checks are a backstop.**
 * No camera frames, images or audio are ever sent by the conversation engine. Live voice
   (§3) is separate and does stream the microphone audio to OpenAI during a parent-started
   call.
+* **Letting the AI see (camera)** is a separate privacy switch, **off by default**
+  (`privacy.ai_camera_enabled`, "Let the AI look through the camera when asked"). Only when it,
+  the camera and cloud communication are all on (and not in offline mode), and only when
+  someone asks — the parent's **Look and answer** button on the AI page, or a question about
+  what LittleBot sees during a live voice call — LittleBot takes **one still frame** and sends it
+  with the question to ChatGPT. The frame exists only in memory for that request: it is never
+  saved, logged or sent to the dashboard (the browser gets only the answer text and a count of
+  photos sent today). OpenAI does receive the photo, including anyone in view. See
+  [CHATGPT.md §4](CHATGPT.md#4-letting-the-ai-see-camera).
 * Cloud providers process requests under their own terms and may retain data for a
   period for abuse monitoring — check the provider's data-retention policy before
   enabling cloud conversation.
@@ -297,3 +306,7 @@ these settings say. Offline mode never contacts any server.
   start gates). The microphone/speaker bridge, including the half-duplex gate and the mute on a
   safety cut, is tested separately against a fake PortAudio. **Not yet tested against OpenAI's
   real service or on the Pi's real microphone and speaker.**
+* **Letting the AI see (camera):** the dashboard route and card are tested with a stand-in for
+  the camera look (only the answer text reaches the browser, blocked requests get a plain
+  reason, the switch is off by default). **Not yet tested against OpenAI's real service or with
+  the Pi's real camera.**
