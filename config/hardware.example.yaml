@@ -55,7 +55,8 @@ vision:
 
 # ---------------------------------------------------------------------------
 # Audio: mini USB microphone + mini USB speaker (the Pi 5 has no headphone jack).
-# device: null = system default; otherwise a NAME SUBSTRING (robust when USB ports
+# device: null = the USB speaker / microphone when plugged in (never the HDMI screen, whatever
+# the desktop's default is); "system" = the desktop's default; otherwise a NAME SUBSTRING (robust when USB ports
 # change) or an index. List names with:
 #   .venv/bin/python scripts/check_audio.py --list      (or: arecord -l / aplay -l)
 # Examples (UNVERIFIED - copy the real names from the list): "USB PnP Sound Device",

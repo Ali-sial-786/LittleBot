@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import platform
 import shutil
 import subprocess
@@ -164,6 +165,23 @@ def check_devices(r: Report, out_dev: Any, in_dev: Any) -> tuple[bool, bool]:
     return have_out, have_in
 
 
+def check_default_sink(r: Report) -> None:
+    """Videos (Chromium) and other apps play on the desktop's default output: it should be the USB speaker."""
+    rc, out = _run(["wpctl", "inspect", "@DEFAULT_AUDIO_SINK@"])
+    props = dict(re.findall(r'(node\.name|node\.description) = "([^"]*)"', out or "")) if rc == 0 else {}
+    name, label = props.get("node.name", ""), props.get("node.description") or props.get("node.name") or "?"
+    if not name:
+        r.line("WARN", "PipeWire has no default output right now.")
+    elif "hdmi" in name.lower():
+        r.line("WARN", f"the desktop's default output is the HDMI screen ({label}): videos play there, not on the speaker")
+        r.hint("Make the USB speaker the default for good: scripts/set_default_speaker.sh  (one-off: `wpctl status`, "
+               "then `wpctl set-default <the USB speaker's number>`). LittleBot's own sounds already prefer it.")
+    elif ".usb-" in name.lower():
+        r.line("PASS", f"the desktop's default output is the USB speaker ({label})")
+    else:
+        r.line("INFO", f"the desktop's default output: {label}")
+
+
 def check_system_tools(r: Report) -> None:
     section("System audio (ALSA / PipeWire)")
     for cmd, label in ((["aplay", "-l"], "playback cards (aplay -l)"), (["arecord", "-l"], "capture cards (arecord -l)")):
@@ -183,8 +201,8 @@ def check_system_tools(r: Report) -> None:
         running = rc == 0 and "PipeWire" in out
         r.line("INFO", "PipeWire " + ("is running" if running else "is installed (not reachable from this session)")
                + ": PortAudio sees it through the 'pipewire'/'pulse'/'default' devices.")
-        r.hint("With PipeWire, choose the USB speaker as default sink: `wpctl status` then `wpctl set-default <id>`; "
-               "LittleBot can then use device: null (system default).")
+        if running:
+            check_default_sink(r)
     elif shutil.which("pactl"):
         r.line("INFO", "PulseAudio tools present (pactl): use `pactl set-default-sink <name>` to pick the USB speaker.")
     else:

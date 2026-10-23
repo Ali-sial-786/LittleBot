@@ -28,6 +28,7 @@ from __future__ import annotations
 import collections
 import dataclasses
 import logging
+import re
 import threading
 import time
 from typing import Any, Callable
@@ -164,21 +165,43 @@ def list_devices() -> dict[str, Any]:
     return {"inputs": inputs, "outputs": outputs, "portaudio": err is None, "detail": detail}
 
 
+_USB = re.compile(r"\busb\b|\buac", re.I)
+_HDMI = re.compile(r"hdmi|vc4", re.I)
+
+
+def is_usb_device(d: dict[str, Any]) -> bool:
+    return bool(_USB.search(d.get("name", "")))
+
+
+def is_hdmi_device(d: dict[str, Any]) -> bool:
+    return bool(_HDMI.search(d.get("name", "")))
+
+
 def find_device(spec: int | str | None, kind: str) -> dict[str, Any]:
-    """Pick a device: None/'default' = system default, int = index, str = name substring."""
+    """Pick a device: int = index, str = name substring, 'system' = the desktop's default.
+
+    None / 'default' / 'auto': the robot's own USB speaker (or microphone) when one is plugged in,
+    whatever the desktop's default is - on a Pi that default is easily the HDMI screen. Without a
+    USB device: the system default, but never HDMI while anything else exists.
+    """
     key = "max_output_channels" if kind == "output" else "max_input_channels"
     devs = [d for d in query_devices() if d[key] > 0]
     if not devs:
         err = sounddevice_error()
         raise AudioDeviceError(f"no {kind} devices found" + (f" ({err})" if err else ""))
-    if spec is None or (isinstance(spec, str) and spec.strip().lower() in ("", "default", "auto", "none")):
+    system = isinstance(spec, str) and spec.strip().lower() == "system"
+    if system or spec is None or (isinstance(spec, str) and spec.strip().lower() in ("", "default", "auto", "none")):
+        if not system:
+            usb = [d for d in devs if is_usb_device(d)]
+            if usb:
+                return usb[0]
         for d in devs:
-            if d[f"default_{kind}"]:
+            if d[f"default_{kind}"] and (system or not is_hdmi_device(d)):
                 return d
         for d in devs:  # PortAudio has no default: prefer the ALSA/PipeWire "default" routes
             if d["name"].lower() in ("default", "pipewire", "pulse"):
                 return d
-        return devs[0]
+        return next((d for d in devs if not is_hdmi_device(d)), devs[0])
     if isinstance(spec, bool):
         raise AudioDeviceError(f"invalid {kind} device {spec!r}")
     if isinstance(spec, int) or (isinstance(spec, str) and spec.strip().lstrip("-").isdigit()):

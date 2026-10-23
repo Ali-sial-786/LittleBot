@@ -27,7 +27,7 @@ audio:
     device: null        # set to a name substring, e.g. "USB PnP" after running scripts/check_audio.py
   speaker:
     backend: sounddevice
-    device: null        # e.g. "USB Audio"
+    device: null        # null = the USB speaker when plugged in, never HDMI; or a name substring, e.g. "UACDemo"
   tts:
     provider: auto      # espeak-ng if installed; piper if a model is configured
 motion:

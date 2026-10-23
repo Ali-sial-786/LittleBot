@@ -43,7 +43,26 @@ def test_find_device_by_default_index_and_name(fake_sd):
     with pytest.raises(AudioDeviceError, match="not found"):
         dev.find_device(2, "output")  # #2 is input-only
     fake_sd.default_out = -1
-    assert dev.find_device(None, "output")["index"] == 0  # no system default: first usable device
+    assert dev.find_device(None, "output")["index"] == 1  # no system default: the USB speaker, not HDMI
+
+
+def test_default_is_the_usb_speaker_not_hdmi(fake_sd):
+    fake_sd.default_out = 0  # the desktop's default output is the HDMI screen
+    assert dev.find_device(None, "output")["index"] == 1
+    assert dev.find_device("default", "output")["index"] == 1
+    assert dev.find_device("system", "output")["index"] == 0  # explicit opt-in to the desktop default
+    assert dev.find_device("hdmi", "output")["index"] == 0  # or name it
+
+
+def test_without_usb_the_default_avoids_hdmi_when_it_can(fake_sd):
+    fake_sd.devices = [{"index": i, "hostapi": 0, **d} for i, d in enumerate([
+        {"name": "vc4-hdmi-0: MAI PCM (hw:0,0)", "max_input_channels": 0, "max_output_channels": 2, "default_samplerate": 48000.0},
+        {"name": "Headphones: bcm2835 (hw:1,0)", "max_input_channels": 0, "max_output_channels": 2, "default_samplerate": 48000.0},
+    ])]
+    fake_sd.default_out = 0
+    assert dev.find_device(None, "output")["index"] == 1
+    fake_sd.devices = fake_sd.devices[:1]
+    assert dev.find_device(None, "output")["index"] == 0  # HDMI is all there is
 
 
 def test_no_devices_reports_cleanly(no_devices):
