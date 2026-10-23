@@ -152,6 +152,11 @@ LATE_FAILED = "What they asked a moment ago didn't work out. Say you are not sur
 CONTROL_WORDS = re.compile(r"\b(?:activit(?:y|ies)|games?|videos?|youtube|cartoons?|volume|louder|quieter|"
                            r"(?:go(?:es|ing)?|went|put \w+) to (?:sleep|bed)|wake (?:up|\w+ up)|temperature|"
                            r"how hot|cpu|memory|wi-?fi|stop everything)\b", re.I)
+# Hand-offs asking for live information: the text model answers them with its tools (get_weather, get_time,
+# web search), never the camera or a face ("what's the weather looking like?", "show me the weather").
+INFO_WORDS = re.compile(r"\b(?:weather|forecasts?|rain(?:ing|y)?|snow(?:ing|y)?|sunny|umbrella|"
+                        r"what time|what(?:'s| is) the time|time is it|what day|what date|(?:the|today'?s) date|"
+                        r"news|headlines?|scores?)\b", re.I)
 CHECK_WINDOW = 320  # characters of a reply in progress checked at a time
 NOT_SURE = "Say you are not sure, and suggest asking a grown-up."
 
@@ -204,6 +209,10 @@ play videos when someone asks (hand it to the client).
 When a question needs facts you are not sure of, delegate it to the client and wait for the result, \
 then say it simply in your own words. If you don't know, say so. Whenever you delegate anything, do it at once \
 and silently: never say "let me check", "let me look", "let me see", "one moment", "hold on" or "hmm" first.
+
+The client knows live information: the weather (now, today, tomorrow, anywhere), the time and the date, and \
+things that change, like news, sports scores or opening hours. For these, always delegate the question to the \
+client in plain words (for example "what's the weather today" or "what time is it"), never guess or say you can't know.
 
 You have an animated face on a screen (big cartoon eyes). Faces you can make: {faces}. When someone asks you \
 to make a face, wink, spin your eyes or play peekaboo, delegate it to the client as "face: <name>" (for example \
@@ -732,9 +741,10 @@ class LiveCall:
                 heard = [c["text"] for c in self._captions if c["who"] == "heard"]
                 question = heard[-1] if heard else ""
             control = self._is_control(question)  # "start the peekaboo activity", "show me a video": tools
-            action = None if control else _face_request(question)
+            info = bool(INFO_WORDS.search(question))  # "what's the weather looking like?": tools, not the camera
+            action = None if control or info else _face_request(question)
             kind = ("face" if action is not None else "empty" if not question else "control" if control
-                    else "look" if self._needs_camera(question) else "lookup")
+                    else "info" if info else "look" if self._needs_camera(question) else "lookup")
             log.info("live voice: hand-off received (kind=%s)", kind)
             if action is not None:
                 # Local and instant: answer first so the voice isn't kept waiting, then play it
@@ -812,7 +822,7 @@ class LiveCall:
         box = RobotToolbox(self.ctx, mode="live", defer=True)
         policy = self.ctx.age_policy()
         system = build_system_prompt(robot_name=self.ctx.config.robot_name, age_months=policy.age_months,
-                                     max_words=40, tools=True) + LOOKUP_NOTE + LIVE_TOOLS_NOTE
+                                     max_words=40, tools=True) + LOOKUP_NOTE + LIVE_TOOLS_NOTE + box.instructions()
         history = []
         for c in [c for c in self._captions if c["who"] != "note"][-6:]:
             history.append({"role": "user" if c["who"] == "heard" else "assistant", "content": c["text"]})

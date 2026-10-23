@@ -258,6 +258,25 @@ class ChatGPTConfig(_Section):
     # videos (YouTube search), activities, games, sleep, status ("how hot are you?").
     tools_enabled: bool = True
     max_tool_rounds: int = 6  # tool calls per answer ("play baby shark" = search + play)
+    # OpenAI's own web search (the hosted "web_search" tool, as the Codex CLI sends it) for news, scores,
+    # opening hours and other facts that change. Offered with the tools; if the endpoint refuses it,
+    # LittleBot asks again without it and doesn't offer it again until restarted.
+    web_search: bool = True
+
+
+class InfoConfig(_Section):
+    """Live information for the tools: the weather (Open-Meteo, no key) and the time (littlebot/info).
+
+    The parent's choice on the dashboard (Settings, "Weather & time") wins over ``location`` / ``units``."""
+
+    # Home, for the weather: a place ("Toronto", "Springfield, Illinois") or "lat, lon". "" = approximate,
+    # from the robot's internet connection (``locate_by_ip``).
+    location: str = ""
+    units: Literal["auto", "celsius", "fahrenheit"] = "auto"  # auto: from home's country, else the locale
+    locate_by_ip: bool = True  # no home place set: ask a free service where the robot's public IP is (cached)
+    timezone: str = ""  # IANA name ("America/Toronto") for the time tool; "" = the robot's own time zone
+    timeout_seconds: float = Field(default=3.0, gt=0, le=30)  # per answer, all requests together
+    cache_minutes: float = Field(default=10.0, ge=0)  # a forecast is reused this long
 
 
 class MediaConfig(_Section):
@@ -383,6 +402,7 @@ class LittleBotConfig(BaseModel):
     wake: WakeConfig = Field(default_factory=WakeConfig)
     ai: AIConfig = Field(default_factory=AIConfig)
     chatgpt: ChatGPTConfig = Field(default_factory=ChatGPTConfig)
+    info: InfoConfig = Field(default_factory=InfoConfig)
     media: MediaConfig = Field(default_factory=MediaConfig)
     motion: MotionConfig = Field(default_factory=MotionConfig)
     dashboard: DashboardConfig = Field(default_factory=DashboardConfig)

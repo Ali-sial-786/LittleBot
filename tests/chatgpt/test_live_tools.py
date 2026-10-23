@@ -299,3 +299,74 @@ async def test_without_tools_hand_offs_work_as_before(ctx, make_live):
         assert answers(server, "n2") == ["A cow says moo."] and provider.calls[0]["tools"] == []
     finally:
         await close(svc, server)
+
+
+# ---------------------------------------------------------------- live information (weather, time, web search)
+def _fake_weather(ctx: Any) -> Any:
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "info"))
+    from weather_fakes import FakeWeb, weather_service
+
+    web = FakeWeb()
+    weather_service(ctx, web)
+    return web
+
+
+async def test_the_voice_is_told_to_hand_over_weather_time_and_news(ctx, make_live):
+    svc, server, _audio = await make_live(ToolProvider())
+    try:
+        instructions = server.requests[0]["body"]["session"]["instructions"]
+        assert "the weather (now, today, tomorrow, anywhere), the time and the date" in instructions
+        assert "news" in instructions and "never guess or say you can't know" in instructions
+    finally:
+        await close(svc, server)
+
+
+async def test_weather_hand_offs_get_the_tools_not_the_camera_and_answer_in_time(ctx, make_live, caplog):
+    import logging
+
+    caplog.set_level(logging.INFO, logger="littlebot.chatgpt.live")
+    web = _fake_weather(ctx)
+    provider = ToolProvider([("get_weather", {})], text="It's sunny and 12 degrees!")
+    svc, server, _audio = await make_live(provider)
+    loop = asyncio.get_running_loop()
+    try:
+        # "looking" and "show" are camera words: before, this took a photo (or said it couldn't see)
+        for i, question in enumerate(("What's the weather looking like today?", "Show me the weather for tomorrow")):
+            t0 = loop.time()
+            delegate(server, f"w{i}", question)
+            await wait_for(lambda: answers(server, f"w{i}"))
+            assert answers(server, f"w{i}") == ["It's sunny and 12 degrees!"]  # no "still thinking" first
+            assert loop.time() - t0 < live_mod.HANDOFF_INTERIM_S
+        call = provider.calls[0]
+        assert {"get_weather", "get_time", "web_search"} <= set(call["tools"])
+        assert "call get_weather" in call["system"] and "use web search first" in call["system"]
+        assert json.loads(provider.results[0])["place"] == "Toronto, Ontario"
+        assert web.count("api.open-meteo.com") == 1  # the second question used the cached forecast
+        assert caplog.text.count("hand-off received (kind=info)") == 2 and "kind=look" not in caplog.text
+        assert svc.status()["photos"] == 0
+    finally:
+        await close(svc, server)
+
+
+async def test_time_and_news_hand_offs_get_the_tools(ctx, make_live, caplog):
+    import logging
+
+    caplog.set_level(logging.INFO, logger="littlebot.chatgpt.live")
+    _fake_weather(ctx)
+    provider = ToolProvider([("get_time", {})], text="It's half past nine.")
+    svc, server, _audio = await make_live(provider)
+    try:
+        delegate(server, "t1", "What time is it?")
+        await wait_for(lambda: answers(server, "t1"))
+        assert answers(server, "t1") == ["It's half past nine."] and json.loads(provider.results[0])["day"]
+        provider.script = []
+        provider.text = "The Leafs won 3 to 2."
+        delegate(server, "n1", "Who won the hockey game last night?")  # "game" is a control word: tools too
+        await wait_for(lambda: answers(server, "n1"))
+        assert answers(server, "n1") == ["The Leafs won 3 to 2."] and "web_search" in provider.calls[-1]["tools"]
+        assert "kind=info" in caplog.text and "kind=control" in caplog.text
+    finally:
+        await close(svc, server)

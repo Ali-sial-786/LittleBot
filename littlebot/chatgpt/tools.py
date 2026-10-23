@@ -11,6 +11,12 @@ Used by typed / push-to-talk chat (``brain.conversation``, ``mode="chat"``) and 
 hand-offs (``chatgpt.live``, ``mode="live"``). Everything runs on the asyncio loop; blocking reads
 (system monitor, Wi-Fi) go to a worker thread.
 
+Live information: ``get_weather`` (Open-Meteo, littlebot/info/weather.py) and ``get_time``
+(littlebot/info/clock.py), plus OpenAI's own web search (``WEB_SEARCH``, a hosted tool the endpoint
+runs itself; ``chatgpt.web_search``) for news, scores, opening hours and other facts that change.
+``instructions()`` is the note callers add to the system prompt so the model uses them rather than
+guessing.
+
 Take-overs: starting a video or an activity, and going to sleep, need the screen and the speaker
 that the conversation itself is using (starting them mid-turn would cut the answer off).
 With ``defer=True`` they are checked now (unknown activity, videos switched off, ...) but only
@@ -117,8 +123,33 @@ TOOLS: tuple[_Tool, ...] = (
     _Tool("look_through_camera", "Take one photo with LittleBot's camera (only if a grown-up allows it) and say "
           "what is in it, to answer a question like 'what am I holding?'.",
           _obj({"question": _STR}, ("question",)), modes=("chat",)),
+    _Tool("get_weather", "The real weather from a weather service: now (temperature, feels-like, conditions, wind) "
+          "and the forecast (high, low, conditions, chance of rain or snow, wind, sunrise and sunset) for today, "
+          "tomorrow or the next days. Call it for EVERY question about the weather, the temperature outside, rain, "
+          "snow, sun, wind, or what to wear outside, instead of guessing or saying you don't know. Without a place it "
+          "is the weather at home; for somewhere else give the place, e.g. 'Paris' or 'Springfield, Illinois'.",
+          _obj({"place": {**_STR, "description": "a city or town; leave out for home"},
+                "days": {"type": "integer", "minimum": 1, "maximum": 7,
+                         "description": "days of forecast: 1 today, 2 (default) today and tomorrow, up to 7"}})),
+    _Tool("get_time", "The current time, date and day of the week where LittleBot is (or in another place). Call it "
+          "for 'what time is it?', 'what day is it?', 'what's the date?' or how long until something, instead of "
+          "guessing.", _obj({"place": {**_STR, "description": "a city, for the time somewhere else; leave out for "
+                                                            "here"}})),
 )
 TOOL_NAMES = frozenset(t.name for t in TOOLS)
+
+# OpenAI's own web search, run on OpenAI's side (a hosted tool, not a function: RobotToolbox never runs
+# it). ``responses.ChatGPTProvider`` sends it as {"type": "web_search"}; "name" is for logs and fakes.
+WEB_SEARCH = {"type": "web_search", "name": "web_search"}
+
+# Appended to the system prompt whenever the tools are offered (typed chat and live-voice hand-offs).
+INFO_NOTE = """
+Live information: never guess, and never say you can't know or can't check. For the weather (today, tomorrow, \
+anywhere) call get_weather; for the time, the day or the date call get_time.{search} Then answer in one or two \
+short, plain sentences with the key facts (for the weather: what it is like, the temperature and whether to expect \
+rain), rounded numbers, no links, no website names and no list."""
+SEARCH_NOTE = (" For anything else that changes or that you are not sure of (news, sports scores, opening hours, "
+               "events, prices, who someone is now, recent facts), use web search first.")
 
 
 def _ok(text: str) -> str:
@@ -151,9 +182,21 @@ class RobotToolbox:
 
     # ------------------------------------------------------------ the model's side
     def specs(self) -> list[dict[str, Any]]:
-        """Function specs for ``ChatGPTProvider.reply(tools=...)``."""
-        return [{"name": t.name, "description": t.description, "parameters": t.parameters}
-                for t in TOOLS if self.mode in t.modes]
+        """Tool specs for ``ChatGPTProvider.reply(tools=...)``: LittleBot's functions, then OpenAI's web
+        search (``WEB_SEARCH``) when ``chatgpt.web_search`` is on."""
+        out: list[dict[str, Any]] = [{"name": t.name, "description": t.description, "parameters": t.parameters}
+                                     for t in TOOLS if self.mode in t.modes]
+        if self.web_search:
+            out.append(dict(WEB_SEARCH))
+        return out
+
+    @property
+    def web_search(self) -> bool:
+        return bool(getattr(getattr(self.ctx.config, "chatgpt", None), "web_search", False))
+
+    def instructions(self) -> str:
+        """What to add to the system prompt with these tools: use them for live information."""
+        return INFO_NOTE.format(search=SEARCH_NOTE if self.web_search else "")
 
     async def run(self, name: str, arguments: str | dict[str, Any] | None = None) -> str:
         """Run one tool call; returns what to tell the model. Never raises (except cancellation)."""
@@ -340,6 +383,9 @@ class RobotToolbox:
              "Games are not available yet." if games is None else "No games are installed yet."),
             "I can change my volume, go to sleep and wake up, stop everything, and tell you how I am "
             "(temperature, memory, Wi-Fi, what's connected).",
+            "I can tell you the weather here or anywhere, today or in the next days, and the time and date"
+            + (", and find out things that change, like news, sports scores or opening hours." if self.web_search
+               else "."),
             "I am a robot, not a person.",
         ]
         return " ".join(lines)
@@ -780,6 +826,46 @@ class RobotToolbox:
             return _ok(f"the camera saw: {result['answer']}")
         return _err(str(result.get("detail") or "LittleBot couldn't look just now")
                     + " Don't guess what is there.")
+
+    # ------------------------------------------------------------ live information (littlebot/info)
+    async def _get_weather(self, args: dict[str, Any]) -> str:
+        from littlebot.info.weather import WeatherError, get_weather  # noqa: PLC0415
+
+        place = " ".join(str(args.get("place") or "").split())[:100] or None
+        try:
+            days = max(1, min(7, int(args.get("days") or 2)))
+        except (TypeError, ValueError):
+            days = 2
+        try:
+            report = await get_weather(self.ctx).report(place, days=days)
+        except WeatherError as e:
+            return _err(f"{e}. Say so briefly; don't guess the weather.")
+        return _json(report)
+
+    async def _get_time(self, args: dict[str, Any]) -> str:
+        from littlebot.info.clock import now_info  # noqa: PLC0415
+        from littlebot.info.weather import WeatherError, get_weather  # noqa: PLC0415
+
+        place = " ".join(str(args.get("place") or "").split())[:100]
+        info = getattr(self.ctx.config, "info", None)
+        tz, where = (getattr(info, "timezone", "") or None), None
+        if place:
+            try:
+                found = await get_weather(self.ctx).find_bounded(place)
+            except WeatherError as e:
+                return _err(str(e))
+            if not found.timezone:
+                return _err(f"LittleBot doesn't know the time zone of {found.label[:60]}")
+            tz, where = found.timezone, found.label
+        try:
+            out = now_info(tz)
+        except ValueError:
+            if where:
+                return _err(f"LittleBot doesn't know the time zone of {where[:60]}")
+            # info.timezone isn't a real zone: the robot's own clock
+            log.warning("info.timezone %r is not a known time zone; using the robot's own", str(tz)[:60])
+            out = now_info(None)
+        return _json({**({"place": where} if where else {}), **out})
 
 
 # ---------------------------------------------------------------- helpers

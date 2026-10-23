@@ -1,6 +1,6 @@
-// Settings: password, sessions, dashboard access (LAN opt-in), system info, events, config, power.
+// Settings: password, sessions, dashboard access (LAN opt-in), weather & time, system info, events, config, power.
 
-import { get, post } from '../api.js';
+import { get, post, put } from '../api.js';
 import { banner, button, clear, confirmDialog, fmtDuration, h, icon, pageHead, setText, titleCase, toast } from '../ui.js';
 
 export default {
@@ -38,6 +38,33 @@ export default {
     eventsDetails.addEventListener('toggle', () => { if (eventsDetails.open) loadEvents(); });
     configDetails.addEventListener('toggle', () => { if (configDetails.open) loadConfig(); });
 
+    // Weather & time: where home is for the weather (and where that came from), the units, the time here.
+    const wxWhere = h('p', { style: { margin: 0 }, text: 'Weather location: finding where LittleBot is…' });
+    const wxBanner = h('div');
+    const wxKv = h('dl', { class: 'kv' });
+    const wxResult = h('p', { class: 'muted', 'aria-live': 'polite', hidden: true });
+    const wxInput = h('input', { type: 'text', id: 'weather-location', maxlength: 120, autocomplete: 'off', placeholder: 'Toronto, or 43.65, -79.38' });
+    const wxUnits = h('select', { id: 'weather-units' },
+      [['auto', 'Automatic'], ['celsius', '°C (Celsius)'], ['fahrenheit', '°F (Fahrenheit)']].map(([value, text]) => h('option', { value, text })));
+    const wxSave = h('button', { type: 'submit', class: 'btn primary' }, icon('check'), h('span', { text: 'Save' }));
+    const wxForm = h('form', { class: 'stack', hidden: true },
+      h('div', { class: 'form-grid two' },
+        h('div', { class: 'field' }, h('label', { for: 'weather-location', text: 'Place' }), wxInput,
+          h('span', { class: 'hint', text: 'A city or town (add the country if there are several), or latitude, longitude. Empty: use your internet connection.' })),
+        h('div', { class: 'field' }, h('label', { for: 'weather-units', text: 'Units' }), wxUnits)),
+      h('div', { class: 'btn-row' }, wxSave,
+        button('Use my internet connection', { kind: 'soft', iconName: 'wifi', onClick: () => saveWeather('') }),
+        button('Cancel', { kind: 'soft', onClick: () => { wxForm.hidden = true; wxChange.hidden = false; } })));
+    const wxChange = button('Change', { kind: 'soft small', iconName: 'edit', onClick: () => {
+      wxForm.hidden = false; wxChange.hidden = true; wxInput.focus();
+    } });
+    wxForm.addEventListener('submit', (e) => { e.preventDefault(); saveWeather(wxInput.value.trim()); });
+    const weatherCard = h('section', { class: 'card span-2' }, h('div', { class: 'card-head' }, h('h2', {}, icon('sun'), 'Weather & time')),
+      h('div', { class: 'stack' },
+        h('p', { class: 'muted', text: 'LittleBot can tell you the weather and the time when you ask. ChatGPT gets the weather for this place unless you ask about somewhere else.' }),
+        wxBanner, h('div', { class: 'btn-row', style: { alignItems: 'center' } }, wxWhere, wxChange), wxForm, wxKv,
+        h('div', { class: 'btn-row' }, button('Check the weather now', { kind: 'soft', iconName: 'cloud', onClick: checkWeather })), wxResult));
+
     view.append(
       pageHead('Settings', 'Your parent account, how to reach the dashboard, and system details.'),
       h('div', { class: 'grid two' },
@@ -52,6 +79,7 @@ export default {
                 }
               } })))),
         h('section', { class: 'card span-2' }, h('div', { class: 'card-head' }, h('h2', {}, icon('wifi'), 'Dashboard access')), accessBox),
+        weatherCard,
         h('section', { class: 'card' }, h('div', { class: 'card-head' }, h('h2', {}, icon('cpu'), 'System')), h('div', { class: 'stack' }, sysKv, services)),
         h('section', { class: 'card' }, h('div', { class: 'card-head' }, h('h2', {}, icon('power'), 'Restart or shut down')),
           h('p', { class: 'muted', text: 'Stops LittleBot safely (motors off first). On the Raspberry Pi the system service starts it again after a restart.' }),
@@ -130,8 +158,44 @@ export default {
       try { configPre.textContent = JSON.stringify(await get('/system/config'), null, 2); } catch (e) { configPre.textContent = e.message; }
     }
 
+    function renderWeather(d) {
+      const w = d.weather || {};
+      const t = d.time || {};
+      clear(wxWhere).append('Weather location: ', h('strong', { text: w.location || 'not known yet' }), ` (${w.source_detail || 'not set'})`);
+      clear(wxBanner);
+      if (w.blocked) wxBanner.append(banner('warn', 'cloud', "LittleBot can't get the weather right now", w.blocked === 'cloud_off' ? 'Cloud communication is off in Privacy.' : 'LittleBot is in offline mode.'));
+      else if (!w.found && w.source === 'internet') wxBanner.append(banner('info', 'info', 'Home not found yet', "LittleBot couldn't tell where it is from your internet connection. Press Change and type your town."));
+      const deg = (u) => (u === 'fahrenheit' ? '°F' : '°C');
+      clear(wxKv);
+      for (const [k, v] of [
+        ['Units', w.units === 'auto' ? `Automatic (${deg(w.units_in_use)})` : deg(w.units)],
+        ['Time here', t.day ? `${t.day} ${t.time_24h} (${t.timezone})${t.timezone_problem ? `: ${t.timezone_problem}` : ''}` : '–'],
+        ['Web search', d.web_search ? 'On: ChatGPT can find news, scores, opening hours and other things that change' : 'Off (chatgpt.web_search)'],
+      ]) wxKv.append(h('dt', { text: k }), h('dd', { text: v }));
+      wxInput.value = w.source === 'dashboard' ? (w.query || w.location || '') : '';
+      wxUnits.value = w.units || 'auto';
+    }
+
+    async function loadWeather() {
+      try { renderWeather(await get('/info?lookup=true')); } catch (e) { setText(wxWhere, `Weather location: ${e.message}`); }
+    }
+
+    async function saveWeather(location) {
+      wxSave.disabled = true;
+      const r = await app.act(() => put('/info', { location, units: wxUnits.value }), (res) => (location ? `Weather location: ${res?.weather?.location || location}.` : 'The weather now uses your internet connection.'));
+      wxSave.disabled = false;
+      if (r) { renderWeather(r); wxForm.hidden = true; wxChange.hidden = false; wxResult.hidden = true; }
+    }
+
+    async function checkWeather() {
+      wxResult.hidden = false;
+      setText(wxResult, 'Asking the weather service…');
+      try { setText(wxResult, (await get('/info/weather')).summary); } catch (e) { setText(wxResult, e.message); }
+    }
+
     loadSessions();
     loadSystem();
+    loadWeather();
     return {};
   },
 };

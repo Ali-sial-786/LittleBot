@@ -66,6 +66,10 @@ def build_defaults(cfg: LittleBotConfig) -> dict[str, Any]:
         "face.expression_default": "neutral",
         # system
         "system.sleep_after_idle_minutes": cfg.system.sleep_after_idle_minutes,
+        # live information (littlebot/info): the weather's home place as the parent chose it on the
+        # dashboard ({} = config ``info.location``, else from the internet connection), and the units
+        "info.location": {},
+        "info.units": cfg.info.units,
         # child profile (minimum necessary information; all optional)
         "profile": {
             "nickname": "",
