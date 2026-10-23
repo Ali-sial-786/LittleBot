@@ -93,7 +93,7 @@ ai:
   listen_timeout_seconds: 8
   say_didnt_hear: true
   reply_to_utterance_events: true
-  share_child_name: false    # never send the child's nickname to a cloud provider unless a parent opts in
+  share_child_name: true     # tell the AI the child's nickname (Settings profile); the parent can switch it off
   share_interests: false     # favourite animals / interests in the cloud prompt only with parent opt-in
   # price_per_mtok:          # optional overrides of the built-in price estimates (USD per 1M tokens)
   #   claude-haiku-5-5: [0.10, 0.50]

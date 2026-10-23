@@ -219,8 +219,8 @@ class AIConfig(_Section):
     say_didnt_hear: bool = True
     # Reply to audio.utterance events that arrive while LittleBot is idle (not mid-activity).
     reply_to_utterance_events: bool = True
-    # Personal info is NOT sent to cloud providers unless a parent opts in.
-    share_child_name: bool = False
+    # The child's nickname (Settings -> profile) is told to the AI so it can use it; the parent can switch it off.
+    share_child_name: bool = True
     share_interests: bool = False
     # Safety-rule groups (littlebot/safety/content.py BLOCK_RULES) switched off for AI replies: the parent's
     # choice, [] = every rule on. The rules only stop what could harm a small child (e.g. "personal_info").

@@ -1179,3 +1179,14 @@ async def test_stop_playing_brings_the_face_back(live, ctx):
     await wait_for(lambda: games.stopped == 1)
     await wait_for(lambda: any("your face is back" in n for n in notes(server)))
     assert svc.status()["active"]  # the chat goes on
+
+
+async def test_the_voice_knows_the_childs_name_unless_the_parent_says_no(live, ctx):
+    svc, server, _audio, _provider, _alerts = live
+    ctx.settings.set("profile", {"nickname": "Amara"})
+    await connect(svc, server)
+    assert "The little one's name is Amara." in server.requests[-1]["body"]["session"]["instructions"]
+    await svc.stop_session()
+    ctx.settings.set("ai.share_child_name", False)
+    await connect(svc, server)
+    assert "Amara" not in server.requests[-1]["body"]["session"]["instructions"]

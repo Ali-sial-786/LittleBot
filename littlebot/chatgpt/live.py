@@ -748,8 +748,25 @@ class LiveCall:
         age = self.ctx.settings.child_age_months()
         text = VOICE_INSTRUCTIONS.format(name=self.ctx.config.robot_name, child=age_description(age),
                                          faces=_face_menu())
+        nickname = self._child_name()
+        if nickname:
+            text += (f"\nThe little one's name is {nickname}. Use it warmly now and then (not in every sentence); "
+                     f"anyone else you hear is one of {nickname}'s grown-ups.")
         now = _dt.datetime.now()
         return f"{text}\nAt the start of this call it is {now:%A}, {now:%H:%M} local time."
+
+    def _child_name(self) -> str | None:
+        """The child's nickname from the profile, unless the parent switched sharing it off (``ai.share_child_name``)."""
+        from littlebot.brain.prompts import clean_child_name  # noqa: PLC0415
+
+        try:
+            settings = self.ctx.settings
+            if not bool(settings.get("ai.share_child_name", self.ctx.config.ai.share_child_name)):
+                return None
+            profile = settings.get("profile") or {}
+            return clean_child_name(profile.get("nickname")) if isinstance(profile, dict) else None
+        except Exception:  # noqa: BLE001 - no name is fine
+            return None
 
     async def _post_offer(self, sdp: str, bearer: Any, voice: str) -> str:
         body = {"sdp": sdp, "session": {

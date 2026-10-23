@@ -268,8 +268,9 @@ the main safeguard; the code checks are a backstop.**
   names, word counts, error kinds, categories and timings. API keys are never logged,
   never put in status or events, and are redacted from provider error messages.
 * Minimum personal data goes to the provider: scrubbed words of the current turn plus
-  the tiny context, the age band, and — **only if a parent opts in** (`ai.share_child_name`,
-  `ai.share_interests`) — the nickname and short, sanitised favourite animals/interests.
+  the tiny context, the age band, the child's nickname (`ai.share_child_name`, **on by default**
+  so the AI and the live voice can call the child by name; switch it off on the AI page) and,
+  only if a parent opts in (`ai.share_interests`), short, sanitised favourite animals/interests.
 * No camera frames, images or audio are ever sent by the conversation engine. Live voice
   (§3) is separate and does stream the microphone audio to OpenAI during a parent-started
   call.

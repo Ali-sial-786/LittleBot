@@ -738,7 +738,7 @@ class AudioService(Service):
     def _cloud_text(self, text: str) -> str:
         """Text as sent to a cloud voice: the child's nickname only with ``ai.share_child_name``."""
         try:
-            if bool(self.ctx.settings.get("ai.share_child_name", False)):
+            if bool(self.ctx.settings.get("ai.share_child_name", self.ctx.config.ai.share_child_name)):
                 return text
             profile = self.ctx.settings.get("profile") or {}
             nickname = str(profile.get("nickname") or "") if isinstance(profile, dict) else ""

@@ -390,9 +390,10 @@ def _sent_text(req: httpx.Request) -> str:
     return json.loads(req.content)["input"]
 
 
-async def test_cloud_tts_never_sends_the_nickname_without_opt_in(actx, make_service):
+async def test_cloud_tts_never_sends_the_nickname_when_sharing_is_off(actx, make_service):
     rec = Recorder(lambda req: httpx.Response(200, content=_wav_bytes()))
     ctx = _cloud_ctx(actx, cloud=True, nickname="Zara")
+    ctx.settings.set("ai.share_child_name", False)
     svc = _tts_service(make_service, ctx, rec)
     assert await svc.say("Well done, Zara! ZARA's turn. zara, clap!") is True
     assert len(rec.requests) == 1
@@ -410,6 +411,7 @@ async def test_cloud_tts_never_sends_the_nickname_without_opt_in(actx, make_serv
 async def test_cloud_tts_multi_part_nickname_is_scrubbed(actx, make_service):
     rec = Recorder(lambda req: httpx.Response(200, content=_wav_bytes()))
     ctx = _cloud_ctx(actx, cloud=True, nickname="Mary-Jane Rose")
+    ctx.settings.set("ai.share_child_name", False)
     svc = _tts_service(make_service, ctx, rec)
     assert await svc.say("Hi Mary-Jane! Rose, Mary-Jane Rose and mary, look!") is True
     sent = _sent_text(rec.requests[0])
@@ -422,6 +424,7 @@ async def test_cloud_tts_built_from_config_is_gated(actx, make_service):
     rec = Recorder(lambda req: httpx.Response(200, content=_wav_bytes()))
     actx.config.ai.min_age_months_for_cloud = 24
     ctx = _cloud_ctx(actx, cloud=True, age=12, nickname="Zara")
+    ctx.settings.set("ai.share_child_name", False)
     ctx.config.audio.tts.provider = "openai"
     svc = make_service(ctx, tts=None)
     assert isinstance(svc._tts, OpenAITTS)

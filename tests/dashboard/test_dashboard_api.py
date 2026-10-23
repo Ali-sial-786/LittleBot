@@ -690,10 +690,10 @@ async def test_attention_alerts_reach_the_parent(authed, dctx):
 
 async def test_ai_sharing_opt_ins(authed, dctx):
     info = (await authed.get("/api/ai")).json()
-    assert info["settings"]["share_child_name"] is False and info["settings"]["share_interests"] is False
-    r = await authed.put("/api/ai/settings", json={"share_child_name": True, "share_interests": True})
+    assert info["settings"]["share_child_name"] is True and info["settings"]["share_interests"] is False
+    r = await authed.put("/api/ai/settings", json={"share_child_name": False, "share_interests": True})
     assert r.status_code == 200
-    assert dctx.settings.get("ai.share_child_name") is True and dctx.settings.get("ai.share_interests") is True
+    assert dctx.settings.get("ai.share_child_name") is False and dctx.settings.get("ai.share_interests") is True
     assert (await authed.put("/api/ai/settings", json={"share_child_name": "maybe"})).status_code == 422
 
 

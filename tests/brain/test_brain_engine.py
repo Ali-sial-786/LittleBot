@@ -618,6 +618,7 @@ async def test_hazard_plus_grownup_reply_gets_a_gentle_line_not_a_game(make_brai
 
 async def test_personal_info_is_scrubbed_before_cloud(make_brain):
     ctx = cloud_context(nickname="Emma")
+    ctx.settings.set("ai.share_child_name", False)  # the parent switched sharing the name off
     ctx.settings.set("profile", {"age_months": 40, "nickname": "Emma", "favourite_animals": ["otters"],
                                  "interests": ["trains"]})
     api = FakeAPI()
