@@ -77,8 +77,8 @@ class FakeLiveAudio:
         self.muted = True
 
 
-def tone_track() -> Any:
-    """A 440 Hz tone, the 'voice' of the fake OpenAI peer."""
+def tone_track(silent: Any = None) -> Any:
+    """A 440 Hz tone, the 'voice' of the fake OpenAI peer (silence while ``silent()`` is true)."""
     from aiortc import MediaStreamTrack
     import av
 
@@ -97,7 +97,7 @@ def tone_track() -> Any:
             if wait > 0:
                 await asyncio.sleep(wait)
             t = (np.arange(960) + self.pts) / 48000
-            pcm = (np.sin(2 * np.pi * 440 * t) * 8000).astype(np.int16)
+            pcm = (np.sin(2 * np.pi * 440 * t) * (0 if silent is not None and silent() else 8000)).astype(np.int16)
             frame = av.AudioFrame.from_ndarray(pcm.reshape(1, -1), format="s16", layout="mono")
             frame.sample_rate, frame.pts, frame.time_base = 48000, self.pts, fractions.Fraction(1, 48000)
             self.pts += 960
@@ -118,6 +118,7 @@ class FakeOpenAI:
         self.channel: Any = None
         self.channel_ready = asyncio.Event()
         self.heard: list[np.ndarray] = []  # the client's microphone sound, int16 frames
+        self.voice_quiet = False  # the "voice" pauses (silence) while this is true
         self._tasks: list[Any] = []
 
     async def __call__(self, request: Any) -> Any:
@@ -149,7 +150,7 @@ class FakeOpenAI:
                 self.heard.append(frame.to_ndarray().reshape(-1))
 
         pc.on("track", lambda t: self._tasks.append(asyncio.ensure_future(listen(t))) if t.kind == "audio" else None)
-        pc.addTrack(tone_track())
+        pc.addTrack(tone_track(lambda: self.voice_quiet))
         await pc.setRemoteDescription(RTCSessionDescription(sdp=body["sdp"], type="offer"))
         await pc.setLocalDescription(await pc.createAnswer())
         return httpx.Response(201, text=pc.localDescription.sdp, headers={"content-type": "application/sdp"})

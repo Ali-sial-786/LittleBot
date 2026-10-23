@@ -462,12 +462,12 @@ async def test_fingers_are_counted_on_the_robot_when_it_is_sure(fast, caplog):
 
 @pytest.mark.parametrize("count", [HandCount(0, 0, False, "no_hand"), HandCount(0, 1, False, "fist"),
                                    HandCount(4, 1, False, "unclear_finger")])
-async def test_unsure_finger_counts_go_to_chatgpt_with_high_detail(fast, count):
+async def test_unsure_finger_counts_go_to_chatgpt_with_the_quick_request(fast, count):
     ctx, look, provider, events = fast
     look._counter = FakeCounter(count)
     out = await look.look("how many fingers am I holding up?")
     assert out["source"] == "chatgpt" and out["answer"] == "You are holding up three fingers."
-    assert provider.options == [{"detail": "high", "effort": look_mod.COUNT_EFFORT, "streams": True}]
+    assert provider.options == [{"detail": "low", "effort": look_mod.LOOK_EFFORT, "streams": True}]
 
 
 async def test_other_questions_never_use_the_counter(fast):
@@ -844,7 +844,9 @@ async def test_the_config_picks_the_look_models_detail_and_effort(ctx):
     assert (look.effort, look.count_effort, look.detail) == ("minimal", "low", "low")
     look._provider = provider = FastProvider()
     await look.look("how many fingers am I holding up?")
-    assert provider.options == [{"detail": "low", "effort": "low", "streams": True}]
+    await look.look("can you read this word?")
+    assert provider.options == [{"detail": "low", "effort": "minimal", "streams": True},
+                                {"detail": "low", "effort": "low", "streams": True}]
 
 
 def test_the_config_rejects_unknown_look_settings():
@@ -865,7 +867,7 @@ async def test_the_timing_says_where_the_time_went(fast, caplog):
     out = await look.look("how many fingers am I holding up?", on_first=lambda _s: None)
     t = out["timing"]
     assert t["photo"] == "warm" and t["photo_age_ms"] == 100 and t["count"] == "unsure:fist" and "count_ms" in t
-    assert t["model"] == "fake" and t["detail"] == "high" and t["effort"] == look_mod.COUNT_EFFORT
+    assert t["model"] == "fake" and t["detail"] == "low" and t["effort"] == look_mod.LOOK_EFFORT
     assert {"photo_kb", "first_token_ms", "first_sentence_ms", "chatgpt_ms"} <= set(t)
     line = next(r.getMessage() for r in caplog.records if "camera look timing" in r.getMessage())
     assert line.endswith(look_mod.timing_text(t)) and "fingers" not in line

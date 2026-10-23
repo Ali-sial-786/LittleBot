@@ -136,6 +136,22 @@ LOOK_REUSE_S = 8.0  # a look this recent answers the same question again: one ph
 NOTE_GRACE_S = 0.5
 NOTE_TURN_WAIT_S = 4.0
 ALREADY_TOLD = "(You were told this a moment ago too: if you already said it, don't say it again.)"
+# While LittleBot looks, the voice can only fill the wait ("One second...", "Let me look!"), whatever its
+# instructions say. So its sound is held back from the moment a look starts until it has the answer, and let
+# through again at the next pause in what it says (HUSH_PAUSE_S of quiet: never mid-word), so the person hears
+# the answer only. Never longer than HUSH_MAX_S per look.
+HUSH_MAX_S = 6.0
+HUSH_PAUSE_S = 0.16
+HUSH_QUIET_LEVEL = 0.01  # RMS (full scale 1.0) below which a 20 ms frame is quiet
+# Said on their own, these end the call at once (a wake word heard by mistake, "stop talking"); the wake
+# word listens again afterwards. The whole utterance must be one of them, so "can you stop the video?" or
+# "stop that, Emma" don't hang up.
+STOP_CALL = re.compile(
+    r"^(?:(?:ok|okay|oh|um+|uh+|no|hey|please|littlebot|little bot|bot)\s+)*"
+    r"(?:stop(?: (?:talking|listening|it|now))*|be quiet|quiet|shh+|hush|shush|never ?mind|cancel(?: that)?|"
+    r"go away|that'?s (?:all|it)|(?:good ?)?bye(?: bye)?|i'?m done|we'?re done|false alarm|"
+    r"(?:i was )?not talking to you|i wasn'?t talking to you|wrong (?:person|robot))"
+    r"(?: (?:please|now|thanks|thank you|littlebot|little bot|bot|robot))*$")
 PARTIAL_MAX_CHARS = 300  # what the person is still saying, kept to start a look before they finish
 CANT_SEE = "You couldn't look. Say you can't see right now, and suggest the grown-up shows you again later; " \
            "don't guess what is there."
@@ -511,6 +527,11 @@ class LiveCall:
         self.voice: str | None = None
         self.photos = 0
         self._look_job: _LookJob | None = None
+        self._hush_job: _LookJob | None = None  # the voice's sound is held back until this look's answer
+        self._hush_release = False  # the voice has that answer: let its sound through at the next pause
+        self._hush_quiet_since: float | None = None
+        self._hush_held = 0  # frames held back for the current look (for the log)
+        self._last_frame_at: float | None = None
         self._heard_partial = ""  # what the person is saying right now (before the final transcript)
         self._user_turns = 0  # final things the person said; a look is shared only within one of them
         self._words_began_at: float | None = None  # their first partial words this turn (None: none came yet)
@@ -690,7 +711,45 @@ class LiveCall:
                 frame = await track.recv()
             except MediaStreamError:
                 return
-            self.audio.play_frame(frame)
+            if not self._hushed(frame):
+                self.audio.play_frame(frame)
+
+    # ------------------------------------------------------------ keeping the voice quiet while it looks
+    def _hush(self, job: "_LookJob") -> None:
+        self._hush_job, self._hush_release, self._hush_quiet_since, self._hush_held = job, False, None, 0
+
+    def _unhush(self, job: "_LookJob") -> None:
+        """The voice has ``job``'s answer (or why it couldn't look): its sound may come through again."""
+        if self._hush_job is job:
+            self._hush_release = True
+
+    def _hushed(self, frame: Any) -> bool:
+        """Whether to hold back this frame of the voice's sound (see HUSH_MAX_S)."""
+        now = self.svc._now()
+        gap = self._last_frame_at is not None and now - self._last_frame_at >= HUSH_PAUSE_S
+        self._last_frame_at = now
+        job = self._hush_job
+        if job is None:
+            return False
+        try:
+            pcm = frame.to_ndarray().astype("float32") / 32768.0
+            quiet = float((pcm * pcm).mean()) ** 0.5 < HUSH_QUIET_LEVEL
+        except Exception:  # noqa: BLE001 - an odd frame: treat it as sound
+            quiet = False
+        if quiet:
+            self._hush_quiet_since = self._hush_quiet_since if self._hush_quiet_since is not None else now
+        else:
+            self._hush_quiet_since = None
+        paused = gap or (self._hush_quiet_since is not None and now - self._hush_quiet_since >= HUSH_PAUSE_S)
+        late = now - job.started >= HUSH_MAX_S
+        if (self._hush_release and paused) or late or self._ended.is_set():
+            self._hush_job = None
+            log.info("live voice: the voice is heard again %d ms after the look began (%d frames held back%s)",
+                     int((now - job.started) * 1000), self._hush_held, "; too long" if late else "")
+            return False
+        if not quiet:
+            self._hush_held += 1
+        return True
 
     # ------------------------------------------------------------ events
     def _on_message(self, message: Any) -> None:
@@ -733,6 +792,10 @@ class LiveCall:
                     self._user_turns += 1
                     self._turn_ended_at = now
                     self._poke()  # their words are finished: a held look answer may go soon
+                if STOP_CALL.match(_plain_words(event.text)):
+                    log.info("live voice: asked to stop")
+                    self.end("asked to stop")
+                    return
                 concern = classify_child_input(event.text)
                 if concern is not None:
                     log.warning("live voice: worrying words heard (category=%s)", concern.category)
@@ -1013,6 +1076,7 @@ class LiveCall:
             text, why = f"{text} {ALREADY_TOLD}", f"{why}, after the note"
         job.told.append("hand-off")
         self._log_told(job, "hand-off", f"{why}; {'first sentence' if more else job.outcome}")
+        self._unhush(job)
         return text
 
     def _shared_look(self) -> "_LookJob | None":
@@ -1057,6 +1121,7 @@ class LiveCall:
         turn = self._user_turns + (1 if source == "partial" else 0)
         job = self._look_job = _LookJob(started=self.svc._now(), by_user=source != "delegation", turn=turn,
                                         source=source)
+        self._hush(job)  # whatever the voice says until the answer is only "one second..."
         job.task = self._spawn(self._run_look(job, question))
         return job
 
@@ -1084,6 +1149,7 @@ class LiveCall:
         why = await self._hold_for_hand_off(job)
         if job.claimed or self._ended.is_set():
             return  # the hand-off got the answer
+        self._unhush(job)  # the note below gives it the answer (or nothing new to say)
         text, more = job.for_voice()
         if job.ok or more:
             self._note(f"You just looked through your camera. {text} Tell them right away, starting with the answer.")
@@ -1431,6 +1497,11 @@ def _voice_face(text: str) -> Any:
                 return None
             return FaceAction(name or _VOICE_EXPRESSIONS[m.group(1).lower()])
     return None
+
+
+def _plain_words(text: str) -> str:
+    """Lower case, letters, digits and apostrophes only, single spaces: "Stop, listening!" -> "stop listening"."""
+    return " ".join(re.sub(r"[^a-z0-9' ]+", " ", str(text).lower().replace("’", "'")).split())
 
 
 USER_FACE_CUE = re.compile(r"\b(?:face|faces|wink\w*|peek[- ]?a[- ]?boo|peekaboo|spin\w*|eyes|smile|blink\w*)\b", re.I)

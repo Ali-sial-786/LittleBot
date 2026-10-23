@@ -970,3 +970,58 @@ async def test_late_words_after_a_hand_off_take_no_second_photo(live, ctx):
     hear(server, "How many fingers am I holding up?")
     await asyncio.sleep(0.8)
     assert len(look.asked) == 1 and notes(server) == []
+
+
+async def test_the_voice_is_kept_quiet_while_it_looks_and_heard_again_with_the_answer(live, ctx, caplog):
+    pytest.importorskip("littlebot.chatgpt.look")
+    caplog.set_level(logging.INFO, logger="littlebot.chatgpt.live")
+    svc, server, audio, _provider, _alerts = live
+    look = ctx.extras["camera_look"] = FakeLook(delay=0.4)
+    await connect(svc, server)
+    await wait_for(lambda: audio.frames > 5)
+    hear(server, "How many fingers am I holding up?")
+    await asyncio.sleep(0.15)  # frames already on their way
+    held_from = audio.frames
+    await asyncio.sleep(0.2)  # the "voice" talks ("One second..."), but isn't heard
+    assert audio.frames - held_from <= 1 and look.asked
+    await wait_for(lambda: notes(server))  # the answer is on its way to the voice ...
+    await asyncio.sleep(0.2)
+    assert audio.frames - held_from <= 2  # ... but it is still mid-word: not cut in
+    server.voice_quiet = True  # it pauses
+    await asyncio.sleep(0.3)
+    server.voice_quiet = False
+    await wait_for(lambda: audio.frames - held_from > 10)  # and is heard again: the answer
+    assert "the voice is heard again" in caplog.text and "too long" not in caplog.text
+
+
+async def test_the_voice_is_never_held_back_for_long(live, ctx, monkeypatch):
+    pytest.importorskip("littlebot.chatgpt.look")
+    from littlebot.chatgpt import live as live_mod
+
+    monkeypatch.setattr(live_mod, "HUSH_MAX_S", 0.3)
+    svc, server, audio, _provider, _alerts = live
+    ctx.extras["camera_look"] = FakeLook(delay=5.0)  # a look that takes far too long
+    await connect(svc, server)
+    hear(server, "How many fingers am I holding up?")
+    await asyncio.sleep(0.2)
+    held_from = audio.frames
+    await wait_for(lambda: audio.frames - held_from > 10)
+
+
+@pytest.mark.parametrize("words", ["Stop listening.", "Stop talking!", "Never mind", "I wasn't talking to you.",
+                                   "Okay, bye bye!"])
+async def test_saying_stop_ends_the_call(live, words):
+    svc, server, _audio, _provider, _alerts = live
+    await connect(svc, server)
+    hear(server, words)
+    await wait_for(lambda: not svc.status()["active"])
+    assert svc.status()["last_call"]["ended_reason"] == "asked to stop"
+
+
+async def test_stop_inside_a_sentence_doesnt_end_the_call(live):
+    svc, server, _audio, _provider, _alerts = live
+    await connect(svc, server)
+    hear(server, "Can you stop the video?")
+    hear(server, "Let's play stop and go.")
+    await asyncio.sleep(0.2)
+    assert svc.status()["active"]

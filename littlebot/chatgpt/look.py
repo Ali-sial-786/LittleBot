@@ -74,13 +74,15 @@ WARM_EVERY_S = 0.15
 COUNT_HEAD_START_S = 0.15
 # Reasoning effort per look (the endpoint falls back to the next costlier one when a model refuses
 # one, see ChatGPTProvider.reply); chatgpt.look_effort / chatgpt.look_count_effort override them.
-LOOK_EFFORT = "none"  # simple questions: "what colour is this?", "what am I holding?"
-COUNT_EFFORT = "minimal"  # counting and reading: a little thinking helps
+LOOK_EFFORT = "none"  # most questions: "what colour is this?", "how many fingers?", "what am I holding?"
+COUNT_EFFORT = "minimal"  # reading and tiny things: a little thinking helps
 KEEP_ALIVE_S = 50.0  # while warm: re-touch the ChatGPT connection this often so it is never cold
 
-# Questions that need the photo's fine detail: counting, reading, small things.
-NEEDS_DETAIL = re.compile(r"\b(?:how many|count\w*|number\w*|fingers?|read\w*|letters?|words?|written|writing|"
-                          r"says?|spell\w*|tiny|small|little)\b", re.I)
+# Questions that need the photo's fine detail: reading and small things. Counting doesn't: on the robot,
+# "how many fingers?" with high detail and a little thinking took 1.7-2.1 s to ChatGPT's first word, with
+# low detail and none 0.9-1.6 s; our photo is only 640x480, so "high" sees just 1.25x more anyway.
+NEEDS_DETAIL = re.compile(r"\b(?:read\w*|letters?|words?|written|writing|says?|spell\w*|tiny|small|little)\b",
+                          re.I)
 # Questions about hands: something may still be moving into place, so the photo must be fresh.
 ABOUT_HANDS = re.compile(r"\b(?:fingers?|hands?|holding|hold(?:s|ing)? up|showing|show(?:s|ing)?|wav\w*|doing|"
                          r"pointing)\b", re.I)
