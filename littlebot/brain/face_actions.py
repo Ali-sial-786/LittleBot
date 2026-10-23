@@ -48,7 +48,7 @@ FACE_MENU: dict[str, str] = {
 }
 
 # Timings (seconds). Peekaboo must stay well under 3 s in total.
-EXPRESSION_HOLD = 2.5
+EXPRESSION_HOLD = 4.0
 WINK_HOLD = 1.2
 PEEKABOO_CLOSED = 1.5
 PEEK_HOLD = 2.5

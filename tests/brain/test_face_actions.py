@@ -144,7 +144,7 @@ def _calls(face: FakeFace) -> list[tuple]:
 async def test_perform_expression_is_held(face_ctx):
     assert await perform(face_ctx, FaceAction("surprised")) is True
     assert _calls(face_ctx.face) == [("set_expression", "surprised", face_actions.EXPRESSION_HOLD)]
-    assert 2.0 <= face_actions.EXPRESSION_HOLD <= 3.0 and face_ctx.face.expression == "surprised"
+    assert 3.0 <= face_actions.EXPRESSION_HOLD <= 5.0 and face_ctx.face.expression == "surprised"
 
 
 @pytest.mark.parametrize("name", ["spin_eyes", "hearts", "confetti", "nod", "shake", "bounce", "wiggle", "sparkle"])

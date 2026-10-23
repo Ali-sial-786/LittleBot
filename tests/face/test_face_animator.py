@@ -309,6 +309,33 @@ def test_hold_reverts_to_state_default():
     assert a.expression == "listening"
 
 
+def test_held_expression_outlives_talking_state_changes():
+    """'Make a happy face' while LittleBot talks: listening/speaking/thinking flips must not wipe it."""
+    a = calm()
+    a.set_expression("happy", hold=2.0)
+    for state in ("speaking", "listening", "thinking", "speaking"):
+        a.set_state(state)
+        step(a, 0.2)
+        assert a.expression == "happy", state
+    step(a, 1.5)  # hold over: the current state's own expression comes back
+    assert a.expression == "speaking"
+
+
+def test_sleep_error_and_hidden_still_take_over_a_held_expression():
+    for state in ("sleeping", "error", "hidden"):
+        a = calm()
+        a.set_expression("happy", hold=5.0)
+        a.set_state(state)
+        assert a.expression == DEFAULT_EXPRESSION_FOR_STATE[state], state
+
+
+def test_unheld_expression_still_follows_the_state():
+    a = calm()
+    a.set_expression("happy")
+    a.set_state("listening")
+    assert a.expression == "listening"
+
+
 def test_new_expression_cancels_hold():
     a = calm()
     a.set_expression("happy", hold=0.5)

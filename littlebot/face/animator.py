@@ -109,6 +109,11 @@ def _mix(a: tuple[float, ...], b: tuple[float, ...], k: float) -> tuple[float, f
     return (a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k, a[2] + (b[2] - a[2]) * k)
 
 
+# Robot states that do not cancel a held expression ("make a happy face" while LittleBot talks);
+# sleeping, error and hidden always take over at once.
+KEEPS_HELD_EXPRESSION = frozenset({"idle", "listening", "thinking", "speaking"})
+
+
 @dataclass
 class _ActiveAnim:
     name: str
@@ -202,8 +207,11 @@ class FaceAnimator:
             return True
         old = self.state
         self.state = state
-        self.hold_until = None
-        self._go(DEFAULT_EXPRESSION_FOR_STATE[state])
+        if not (state in KEEPS_HELD_EXPRESSION and self.hold_until is not None and self.t < self.hold_until):
+            self.hold_until = None
+            self._go(DEFAULT_EXPRESSION_FOR_STATE[state])
+        # else: an expression someone asked for (with a hold) outlives listening/speaking/thinking flips and
+        # gives way to the new state's default when its hold ends (see update()).
         if (old == "hidden") != (state == "hidden"):
             self._emit(Topics.FACE_VISIBLE, {"visible": state != "hidden"})
         if state in ("sleeping", "hidden"):
