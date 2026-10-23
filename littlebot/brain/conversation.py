@@ -662,7 +662,7 @@ class ConversationEngine(Service):
                 interests=profile.get("interests") if share_interests else None,
                 favourite_animals=profile.get("favourite_animals") if share_interests else None,
                 face_tags=True, tools=toolbox is not None,
-            )
+            ) + (toolbox.instructions() if toolbox is not None else "")  # weather, time, web search
             messages = self._context_messages() + [{"role": "user", "content": sent}]
             projected = self.usage.estimate_cost(
                 sel.provider.model,

@@ -164,15 +164,19 @@ async def run(box: RobotToolbox, name: str, **args: Any) -> str:
 def test_specs_are_json_schema_functions_and_live_has_no_camera_tool(ctx):
     chat = RobotToolbox(ctx, mode="chat").specs()
     live = RobotToolbox(ctx, mode="live").specs()
-    names = {s["name"] for s in chat}
+    functions = [s for s in chat if s.get("type", "function") == "function"]
+    names = {s["name"] for s in functions}
     assert names == TOOL_NAMES
     assert {"get_robot_status", "describe_yourself", "start_activity", "set_volume", "volume_up", "set_face",
             "go_to_sleep", "wake_up", "stop_everything", "search_youtube", "play_youtube", "stop_video",
-            "start_game", "look_through_camera"} <= names
+            "start_game", "look_through_camera", "get_weather", "get_time"} <= names
     assert "look_through_camera" not in {s["name"] for s in live}  # the live call looks through its own path
-    for spec in chat:
+    assert {"get_weather", "get_time"} <= {s["name"] for s in live}
+    for spec in functions:
         assert spec["parameters"]["type"] == "object" and spec["description"]
         json.dumps(spec)
+    # OpenAI's own web search (a hosted tool) comes last, in chat and live, while chatgpt.web_search is on
+    assert chat[-1] == live[-1] == {"type": "web_search", "name": "web_search"}
 
 
 async def test_unknown_tools_and_bad_arguments_are_errors(ctx):

@@ -252,3 +252,34 @@ def test_ask_what_littlebot_sees_card_and_privacy_switch(phone):
     row = page.locator(".switch-row", has_text="Let the AI look through the camera when asked")
     expect(row).to_be_visible()
     expect(row.get_by_role("switch")).not_to_be_checked()  # off by default
+
+
+def test_settings_show_where_the_weather_is_for_and_let_the_parent_change_it(phone):
+    page = phone.open("settings")
+    card = page.locator("section.card", has=page.get_by_role("heading", name="Weather & time"))
+    card.scroll_into_view_if_needed()
+    # Cloud off (the default): nothing is looked up, and the card says why there's no weather.
+    expect(card.get_by_text("Weather location: not known yet (from your internet connection, approximate)")).to_be_visible()
+    expect(card.locator(".banner", has_text="Cloud communication is off in Privacy.")).to_be_visible()
+    expect(card.get_by_text("Automatic (°")).to_be_visible()
+    card.get_by_role("button", name="Change").click()
+    card.get_by_label("Place").fill("43.65, -79.38")  # coordinates need no place search
+    card.get_by_label("Units").select_option("celsius")
+    card.get_by_role("button", name="Save").click()
+    expect(card.get_by_text("Weather location: 43.65, -79.38 (set on the dashboard)")).to_be_visible()
+    expect(card.get_by_role("button", name="Change")).to_be_visible()
+    assert phone.bot.ctx.settings.get("info.location")["latitude"] == 43.65
+    assert phone.bot.ctx.settings.get("info.units") == "celsius"
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")  # no sideways scroll
+    # A name needs the place search, so with cloud off the parent is told what to do.
+    card.get_by_role("button", name="Change").click()
+    card.get_by_label("Place").fill("Toronto")
+    card.get_by_role("button", name="Save").click()
+    expect(page.get_by_text("Turn on cloud communication in Privacy first").first).to_be_visible()
+    card.get_by_role("button", name="Use my internet connection").click()
+    expect(card.get_by_text("Weather location: not known yet (from your internet connection, approximate)")).to_be_visible()
+    card.get_by_role("button", name="Change").click()
+    card.get_by_label("Units").select_option("auto")
+    card.get_by_role("button", name="Use my internet connection").click()
+    expect(card.get_by_role("button", name="Change")).to_be_visible()
+    assert phone.bot.ctx.settings.get("info.location") == {} and phone.bot.ctx.settings.get("info.units") == "auto"

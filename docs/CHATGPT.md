@@ -326,6 +326,9 @@ in typed chat, with **Push to talk**, or during a **live voice** call. ChatGPT p
 | "How hot are you?", "are you on Wi-Fi?", "what's connected?", "which ChatGPT plan?" | answers from its status: CPU temperature and load, memory, how long it has been running, Wi-Fi signal, camera / microphone / speaker / screen / motors, volume, the signed-in plan, live voice on or off, what is playing, the Privacy switches |
 | "What can you do?", "tell me about yourself" | a short summary of what it can do |
 | Typed chat only: "what am I holding?" | one camera photo, if you allowed it in Privacy ([section 4](#4-letting-the-ai-see-camera)). In live voice the call's own camera look is used |
+| "What's the weather today?", "will it rain tomorrow?", "do we need coats?", "weather in Paris this weekend" | gets the real weather: now, today, tomorrow or up to 7 days, at home or anywhere ([Weather, time and finding things out](#weather-time-and-finding-things-out)) |
+| "What time is it?", "what day is it?", "what's the date?", "what time is it in Tokyo?" | reads its own clock (or that place's time zone) |
+| "Any news today?", "who won the hockey game?", "is the zoo open on Sundays?" | ChatGPT looks it up with its own web search |
 
 **When things start.** A video, an activity or going to sleep needs the screen and the speaker that
 the conversation is using, so it starts **after** LittleBot has said its answer. In a **live voice
@@ -363,18 +366,81 @@ it didn't work out). Faces, the volume and status answers usually come back in a
   ends, as a safety stop "links"). ChatGPT is told to say "Here comes Baby Shark!" instead, and
   video titles are shortened before it gets them, but if the live voice slips, the call ends.
 
+### Weather, time and finding things out
+
+LittleBot can answer the everyday questions a smart speaker answers, in typed chat, push to talk and
+live voice (with `chatgpt.tools_enabled`, the default):
+
+* **Weather** (`get_weather`): now (temperature, feels-like, conditions in plain words, wind, humidity),
+  the next hours in three-hour blocks, and today's, tomorrow's or up to 7 days' forecast (high, low,
+  conditions, chance of rain or snow, wind, sunrise and sunset). From [Open-Meteo](https://open-meteo.com):
+  free, no account or key. At home, or anywhere ChatGPT names ("weather in Paris"), found with
+  Open-Meteo's free place search.
+* **Time and date** (`get_time`): the time, the day of the week and the date from the robot's own clock,
+  in the robot's time zone (`info.timezone`, else the Pi's), or in another place's time zone.
+* **Anything else that changes** (news, sports scores, opening hours, events): ChatGPT's own **web
+  search** (`chatgpt.web_search: true`, the default), run by OpenAI as part of the answer. LittleBot
+  removes the links and citation marks before it speaks.
+
+ChatGPT is told to use these instead of guessing or saying it doesn't know. The live voice is told
+to hand such questions to LittleBot, and those hand-offs always go to ChatGPT with the tools (never to
+the camera, even when they say "looking like" or "show me the weather").
+
+**Where home is.** Open **Settings → Weather & time** on the dashboard. It shows, for example,
+"Weather location: **Toronto, Ontario** (from your internet connection, approximate)". Press **Change**
+to type a town ("Toronto", or "Springfield, Illinois" when there are several) or a latitude and longitude
+("43.65, -79.38"), and to choose °C or °F. **Use my internet connection** goes back to automatic.
+**Check the weather now** shows what ChatGPT would get. In order, home is:
+
+1. the place you chose on the dashboard ("set on the dashboard"), else
+2. `info.location` in `config/local.yaml` ("from LittleBot's config file"), else
+3. approximately where the robot's internet connection is ("from your internet connection, approximate"):
+   LittleBot asks a free service where its public IP address is (ipinfo.io, then ipwho.is, then
+   ipapi.co). This is usually the right city, but can be your internet provider's nearest town. It is
+   kept in LittleBot's database and asked again after a week.
+
+**Units.** Automatic: °F and mph if home is in the US (and the few other countries that use them),
+else °C and km/h (mph in the UK). Weather somewhere else is given in your units.
+
+**Speed.** Each weather answer gets at most 3 s for its requests (`info.timeout_seconds`); a request
+that runs out of time carries on in the background, so asking again finds it ready. A forecast is
+reused for 10 minutes (`info.cache_minutes`), so a second weather question is instant, and in a live
+call the answer usually comes well within the voice's 5 s (the weather service itself answers in
+under a second).
+
+**Web search caveat.** Web search is sent the way the Codex CLI sends it (`{"type": "web_search"}` in
+the request's tools), but it has **not been tried against OpenAI's real endpoint yet**. If the endpoint
+refuses it, LittleBot asks again without it, and doesn't offer it again until it restarts (the journal
+says "not offering web_search any more"). Answers then work as before, without web search.
+
+**Needs:** cloud communication on in Privacy (nothing is sent while it is off, or in offline mode).
+Typing a place name on the dashboard needs it too (coordinates don't).
+
 ### What goes where
 
 The tool names, their results (status numbers, activity, game and video names) and your words go
 to OpenAI, as with any ChatGPT answer. A search sends only the search words to YouTube, from the
 robot. The robot's Wi-Fi network name is included in the status if `iwgetid` is installed.
+For the weather, Open-Meteo gets the place's coordinates (and a place name to search); the IP
+location service sees the robot's public IP address (once a week at most, only when you haven't
+set home); the weather report sent to OpenAI contains the place's name. Web searches are run by OpenAI.
 
 ### Settings
 
 ```yaml
 chatgpt:
-  tools_enabled: true          # ChatGPT may control LittleBot when asked (false: it only answers)
+  tools_enabled: true          # ChatGPT may control LittleBot when asked (false: it only answers;
+                               # then also no weather, time or web search)
   max_tool_rounds: 6           # tool calls per answer ("play baby shark" = search + play)
+  web_search: true             # OpenAI's web search for news, scores, opening hours...
+info:
+  location: ""                 # home for the weather: "Toronto", "Springfield, Illinois" or "43.65, -79.38";
+                               # "" = from the internet connection (the dashboard's choice wins)
+  units: auto                  # auto | celsius | fahrenheit (the dashboard's choice wins)
+  locate_by_ip: true           # no home set: approximate it from the robot's public IP address
+  timezone: ""                 # for "what time is it?"; "" = the robot's own time zone
+  timeout_seconds: 3           # per weather answer, all requests together
+  cache_minutes: 10            # a forecast is reused this long
 media:
   allow_search: true           # play any video found on YouTube, not only the approved list
   search_results: 5            # results per search (the others are what Skip plays)
@@ -537,6 +603,15 @@ plan, the one-time code and the live status, never tokens.
 | `live_volume` | `null` | `null` = the speaker volume setting. Always capped at `audio.speaker.max_volume` |
 | `tools_enabled` | `true` | ChatGPT may control LittleBot when asked: typed chat, push to talk and live-voice hand-offs ([section 5](#5-asking-littlebot-to-do-things)) |
 | `max_tool_rounds` | `6` | tool calls per answer |
+| `web_search` | `true` | offer OpenAI's hosted web search with the tools (`{"type": "web_search"}`). Refused by the endpoint: asked again without it, then not offered until restart |
+
+Live information (`info:` section, `InfoConfig`): `location` (`""`: a place or "lat, lon"; empty = from
+the internet connection), `units` (`auto` | `celsius` | `fahrenheit`), `locate_by_ip` (`true`),
+`timezone` (`""` = the robot's own), `timeout_seconds` (`3`), `cache_minutes` (`10`). The parent's
+choice on the dashboard (settings `info.location`, `info.units`) wins over `location` and `units`. See
+[Weather, time and finding things out](#weather-time-and-finding-things-out). Dashboard API: `GET
+/api/info` (`?lookup=true` finds home first if it isn't known), `PUT /api/info {"location", "units"}`
+(`""` = automatic), `GET /api/info/weather`.
 
 Wake word (`wake:` section, `WakeConfig`): `enabled` (`true`, the switch's default), `phrases`,
 `model_path` (`models/vosk-model-small-en-us-0.15`), `min_confidence` (`0.5`), `distractors`
@@ -555,7 +630,9 @@ YouTube search (`media:` section, `MediaConfig`): `allow_search` (`true`: any vi
 | `littlebot/chatgpt/wire.py` | GPT-Live data-channel events |
 | `littlebot/chatgpt/live.py` | `LiveVoiceService` (`ctx.live`): gates, safety checks, limits, delegations, clean-up |
 | `littlebot/chatgpt/live_audio.py` | microphone / speaker bridge with the half-duplex gate |
-| `littlebot/chatgpt/tools.py` | `RobotToolbox`: the tools ChatGPT may use (status, volume, faces, videos, activities, games, sleep, camera) |
+| `littlebot/chatgpt/tools.py` | `RobotToolbox`: the tools ChatGPT may use (status, volume, faces, videos, activities, games, sleep, camera, weather, time; web search) |
+| `littlebot/info/weather.py`, `littlebot/info/clock.py` | the weather (Open-Meteo, place search, home from the dashboard / config / IP address, cache) and the time |
+| `littlebot/dashboard/routes/info_routes.py`, `static/js/pages/settings.js` | the "Weather & time" card on the Settings page |
 | `littlebot/media/search.py` | YouTube search through yt-dlp (no API key); `MediaController.search` / `play_video` play the results |
 | `littlebot/chatgpt/look.py` | `CameraLook`: one photo + question to ChatGPT, with the privacy gates (section 4) |
 | `littlebot/audio/wakeword.py` | `WakeWordService` (`ctx.wake`): "Hey LittleBot" heard offline with Vosk, then `ctx.live.start_session`; shares the microphone with `AudioService` (`attach_background_listener`) |
@@ -588,6 +665,17 @@ YouTube search (`media:` section, `MediaConfig`): `allow_search` (`true`: any vi
   next result on errors 101/150, skip); the yt-dlp child process with a stand-in script. One real
   search through yt-dlp worked from a development machine (2 s); not from the Pi, and the found
   videos have not been played in the Pi's kiosk.
+* **Weather, time and web search** (`tests/info/`, `tests/chatgpt/test_info_tools.py`,
+  `test_web_search.py`, `test_live_tools.py`, `tests/dashboard/test_dashboard_info.py`, the browser
+  test): the weather against stand-ins for Open-Meteo and the IP services (home from the dashboard,
+  config or IP address, the next IP service when one fails, the kept IP location, the 10-minute cache,
+  the 3 s limit with the answer kept for next time, units, places with a region, errors, nothing sent
+  with cloud off); the time in any zone; the tools; live hand-offs about the weather and the time going
+  to the tools, not the camera, within the 5 s window; the dashboard card. The real Open-Meteo forecast
+  and place search, and the three IP services, were called once from a development machine and their
+  answers read correctly. Web search was tested only against mocked event streams (the request, the
+  `web_search_call` items and citations, and every refusal falling back without it): **not against
+  OpenAI's real endpoint**.
 * **Wake word** (`tests/audio/test_wakeword.py`, `tests/dashboard/test_dashboard_wake.py`): a stand-in
   recogniser on a mock microphone that, like the Pi's USB microphone, can't be opened twice, with
   the real `AudioService`: earcon + exactly one start, "uh-oh" when live voice is blocked or doesn't

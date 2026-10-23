@@ -90,8 +90,10 @@ async def test_play_a_video_starts_after_the_reply_is_spoken(make_brain, tmp_pat
     # the reply was spoken first; the video started after the turn (and its lease) ended
     assert ctx.media.played == [("XqZsoesa55w", "Baby Shark Dance", ["Here comes Baby Shark!"])]
     first, second = api.body(0), api.body(1)
-    assert {t["name"] for t in first["tools"]} >= {"play_youtube", "set_volume", "get_robot_status"}
+    assert {t.get("name") for t in first["tools"]} >= {"play_youtube", "set_volume", "get_robot_status", "get_weather"}
+    assert first["tools"][-1] == {"type": "web_search"}  # OpenAI's hosted web search, as Codex sends it
     assert "Things you can do (tools)" in first["instructions"]
+    assert "call get_weather" in first["instructions"] and "use web search" in first["instructions"]
     assert second["input"][-1] == {"type": "function_call_output", "call_id": "c1",
                                    "output": "ok: the video 'Baby Shark Dance' will start as soon as you have "
                                              "finished speaking. Tell them briefly."}
