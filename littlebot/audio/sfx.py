@@ -470,8 +470,11 @@ class SoundBank:
     """Loads ``assets/sounds/*.wav`` on demand (cached) and synthesises missing built-ins."""
 
     def __init__(self, sounds_dir: str | Path | None = None, *, synthesize_missing: bool = True,
-                 cache_size: int = 48) -> None:
+                 cache_size: int = 48, user_dir: str | Path | None = None) -> None:
         self.sounds_dir = Path(sounds_dir) if sounds_dir is not None else SOUNDS_DIR
+        # The parent's own recordings (data/sounds/voice/<name>_N.wav, e.g. from scripts/record_giggle.py):
+        # outside the code folder, so updates never touch them; they win over the shipped clips.
+        self.user_dir = Path(user_dir) if user_dir is not None else None
         self.synthesize_missing = synthesize_missing
         self._cache: OrderedDict[str, tuple[np.ndarray, int]] = OrderedDict()
         self._cache_size = cache_size
@@ -510,17 +513,38 @@ class SoundBank:
             return []
         found = self._variants.get(name)
         if found is None:
-            folder = self.sounds_dir / "voice"
-            found = [f"voice/{p.name}" for p in sorted(folder.glob(f"{name}_*.wav"))] if folder.is_dir() else []
+            found = []
+            mine = self.user_dir / "voice" if self.user_dir is not None else None
+            if mine is not None and mine.is_dir():
+                found = [str(p) for p in sorted(mine.glob(f"{name}_*.wav"))]
+            if not found:
+                folder = self.sounds_dir / "voice"
+                found = [f"voice/{p.name}" for p in sorted(folder.glob(f"{name}_*.wav"))] if folder.is_dir() else []
             self._variants[name] = found
         return found
+
+    def _load_user_clip(self, path: str) -> tuple[np.ndarray, int] | None:
+        hit = self.cached(path)
+        if hit is not None:
+            return hit
+        try:
+            result = dsp.read_wav(Path(path))
+        except (OSError, ValueError) as e:
+            log.warning("could not read sound %s: %s", path, e)
+            return None
+        with self._lock:
+            self._cache[path] = result
+            while len(self._cache) > self._cache_size:
+                self._cache.popitem(last=False)
+        return result
 
     def get(self, name: str) -> tuple[np.ndarray, int] | None:
         """(samples, sample_rate) or None if unknown / unreadable. A built-in with recorded voice
         clips (e.g. a human "Hehe! That tickles!" for "giggle") plays one of them at random."""
         variants = self.voice_variants(name)
         if variants:
-            clip = self.get(random.choice(variants))
+            pick = random.choice(variants)
+            clip = self._load_user_clip(pick) if Path(pick).is_absolute() else self.get(pick)
             if clip is not None:
                 return clip
         hit = self.cached(name)

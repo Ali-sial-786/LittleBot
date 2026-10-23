@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """Record LittleBot's giggle in its GPT-Live voice (uses the robot's ChatGPT sign-in).
 
-    .venv/bin/python scripts/record_giggle.py               # 3 takes -> assets/sounds/voice/giggle_N.wav
+    .venv/bin/python scripts/record_giggle.py               # 3 takes -> data/sounds/voice/giggle_N.wav
     .venv/bin/python scripts/record_giggle.py --takes 5     # more takes
     .venv/bin/python scripts/record_giggle.py --dry-run     # record, but only save to data/giggle_takes/
 
 Each take is a short live call: the voice is asked to give a real, happy giggle and then say
 "That tickles!", and only the voice's own audio is recorded. The microphone is never used (the call
 gets silence; if the voice doesn't react to the written request it hears a spoken request made with
-espeak-ng instead). The takes replace the earlier giggle clips; restart LittleBot afterwards:
+espeak-ng instead). The takes are used instead of the shipped giggle clips (delete
+data/sounds/voice/ to go back); restart LittleBot afterwards:
 systemctl --user restart littlebot
 """
 from __future__ import annotations
@@ -203,7 +204,8 @@ async def main_async(args: argparse.Namespace) -> int:
     if not auth.signed_in:
         print("Not signed in with ChatGPT on this robot. Sign in on the dashboard's AI page first.")
         return 1
-    out_dir = (cfg.data_path / "giggle_takes") if args.dry_run else REPO_ROOT / "assets" / "sounds" / "voice"
+    # data/ is outside the code: updates never touch the recordings, and they win over the shipped clips.
+    out_dir = (cfg.data_path / "giggle_takes") if args.dry_run else cfg.data_path / "sounds" / "voice"
     out_dir.mkdir(parents=True, exist_ok=True)
     takes: list[np.ndarray] = []
     for i in range(1, args.takes + 1):

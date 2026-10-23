@@ -51,6 +51,7 @@ import logging
 import math
 import threading
 import time
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -166,7 +167,7 @@ class AudioService(Service):
         self._mock_tts = MockTTS()
         self.last_tts_error = ""
         self.last_stt_error = ""
-        self._bank = sound_bank or SoundBank()
+        self._bank = sound_bank or SoundBank(user_dir=Path(ctx.config.data_path) / "sounds")
 
         # --- devices (resolved lazily / in start(); probing PortAudio can be slow) ---
         self._out: OutputBackend | None = output

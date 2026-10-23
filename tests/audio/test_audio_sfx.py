@@ -190,3 +190,19 @@ def test_recorded_voice_clips_replace_a_built_in(tmp_path):
     levels = {round(float(bank.get("giggle")[0].max()), 1) for _ in range(40)}
     assert levels == {0.2, 0.4}  # one of the clips, picked at random
     assert bank.voice_variants("chime") == [] and bank.get("chime") is not None  # others stay synthesised
+
+
+def test_the_parents_own_recordings_win_over_shipped_clips(tmp_path):
+    import numpy as np
+
+    from littlebot.audio import dsp
+    from littlebot.audio.sfx import SoundBank
+
+    shipped, mine = tmp_path / "assets", tmp_path / "data"
+    (shipped / "voice").mkdir(parents=True)
+    dsp.write_wav(shipped / "voice" / "giggle_1.wav", np.full(2205, 0.2, np.float32), 22050)
+    assert SoundBank(shipped, user_dir=mine).voice_variants("giggle") == ["voice/giggle_1.wav"]
+    (mine / "voice").mkdir(parents=True)
+    dsp.write_wav(mine / "voice" / "giggle_1.wav", np.full(2205, 0.4, np.float32), 22050)
+    bank = SoundBank(shipped, user_dir=mine)
+    assert round(float(bank.get("giggle")[0].max()), 1) == 0.4
