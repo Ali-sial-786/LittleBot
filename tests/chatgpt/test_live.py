@@ -13,6 +13,8 @@ pytest.importorskip("aiortc")
 
 from chatgpt_helpers import FakeLiveAudio, FakeOpenAI, FakeProvider, signed_in_auth  # noqa: E402
 
+import littlebot.chatgpt.live as live_mod  # noqa: E402
+from littlebot.brain.providers.base import ProviderReply  # noqa: E402
 from littlebot.chatgpt.live import LiveVoiceService  # noqa: E402
 from littlebot.core.arbiter import Priority, Resource  # noqa: E402
 from littlebot.core.events import Topics  # noqa: E402
@@ -431,7 +433,9 @@ async def test_a_hand_off_just_after_that_look_shares_it_but_a_new_question_look
     await wait_for(lambda: notes(server))
     delegate(server, "s2", "Look: what is the person holding?")
     await wait_for(lambda: answers(server, "s2"))
-    assert answers(server, "s2") == ["You are holding up three fingers."] and len(look.asked) == 1
+    # the note came first: the hand-off still gets the answer, and is told the voice already had it
+    assert answers(server, "s2") == [f"You are holding up three fingers. {live_mod.ALREADY_TOLD}"]
+    assert len(look.asked) == 1
     hear(server, "and now?")  # something new was said: the next hand-off is a new question
     delegate(server, "s3", "Look again: how many fingers now?")
     await wait_for(lambda: answers(server, "s3"))
@@ -469,12 +473,26 @@ def test_seeing_words():
     for text in ("How many fingers am I holding up?", "how many fingers do you see", "What am I holding?",
                  "Guess what I\u2019m holding!", "whats in my hand", "Can you see me?", "Do you see my teddy?",
                  "What colour is this?", "what color are my eyes", "What do you see?", "Look at this!",
-                 "count my fingers", "What is she wearing?"):
+                 "count my fingers", "What is she wearing?",
+                 # more ways of asking
+                 "What is this?", "Hey LittleBot, what's this?", "What is this, LittleBot?", "what's this called",
+                 "What is that thing?", "What colour shirt am I wearing?", "what colour is my shirt",
+                 "Do you know what this is?", "tell me what these are", "Can you see what I'm doing?",
+                 "Look what I made!", "How many blocks can you see?", "What animal is this?", "Which colour is this?",
+                 "What does this say?", "Can you read this?", "What have I got here?", "What kind of dog is this?",
+                 "what is this I'm holding", "What is the child holding?", "what's in the child's hand"):
         assert asks_to_see(text), text
     for text in ("See you later!", "nice to see you", "How many fingers does a cat have?",
                  "how many fingers do you have", "Do you see what I mean?", "What colour is the sky?",
-                 "I like to look up at the clouds", "Make a happy face", "Let me see", ""):
+                 "I like to look up at the clouds", "Make a happy face", "Let me see", "",
+                 "What is this song?", "What's that?", "what is that noise", "What are we doing today?",
+                 "Can you guess what it is?", "what have I got to do today", "Look what time it is!",
+                 "How many legs does a spider have?", "What number is your favourite?", "What is it?",
+                 "And now?", "What about this one?"):  # those two only right after a look
         assert not asks_to_see(text), text
+    for text in ("And now?", "what about this one", "How many now?", "and this one?"):
+        assert asks_to_see(text, follow_up=True), text
+    assert not asks_to_see("and now let's sing a song", follow_up=True)
 
 
 def test_seeing_questions_are_not_face_requests():
@@ -758,3 +776,197 @@ def test_seeing_words_while_still_talking():
                  "how many fingers do you", "see you later", "I like to look up"):
         assert not asks_to_see(text, partial=True), text
     assert asks_to_see("how many fingers")  # a finished sentence that says just that is a clear ask
+    # a short whole-sentence question waits for its sentence to end ("what is this song" is not one)
+    assert not asks_to_see("what is this", partial=True) and not asks_to_see("what is this song", partial=True)
+    assert asks_to_see("what is this?", partial=True) and asks_to_see("Oh, what is this? I found it", partial=True)
+    assert not asks_to_see("and now", partial=True, follow_up=True)
+    assert asks_to_see("and now?", partial=True, follow_up=True)
+
+
+# --------------------------------------------------------------------------- telling the voice sooner, once
+def voice_says(server: FakeOpenAI, text: str) -> None:
+    server.send({"type": "output_transcript.added", "item": {"text": text}})
+
+
+def log_line(caplog: Any, needle: str) -> str:
+    return next(r.getMessage() for r in caplog.records if needle in r.getMessage())
+
+
+async def test_without_a_hand_off_a_quick_answer_is_told_soon_after_their_words(live, ctx, caplog):
+    pytest.importorskip("littlebot.chatgpt.look")
+    svc, server, _audio, _provider, _alerts = live
+    look = ctx.extras["camera_look"] = FakeLook()  # answers at once, like a finger count on the robot
+    caplog.set_level(logging.INFO, logger="littlebot.chatgpt.live")
+    await connect(svc, server)
+    loop = asyncio.get_running_loop()
+    t0 = loop.time()
+    hear(server, "How many fingers am I holding up?")
+    await wait_for(lambda: notes(server))
+    took = loop.time() - t0
+    assert live_mod.NOTE_GRACE_S - 0.05 <= took < 0.95  # held 1 s from the look's start before
+    assert len(look.asked) == 1
+    line = log_line(caplog, "look answer told via note")
+    assert "ready at +" in line and f"no hand-off {live_mod.NOTE_GRACE_S:g} s after their last words" in line
+
+
+async def test_no_note_while_they_are_still_talking(live, ctx):
+    pytest.importorskip("littlebot.chatgpt.look")
+    svc, server, _audio, _provider, _alerts = live
+    look = ctx.extras["camera_look"] = FakeLook()
+    await connect(svc, server)
+    partial(server, "How many fingers am I holding")
+    await wait_for(lambda: look.asked)
+    await asyncio.sleep(1.3)  # the answer is long ready, but they haven't finished: don't talk over them
+    assert notes(server) == []
+    loop = asyncio.get_running_loop()
+    t0 = loop.time()
+    hear(server, "How many fingers am I holding up right now?")
+    await wait_for(lambda: notes(server))
+    assert loop.time() - t0 < 0.95 and len(look.asked) == 1
+
+
+async def test_the_voice_talking_without_a_hand_off_gets_the_answer_at_once(live, ctx, caplog, monkeypatch):
+    pytest.importorskip("littlebot.chatgpt.look")
+    monkeypatch.setattr(live_mod, "NOTE_GRACE_S", 5.0)
+    svc, server, _audio, _provider, _alerts = live
+    look = ctx.extras["camera_look"] = FakeLook()
+    caplog.set_level(logging.INFO, logger="littlebot.chatgpt.live")
+    await connect(svc, server)
+    hear(server, "What am I holding?")
+    await wait_for(lambda: look.asked)
+    await asyncio.sleep(0.3)
+    assert notes(server) == []  # a hand-off may still come
+    voice_says(server, "Ooh, let me ")  # it answers on its own instead
+    await wait_for(lambda: notes(server), timeout=1.0)
+    assert notes(server)[0].startswith("You just looked through your camera.")
+    assert "the voice talked without handing it over" in log_line(caplog, "look answer told via note")
+
+
+async def test_a_hand_off_on_its_way_still_gets_the_answer_and_no_note_follows(live, ctx, caplog):
+    pytest.importorskip("littlebot.chatgpt.look")
+    svc, server, _audio, _provider, _alerts = live
+    look = ctx.extras["camera_look"] = FakeLook()
+    caplog.set_level(logging.INFO, logger="littlebot.chatgpt.live")
+    await connect(svc, server)
+    hear(server, "How many fingers am I holding up?")
+    await wait_for(lambda: look.asked)
+    await asyncio.sleep(0.2)
+    delegate(server, "w1", "Look: how many fingers is the person holding up?")
+    await wait_for(lambda: answers(server, "w1"))
+    assert answers(server, "w1") == ["You are holding up three fingers."]  # no "you were told" when it wasn't
+    await asyncio.sleep(live_mod.NOTE_GRACE_S + 0.3)
+    assert notes(server) == [] and len(look.asked) == 1
+    line = log_line(caplog, "look answer told via hand-off")
+    assert "the hand-off came at +" in line and "held" in line
+
+
+async def test_seeing_hand_offs_never_go_to_the_tools_or_the_text_model(live, ctx, caplog):
+    pytest.importorskip("littlebot.chatgpt.look")
+    svc, server, _audio, provider, _alerts = live
+    provider.supports_tools = True  # tools on: "game", "video" and "activity" hand-offs go to them
+
+    async def reply(messages, *, system, max_tokens, timeout, **kw):
+        provider.calls.append({"messages": messages, "tools": bool(kw.get("tools"))})
+        return ProviderReply(text="Okay!", model="fake")
+
+    provider.reply = reply  # type: ignore[method-assign]
+    look = ctx.extras["camera_look"] = FakeLook(answer="A puzzle box!")
+    caplog.set_level(logging.INFO, logger="littlebot.chatgpt.live")
+    await connect(svc, server)
+    delegate(server, "g1", "Look: what game is the child holding?")  # names a game, but asks to look
+    await wait_for(lambda: answers(server, "g1"))
+    assert answers(server, "g1") == ["A puzzle box!"] and provider.calls == []
+    delegate(server, "g2", "Tell me what this is")  # no look / see words at all
+    await wait_for(lambda: answers(server, "g2"))
+    assert answers(server, "g2") == ["A puzzle box!"] and provider.calls == [] and len(look.asked) == 2
+    delegate(server, "g3", "Show me a video of a dog")  # asks for something to be done: the tools
+    await wait_for(lambda: answers(server, "g3"))
+    delegate(server, "g4", "Look for a dinosaur video and play it")
+    await wait_for(lambda: answers(server, "g4"))
+    assert len(look.asked) == 2 and [c["tools"] for c in provider.calls] == [True, True]
+    assert caplog.text.count("hand-off received (kind=look)") == 2
+    assert caplog.text.count("hand-off received (kind=control)") == 2
+
+
+async def test_a_vague_hand_off_during_the_look_their_words_asked_for_gets_that_look(live, ctx, caplog):
+    pytest.importorskip("littlebot.chatgpt.look")
+    svc, server, _audio, provider, _alerts = live
+    look = ctx.extras["camera_look"] = FakeLook(answer="A red ball!", delay=0.3)
+    caplog.set_level(logging.INFO, logger="littlebot.chatgpt.live")
+    await connect(svc, server)
+    hear(server, "What is this?")
+    delegate(server, "v1", "Describe that thing for them")  # no seeing words: the text model would guess
+    await wait_for(lambda: answers(server, "v1"))
+    assert answers(server, "v1") == ["A red ball!"] and provider.calls == [] and len(look.asked) == 1
+    assert "hand-off received (kind=look, from the person's words)" in caplog.text
+    delegate(server, "v2", "What is the capital of France?")
+    await wait_for(lambda: answers(server, "v2"))
+    assert answers(server, "v2") == ["A cow says moo."] and len(look.asked) == 1
+
+
+async def test_the_look_log_says_where_the_time_went(live, ctx, caplog):
+    pytest.importorskip("littlebot.chatgpt.look")
+    svc, server, _audio, _provider, _alerts = live
+
+    class TimedLook(FakeLook):
+        async def look(self, question: str, *, asked_by: str = "parent", on_first=None) -> dict[str, Any]:
+            out = await super().look(question, asked_by=asked_by)
+            return {**out, "timing": {"photo": "warm", "photo_age_ms": 120, "photo_ms": 0, "count": "unsure:fist",
+                                      "count_ms": 90, "detail": "high", "first_sentence_ms": 640, "chatgpt_ms": 800}}
+
+    ctx.extras["camera_look"] = TimedLook()
+    caplog.set_level(logging.INFO, logger="littlebot.chatgpt.live")
+    await connect(svc, server)
+    partial(server, "how many fingers am I holding")
+    hear(server, "how many fingers am I holding up?")
+    delegate(server, "t1", "Look: how many fingers?")
+    await wait_for(lambda: answers(server, "t1"))
+    line = log_line(caplog, "look triggered (from=partial) -> ok in")
+    assert line.endswith("| photo=warm photo_age_ms=120 photo_ms=0 count=unsure:fist count_ms=90 detail=high "
+                         "first_sentence_ms=640 chatgpt_ms=800")
+    assert "look answer told via hand-off" in caplog.text
+    assert "fingers" not in caplog.text and "holding" not in caplog.text  # labels and numbers only
+
+
+async def test_and_now_right_after_a_look_looks_again_before_the_hand_off(live, ctx):
+    pytest.importorskip("littlebot.chatgpt.look")
+    svc, server, _audio, _provider, _alerts = live
+    look = ctx.extras["camera_look"] = FakeLook()
+    await connect(svc, server)
+    hear(server, "How many fingers am I holding up?")
+    await wait_for(lambda: notes(server))
+    partial(server, "And now?")  # a finger game: the next round
+    await wait_for(lambda: len(look.asked) == 2)
+    hear(server, "And now?")
+    delegate(server, "n1", "Look again: how many fingers now?")
+    await wait_for(lambda: answers(server, "n1"))
+    assert answers(server, "n1") == ["You are holding up three fingers."]
+    await asyncio.sleep(0.3)
+    assert len(look.asked) == 2 and svc.status()["photos"] == 2  # one photo per question
+
+
+async def test_a_new_question_soon_after_a_look_starts_its_own_look_early(live, ctx):
+    pytest.importorskip("littlebot.chatgpt.look")
+    svc, server, _audio, _provider, _alerts = live
+    look = ctx.extras["camera_look"] = FakeLook()
+    await connect(svc, server)
+    hear(server, "What am I holding?")
+    await wait_for(lambda: notes(server))
+    partial(server, "And what colour is my ")  # within LOOK_REUSE_S, but a new question: look while they talk
+    await wait_for(lambda: len(look.asked) == 2)
+    hear(server, "And what colour is my shirt?")  # its own words don't look a third time
+    await asyncio.sleep(0.3)
+    assert len(look.asked) == 2
+
+
+async def test_late_words_after_a_hand_off_take_no_second_photo(live, ctx):
+    pytest.importorskip("littlebot.chatgpt.look")
+    svc, server, _audio, _provider, _alerts = live
+    look = ctx.extras["camera_look"] = FakeLook()
+    await connect(svc, server)
+    delegate(server, "late1", "Look: how many fingers is the person holding up?")
+    await wait_for(lambda: answers(server, "late1"))
+    partial(server, "How many fingers am I holding")  # their transcript lags behind the voice
+    hear(server, "How many fingers am I holding up?")
+    await asyncio.sleep(0.8)
+    assert len(look.asked) == 1 and notes(server) == []

@@ -209,3 +209,18 @@ def test_dark_photos_are_brightened_and_bright_ones_left_alone():
     assert brighten_if_dark(bright) is bright
     black = np.zeros((48, 64, 3), np.uint8)
     assert brighten_if_dark(black) is black  # nothing to lift (lens covered)
+
+
+def test_shrink_jpeg_for_a_model_that_looks_at_less():
+    from littlebot.vision.imaging import shrink_jpeg
+
+    cv2 = get_cv2()
+    if cv2 is None:
+        pytest.skip("OpenCV needed")
+    img = (np.random.default_rng(0).random((480, 640, 3)) * 255).astype(np.uint8)
+    big = cv2.imencode(".jpg", img, [int(cv2.IMWRITE_JPEG_QUALITY), 75])[1].tobytes()
+    small = shrink_jpeg(big, 512, 75)
+    out = cv2.imdecode(np.frombuffer(small, np.uint8), cv2.IMREAD_COLOR)
+    assert out.shape[:2] == (384, 512) and len(small) < len(big)
+    assert shrink_jpeg(small, 512) is small  # already small enough: untouched
+    assert shrink_jpeg(b"not a jpeg", 512) == b"not a jpeg"

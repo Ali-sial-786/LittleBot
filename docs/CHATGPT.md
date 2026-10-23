@@ -263,10 +263,15 @@ shirt?". It is **off by default**.
 ### What happens
 
 * LittleBot grabs **one still frame** from the camera at the moment of the question (a small
-  JPEG, at most 768 pixels wide) and sends it with the question to the ChatGPT text model on your
-  plan. **Nothing is filmed or streamed**, and no photo is ever taken on a timer or in the
+  JPEG, 640 pixels wide, or 512 for simple questions) and sends it with the question to the ChatGPT
+  text model on your plan. **Nothing is filmed or streamed**, and no photo is ever taken on a timer or in the
   background. LittleBot's face does a little "peek" when it takes the photo, so everyone can see
-  it happened.
+  it happened. During a live call the camera keeps its latest frame in memory (replaced with every
+  new one, never sent or saved), so the photo for a question doesn't wait for the camera.
+* "How many fingers am I holding up?" is counted on LittleBot itself when the hand models are
+  installed (`scripts/download_models.py hands`). When it is sure within a moment, the photo is not
+  sent at all; when it isn't sure, ChatGPT answers. If counting takes longer than that moment (a busy
+  robot), the photo goes to ChatGPT too and the first sure answer is used.
 * The answer comes back as text (at most 40 words) and is checked with LittleBot's safety rules
   before it is shown or spoken. If it fails the check, LittleBot says "I'm not sure what I see.
   Let's ask a grown-up." instead. Only one photo is taken at a time.

@@ -80,6 +80,24 @@ async def test_keeps_one_recent_photo_and_refreshes_it(made):
     await svc.stop()
 
 
+async def test_during_a_live_call_it_is_never_older_than_one_frame(made):
+    """The live call's refresh period (look.WARM_EVERY_S) renews it with every frame the loop reads, so a
+    question about hands (look.WARM_MAX_AGE_HANDS_S) finds one without waiting for the camera."""
+    from littlebot.chatgpt import look as look_mod
+
+    ctx = made()
+    svc, cam, clock = await started(ctx)
+    svc.keep_photo_warm("live", True, every=look_mod.WARM_EVERY_S)
+    frame = 1.0 / float(ctx.config.camera.detect_fps)
+    tick(svc, clock, frame)
+    for _ in range(30):
+        clock.advance(frame * 0.99)  # asked just before the loop reads its next frame
+        got = svc.latest_photo(max_age=look_mod.WARM_MAX_AGE_HANDS_S)
+        assert got is not None and got[1] < frame  # refreshed every other frame, it was ~2 frames old here
+        tick(svc, clock, frame * 0.02)
+    await svc.stop()
+
+
 async def test_stopping_drops_it_at_once(made):
     ctx = made()
     svc, cam, clock = await started(ctx)

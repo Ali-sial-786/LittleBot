@@ -144,6 +144,51 @@ def test_a_broken_model_file_is_reported_once(tmp_path, monkeypatch, caplog):
     assert caplog.text.count("finger counter unavailable") == 1
 
 
+class FakeNet:
+    def __init__(self) -> None:
+        self.inputs: list[tuple[int, ...]] = []
+
+    def setInput(self, blob: np.ndarray) -> None:  # noqa: N802 - cv2.dnn's name
+        self.inputs.append(blob.shape)
+
+    def forward(self, names: list[str]) -> list[np.ndarray]:
+        return []
+
+
+def test_warm_up_runs_both_networks_once():
+    fc = object.__new__(FingerCounter)
+    fc._lock = threading.Lock()
+    fc._palm, fc._hand = FakeNet(), FakeNet()
+    fc._palm_out, fc._hand_out = ["palm"], ["hand"]
+    fc.warm_up()
+    assert fc._palm.inputs == [(1, H.PALM_INPUT, H.PALM_INPUT, 3)]
+    assert fc._hand.inputs == [(1, H.HAND_INPUT, H.HAND_INPUT, 3)]
+
+
+def test_loading_also_warms_up(tmp_path, monkeypatch, caplog):
+    monkeypatch.setattr(H, "_shared", None)
+    monkeypatch.setattr(H, "_load_failed", False)
+    monkeypatch.setattr(H, "get_cv2", lambda: object())
+    palm_path, hand_path = H.model_paths(tmp_path)
+    palm_path.parent.mkdir(parents=True)
+    palm_path.write_bytes(b"x")
+    hand_path.write_bytes(b"x")
+    warmed: list[int] = []
+
+    class Loaded:
+        def __init__(self, palm, hand) -> None:
+            pass
+
+        def warm_up(self) -> None:
+            warmed.append(1)
+
+    monkeypatch.setattr(H, "FingerCounter", Loaded)
+    caplog.set_level("INFO", logger="littlebot.vision.hands")
+    counter = load_finger_counter(tmp_path)
+    assert isinstance(counter, Loaded) and warmed == [1] and load_finger_counter(tmp_path) is counter
+    assert "finger counter loaded in" in caplog.text and "warmed up in" in caplog.text
+
+
 def test_the_real_models_if_installed():
     """On a robot with ``scripts/download_models.py hands`` run: loads, finds no hand in a blank frame, fast."""
     if get_cv2() is None:
@@ -152,7 +197,7 @@ def test_the_real_models_if_installed():
     if not palm_path.is_file() or not hand_path.is_file():
         pytest.skip("hand models not downloaded")
     fc = FingerCounter(palm_path, hand_path)
-    fc.count(FRAME)  # warm-up
+    fc.warm_up()
     t0 = time.perf_counter()
     out = fc.count(FRAME)
     assert out.sure is False and out.why == "no_hand"

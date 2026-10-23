@@ -238,6 +238,14 @@ class ChatGPTConfig(_Section):
     # Text model for typed / push-to-talk replies and live-voice look-ups: the first one that works.
     models: list[str] = Field(default_factory=lambda: ["gpt-6-luna", "gpt-6-sol", "gpt-5.6-luna"])
     reasoning_effort: Literal["minimal", "low", "medium", "high"] = "low"
+    # Camera looks ("how many fingers?", littlebot/chatgpt/look.py): models tried first for them (a faster
+    # one, say; then chatgpt.models), the reasoning effort for simple questions and for counting / reading
+    # (None: "none" / "minimal"), and the photo detail ("auto": low for simple questions, high for counting
+    # and reading; "low" is fastest). The look's timing log line shows what each one costs.
+    look_models: list[str] = Field(default_factory=list)
+    look_effort: Literal["none", "minimal", "low", "medium", "high"] | None = None
+    look_count_effort: Literal["none", "minimal", "low", "medium", "high"] | None = None
+    look_detail: Literal["auto", "low", "high"] = "auto"
     # --- live voice (GPT-Live speech-to-speech over WebRTC; needs the "live" extra: aiortc) ---
     live_model: str = "gpt-live-1-codex"
     # The voice to ask for first; if OpenAI refuses it, each of live_voice_fallbacks in turn.
