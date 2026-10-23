@@ -99,3 +99,26 @@ def test_tidy_trims_silence():
     x = np.concatenate([np.zeros(sr), 0.3 * np.sin(np.arange(sr) / 5), np.zeros(sr)]).astype(np.float32)
     y = rg.tidy(x)
     assert 1.0 <= len(y) / sr < 1.2
+
+
+async def test_a_skipped_take_is_saved_aside_and_the_kept_ones_installed(tmp_path, monkeypatch):
+    import argparse
+
+    import littlebot.core.config as config_mod
+
+    cfg = make_test_config(data_dir=str(tmp_path))
+    signed_in_auth(tmp_path)
+    monkeypatch.setattr(config_mod, "load_config", lambda **kw: cfg)
+    tone = (0.3 * np.sin(np.arange(rg.OUT_RATE) / 5)).astype(np.float32)
+    calls = iter([True, False])
+
+    async def fake_take(auth, chatgpt_cfg, **kw):
+        return tone, "", "bubbie"
+
+    monkeypatch.setattr(rg, "record_take", fake_take)
+    monkeypatch.setattr(rg, "ask_keep", lambda clip: next(calls))
+    args = argparse.Namespace(takes=2, dry_run=False, like=None, start=None, end=None, say=None, ask=True)
+    assert await rg.main_async(args) == 0
+    assert [p.name for p in (tmp_path / "sounds" / "voice").glob("giggle_*.wav")] == ["giggle_1.wav"]
+    skipped = list((tmp_path / "giggle_takes").glob("skipped_*_take2.wav"))
+    assert len(skipped) == 1 and skipped[0].stat().st_size > 1000

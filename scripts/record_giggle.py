@@ -12,9 +12,10 @@ gets silence; if the voice doesn't react to the written request it hears a spoke
 espeak-ng instead).
 
 --like FILE plays the giggle in FILE (any video or audio file; --start/--end pick a part of it, in
-seconds) to the voice instead, and the voice copies it as closely as it can in its own voice
-(nothing else, unless --say "That tickles!" is given). --ask plays each take on the speaker and
-asks whether to keep it.
+seconds) to the voice instead: the voice copies it as closely as it can in its own voice and
+then says "That tickles!" (--say "..." for other words, --say "" for none). --ask plays each take
+on the speaker and asks whether to keep it; a take you skip is saved in data/giggle_takes/, and
+scripts/set_giggle.py <that file> makes it the giggle after all.
 
 The takes are used instead of the shipped giggle clips (scripts/set_giggle.py --reset goes back);
 restart LittleBot afterwards: systemctl --user restart littlebot
@@ -29,6 +30,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import uuid
 from pathlib import Path
 from typing import Any
@@ -299,7 +301,7 @@ async def main_async(args: argparse.Namespace) -> int:
     takes: list[np.ndarray] = []
     for i in range(1, args.takes + 1):
         print(f"Take {i}: calling the GPT-Live voice...", flush=True)
-        audio, said, voice = await record_take(auth, cfg.chatgpt, like=like, say=args.say)
+        audio, said, voice = await record_take(auth, cfg.chatgpt, like=like, say=args.say or None)
         clip = tidy(audio)
         secs = len(clip) / OUT_RATE
         print(f"   voice {voice!r} said: {said or '(no words heard)'}  ->  {secs:.1f} s of audio")
@@ -309,7 +311,10 @@ async def main_async(args: argparse.Namespace) -> int:
         if secs > 6:
             print("   longer than 6 s (it may have said more than asked); kept, but check it")
         if args.ask and not ask_keep(clip):
-            print("   skipped")
+            # Kept aside, never lost: scripts/set_giggle.py <file> makes it the giggle after all.
+            skipped = cfg.data_path / "giggle_takes" / f"skipped_{time.strftime('%Y%m%d-%H%M%S')}_take{i}.wav"
+            dsp.write_wav(skipped, clip, OUT_RATE)
+            print(f"   skipped (saved as {skipped})")
             continue
         takes.append(clip)
     if not takes:
@@ -362,7 +367,8 @@ def main() -> int:
     ap.add_argument("--like", type=Path, default=None, help="video or audio file with a giggle for the voice to copy")
     ap.add_argument("--start", type=float, default=None, help="with --like: start of the giggle in the file (seconds)")
     ap.add_argument("--end", type=float, default=None, help="with --like: end of the giggle in the file (seconds)")
-    ap.add_argument("--say", default=None, help='with --like: words to say after the giggle, e.g. "That tickles!"')
+    ap.add_argument("--say", default="That tickles!",
+                    help='with --like: words to say after the giggle (default "That tickles!"; --say "" for none)')
     ap.add_argument("--ask", action="store_true", help="play each take on the speaker and ask whether to keep it")
     return asyncio.run(main_async(ap.parse_args()))
 
