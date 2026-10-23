@@ -26,6 +26,7 @@ display:
   fullscreen: true
   scale: 1.0
   output_mode: "720x480@60"  # HDMI mode LittleBot asks for at start (the panel's 3:2 shape); null = desktop's mode
+  video_driver: wayland      # true fullscreen + hidden pointer under labwc; null = SDL's default (X11 via Xwayland)
   hide_cursor: true        # no mouse pointer over the face
   show_sim_panel: false    # desktop-simulator side panel: off on the robot
   fps: 30                  # while animating

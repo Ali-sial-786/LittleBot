@@ -7,6 +7,9 @@ display:
   # 720x480 is the panel's own shape (checked on the real screen 2026-10-22).
   # null = keep whatever mode the desktop uses.
   output_mode: "720x480@60"
+  # Native Wayland window: true fullscreen over the taskbar and no mouse pointer
+  # (checked on the robot 2026-10-22; SDL's default X11-via-Xwayland showed both).
+  video_driver: wayland
   show_sim_panel: false
   hide_cursor: true
   fps: 30

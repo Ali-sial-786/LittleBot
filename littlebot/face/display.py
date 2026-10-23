@@ -130,6 +130,31 @@ def apply_output_mode(output: str, mode: str, *, run: Callable[..., Any] = subpr
     return True
 
 
+def init_video(pg: Any, driver: str | None, env: Any = None) -> None:
+    """``pygame.display.init()``, preferring SDL video ``driver`` (e.g. ``"wayland"``).
+
+    On the robot, the native Wayland driver gives a true fullscreen window (no taskbar)
+    and hides the mouse pointer; SDL2's default there is X11 via Xwayland, which does
+    neither reliably. An ``SDL_VIDEODRIVER`` already in the environment always wins, and
+    if the preferred driver cannot start, SDL's default is used instead.
+    """
+    env = os.environ if env is None else env
+    if not driver or env.get("SDL_VIDEODRIVER"):
+        pg.display.init()
+        return
+    env["SDL_VIDEODRIVER"] = driver
+    try:
+        pg.display.init()
+    except Exception as e:  # noqa: BLE001 - pygame.error: driver not available / no compositor
+        log.warning("SDL video driver %r unavailable (%s); using SDL's default", driver, e)
+        env.pop("SDL_VIDEODRIVER", None)
+        try:
+            pg.display.quit()
+        except Exception:  # noqa: BLE001
+            pass
+        pg.display.init()
+
+
 def _current_size(wlr_randr_text: str, output: str) -> str | None:
     """The ``WxH`` marked ``current`` for ``output`` in plain ``wlr-randr`` output, if any."""
     block: list[str] = []
@@ -202,7 +227,7 @@ class DisplayLoop:
         self._pg = pygame
         if self.fullscreen and self.cfg.output_mode:
             apply_output_mode(self.cfg.output_name, self.cfg.output_mode)
-        pygame.display.init()
+        init_video(pygame, self.cfg.video_driver)
         pygame.font.init()
         pygame.display.set_caption(f"{self.ctx.config.robot_name}")
         self._set_mode()

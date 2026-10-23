@@ -459,3 +459,53 @@ def test_display_open_applies_output_mode_only_in_fullscreen(monkeypatch):
     loop.close()
     _close(robot)
     assert seen == [("HDMI-A-1", "720x480@60")]
+
+
+# ------------------------------------------------------------------ SDL video driver preference
+class _FakeDisplay:
+    def __init__(self, env, fail_for=()):
+        self.env, self.fail_for, self.inits, self.quits = env, fail_for, [], 0
+
+    def init(self):
+        drv = self.env.get("SDL_VIDEODRIVER")
+        self.inits.append(drv)
+        if drv in self.fail_for:
+            raise RuntimeError(f"{drv} not available")
+
+    def quit(self):
+        self.quits += 1
+
+
+class _FakePg:
+    def __init__(self, env, fail_for=()):
+        self.display = _FakeDisplay(env, fail_for)
+
+
+def test_init_video_prefers_configured_driver():
+    env = {}
+    pg = _FakePg(env)
+    D.init_video(pg, "wayland", env)
+    assert pg.display.inits == ["wayland"] and env["SDL_VIDEODRIVER"] == "wayland"
+
+
+def test_init_video_environment_wins():
+    env = {"SDL_VIDEODRIVER": "dummy"}
+    pg = _FakePg(env)
+    D.init_video(pg, "wayland", env)
+    assert pg.display.inits == ["dummy"]
+
+
+def test_init_video_falls_back_to_sdl_default(caplog):
+    env = {}
+    pg = _FakePg(env, fail_for=("wayland",))
+    with caplog.at_level("WARNING", logger="littlebot.face.display"):
+        D.init_video(pg, "wayland", env)
+    assert pg.display.inits == ["wayland", None] and "SDL_VIDEODRIVER" not in env
+    assert "unavailable" in caplog.text
+
+
+def test_init_video_without_preference_uses_default():
+    env = {}
+    pg = _FakePg(env)
+    D.init_video(pg, None, env)
+    assert pg.display.inits == [None] and env == {}
