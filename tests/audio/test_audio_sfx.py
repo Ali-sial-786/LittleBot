@@ -174,3 +174,19 @@ def test_sound_bank_custom_files_and_path_safety(tmp_path):
     assert bank.get(str(tmp_path.parent / "secret.wav")) is None
     assert bank.get("nope") is None
     assert bank.get("") is None
+
+
+def test_recorded_voice_clips_replace_a_built_in(tmp_path):
+    import numpy as np
+
+    from littlebot.audio import dsp
+    from littlebot.audio.sfx import SoundBank
+
+    (tmp_path / "voice").mkdir()
+    for i, level in ((1, 0.2), (2, 0.4)):
+        dsp.write_wav(tmp_path / "voice" / f"giggle_{i}.wav", np.full(2205, level, np.float32), 22050)
+    bank = SoundBank(tmp_path)
+    assert bank.voice_variants("giggle") == ["voice/giggle_1.wav", "voice/giggle_2.wav"]
+    levels = {round(float(bank.get("giggle")[0].max()), 1) for _ in range(40)}
+    assert levels == {0.2, 0.4}  # one of the clips, picked at random
+    assert bank.voice_variants("chime") == [] and bank.get("chime") is not None  # others stay synthesised

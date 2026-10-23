@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import logging
 import math
+import random
 import re
 import threading
 from collections import OrderedDict
@@ -240,50 +241,16 @@ def _bell_sound(sr: int) -> np.ndarray:
     return _bell(_hz("A5"), 1.6, sr, 0.85)
 
 
-def _resonate(x: np.ndarray, freq: float, bandwidth: float, sr: int) -> np.ndarray:
-    """Two-pole resonator: one vocal-tract formant (unity-ish gain at its peak)."""
-    r = math.exp(-math.pi * bandwidth / sr)
-    c1, c2, g = 2 * r * math.cos(TWO_PI * freq / sr), -r * r, 1 - r
-    y = np.zeros(len(x))
-    y1 = y2 = 0.0
-    for i, v in enumerate(x.tolist()):
-        y0 = g * v + c1 * y1 + c2 * y2
-        y[i] = y0
-        y2, y1 = y1, y0
-    return y
-
-
-# A young child's "ee" vowel: formant frequency and bandwidth (Hz).
-_CHILD_EE = ((420.0, 90.0), (2900.0, 180.0), (3700.0, 260.0))
-
-
 def _giggle(sr: int) -> np.ndarray:
-    """A small child's "hee-hee-hee-hee-heee": breathy h + voiced ee shaped by formants, not beeps."""
-    rng = np.random.default_rng(7)
-    # (start s, aspiration s, voiced s, start pitch Hz, peak pitch, end pitch, loudness)
-    sylls = ((0.00, 0.030, 0.070, 560, 640, 540, 1.00), (0.12, 0.025, 0.065, 540, 610, 520, 0.95),
-             (0.23, 0.025, 0.065, 520, 590, 500, 0.90), (0.34, 0.025, 0.065, 500, 565, 470, 0.85),
-             (0.45, 0.030, 0.150, 480, 540, 360, 0.80))
     parts = []
-    for start, asp, voiced, f_a, f_b, f_c, loud in sylls:
-        n_a, n_v = _n(asp, sr), _n(voiced, sr)
-        # voiced part: a band-limited glottal-like pulse train with a quick rise-fall in pitch
-        t = np.arange(n_v) / max(1, n_v)
-        f0 = np.where(t < 0.3, f_a + (f_b - f_a) * (t / 0.3), f_b + (f_c - f_b) * ((t - 0.3) / 0.7))
-        f0 = f0 * (1 + 0.012 * rng.standard_normal(n_v).cumsum() / max(1.0, np.sqrt(n_v)))  # jitter
-        ph = np.cumsum(f0) / sr
-        src = np.zeros(n_v)
-        for k in range(1, 18):
-            if (f0.max() * k) < sr / 2 - 500:
-                src += np.sin(TWO_PI * k * ph) / k ** 1.1
-        src += 0.06 * rng.standard_normal(n_v)  # a little breathiness while voicing
-        env_v = _adsr(n_v, sr, 0.012, 0.03, 0.8, min(0.05, voiced * 0.45))
-        # aspiration "h": noise through the same vowel shape, fading into the voice
-        noise = rng.standard_normal(n_a) * np.linspace(0.2, 1.0, n_a) ** 0.5 * 0.55
-        x = np.concatenate([noise, src * env_v])
-        y = sum(_resonate(x, f, bw, sr) * w for (f, bw), w in zip(_CHILD_EE, (0.8, 4.5, 3.0)))
-        parts.append((start, y * loud))
-    return _mix(0.72, sr, parts)
+    for i, start in enumerate((0.0, 0.12, 0.24, 0.36, 0.5)):
+        n = _n(0.095, sr)
+        t = np.arange(n) / sr
+        f0 = 720 - 28 * i
+        f = f0 * (1 + 0.09 * np.sin(math.pi * t / (n / sr)))
+        syl = _tone(f, n, sr, ((1, 1.0), (2, 0.35), (3, 0.12))) * _adsr(n, sr, 0.008, 0.03, 0.7, 0.035)
+        parts.append((start, syl * (1.0 - 0.08 * i)))
+    return _mix(0.65, sr, parts)
 
 
 def _uhoh(sr: int) -> np.ndarray:
@@ -509,6 +476,7 @@ class SoundBank:
         self._cache: OrderedDict[str, tuple[np.ndarray, int]] = OrderedDict()
         self._cache_size = cache_size
         self._lock = threading.Lock()
+        self._variants: dict[str, list[str]] = {}
 
     def names(self) -> list[str]:
         extra = []
@@ -536,8 +504,25 @@ class SoundBank:
             return None
         return path
 
+    def voice_variants(self, name: str) -> list[str]:
+        """Recorded voice clips that replace a built-in sound (assets/sounds/voice/<name>_N.wav)."""
+        if name not in SOUND_NAMES:
+            return []
+        found = self._variants.get(name)
+        if found is None:
+            folder = self.sounds_dir / "voice"
+            found = [f"voice/{p.name}" for p in sorted(folder.glob(f"{name}_*.wav"))] if folder.is_dir() else []
+            self._variants[name] = found
+        return found
+
     def get(self, name: str) -> tuple[np.ndarray, int] | None:
-        """(samples, sample_rate) or None if unknown / unreadable."""
+        """(samples, sample_rate) or None if unknown / unreadable. A built-in with recorded voice
+        clips (e.g. a human "Hehe! That tickles!" for "giggle") plays one of them at random."""
+        variants = self.voice_variants(name)
+        if variants:
+            clip = self.get(random.choice(variants))
+            if clip is not None:
+                return clip
         hit = self.cached(name)
         if hit is not None:
             return hit
