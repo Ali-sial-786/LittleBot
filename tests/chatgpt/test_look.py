@@ -294,3 +294,21 @@ async def test_real_camera_photo_is_sent_and_nothing_is_written_to_disk(ctx, mon
     (image,) = provider.calls[0]["images"]
     assert image.startswith(b"\xff\xd8") and len(image) > 1000
     assert writes == []
+
+
+async def test_endpoint_error_is_logged_with_status_and_code_only(setup, caplog):
+    ctx, look, provider, events = setup
+    err = ProviderError("chatgpt: request not accepted secret-message", status_code=400, kind="bad_request")
+    err.api_error = {"status": 400, "type": "invalid_request_error", "code": "missing_required_parameter",
+                     "param": "input[0].content[0].detail"}
+    provider.error = err
+    caplog.set_level(logging.DEBUG)
+    out = await look.look("is my secret banana on the table?")
+    assert out["error"] == "provider_error"
+    assert ("camera look: ChatGPT failed (provider_error) [status=400 kind=bad_request type=invalid_request_error "
+            "code=missing_required_parameter param=input[0].content[0].detail]") in caplog.text
+    assert "banana" not in caplog.text and "fake photo" not in caplog.text and "secret-message" not in caplog.text
+    caplog.clear()
+    provider.error = ProviderTimeoutError("slow")
+    await look.look("hi")
+    assert "camera look: ChatGPT failed (timeout) [kind=" in caplog.text

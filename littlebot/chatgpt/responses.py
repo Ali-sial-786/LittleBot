@@ -84,7 +84,7 @@ class ChatGPTProvider(BaseProvider):
             if last_user is None:
                 last_user = {"type": "message", "role": "user", "content": []}
                 items.append(last_user)
-            last_user["content"].extend(parts)
+            last_user["content"][:0] = parts  # images first, then the question (as `codex exec -i` sends it)
         return {
             "model": model,
             "instructions": system.strip() or "You are a friendly toy robot.",
@@ -169,15 +169,22 @@ class ChatGPTProvider(BaseProvider):
         return "".join(out), usage, stop
 
 
+IMAGE_DETAIL = "high"  # codex-rs/protocol/src/models.rs: DEFAULT_IMAGE_DETAIL = ImageDetail::High
+
+
 def _image_part(jpeg: bytes) -> dict[str, Any]:
     """A Responses API ``input_image`` content part with the JPEG inlined as a data URL.
 
-    Same shape the Codex CLI sends for attached images: codex-rs/protocol/src/models.rs
-    ``ContentItem::InputImage { image_url }`` (serde tag "type", snake_case) with
-    ``image_url = "data:{mime};base64,{data}"``; see also the OpenAI Responses API docs
-    (input item content type ``input_image``). No ``detail`` field: the server default applies.
+    The shape the Codex CLI sends (openai/codex, codex-rs/protocol/src/models.rs):
+    ``ContentItem::InputImage { image: ImageReference::Inline { image_url }, detail: Some(detail) }``
+    serialises (serde tag "type", snake_case, image flattened) to
+    ``{"type": "input_image", "image_url": "data:<mime>;base64,<standard base64>", "detail": "high"}``
+    (``data_url_from_bytes`` in codex-rs/utils/image/src/lib.rs). ``detail`` is always sent: Codex
+    defaults it to "high", and the OpenAI spec marks it required (openai-python ``ResponseInputImageParam``).
+    Codex shrinks images to fit 2048 px; ours are already 768 px wide.
     """
-    return {"type": "input_image", "image_url": "data:image/jpeg;base64," + base64.b64encode(jpeg).decode("ascii")}
+    return {"type": "input_image", "image_url": "data:image/jpeg;base64," + base64.b64encode(jpeg).decode("ascii"),
+            "detail": IMAGE_DETAIL}
 
 
 class _Unauthorized(Exception):
@@ -220,12 +227,37 @@ def _auth_error(e: ChatGPTAuthError) -> ProviderError:
     return AuthenticationError(f"chatgpt: {e}", status_code=e.status, kind=e.kind)
 
 
+_SAFE_LABEL = re.compile(r"[A-Za-z0-9_.\-\[\]]{1,80}")
+
+
+def _api_error(error: Any, status: int | None = None) -> dict[str, Any]:
+    """The loggable part of an endpoint error: status plus ``type``/``code``/``param`` labels.
+
+    Only short identifier-like labels are kept (``param`` is a field path such as
+    ``input[0].content[1].image_url``); the error ``message``/``detail`` is never kept, so a
+    log line can never carry the prompt, the image or a token."""
+    out: dict[str, Any] = {"status": status}
+    for key in ("type", "code", "param"):
+        v = error.get(key) if isinstance(error, dict) else (error if key == "type" else None)
+        out[key] = v if isinstance(v, str) and _SAFE_LABEL.fullmatch(v) else None
+    return out
+
+
+def _tag(e: Exception, api_error: dict[str, Any]) -> Exception:
+    e.api_error = api_error  # type: ignore[attr-defined]
+    return e
+
+
 def _http_error(status: int, headers: httpx.Headers, body: str, now: float) -> Exception:
     try:
         obj = json.loads(body)
     except ValueError:
         obj = {}
     err = obj.get("error") if isinstance(obj, dict) else None
+    return _tag(_http_error_kind(status, headers, err, obj, now), _api_error(err, status))
+
+
+def _http_error_kind(status: int, headers: httpx.Headers, err: Any, obj: Any, now: float) -> Exception:
     etype = (err.get("type") or err.get("code")) if isinstance(err, dict) else (err if isinstance(err, str) else None)
     detail = str((obj.get("detail") if isinstance(obj, dict) else None) or
                  (err.get("message") if isinstance(err, dict) else "") or "")
@@ -249,6 +281,8 @@ def _http_error(status: int, headers: httpx.Headers, body: str, now: float) -> E
         return RateLimitError("chatgpt: busy", status_code=503, retry_after=_retry_after(headers), kind="overloaded")
     if status == 400 and MODEL_UNAVAILABLE.search(detail):
         return _ModelUnavailable()
+    if status == 400 and "does not represent a valid image" in detail:  # Codex: CodexErr::InvalidImageRequest
+        return ProviderError("chatgpt: the photo was not accepted", status_code=400, kind="invalid_image")
     if status == 403:  # account / region / plan not allowed: signing in again would not help
         return ProviderError("chatgpt: not available for this ChatGPT account or region", status_code=403,
                              kind="forbidden")
@@ -274,6 +308,12 @@ def _retry_after(headers: httpx.Headers) -> float | None:
 
 
 def _stream_error(error: Any) -> ProviderError:
+    e = _stream_error_kind(error)
+    e.api_error = _api_error(error)  # type: ignore[attr-defined]
+    return e
+
+
+def _stream_error_kind(error: Any) -> ProviderError:
     code = (error.get("code") or error.get("type")) if isinstance(error, dict) else None
     if code in ("rate_limit_exceeded", "server_is_overloaded", "slow_down"):
         return RateLimitError("chatgpt: rate limited", kind="rate_limited")

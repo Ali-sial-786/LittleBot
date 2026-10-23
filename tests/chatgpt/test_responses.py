@@ -144,9 +144,11 @@ async def test_images_become_input_image_parts_on_the_last_user_message(tmp_path
     items = seen["body"]["input"]
     assert items[0]["content"] == [{"type": "input_text", "text": "hi"}]  # earlier turns: text only
     assert items[1]["content"] == [{"type": "output_text", "text": "Hello!"}]
+    # Codex CLI shape: images first, then the text; data URL with standard base64; detail always sent ("high")
     assert items[2]["content"] == [
+        {"type": "input_image", "image_url": "data:image/jpeg;base64," + base64.b64encode(jpeg).decode(),
+         "detail": "high"},
         {"type": "input_text", "text": "how many fingers am I holding?"},
-        {"type": "input_image", "image_url": "data:image/jpeg;base64," + base64.b64encode(jpeg).decode()},
     ]
     assert len(items) == 3 and history[2] == {"role": "user", "content": "how many fingers am I holding?"}
 
@@ -160,3 +162,36 @@ async def test_no_images_keeps_the_body_unchanged(tmp_path):
     # images without any user message still go in a user message
     body = p.build_body([{"role": "assistant", "content": "Hello!"}], system="x", model="m", images=[b"\xff\xd8"])
     assert body["input"][-1]["role"] == "user" and body["input"][-1]["content"][0]["type"] == "input_image"
+
+
+async def test_rejected_photo_and_http_errors_carry_only_safe_labels(tmp_path):
+    def bad_image(r: httpx.Request) -> httpx.Response:
+        return httpx.Response(400, json={"error": {
+            "message": "The image data you provided does not represent a valid image. secret-token-xyz",
+            "type": "invalid_request_error", "code": "invalid_image", "param": "input[0].content[0].image_url"}})
+
+    with pytest.raises(ProviderError) as e:
+        await provider(tmp_path, bad_image).reply([{"role": "user", "content": "hi"}], system="x", max_tokens=10,
+                                                  timeout=5, images=[b"\xff\xd8"])
+    assert e.value.kind == "invalid_image" and e.value.status_code == 400
+    assert e.value.api_error == {"status": 400, "type": "invalid_request_error", "code": "invalid_image",
+                                 "param": "input[0].content[0].image_url"}
+    assert "secret" not in repr(e.value.api_error) and "secret" not in str(e.value)
+
+    def odd(r: httpx.Request) -> httpx.Response:  # free text in a label slot is dropped, detail-only bodies too
+        return httpx.Response(400, json={"error": {"type": "has spaces: secret", "code": "x" * 200}})
+
+    with pytest.raises(ProviderError) as e:
+        await provider(tmp_path, odd).reply([{"role": "user", "content": "hi"}], system="x", max_tokens=10, timeout=5)
+    assert e.value.kind == "bad_request" and e.value.api_error == {"status": 400, "type": None, "code": None,
+                                                                   "param": None}
+
+    def failed(r: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text=sse({"type": "response.failed", "response": {"error": {
+            "code": "server_error", "message": "secret"}}}))
+
+    with pytest.raises(ProviderError) as e:
+        await provider(tmp_path, failed).reply([{"role": "user", "content": "hi"}], system="x", max_tokens=10,
+                                               timeout=5)
+    assert e.value.kind == "stream_error" and e.value.api_error == {"status": None, "type": None,
+                                                                    "code": "server_error", "param": None}

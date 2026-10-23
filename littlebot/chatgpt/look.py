@@ -166,7 +166,7 @@ class CameraLook:
                                                   max_tokens=200, timeout=REPLY_TIMEOUT_S, images=[photo])
             except (ProviderError, asyncio.TimeoutError, TimeoutError) as e:
                 code = _error_code(e)
-                log.warning("camera look: ChatGPT failed (%s)", code)
+                log.warning("camera look: ChatGPT failed (%s)%s", code, _why(e))
                 return result(error=code)
             finally:
                 photo = None  # drop the image right away (nothing else holds it)
@@ -221,6 +221,20 @@ def _error_code(e: BaseException) -> str:
     if kind in ("refused", "plan_not_included"):
         return kind
     return "provider_error"
+
+
+def _why(e: BaseException) -> str:
+    """Why the endpoint said no, for the journal: HTTP status, our kind and the error's type/code/param.
+
+    Only labels the provider already reduced to identifiers (``ProviderError.api_error``); never the
+    error message, the question, the photo or a token."""
+    if not isinstance(e, ProviderError):
+        return ""
+    api = getattr(e, "api_error", None) or {}
+    status = e.status_code if e.status_code is not None else api.get("status")
+    fields = {"status": status, "kind": e.kind, **{k: api.get(k) for k in ("type", "code", "param")}}
+    shown = " ".join(f"{k}={v}" for k, v in fields.items() if v is not None)
+    return f" [{shown}]" if shown else ""
 
 
 def get_look(ctx: Any) -> CameraLook:
