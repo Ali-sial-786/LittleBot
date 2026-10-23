@@ -82,10 +82,11 @@ async def test_look_sends_one_photo_and_answers(setup):
     assert ctx.vision.photos == [{"max_width": 768, "quality": 80, "timeout": 3.0}]
     (call,) = provider.calls
     assert call["images"] == [JPEG]
-    assert call["messages"] == [{"role": "user", "content": "how many fingers am I holding?"}]
+    assert call["messages"] == [{"role": "user", "content": "Look at this photo from your camera. how many fingers am I holding?"}]
+    assert "toy robot" in call["system"] and "count" in call["system"] and "baby" not in call["system"].lower()
     system = call["system"]
-    assert "camera" in system and "Count things carefully" in system and "fingers" in system
-    assert "Never identify people" in system and "40 words" in system and "If you can't tell" in system
+    assert "camera" in system and "count carefully" in system and "fingers" in system
+    assert "Never say who a person is" in system and "40 words" in system and "too dark or blurry" in system
     st = look.status()
     assert st["photos_today"] == 1 and st["last_at"] is not None and st["enabled"] is True and st["blocked"] is None
     # visible: the face peeks and the dashboard hears about it (without the question or the image)
@@ -112,12 +113,12 @@ async def test_odd_asked_by_is_normalised(setup):
 async def test_empty_question_asks_what_it_sees_and_pii_is_scrubbed(setup):
     ctx, look, provider, events = setup
     await look.look("   ")
-    assert provider.calls[0]["messages"][0]["content"] == DEFAULT_QUESTION
+    assert provider.calls[0]["messages"][0]["content"] == f"Look at this photo from your camera. {DEFAULT_QUESTION}"
     await look.look("what is on the note, call 555-123-4567")
     sent = provider.calls[1]["messages"][0]["content"]
     assert "555-123-4567" not in sent
     await look.look("x" * 1000)
-    assert len(provider.calls[2]["messages"][0]["content"]) <= 300
+    assert len(provider.calls[2]["messages"][0]["content"].removeprefix("Look at this photo from your camera. ")) <= 300
 
 
 async def test_unsafe_answer_is_replaced_by_a_safe_fallback(setup):

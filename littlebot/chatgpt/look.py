@@ -17,7 +17,6 @@ import re
 import time
 from typing import Any
 
-from littlebot.brain.prompts import build_system_prompt
 from littlebot.brain.providers.base import (
     AuthenticationError, BaseProvider, NetworkError, ProviderError, ProviderTimeoutError, RateLimitError,
 )
@@ -60,16 +59,26 @@ ERRORS: dict[str, str] = {
     "provider_error": "ChatGPT could not answer. Try again.",
 }
 
-LOOK_NOTE = """
+# Its own instructions, not the baby-chat prompt: that one says photos are off-limits and to switch to a
+# game when unsure, which made ChatGPT answer "I can't tell" on the robot. Safety still holds: the answer
+# goes through validate_reply like every reply.
+LOOK_SYSTEM = """\
+You are the eyes of {robot}, a small toy robot with a camera. Attached is one photo from its camera, \
+taken just now because someone asked it to look. A family with a very young child is usually in front of it, \
+and a grown-up is there.
 
-Looking through your camera:
-- You are {robot} looking through your own camera at a family with a very young child. Attached is one \
-still photo, taken just now because someone asked you to look.
-- Answer what you see plainly and briefly, in at most {words} words.
-- Count things carefully (for example how many fingers are held up) and say the number.
-- Never identify people, and never guess anyone's age, name or location. Never read out personal \
+Answer the question about the photo directly and accurately, in at most {words} words, in plain friendly \
+words that the robot can say out loud.
+- Look closely before answering. When asked to count (for example how many fingers are held up), count \
+carefully and say the number.
+- Describe what is really there: actions, hands, toys, objects, colours.
+- If the photo is too dark or blurry, or the thing asked about isn't in the picture, say exactly that \
+(for example "I can't see your hand, hold it up in front of me") instead of guessing.
+- Never say who a person is, and never guess anyone's name, age or location. Don't read out personal \
 information such as names, addresses, numbers, screens or documents.
-- If you can't tell, say so."""
+- Nothing scary, rude or grown-up. No lists, emoji or links."""
+
+QUESTION = "Look at this photo from your camera. {question}"
 
 _ASKED_BY = re.compile(r"[a-z][a-z0-9_]{0,23}")
 
@@ -162,7 +171,8 @@ class CameraLook:
             self._show(asked_by)
             try:
                 log.info("photo sent to ChatGPT (asked_by=%s)", asked_by)
-                reply = await self.provider.reply([{"role": "user", "content": text}], system=self._system_prompt(),
+                reply = await self.provider.reply([{"role": "user", "content": QUESTION.format(question=text)}],
+                                                  system=self._system_prompt(),
                                                   max_tokens=200, timeout=REPLY_TIMEOUT_S, images=[photo])
             except (ProviderError, asyncio.TimeoutError, TimeoutError) as e:
                 code = _error_code(e)
@@ -175,16 +185,16 @@ class CameraLook:
             answer_text, _ = extract_tags(reply.text or "")  # a stray [face: ...] tag must never be read out
             checked = validate_reply(answer_text, max_words=MAX_WORDS)
             answer = checked.text if checked.ok and checked.text.strip() else FALLBACK
+            if answer == FALLBACK:  # say why in the log (rule names only, never the words)
+                log.info("camera look: answer replaced by the fallback (%s)",
+                         ",".join(checked.reasons[:3]) or "empty")
             return result(answer=answer)
         finally:
             self._busy = False
 
     # ------------------------------------------------------------ helpers
     def _system_prompt(self) -> str:
-        ctx = self.ctx
-        base = build_system_prompt(robot_name=ctx.config.robot_name, age_months=ctx.settings.child_age_months(),
-                                   max_words=MAX_WORDS)
-        return base + LOOK_NOTE.format(robot=ctx.config.robot_name, words=MAX_WORDS)
+        return LOOK_SYSTEM.format(robot=self.ctx.config.robot_name, words=MAX_WORDS)
 
     def _roll_day(self) -> None:
         today = _dt.date.today()
