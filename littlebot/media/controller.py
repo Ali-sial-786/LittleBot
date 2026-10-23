@@ -17,6 +17,10 @@ Safety rules enforced here (not just in the UI):
 * When a video ends, errors or is stopped, the player is torn down and the animated face returns
   (``RobotState.PLAYING_MEDIA`` -> ``IDLE``; the face module owns ``face.visible`` and hides
   itself for ``PLAYING_MEDIA``) - YouTube's end screen / related videos never take over.
+* ``hold`` pauses a video for a chat ("Hey LittleBot" while it plays): the position is kept, the player
+  is closed and the face, speaker and screen go back to LittleBot. ``resume`` opens the player again
+  where it was (a moment earlier); a held video nobody resumes stops ``media.chat_pause_minutes``
+  after the voice chat ended. No screen time is counted meanwhile.
 
 Playback itself happens in a web page (``player_routes``) shown by a display backend
 (``display``). The page polls the desired state from :class:`PlayerBridge` and reports
@@ -98,6 +102,14 @@ SEARCH_ID_PREFIX = "search:"  # status()["item"]["id"] of a video found by searc
 TRY_NEXT_RESULT_ERRORS = frozenset({2, 5, 100, 101, 150})
 MAX_QUEUE = 10
 
+# Paused for a chat (``hold``): the page's "paused" report (it has the exact position) is awaited this long;
+# the video carries on this much earlier than where it stopped, so the child knows where they were.
+HOLD_PAUSE_WAIT_SECONDS = 1.0
+RESUME_REWIND_SECONDS = 2.0
+MAX_POSITION_GUESS_SECONDS = 5.0  # no "paused" report: the last report's position + the time since (at most this)
+YT_PLAYING, YT_PAUSED = 1, 2  # IFrame API player states the page reports
+HELD_DETAIL = "paused for a chat and not resumed"
+
 UNEXPECTED_VIDEO_MESSAGE = PLAYER_ERRORS["unexpected_video"][1]
 UNVERIFIED_VIDEO_MESSAGE = ("The player didn't confirm which video it was showing, so it was stopped "
                             "(only approved videos may play).")
@@ -114,6 +126,17 @@ def describe_player_error(code: Any) -> tuple[str, str]:
     if code in PLAYER_ERRORS:
         return PLAYER_ERRORS[code]
     return ("unknown", f"The YouTube player reported an error ({code}).")
+
+
+@dataclass
+class _Hold:
+    """A video paused for a chat (``MediaController.hold``): the player is closed, the face is back."""
+
+    reason: str
+    since: float
+    position: float  # seconds into the video (the playlist's current video)
+    video_id: str | None  # the video that was in the player (a playlist's current one)
+    quiet_since: float  # since when no voice chat is on (the stop countdown, ``media.chat_pause_minutes``)
 
 
 @dataclass
@@ -137,6 +160,7 @@ class _Session:
     verified: bool = False  # the current video's id was reported and is approved
     unverified_since: float | None = None  # "playing" reported without a confirmed id
     queue: list[dict[str, Any]] = field(default_factory=list)  # other search results: skip / fallback
+    hold: _Hold | None = None  # paused for a chat: no lease, no PLAYING_MEDIA, no player window
 
 
 class MediaController(Service):
@@ -179,6 +203,7 @@ class MediaController(Service):
         self._tasks: set[asyncio.Task[Any]] = set()
         self._subs: list[Subscription] = []
         self._shutting_down = False
+        self._unduck: asyncio.TimerHandle | None = None  # restores the volume after ``duck``
         self._usage_day: _dt.date | None = None
         self._usage_persisted = 0.0
         self._usage_pending = 0.0
@@ -377,6 +402,10 @@ class MediaController(Service):
                 self._session = sess
             # The face hides itself for PLAYING_MEDIA (it owns face.visible).
         else:
+            if sess.hold is not None:  # paused for a chat: take the screen back for the new video
+                why = self._reclaim(sess)
+                if why:
+                    raise PermissionError(why)
             with self._lock:
                 self._accrue()
         sess.queue = list(queue or [])
@@ -424,6 +453,8 @@ class MediaController(Service):
             if limit:
                 await self._end_session("limit", detail=limit)
                 return False
+            if sess.hold is not None:
+                return await self._resume_held(sess)
             with self._lock:
                 sess.state = "playing" if sess.has_played else "loading"
                 sess.paused_at = None
@@ -431,6 +462,67 @@ class MediaController(Service):
             self.bridge.command("play")
             self.ctx.bus.publish(Topics.MEDIA_RESUMED, {"item_id": sess.item["id"]}, source="media")
             return True
+
+    async def hold(self, reason: str = "voice chat", *, wait: float = HOLD_PAUSE_WAIT_SECONDS) -> bool:
+        """Pause the video for a chat ("Hey LittleBot" while it plays), keeping its position: the player
+        is closed and the screen, speaker and face go back to LittleBot (``RobotState.IDLE``).
+
+        Waits up to ``wait`` seconds for the page to confirm it paused (that report has the exact
+        position; the wake word plays its earcon after this, over a quiet speaker). ``resume()`` opens the
+        player again where it was, ``stop()`` ends it; nobody doing either, it stops
+        ``media.chat_pause_minutes`` after the voice chat ended. False when no video is on."""
+        self._bind_loop()
+        async with self._op_lock:
+            sess = self._session
+            if sess is None:
+                return False
+            if sess.hold is not None:
+                return True
+            self._end_duck()
+            asked = self._clock.now()
+            with self._lock:
+                self._accrue()
+                was_paused = sess.state == "paused"
+                sess.state = "paused"
+                sess.paused_at = asked
+            self.bridge.command("pause")
+            confirmed = was_paused or (self.bridge.connected and await self._paused_report(asked, wait))
+            position, video_id = self._position(sess, confirmed)
+            now = self._clock.now()
+            with self._lock:
+                sess.hold = _Hold(reason=str(reason)[:60], since=now, position=position, video_id=video_id,
+                                  quiet_since=now)
+            self.bridge.command("stop", "paused")  # the page tears its player down (no hidden player)
+            sess.lease.release()
+            self.ctx.state.release(RobotState.PLAYING_MEDIA, f"media paused ({reason})")  # the face comes back
+            if self.backend.can_close:
+                self._cancel_close_task()
+                self._close_task = asyncio.get_running_loop().create_task(self._close_backend_later(0.0))
+            self.ctx.bus.publish(Topics.MEDIA_PAUSED, {
+                "item_id": sess.item["id"], "held": True, "reason": sess.hold.reason,
+                "position_seconds": round(position, 1)}, source="media")
+            log.info("media: paused for a chat (%s) at %.0fs%s", reason, position,
+                     "" if confirmed else " (estimated: the player didn't confirm the pause)")
+            return True
+
+    def duck(self, factor: float, seconds: float) -> bool:
+        """Turn the playing video down to ``factor`` of its volume for ``seconds`` (the wake word heard
+        "hey ..." and listens for the rest of the phrase). Nothing is saved; any thread."""
+        sess, loop = self._session, self._loop
+        if sess is None or sess.state == "paused" or loop is None or loop.is_closed():
+            return False
+        try:
+            factor = max(0.0, min(1.0, float(factor)))
+            seconds = max(0.1, float(seconds))
+        except (TypeError, ValueError):
+            return False
+        self.bridge.set_volume(round(self._volume() * factor, 3))
+        try:
+            loop.call_soon_threadsafe(self._arm_unduck, seconds)
+        except RuntimeError:
+            self.bridge.set_volume(self._volume())
+            return False
+        return True
 
     async def skip(self) -> dict[str, Any]:
         """The next search result of a video found by search, else the next enabled approved item
@@ -446,10 +538,14 @@ class MediaController(Service):
             if limit:
                 await self._end_session("limit", detail=limit)
                 return self.status()
-            nxt = sess.queue.pop(0) if sess.queue else self._next_playable(sess.item["id"])
+            nxt = sess.queue[0] if sess.queue else self._next_playable(sess.item["id"])
             if nxt is None:
                 await self._end_session("stopped", detail="no approved videos left")
                 return self.status()
+            if sess.hold is not None and self._reclaim(sess):
+                return self.status()  # still paused for a chat (live voice has the screen)
+            if sess.queue:
+                sess.queue.pop(0)
             self._load(sess, nxt)
             if not self._player_alive():
                 try:
@@ -523,6 +619,14 @@ class MediaController(Service):
             else:
                 daily_used = self.usage.get(today) + live
             paused_for = (now - sess.paused_at) if sess is not None and sess.paused_at is not None else None
+            hold = sess.hold if sess is not None else None
+        held: dict[str, Any] | None = None
+        if hold is not None:
+            chat = self._chat_active()
+            left = None if chat else max(0.0, self._chat_pause_seconds() - (now - hold.quiet_since))
+            held = {"reason": hold.reason, "position_seconds": round(hold.position, 1),
+                    "since_seconds": round(now - hold.since, 1), "chat_active": chat,
+                    "stops_in_seconds": round(left, 1) if left is not None else None}
         session_limit = self._session_limit_seconds()
         daily_limit = self._daily_limit_seconds()
         policy = self.ctx.age_policy()
@@ -538,6 +642,7 @@ class MediaController(Service):
             "daily_limit_seconds": daily_limit,
             "daily_remaining_seconds": round(max(0.0, daily_limit - daily_used), 1),
             "paused_seconds": round(paused_for, 1) if paused_for is not None else None,
+            "held": held,  # paused for a chat, the face showing: {position_seconds, stops_in_seconds, ...}
             "volume": self._volume(),
             "enabled": bool(self.ctx.settings.get("media.enabled", True)),
             "offline": self.ctx.config.is_offline,
@@ -648,7 +753,7 @@ class MediaController(Service):
         return self._daily_limit_seconds() - self._daily_used()
 
     # ================================================================ internals: session
-    def _load(self, sess: _Session, item: dict[str, Any]) -> None:
+    def _load(self, sess: _Session, item: dict[str, Any], *, count: bool = True) -> None:
         now = self._clock.now()
         with self._lock:
             sess.item = item
@@ -662,7 +767,7 @@ class MediaController(Service):
             sess.unverified_since = None
         self.bridge.set_volume(self._volume())
         sess.load_id = self.bridge.load(item)
-        if _is_approved(item):
+        if count and _is_approved(item):
             self.repo.record_play(item["id"])
 
     async def _end_session(self, reason: str, *, detail: str | None = None, session_id: int | None = None) -> bool:
@@ -671,6 +776,7 @@ class MediaController(Service):
         if sess is None or (session_id is not None and sess.id != session_id):
             return False
         reason = reason if reason in STOP_REASONS else "stopped"
+        self._end_duck()
         with self._lock:
             self._accrue()
             self._flush_usage(force=True)
@@ -700,7 +806,7 @@ class MediaController(Service):
     async def _close_backend_later(self, delay: float) -> None:
         if delay > 0:
             await asyncio.sleep(delay)
-        if self._session is None:
+        if self._session is None or self._session.hold is not None:
             try:
                 await self.backend.close()
             except Exception:  # noqa: BLE001
@@ -752,6 +858,12 @@ class MediaController(Service):
         limit = self._limit_reason(sess)
         if limit:
             await self._end_session("limit", detail=limit)
+            return
+        if sess.hold is not None:  # no player meanwhile: only the countdown after the chat
+            if self._chat_active():
+                sess.hold.quiet_since = now
+            elif now - sess.hold.quiet_since >= self._chat_pause_seconds():
+                await self._end_session("stopped", detail=HELD_DETAIL)
             return
         if sess.state == "paused" and sess.paused_at is not None \
                 and now - sess.paused_at >= self.cfg.max_pause_minutes * 60:
@@ -830,8 +942,8 @@ class MediaController(Service):
             return {"ok": True, "current": True}  # nothing to check
         async with self._op_lock:
             sess = self._session
-            if sess is None or sess.load_id != event.get("load_id"):
-                return {"ok": True, "current": False}
+            if sess is None or sess.load_id != event.get("load_id") or sess.hold is not None:
+                return {"ok": True, "current": False}  # (held: the closing page's last reports don't count)
             sess.ever_connected = True
             if etype in VIDEO_CHECK_EVENTS and not self._reported_video_ok(sess, event):
                 await self._fail(sess, "unexpected_video", UNEXPECTED_VIDEO_MESSAGE)
@@ -866,6 +978,112 @@ class MediaController(Service):
                 # tab/window in the kiosk): stop, and closing the kiosk closes any popup with it.
                 await self._fail(sess, f"player_{etype}", PLAYER_HIDDEN_MESSAGE)
         return {"ok": True, "current": True}
+
+    # ================================================================ internals: paused for a chat
+    async def _paused_report(self, asked: float, wait: float) -> bool:
+        """Wait (up to ``wait`` s) for the page to report the player paused after ``asked`` (clock time)."""
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + max(0.0, wait)
+        while True:
+            info, at = self.bridge.player_report()
+            if at is not None and at >= asked and info.get("player_state") == YT_PAUSED:
+                return True
+            if loop.time() >= deadline:
+                return False
+            await asyncio.sleep(0.05)
+
+    def _position(self, sess: _Session, confirmed: bool) -> tuple[float, str | None]:
+        """(seconds into the video, its id) from the page's last report. Without a "paused" report, a playing
+        video's position is its last report plus the time since (at most MAX_POSITION_GUESS_SECONDS)."""
+        info, at = self.bridge.player_report()
+        vid = info.get("video_id") if is_valid_video_id(info.get("video_id")) else None
+        pos = info.get("current_time")
+        if not isinstance(pos, (int, float)) or isinstance(pos, bool) or at is None:
+            return float(sess.item.get("start_seconds") or 0), vid
+        pos = float(pos)
+        if not confirmed and info.get("player_state") == YT_PLAYING:
+            pos += max(0.0, min(MAX_POSITION_GUESS_SECONDS, self._clock.now() - at))
+        return max(0.0, pos), vid
+
+    def _resume_item(self, sess: _Session, hold: _Hold) -> dict[str, Any]:
+        """The held item, starting where it was (a playlist at the video that was playing)."""
+        item = dict(sess.item, start_seconds=int(max(0.0, hold.position - RESUME_REWIND_SECONDS)))
+        if item.get("kind") == "playlist" and hold.video_id and hold.video_id in sess.playlist_ids:
+            item["youtube_id"] = hold.video_id
+        return item
+
+    def _reclaim(self, sess: _Session) -> str | None:
+        """A held session takes the screen back (lease + PLAYING_MEDIA). Why it can't, or None."""
+        holder = self.ctx.arbiter.holder(Resource.FACE) or self.ctx.arbiter.holder(Resource.SCREEN)
+        lease = self.ctx.arbiter.acquire(OWNER, RESOURCES, Priority.MEDIA, on_preempt=self._on_preempt)
+        if lease is None:
+            who = holder.owner if holder is not None else "something more important"
+            return f"LittleBot is busy right now ({who}). Try again in a moment."
+        if not self.ctx.state.transition(RobotState.PLAYING_MEDIA, f"media: {sess.item['title']}"):
+            lease.release()
+            return f"LittleBot can't play the video right now (state {self.ctx.state.state.value})."
+        with self._lock:
+            sess.lease = lease
+            sess.hold = None
+        sess.ever_connected = False
+        sess.backend_opened = False
+        return None
+
+    async def _resume_held(self, sess: _Session) -> bool:
+        """``resume`` of a video paused for a chat: the player opens again where it was. Caller holds ``_op_lock``."""
+        hold = sess.hold
+        assert hold is not None
+        try:
+            self._check_allowed(sess.item, sess.override, sess)
+        except PermissionError as e:  # e.g. today's time ran out meanwhile, the age setting changed
+            await self._end_session("stopped", detail=str(e))
+            return False
+        why = self._reclaim(sess)
+        if why:
+            log.info("media: the paused video can't carry on yet: %s", why)
+            return False
+        item = self._resume_item(sess, hold)
+        self._cancel_close_task()
+        self._load(sess, item, count=False)
+        if not self._player_alive():
+            try:
+                await self.backend.open(self.player_url())
+            except PlayerBackendError as e:
+                msg = f"Couldn't open the video player on LittleBot's screen: {e}"
+                self._record_error(item, "backend", msg)
+                await self._end_session("error", detail=msg)
+                return False
+        if self.backend.is_running():
+            sess.backend_opened = True
+        self.ctx.bus.publish(Topics.MEDIA_RESUMED, {"item_id": item["id"], "held": True,
+                                                   "position_seconds": item["start_seconds"]}, source="media")
+        self._ensure_watchdog()
+        log.info("media: carrying on after the chat (item %s at %ss)", item["id"], item["start_seconds"])
+        return True
+
+    def _chat_active(self) -> bool:
+        live = getattr(self.ctx, "live", None)
+        if live is None:
+            return False
+        try:
+            return bool(live.status().get("active"))
+        except Exception:  # noqa: BLE001
+            return False
+
+    def _chat_pause_seconds(self) -> float:
+        return max(0.0, float(self.cfg.chat_pause_minutes)) * 60
+
+    def _arm_unduck(self, seconds: float) -> None:
+        if self._unduck is not None:
+            self._unduck.cancel()
+        self._unduck = asyncio.get_running_loop().call_later(seconds, self._end_duck)
+
+    def _end_duck(self) -> None:
+        """The volume back to the parent's setting after ``duck``. On the loop."""
+        if self._unduck is not None:
+            self._unduck.cancel()
+            self._unduck = None
+            self.bridge.set_volume(self._volume())
 
     async def _try_next_result(self, sess: _Session, code: Any) -> bool:
         """A search result YouTube won't play: load the next one instead (True if one was loaded)."""

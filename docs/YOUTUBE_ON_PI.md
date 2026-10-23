@@ -13,7 +13,7 @@ not add to the allowlist. Design and safety rules: [modules/media.md](modules/me
 ## 1. What runs during a video
 
 ```
-littlebot (Python: face hidden + low fps, audio idle, vision, dashboard server)
+littlebot (Python: face hidden + low fps, audio idle, vision, dashboard server, wake word listening)
    └─ chromium --kiosk --app=http://127.0.0.1:8765/player?token=...   (only while a video plays)
         ├─ browser process, GPU process, network / audio / storage utility processes
         ├─ renderer: our player page (tiny: polls the robot twice a second)
@@ -109,6 +109,10 @@ coexist; the media session holds the `audio_out` lease so LittleBot itself stays
 LittleBot) then gets "device busy". `media.volume` (0..`media.max_volume` = 0.8) sets the
 YouTube player's volume relative to the system volume. *Unverified on the Pi.*
 
+The wake word keeps listening while a video plays (section 10), so the video's own sound reaches
+the microphone. There is no echo cancellation; a quieter `media.volume` makes "Hey LittleBot" much
+easier to hear (section 10 has the numbers).
+
 ## 6. Measure on arrival
 
 Run LittleBot normally (`--mode pi`, face + camera + audio), then in a second terminal:
@@ -134,6 +138,13 @@ Run LittleBot normally (`--mode pi`, face + camera + audio), then in a second te
     playback must either continue or stop cleanly with the face returning - never show YouTube.
 11. **Endurance**: three back-to-back 15-minute sessions; then `journalctl -k | grep -i oom`
     (must be empty) and `pgrep -fa chromium-profile` (must be empty after each session).
+12. **Talking during a video** (section 10): play a song video at the usual volume and say "Hey
+    LittleBot" from where the child sits (1-2 m), ten times: how many paused the video? Then let a
+    few typical videos play for 30 minutes with nobody talking and count the false starts
+    (`journalctl --user -u littlebot | grep -c "wake word heard"`) and what was ignored
+    (`grep "ignored while a video plays"`). Check that the earcon is heard, the face is back
+    within ~2 s, "keep watching" carries on at the right place (Chromium restarts: note how long
+    it takes), and `free -m` during a video with the wake word on (the model stays loaded).
 
 Record results in the PERFORMANCE.md table and update this document.
 
@@ -200,3 +211,119 @@ Based on the YouTube API Services Developer Policies and the Required Minimum Fu
 | Real IFrame API script loads under our CSP, player iframe created, Referer accepted (no error 153), real `ready` / `buffering` / `error` events reach the robot, error 150 mapped and shown | verified once, **manually** in the dev sandbox (headless Chromium, datacenter network) | not a committed test |
 | **Real video playback** | **NOT verified** | YouTube answered "Video unavailable - This content isn't available" (reported as error 150) for every video tried (`jNQXAC9IVRw`, `aqz-KE-bpKQ`, `M7lc1UVf-VE`) on both embed hosts, most likely because of the sandbox's datacenter IP / headless browser. Opening an embed URL directly (no embedding page) gave error 153 ("player configuration error", missing referrer), confirming why the page sends `Referrer-Policy: strict-origin-when-cross-origin`. |
 | Pi CPU / memory / decode / thermal, kiosk stacking, touch, audio device sharing | **NOT verified** | needs the hardware (section 6) |
+| Pause for a chat (`hold`): position, face back, kiosk closed, resume where it was, countdown, tools, "keep watching" / "stop the video" | verified with fakes | pytest (`tests/media/test_media_hold.py`, `tests/audio/test_wakeword_video.py`, `tests/chatgpt/test_live_video.py`) |
+| Wake word over a video's sound | measured with **synthetic** voices and music (section 10) | real rooms, children's voices and the Pi's microphone / speaker: **NOT verified** |
+
+## 10. Talking to LittleBot during a video
+
+"Hey LittleBot" works while a video plays: the video pauses, the face comes back and the live voice
+starts, as it does when LittleBot is idle. Afterwards the video carries on where it was, or stops.
+
+### What happens, step by step
+
+1. **Listening during the video.** The wake word (littlebot/audio/wakeword.py) keeps listening
+   while a video plays (`wake.during_videos`). The video's sound reaches the microphone too, so
+   stricter rules apply then: only `wake.video_phrases` count (default: just "hey little bot";
+   "hey bot" alone is what videos say by mistake most) and each word needs
+   `wake.video_min_confidence` (0.7, instead of 0.5). Phrases heard that don't count are logged:
+   `wake word: 'hey bot' ignored while a video plays (...)`; the dashboard's wake word line says
+   "Listening for “hey little bot” (a video is playing)."
+2. **"Hey LittleBot" heard.** The video is paused first (`MediaController.hold`): the page is told
+   to pause and LittleBot waits up to `wake.video_pause_wait_seconds` (1 s) for its "paused"
+   report, which has the exact position (without one, the position is the last report plus the
+   time since). The player is then torn down and the kiosk Chromium closed (YouTube's rules allow
+   no hidden player, and the kiosk window covers the face); the screen, speaker and face go back
+   to LittleBot (`PLAYING_MEDIA -> IDLE`) and the face shows again. No screen time is counted while
+   the video waits.
+3. **Earcon and live voice.** Then, exactly as when idle: the "listen" earcon (heard over a quiet
+   speaker, because the video paused first), the face listens, live voice starts. When its data
+   channel opens, the voice is told (a note) that the video "<title>" is paused and how to carry
+   on with it or stop it (the title is shortened as for anything said aloud, `speakable_title`).
+4. **"Keep watching", "resume the video", "play it again", "go back to the video"**, said by the
+   person (LittleBot recognises their own words: `VIDEO_RESUME` in live.py) or handed over by the
+   voice: the voice is told to say a short goodbye, the call ends as with any hand-over, and the
+   video carries on **2 s before** where it stopped (Chromium starts again: a few seconds on a Pi,
+   *estimate*). Once asked for, it carries on even if the call ends before the goodbye.
+5. **"Stop the video", "turn it off", "no more videos"**: the video stops at once; the face stays
+   and the chat goes on.
+6. **Neither:**
+   * the chat couldn't start or connect (not signed in, no internet ...): "uh-oh", and the video
+     carries on;
+   * nobody said anything within `wake.video_no_words_seconds` (15 s) of the call connecting (most
+     likely the wake word heard the video itself): the call ends and the video carries on;
+   * otherwise (they talked, and said nothing about the video) the video stays paused with the
+     face showing. The dashboard (Home and Videos) shows "Paused at m:ss for a chat. It stops in
+     ..." with Resume and Stop, and it stops `media.chat_pause_minutes` (2) after the chat ended.
+     Tapping Resume, or "Hey LittleBot ... keep watching", carries on meanwhile.
+7. The text model's tools do the same in typed chat and in hand-offs: `resume_video` carries on
+   with a video paused for a chat once the reply was spoken / the call ended, `stop_video` stops
+   it, `get_robot_status` says `paused_while_talking`.
+
+The parent's own **Pause** on the dashboard is unchanged (the paused player stays on the screen).
+
+### Settings
+
+```yaml
+wake:                                # config/local.yaml
+  during_videos: true                # false: not listening while a video plays (frees the ~130 MB model then)
+  video_phrases: ["hey little bot"]  # only these count during a video; [] = all of wake.phrases
+  video_min_confidence: 0.7          # per word during a video (wake.min_confidence is 0.5)
+  video_duck: false                  # turn the video down after a "hey ..." (see below)
+  video_duck_volume: 0.3             # ... to this share of its volume
+  video_duck_seconds: 2.0            # ... for this long
+  video_pause_wait_seconds: 1.0      # the earcon waits at most this long for the video to pause
+  video_no_words_seconds: 15         # nobody talks this long after the call connected: back to the video (0 = off)
+media:
+  chat_pause_minutes: 2              # a video paused for a chat stops this long after the chat
+```
+
+### What was measured (and what wasn't)
+
+Measured on a desktop with the real recogniser (Vosk small English model, LittleBot's grammar,
+fed 0.1 s at a time as on the robot) and **synthetic** sound: espeak-ng voices saying the wake
+phrases (8 voices x 2 speeds), mixed with a "video" played through a simulated room (0.35 s
+reverb): kids-video style speech (30 lines from 4 other voices, with many near misses such as
+"hey little boy", "hey buddy", "hey, but ..."), synthetic music (melody, bass, drums), or both
+(a "song"). SNR is the person's level over the video's at the microphone.
+
+| | all phrases, 0.5 (before) | "hey little bot" only, 0.7 (video default) |
+|------|------|------|
+| False starts, 30 min of video speech | 27 (54 / h) | 5 (10 / h) |
+| False starts, 30 min of song | 16 (32 / h) | 3 (6 / h) |
+| False starts, 30 min of music without words | 0 | 0 |
+| Clips of single video lines that started it (of 360) | 16 | 1 |
+
+The corpus says "hey" in almost every line, so these rates are a worst case; real videos should
+start it far less often. A stricter confidence alone helps little (most false starts have word
+confidence 1.0: 27 -> 23 at 0.7); keeping only the long phrase does most of it.
+
+"Hey little bot" heard (said by the person), with the video defaults:
+
+| Video sound | +20 dB | +10 dB | +5 dB | 0 dB | -5 dB |
+|------|------|------|------|------|------|
+| music | 78 % | 66 % | 62 % | 44 % | 3 % |
+| song (music + words) | 75 % | 62 % | 22 % | 12 % | 3 % |
+| speech | 44 % | 28 % | 9 % | 6 % | 6 % |
+
+Without a video the same clips are heard 78 % of the time (94 % for "hey little bot"; espeak-ng's
+"hey littlebot" in one word only 62 %). So it works when the person is clearly louder than the
+video at the microphone, and mostly fails against loud talking or singing. On the robot the speaker is centimetres from the microphone and
+the child a metre or two away, so the SNR may well be 0 dB or less at a normal video volume:
+**this is the part to check on the Pi** (section 6, step 12). What helps, best first:
+
+* a lower `media.volume` (moves you to the left in the table: half the volume is 6 dB);
+* saying it louder or closer, and a short pause after "hey";
+* PipeWire's echo cancellation (`libpipewire-module-echo-cancel`, a WebRTC echo canceller): play
+  Chromium into its sink and let LittleBot record from its source, so most of the video is
+  removed from what the wake word hears. Not set up by LittleBot; *unverified* on the Pi;
+* `wake.video_duck: true`. With the video turned down to 30 % 0.6 s after a heard "hey" (the page
+  polls twice a second), "hey little bot" was heard more often against speech (+10 dB: 28 -> 44 %,
+  +5 dB: 9 -> 28 %, 0 dB: 6 -> 16 %) and songs (+5 dB: 22 -> 31 %), not against music. But the
+  recogniser heard "hey" 7-10 times a minute in this corpus, and each one dips the video for
+  `video_duck_seconds`, so it is off by default. Try it if the robot misses you during videos.
+
+Not measured: real children's and adults' voices, accents, real rooms, the Pi's USB microphone and
+speaker, how often real videos start it, and the Pi's CPU for listening during a video (about 4 %
+of one desktop core measured for the wake word; roughly 10 % of one Pi 5 core expected, on top of
+Chromium). The wake word's model now stays loaded during a video (about 130 MB); on a 2 GB Pi that
+is tight next to Chromium (section 3): `wake.during_videos: false` frees it, as before.

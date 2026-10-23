@@ -211,8 +211,19 @@ as if you had pressed **Start live voice**. Wait for the sound, then talk.
   and what happened the last time it heard you. Saying the phrase counts as a grown-up starting
   the call; turn the switch off if your child could start calls when you are not there.
 * **It pauses** while live voice is on, while LittleBot listens for push to talk or tests the
-  microphone, while a video plays and while the microphone is off in **Privacy**. It ignores what
-  it hears while LittleBot itself is making a sound.
+  microphone, and while the microphone is off in **Privacy**. It ignores what it hears while
+  LittleBot itself is making a sound.
+* **During a video** it keeps listening, but only for the whole **"Hey LittleBot"** ("Hey Bot"
+  alone is what videos say by mistake most), and a little more strictly, because the video's
+  sound reaches the microphone too. Saying it pauses the video (where it was), brings the face
+  back, then plays the listening sound and starts live voice; the voice is told which video is
+  paused. **"Keep watching"**, "resume the video", "play it again" or "go back to the video"
+  carries on with it after a short goodbye; **"stop the video"**, "turn it off" or "no more
+  videos" stops it and the chat goes on. If nobody says anything (it probably heard the video) or
+  the chat can't start, the video carries on by itself; otherwise it waits, paused with the face
+  showing, and stops 2 minutes after the chat (the dashboard shows it, with **Resume**). Over a
+  loud video it hears you less well: say it louder or closer, or turn the video down. Details,
+  settings and measurements: [YOUTUBE_ON_PI.md section 10](YOUTUBE_ON_PI.md#10-talking-to-littlebot-during-a-video).
 * **If live voice can't start** (not signed in, cloud communication off, no connection …) you hear
   "uh-oh", the status line says why and the log has `wake word: live voice could not start (...)`.
   It listens again after 4 seconds (`wake.cooldown_seconds`); it never retries by itself.
@@ -223,7 +234,7 @@ as if you had pressed **Start live voice**. Wait for the sound, then talk.
   `wake: {phrases: ["hey little bot"]}` in `config/local.yaml`. Real children's voices, accents and
   distance have not been tested yet.
 * **Cost:** about 140 MB of memory while it is switched on (freed when it is off, or during a
-  video) and a few percent of one CPU core (about 4 % of one desktop core measured; roughly 10 % of
+  video with `wake.during_videos: false`) and a few percent of one CPU core (about 4 % of one desktop core measured; roughly 10 % of
   one Pi 5 core expected). The model is shared with `audio.stt.vosk_model_path` if that points to
   the same folder.
 * **Installing:** `scripts/install_pi.sh` installs it by default (`--no-wake-word` skips it): the
@@ -244,6 +255,11 @@ wake:                                # config/local.yaml
   min_confidence: 0.5                # per word, 0..1: higher = fewer false starts, more misses
   distractors: true                  # common words the recogniser may pick instead: fewer false starts
   cooldown_seconds: 4
+  during_videos: true                # listen while a video plays (with the stricter rules below)
+  video_phrases: ["hey little bot"]  # only these count during a video ([] = all phrases)
+  video_min_confidence: 0.7
+  video_duck: false                  # turn the video down for a moment after "hey ..." (off: videos say "hey" a lot)
+  video_no_words_seconds: 15         # a call that paused a video and nobody talks: back to the video
 ```
 
 ## 4. Letting the AI see (camera)
@@ -337,6 +353,7 @@ in typed chat, with **Push to talk**, or during a **live voice** call. ChatGPT p
 | "Make a surprised face", "wink" | shows that face |
 | "Go to sleep", "wake up" | goes to sleep or wakes up |
 | "Stop everything" | stops any video, activity or game. The conversation carries on (the red **STOP** still stops everything, the conversation too) |
+| "Keep watching", "stop the video" (a video paused for this chat) | carries on with the video where it stopped after the answer (in live voice: after a short goodbye, then the call ends), or stops it ([during a video](YOUTUBE_ON_PI.md#10-talking-to-littlebot-during-a-video)) |
 | "How hot are you?", "are you on Wi-Fi?", "what's connected?", "which ChatGPT plan?" | answers from its status: CPU temperature and load, memory, how long it has been running, Wi-Fi signal, camera / microphone / speaker / screen / motors, volume, the signed-in plan, live voice on or off, what is playing, the Privacy switches |
 | "What can you do?", "tell me about yourself" | a short summary of what it can do |
 | Typed chat only: "what am I holding?" | one camera photo, if you allowed it in Privacy ([section 4](#4-letting-the-ai-see-camera)). In live voice the call's own camera look is used |
@@ -508,6 +525,9 @@ All keys and defaults are listed in the [technical section](#configuration).
 | Wake word: "uh-oh" after the listening sound | Live voice couldn't start; the status line under the switch says why (often: not signed in, or cloud communication off) | Fix that reason, then say it again |
 | Wake word: nothing happens | Paused (the status line says why), too far away, or the microphone is too quiet | Speak within about a metre; raise `audio.microphone.input_gain`; check **Audio & devices** → test the microphone |
 | Live voice starts by itself | A false start on "Hey Bot" | Set `wake.phrases: ["hey little bot"]`, or raise `wake.min_confidence` (for example 0.8) |
+| A video pauses by itself and the voice says hello | The wake word heard something like "hey little bot" in the video | Nobody answering, the video carries on after `wake.video_no_words_seconds` (15 s); say "keep watching" to carry on at once. If it happens often: raise `wake.video_min_confidence` (0.85), or `wake.during_videos: false` |
+| Wake word: nothing happens during a video | The video is louder than you at the microphone, or you said "Hey Bot" (only "Hey LittleBot" counts during a video) | Say "Hey LittleBot" louder or closer; lower the video volume; try `wake.video_duck: true`. The log shows what was heard and ignored ("ignored while a video plays") |
+| "Keep watching" doesn't carry on | The video stopped meanwhile (2 minutes after the chat: `media.chat_pause_minutes`, or the day's video time ran out) | Start it again from the Videos page |
 
 The app log (`data/logs/littlebot.log`) has the HTTP status and end reason of each call. It never
 contains what was said.
@@ -629,7 +649,11 @@ choice on the dashboard (settings `info.location`, `info.units`) wins over `loca
 
 Wake word (`wake:` section, `WakeConfig`): `enabled` (`true`, the switch's default), `phrases`,
 `model_path` (`models/vosk-model-small-en-us-0.15`), `min_confidence` (`0.5`), `distractors`
-(`true`), `cooldown_seconds` (`4`), `sound` (`listen`). See [Wake word](#wake-word-hey-littlebot).
+(`true`), `cooldown_seconds` (`4`), `sound` (`listen`); during a video: `during_videos` (`true`),
+`video_phrases` (`["hey little bot"]`), `video_min_confidence` (`0.7`), `video_duck` (`false`),
+`video_duck_volume` (`0.3`), `video_duck_seconds` (`2`), `video_pause_wait_seconds` (`1`),
+`video_no_words_seconds` (`15`); and `media.chat_pause_minutes` (`2`). See [Wake word](#wake-word-hey-littlebot)
+and [YOUTUBE_ON_PI.md section 10](YOUTUBE_ON_PI.md#10-talking-to-littlebot-during-a-video).
 
 YouTube search (`media:` section, `MediaConfig`): `allow_search` (`true`: any video found may play;
 `false`: only the approved list), `search_results` (`5`), `search_timeout_seconds` (`20`),
@@ -697,5 +721,12 @@ YouTube search (`media:` section, `MediaConfig`): `allow_search` (`true`: any vi
   the pauses (live voice, video, Privacy, switch off, LittleBot making sound), a missing model or
   library. The real Vosk recogniser was run once on a development PC with espeak-ng voices (it heard
   all "Hey LittleBot" / "Hey Bot" and none of the look-alikes); not on the Pi, and not with real voices.
+* **Wake word during a video** (`tests/audio/test_wakeword_video.py`, `tests/media/test_media_hold.py`,
+  `tests/chatgpt/test_live_video.py`): the stricter rules during a video, the video paused (position,
+  face back, player closed) before the earcon, the note to the voice, "keep watching" / "stop the
+  video" from the person's words, a hand-off and the tools, the video carrying on when the chat
+  can't start or nobody talks, the 2-minute stop after the chat, the duck. Over a video's sound the
+  real Vosk recogniser was measured with synthetic voices and music only
+  ([YOUTUBE_ON_PI.md section 10](YOUTUBE_ON_PI.md#what-was-measured-and-what-wasnt)).
 * **Not yet tested:** OpenAI's real service (sign-in, text, live voice or photos), the Pi's real
   microphone, speaker and camera, echo in a real room, latency, and real plan limits.

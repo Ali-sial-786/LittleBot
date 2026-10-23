@@ -66,6 +66,7 @@ class PlayerBridge:
         self._owner_seen: float | None = None
         self._last_event: dict[str, Any] | None = None
         self._player: dict[str, Any] = {}
+        self._player_at: float | None = None  # when the page last reported on the current load's player
         self.verify_grace_ms = VERIFY_GRACE_MS
 
     # -- auth ---------------------------------------------------------------
@@ -85,7 +86,7 @@ class PlayerBridge:
                 "title": item.get("title", ""),
             }
             self._action, self._reason = "play", None
-            self._player = {}
+            self._player, self._player_at = {}, None
             self._owner = None  # a new load is claimed afresh
             self._owner_seen = None
             self._seq += 1
@@ -150,6 +151,8 @@ class PlayerBridge:
                 for key in ("player_state", "current_time", "duration", "video_id"):
                     if event.get(key) is not None:
                         self._player[key] = event[key]
+                if event.get("player_state") is not None or event.get("current_time") is not None:
+                    self._player_at = self._last_seen
             return current
 
     # -- introspection ------------------------------------------------------
@@ -173,6 +176,12 @@ class PlayerBridge:
         """A page that could play right now is polling (hidden background tabs don't count)."""
         with self._lock:
             return self._last_visible is not None and self._clock() - self._last_visible <= self._connected_window
+
+    def player_report(self) -> tuple[dict[str, Any], float | None]:
+        """What the page last reported about the current load's player (``player_state``, ``current_time``,
+        ``duration``, ``video_id``) and when (clock time; None before any report)."""
+        with self._lock:
+            return dict(self._player), self._player_at
 
     def seconds_since_seen(self) -> float | None:
         """Since the page playing the current load (its owner, once claimed) was last heard from."""

@@ -20,14 +20,26 @@ Sharing the microphone
     else needs it. Before ``listen()``, the microphone test, ``suspend()`` (live voice) and its
     own ``stop()`` the AudioService calls ``release_mic()``, which returns once this listener
     has closed the stream; ``mic_free()`` hands it back. The listener also pauses while live
-    voice or a video is on, while the privacy microphone switch or the ``wake.enabled`` setting
-    is off; while LittleBot itself makes sound (half-duplex) the audio is discarded.
+    voice is on, while the privacy microphone switch or the ``wake.enabled`` setting is off; while
+    LittleBot itself makes sound (half-duplex) the audio is discarded.
+
+While a video plays
+    It keeps listening (``wake.during_videos``), but the video's own sound reaches the microphone
+    too (there is no echo cancellation), so stricter rules apply: only ``wake.video_phrases``
+    count ("hey little bot"), each word needs ``wake.video_min_confidence``, and with
+    ``wake.video_duck`` the video is turned down for a moment after a "hey ...". What was heard
+    but didn't count is logged ("ignored while a video plays"), to check on the robot.
 
 When a wake phrase is heard
-    "listen" earcon (two soft rising tones) -> face listening (RobotState.LISTENING) ->
+    During a video, the video is paused first (``ctx.media.hold``: its position is kept, the player
+    closes and the face comes back), so the earcon is heard over a quiet speaker. Then "listen"
+    earcon (two soft rising tones) -> face listening (RobotState.LISTENING) ->
     ``ctx.live.start_session(parent_present=True)``; live voice then takes the microphone. If
     live voice can't start (not signed in, cloud off ...) or doesn't connect, LittleBot plays
-    "uhoh" and logs why. No new trigger for ``wake.cooldown_seconds``.
+    "uhoh" and logs why. No new trigger for ``wake.cooldown_seconds``. A paused video carries on
+    by itself when the chat couldn't start or nobody said anything in it (most likely the wake word
+    heard the video); otherwise it waits for "keep watching" / "stop the video" (the live voice
+    handles those) and stops ``media.chat_pause_minutes`` after the chat.
 """
 
 from __future__ import annotations
@@ -71,6 +83,8 @@ EARCON_TIMEOUT = 8.0
 
 # Pauses after which the model is unloaded (they usually last long; ~130 MB back for a video).
 _LONG_PAUSES = {"disabled", "microphone_off", "video", "stopped"}
+# Why a call that paused a video ended without anyone talking (the video then carries on).
+NO_WORDS_REASON = "nobody spoke (the wake word may have heard the video)"
 
 # Common words offered to the recogniser next to the wake phrases. Measured with espeak-ng
 # voices: 48 of 184 "near miss" sentences ("hey bob", "hey look at that", "hey baby" ...)
@@ -98,7 +112,7 @@ PAUSE_TEXT: dict[str, str] = {
     "mic_in_use": "Paused while LittleBot uses the microphone.",
     "mic_error": "Paused: the microphone isn't working right now; trying again in a few seconds.",
     "live_voice": "Paused while live voice is on.",
-    "video": "Paused while a video plays.",
+    "video": "Paused while a video plays (wake.during_videos is off).",
     "starting_live": "Heard you! Starting live voice…",
     "cooldown": "Back in a moment…",
     "no_audio": "Not available: the audio system isn't running.",
@@ -115,6 +129,8 @@ class KeywordRecognizer(Protocol):
         """``{"text": "...", "result": [{"word", "conf"}, ...]}`` when an utterance just ended, else None."""
 
     def reset(self) -> None: ...
+
+    # Optional: ``partial() -> str``, the words of the utterance so far (for ``wake.video_duck``).
 
 
 def normalise_phrase(text: str) -> str:
@@ -186,6 +202,13 @@ class VoskKeywordRecognizer:
     def reset(self) -> None:
         self._rec.Reset()
 
+    def partial(self) -> str:
+        try:
+            out = json.loads(self._rec.PartialResult() or "{}")
+        except ValueError:
+            return ""
+        return str(out.get("partial") or "") if isinstance(out, dict) else ""
+
 
 class WakeWordService(Service):
     """``ctx.wake``: listens for the wake phrases in a background thread and starts live voice."""
@@ -202,6 +225,7 @@ class WakeWordService(Service):
         self.model_path: Path | None = resolve_model_path(self.cfg.model_path)
         self._sample_rate = int(ctx.config.audio.microphone.sample_rate or 16000)
         _, self._phrases, _ = build_grammar(self.cfg.phrases, distractors=False)
+        self._video_phrases = self._phrases_for_videos()
         self._loop: asyncio.AbstractEventLoop | None = None
         self._subs: list[Subscription] = []
         self._thread: threading.Thread | None = None
@@ -227,6 +251,10 @@ class WakeWordService(Service):
         self._attached: Any = None
         self.triggers = 0
         self.last_heard: dict[str, Any] | None = None
+        self.video_ignored = 0  # phrases heard while a video played that didn't count (stricter rules)
+        self.ducks = 0
+        self._duck_until = 0.0
+        self._last_partial = ""
 
     # ------------------------------------------------------------ lifecycle
     async def start(self) -> None:
@@ -370,10 +398,21 @@ class WakeWordService(Service):
             return "mic_in_use"
         if self._live_active():
             return "live_voice"
-        with contextlib.suppress(Exception):
-            if ctx.state.state == RobotState.PLAYING_MEDIA:
-                return "video"
+        if not self.cfg.during_videos and self._video_on():
+            return "video"
         return None
+
+    def _video_on(self) -> bool:
+        try:
+            return self.ctx.state.state == RobotState.PLAYING_MEDIA
+        except Exception:  # noqa: BLE001
+            return False
+
+    def _phrases_for_videos(self) -> list[tuple[str, tuple[str, ...]]]:
+        """The wake phrases that count while a video plays (``wake.video_phrases``; [] = all of them)."""
+        _, wanted, _ = build_grammar(self.cfg.video_phrases, distractors=False)
+        names = {p for p, _ in wanted}
+        return [p for p in self._phrases if p[0] in names] if names else list(self._phrases)
 
     # ------------------------------------------------------------ the thread
     def _main(self) -> None:
@@ -441,6 +480,9 @@ class WakeWordService(Service):
             self._next_check = time.monotonic() + AVAILABILITY_RECHECK * 6
             return None
         self._phrases = usable
+        self._video_phrases = self._phrases_for_videos()
+        if self.cfg.during_videos and not self._video_phrases:
+            log.warning("wake word: none of wake.video_phrases is a usable wake phrase; nothing counts during videos")
         rec = VoskKeywordRecognizer(model, grammar, self._sample_rate)
         log.info("wake word: model ready in %.1fs (%d phrases, %d words)", time.monotonic() - t0, len(usable),
                  len(grammar))
@@ -520,6 +562,7 @@ class WakeWordService(Service):
         pending: list[np.ndarray] = []
         pending_n = 0
         muted = False
+        self._last_partial = ""
         next_gate = time.monotonic() + GATE_POLL_SECONDS
         try:
             while not self._stop.is_set() and not self._audio_busy:
@@ -556,9 +599,13 @@ class WakeWordService(Service):
                     block = dsp.resample(block, inp.sample_rate, rec.sample_rate)
                 result = rec.accept(dsp.to_int16(block).tobytes())
                 del block
+                video = self._video_on()
                 if not result:
+                    if video and self.cfg.video_duck:
+                        self._maybe_duck(rec)
                     continue
-                phrase = match_wake_phrase(result, self._phrases, self.cfg.min_confidence)
+                self._last_partial = ""
+                phrase = self._match(result, video)
                 if phrase is not None and not self._audio_busy and not self._stop.is_set():
                     self._detected(phrase)
                     return True
@@ -568,6 +615,49 @@ class WakeWordService(Service):
             pending.clear()
             with contextlib.suppress(Exception):
                 inp.close()
+
+    def _match(self, result: dict[str, Any], video: bool) -> str | None:
+        """The wake phrase in a final result; while a video plays only the video phrases, more confident."""
+        if not video:
+            return match_wake_phrase(result, self._phrases, self.cfg.min_confidence)
+        phrase = match_wake_phrase(result, self._video_phrases, self.cfg.video_min_confidence)
+        if phrase is None:
+            heard = match_wake_phrase(result, self._phrases, 0.0)
+            if heard is not None:  # something like it, from the video or from a person
+                self.video_ignored += 1
+                why = ("only " + " / ".join(f"'{p}'" for p, _ in self._video_phrases) + " counts then"
+                       if not any(p == heard for p, _ in self._video_phrases)
+                       else f"word confidence below wake.video_min_confidence {self.cfg.video_min_confidence:g}")
+                log.info("wake word: '%s' ignored while a video plays (%s)", heard, why)
+        return phrase
+
+    def _maybe_duck(self, rec: KeywordRecognizer) -> None:
+        """``wake.video_duck``: the words so far end in "hey": turn the video down while the rest is said."""
+        partial = getattr(rec, "partial", None)
+        if partial is None:
+            return
+        try:
+            text = str(partial() or "")
+        except Exception:  # noqa: BLE001
+            return
+        if text == self._last_partial:
+            return
+        self._last_partial = text
+        words = text.split()
+        leads = {ph[0] for _, ph in self._video_phrases}
+        now = time.monotonic()
+        if not words or words[-1] not in leads or now < self._duck_until:
+            return
+        media = self.ctx.media
+        secs = float(self.cfg.video_duck_seconds)
+        try:
+            ok = bool(media is not None and media.duck(float(self.cfg.video_duck_volume), secs))
+        except Exception:  # noqa: BLE001
+            ok = False
+        if ok:
+            self._duck_until = now + secs
+            self.ducks += 1
+            log.debug("wake word: heard '%s' during a video; turned it down for %.1f s", words[-1], secs)
 
     def _mic_failed(self, why: str) -> None:
         self._mic_failures += 1
@@ -598,9 +688,11 @@ class WakeWordService(Service):
     async def _handle(self, phrase: str) -> None:
         ctx = self.ctx
         entered = False
+        video: str | None = None
         try:
             with contextlib.suppress(Exception):
                 ctx.bus.publish(WAKE_TOPIC, {"phrase": phrase}, source="wake")
+            video = await self._pause_video()  # first: the earcon is then heard over a quiet speaker
             with contextlib.suppress(Exception):
                 entered = ctx.state.state != RobotState.LISTENING and ctx.state.transition(RobotState.LISTENING,
                                                                                           "wake word")
@@ -616,6 +708,8 @@ class WakeWordService(Service):
                 log.info("wake word: live voice started; connecting")
                 self._note("started")
                 self._spawn(self._watch_connect(live))
+                if video is not None or self._video_held():
+                    self._spawn(self._after_video_chat(live, paused_now=video is not None))
                 return
             error, detail = str(res.get("error") or "failed"), str(res.get("detail") or "")
             log.warning("wake word: live voice could not start (%s%s)", error, f": {detail}" if detail else "")
@@ -623,6 +717,8 @@ class WakeWordService(Service):
             if entered:
                 ctx.state.release(RobotState.LISTENING, "wake word: live voice could not start")
             await self._play("uhoh", "error sound")
+            if video is not None:
+                await self._resume_video("live voice could not start")
         except asyncio.CancelledError:
             raise
         except Exception as e:  # noqa: BLE001
@@ -632,6 +728,8 @@ class WakeWordService(Service):
                 with contextlib.suppress(Exception):
                     ctx.state.release(RobotState.LISTENING, "wake word: live voice failed")
             await self._play("uhoh", "error sound")
+            if video is not None:
+                await self._resume_video("live voice failed")
         finally:
             with self._cv:
                 self._triggered = False
@@ -664,6 +762,88 @@ class WakeWordService(Service):
                 await self._play("uhoh", "error sound")
             return
         log.warning("wake word: live voice still connecting after %.0f s", timeout)
+
+    # ------------------------------------------------------------ a video playing
+    async def _pause_video(self) -> str | None:
+        """A video is playing: pause it for the chat (position kept, the face back). Its title, else None."""
+        media = self.ctx.media
+        if media is None or not hasattr(media, "hold") or not self._video_on():
+            return None
+        try:
+            st = media.status()
+            if st.get("held") or st.get("state") not in ("loading", "playing", "paused"):
+                return None
+            ok = await media.hold("wake word", wait=float(self.cfg.video_pause_wait_seconds))
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - live voice still starts (it then stops the video)
+            log.exception("wake word: pausing the video failed")
+            return None
+        if not ok:
+            return None
+        title = str((st.get("item") or {}).get("title") or "the video")
+        log.info("wake word: the video is paused for the chat")
+        heard = self.last_heard
+        if heard is not None:
+            heard["video"] = title
+        return title
+
+    async def _after_video_chat(self, live: Any, *, paused_now: bool = True) -> None:
+        """A chat while a video is paused for one. Asked to keep watching: it carries on (also when the call
+        ended before the voice's goodbye). For the chat that paused it (``paused_now``): nobody said anything in
+        it (it didn't connect, or most likely the wake word heard the video itself, ``wake.video_no_words_seconds``)
+        also carries on with it. Otherwise it waits (live voice handles "keep watching" / "stop the video") and
+        stops ``media.chat_pause_minutes`` after the chat."""
+        no_words = float(self.cfg.video_no_words_seconds) if paused_now else 0.0
+        connected_at: float | None = None
+        while True:
+            await asyncio.sleep(0.25)
+            try:
+                st = live.status()
+            except Exception:  # noqa: BLE001
+                return
+            if not st.get("active"):
+                break
+            if st.get("phase") in (None, "connecting"):
+                continue
+            connected_at = connected_at or time.monotonic()
+            if no_words > 0 and st.get("heard_user") is False and time.monotonic() - connected_at >= no_words:
+                log.info("wake word: nobody spoke within %.0f s of the call that paused the video; ending it",
+                         no_words)
+                await live.stop_session(NO_WORDS_REASON)
+                break
+        try:
+            last = live.status().get("last_call") or {}
+        except Exception:  # noqa: BLE001
+            return
+        if last.get("video") == "resume":  # asked for in the chat (also if it ended before the voice's goodbye)
+            await self._resume_video("they asked to keep watching")
+        elif paused_now and (last.get("heard_user") is False or last.get("connected") is False):
+            await self._resume_video("nobody spoke in the chat" if last.get("connected") is not False
+                                     else "live voice did not connect")
+
+    def _video_held(self) -> bool:
+        media = self.ctx.media
+        try:
+            return bool(media is not None and (media.status() or {}).get("held"))
+        except Exception:  # noqa: BLE001
+            return False
+
+    async def _resume_video(self, why: str) -> None:
+        """Carry on with a video paused for a chat (if it still is)."""
+        media = self.ctx.media
+        try:
+            if media is None or not (media.status() or {}).get("held"):
+                return
+            ok = await media.resume()
+            if not ok and not (media.status() or {}).get("held"):
+                return  # carried on (the voice's hand-over) or stopped meanwhile
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001
+            log.exception("wake word: carrying on with the video failed")
+            return
+        log.info("wake word: %s; the video %s", why, "carries on" if ok else "couldn't carry on (it stays paused)")
 
     async def _play(self, name: str, what: str = "earcon") -> bool:
         """Play ``name`` and log whether it was heard (and if not, why). Never raises, never hangs."""
@@ -728,7 +908,11 @@ class WakeWordService(Service):
     def status(self) -> dict[str, Any]:
         state = self._state()
         unavailable = self._unavailable if self._recognizer is None else None
-        if state == "listening":
+        video = state == "listening" and self.cfg.during_videos and self._video_on()
+        if video:
+            detail = ("Listening for " + " or ".join(f"“{p}”" for p, _ in self._video_phrases)
+                      + " (a video is playing).")
+        elif state == "listening":
             detail = "Listening for " + " or ".join(f"“{p}”" for p, _ in self._phrases) + "."
         elif state == "unavailable":
             detail = (unavailable or ("", "Not available."))[1]
@@ -748,6 +932,10 @@ class WakeWordService(Service):
             "model_missing": bool(unavailable and unavailable[0] == "model_missing"),
             "model": self._model_label() if self._factory is None else "custom",
             "phrases": [p for p, _ in self._phrases],
+            "during_video": video,
+            "video_phrases": [p for p, _ in self._video_phrases] if self.cfg.during_videos else [],
+            "video_ignored": self.video_ignored,
+            "ducks": self.ducks,
             "triggers": self.triggers,
             "last_heard": dict(self.last_heard) if self.last_heard else None,
         }

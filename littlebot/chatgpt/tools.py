@@ -17,7 +17,8 @@ runs itself; ``chatgpt.web_search``) for news, scores, opening hours and other f
 ``instructions()`` is the note callers add to the system prompt so the model uses them rather than
 guessing.
 
-Take-overs: starting a video or an activity, and going to sleep, need the screen and the speaker
+Take-overs: starting a video or an activity, carrying on with a video paused for a chat ("Hey LittleBot"
+while it played: ``MediaController.hold``), and going to sleep, need the screen and the speaker
 that the conversation itself is using (starting them mid-turn would cut the answer off).
 With ``defer=True`` they are checked now (unknown activity, videos switched off, ...) but only
 queued (``pending``); the host runs ``run_pending()`` once the reply has been spoken (chat) or once
@@ -113,9 +114,10 @@ TOOLS: tuple[_Tool, ...] = (
           _obj({"video_id": {**_STR, "description": "11-character YouTube id, or approved:<n>"},
                 "query": {**_STR, "description": "what to search for when there is no video_id"}})),
     _Tool("list_approved_videos", "The videos a grown-up added to LittleBot's approved list.", _obj()),
-    _Tool("stop_video", "Stop the video that is playing.", _obj()),
+    _Tool("stop_video", "Stop the video that is playing or paused (also one paused while LittleBot talks).", _obj()),
     _Tool("pause_video", "Pause the video that is playing.", _obj()),
-    _Tool("resume_video", "Carry on playing a paused video.", _obj()),
+    _Tool("resume_video", "Carry on playing a paused video where it stopped. A video paused while LittleBot talks "
+          "('keep watching', 'go back to the video') carries on once you have finished speaking.", _obj()),
     _Tool("list_games", "The games LittleBot can play.", _obj()),
     _Tool("start_game", "Start one of LittleBot's on-screen games by id or name (you can keep talking while it "
           "runs).", _obj({"game": {**_STR, "description": "game id or name"}}, ("game",))),
@@ -310,6 +312,8 @@ class RobotToolbox:
             m = _safe(media.status) or {}
             item = m.get("item") or {}
             out["video"] = {"state": m.get("state"), "title": item.get("title")} if item else {"state": m.get("state")}
+            if m.get("held"):
+                out["video"]["paused_while_talking"] = True  # resume_video carries on with it
         acts = ctx.activities
         if acts is not None:
             a = _safe(acts.status) or {}
@@ -765,6 +769,14 @@ class RobotToolbox:
         media = self._media()
         if media is None:
             return _err("videos aren't available on this robot")
+        st = _safe(media.status) or {}
+        if st.get("held"):
+            # Paused for a chat (the face is showing): it needs the screen and speaker back, like a new video.
+            async def resume() -> bool:
+                return bool(await media.resume())
+
+            title = speakable_title((st.get("item") or {}).get("title"))
+            return await self._takeover("video resume", resume, f"the video '{title}' (from where it stopped)")
         return _ok("the video carries on") if await media.resume() else _ok("no video is paused")
 
     # ------------------------------------------------------------ games

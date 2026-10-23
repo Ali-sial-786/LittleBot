@@ -187,6 +187,25 @@ class WakeConfig(_Section):
     distractors: bool = True  # also offer common words to the recogniser: far fewer false triggers
     cooldown_seconds: float = Field(default=4.0, ge=0.0)  # no new trigger this soon after the last one
     sound: str = "listen"  # earcon played when a phrase is heard
+    # --- while a video plays: its sound reaches the microphone too (no echo cancellation) ---
+    # The phrase pauses the video (position kept), the face comes back and live voice starts; see
+    # docs/YOUTUBE_ON_PI.md section 10 for the measurements behind these defaults.
+    during_videos: bool = True  # False: not listening while a video plays
+    # Only these count while a video plays ([] = all of ``phrases``): "hey bot" alone is what videos say
+    # by mistake most ("hey, but...", "hey buddy"); measured: about 4x fewer false triggers.
+    video_phrases: list[str] = Field(default_factory=lambda: ["hey little bot"])
+    video_min_confidence: float = Field(default=0.7, ge=0.0, le=1.0)  # stricter than min_confidence
+    # Turn the video down after a "hey ..." so the rest of the phrase is heard over loud videos. Off by
+    # default: videos say "hey" often, and every one dips the sound for video_duck_seconds.
+    video_duck: bool = False
+    video_duck_volume: float = Field(default=0.3, ge=0.0, le=1.0)  # of the video's volume
+    video_duck_seconds: float = Field(default=2.0, gt=0.0, le=10.0)
+    # The earcon plays once the video confirmed it paused (so it's heard over a quiet speaker), at most this late.
+    video_pause_wait_seconds: float = Field(default=1.0, ge=0.0, le=5.0)
+    # A call that paused a video, and nobody says anything this long after it connected: most likely the
+    # wake word heard the video itself, so the call ends and the video carries on (0 = wait for the call's
+    # own idle hang-up).
+    video_no_words_seconds: float = Field(default=15.0, ge=0.0)
 
 
 class AIConfig(_Section):
@@ -305,6 +324,9 @@ class MediaConfig(_Section):
     connect_timeout_seconds: float = 60.0  # stop if the player page never connects
     heartbeat_timeout_seconds: float = 15.0  # stop if a connected player page goes silent
     max_pause_minutes: float = 10.0  # a paused video gives the screen back after this long
+    # A video paused for a chat ("Hey LittleBot" while it plays; the face shows meanwhile) that nobody asked
+    # to carry on stops this long after the voice chat ended.
+    chat_pause_minutes: float = Field(default=2.0, ge=0.0)
     limit_check_seconds: float = 1.0  # limit/timeout watchdog period while a session is active
     kiosk_close_delay_seconds: float = 1.5  # let the page fade out before the kiosk window closes
     kiosk_extra_args: list[str] = Field(default_factory=list)
