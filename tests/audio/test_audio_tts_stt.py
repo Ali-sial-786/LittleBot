@@ -238,7 +238,7 @@ def test_openai_stt_refused_without_cloud():
 
 # ------------------------------------------------------------------ service-level gating / fallback
 def _cloud_ctx(actx, *, cloud: bool, age: int | None = 30, ai_enabled: bool = True, nickname: str = ""):
-    """Every cloud gate open (unless told otherwise): privacy cloud, key, age >= 24 months, ai.enabled."""
+    """Every cloud gate open (unless told otherwise): privacy cloud, key, a known age, ai.enabled."""
     actx.config.openai_api_key = SecretStr("sk-test-123")
     actx.privacy.set(cloud_enabled=cloud)
     profile = dict(actx.settings.get("profile") or {})
@@ -306,14 +306,16 @@ def _gated_stt_service(make_service, ctx, rec):
     return svc, mic
 
 
-@pytest.mark.parametrize("age, ai_enabled, why", [
-    (12, True, "under 24 months"),  # an infant's voice is never uploaded
-    (23, True, "under 24 months"),
-    (None, True, "age is not set"),
-    (30, False, "ai.enabled"),  # the parent hasn't opted in to cloud AI
+@pytest.mark.parametrize("age, ai_enabled, min_age, why", [
+    (12, True, 24, "under 24 months"),  # with a minimum age set, a younger child's voice is never uploaded
+    (23, True, 24, "under 24 months"),
+    (None, True, 24, "age is not set"),
+    (30, False, 0, "ai.enabled"),  # the parent hasn't opted in to cloud AI
+    (10, False, 0, "ai.enabled"),
 ])
-async def test_cloud_stt_needs_age_and_ai_opt_in(actx, make_service, age, ai_enabled, why):
+async def test_cloud_stt_needs_age_and_ai_opt_in(actx, make_service, age, ai_enabled, min_age, why):
     rec = Recorder(_stt_ok)
+    actx.config.ai.min_age_months_for_cloud = min_age
     ctx = _cloud_ctx(actx, cloud=True, age=age, ai_enabled=ai_enabled)
     svc, mic = _gated_stt_service(make_service, ctx, rec)
     svc._stt_local.queue_text("local words")
@@ -321,6 +323,15 @@ async def test_cloud_stt_needs_age_and_ai_opt_in(actx, make_service, age, ai_ena
     assert await svc.listen(timeout=2) == "local words"
     assert rec.requests == []  # nothing was uploaded
     assert why in svc.status()["stt_provider"] and svc.status()["stt_provider"].startswith("mock")
+
+
+@pytest.mark.parametrize("age", [10, None])  # by default any age: the parent's opt-in decides
+async def test_cloud_stt_at_any_age_once_the_parent_opts_in(actx, make_service, age):
+    rec = Recorder(_stt_ok)
+    ctx = _cloud_ctx(actx, cloud=True, age=age, ai_enabled=True)
+    svc, mic = _gated_stt_service(make_service, ctx, rec)
+    mic.inject_speech(0.6)
+    assert await svc.listen(timeout=2) == "cloud words" and len(rec.requests) == 1
 
 
 async def test_cloud_stt_used_once_every_gate_is_open(actx, make_service):
@@ -340,6 +351,7 @@ async def test_cloud_stt_used_once_every_gate_is_open(actx, make_service):
 async def test_cloud_stt_built_from_config_is_gated(actx, make_service):
     # Provider created by the service itself (audio.stt.provider: openai), not injected.
     rec = Recorder(_stt_ok)
+    actx.config.ai.min_age_months_for_cloud = 24
     ctx = _cloud_ctx(actx, cloud=True, age=10, ai_enabled=True)
     ctx.config.audio.stt.provider = "openai"
     mic = MockInput()
@@ -363,9 +375,10 @@ def _tts_service(make_service, ctx, rec):
     return make_service(ctx, tts=tts)
 
 
-@pytest.mark.parametrize("age, ai_enabled", [(12, True), (None, True), (30, False)])
-async def test_cloud_tts_needs_age_and_ai_opt_in(actx, make_service, age, ai_enabled):
+@pytest.mark.parametrize("age, ai_enabled, min_age", [(12, True, 24), (None, True, 24), (30, False, 0)])
+async def test_cloud_tts_needs_age_and_ai_opt_in(actx, make_service, age, ai_enabled, min_age):
     rec = Recorder(lambda req: httpx.Response(200, content=_wav_bytes()))
+    actx.config.ai.min_age_months_for_cloud = min_age
     ctx = _cloud_ctx(actx, cloud=True, age=age, ai_enabled=ai_enabled, nickname="Zara")
     svc = _tts_service(make_service, ctx, rec)
     assert await svc.say("Well done, Zara!") is True  # spoken by the local voice
@@ -407,6 +420,7 @@ async def test_cloud_tts_multi_part_nickname_is_scrubbed(actx, make_service):
 
 async def test_cloud_tts_built_from_config_is_gated(actx, make_service):
     rec = Recorder(lambda req: httpx.Response(200, content=_wav_bytes()))
+    actx.config.ai.min_age_months_for_cloud = 24
     ctx = _cloud_ctx(actx, cloud=True, age=12, nickname="Zara")
     ctx.config.audio.tts.provider = "openai"
     svc = make_service(ctx, tts=None)

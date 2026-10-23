@@ -179,7 +179,7 @@ same origin) or, failing that, `["url"]` with a localhost host rewritten to the 
 | Method | Path | Body | Calls |
 |---|---|---|---|
 | GET | `/api/ai` | | settings `ai.*`, `keys.has_*_key`, models, `brain.status()`, `brain.providers()`, age policy, privacy |
-| PUT | `/api/ai/settings` | `{enabled?, provider? ∈ mock\|anthropic\|openai\|chatgpt, max_words 3..60?, max_requests_per_hour 0..600?, max_requests_per_day 0..5000?, daily_budget_usd 0..20?, share_child_name?, share_interests?}` | enabling in offline mode -> 403 |
+| PUT | `/api/ai/settings` | `{enabled?, provider? ∈ mock\|anthropic\|openai\|chatgpt, max_words 3..150?, max_requests_per_hour 0..600?, max_requests_per_day 0..5000?, daily_budget_usd 0..20?, share_child_name?, share_interests?}` | enabling in offline mode -> 403 |
 | GET | `/api/ai/providers` | | `brain.providers()` |
 | POST | `/api/ai/test` | `{provider}` | `brain.test_provider()`; cloud provider while privacy cloud is off -> 403 |
 | POST | `/api/ai/push-to-talk` | | `await brain.converse_once()` (45 s timeout -> 504); buttons on the AI and Simulator pages |

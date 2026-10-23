@@ -15,7 +15,7 @@ from chatgpt_helpers import FakeLiveAudio, FakeOpenAI, FakeProvider, signed_in_a
 
 import littlebot.chatgpt.live as live_mod  # noqa: E402
 from littlebot.brain.providers.base import ProviderReply  # noqa: E402
-from littlebot.chatgpt.live import LiveVoiceService  # noqa: E402
+from littlebot.chatgpt.live import NOT_SURE, LiveVoiceService  # noqa: E402
 from littlebot.core.arbiter import Priority, Resource  # noqa: E402
 from littlebot.core.events import Topics  # noqa: E402
 from littlebot.core.state import RobotState  # noqa: E402
@@ -108,7 +108,7 @@ async def test_delegation_is_answered_by_the_text_model(live):
     assert frame["delegation_item_id"] == "d1" and frame["channel"] == "speakable"
     assert frame["content"][0]["text"] == "A cow says moo."
     assert provider.calls[0]["messages"][-1] == {"role": "user", "content": "What sound does a cow make?"}
-    assert "toy robot" in provider.calls[0]["system"]
+    assert "friendly robot" in provider.calls[0]["system"] and "home assistant" in provider.calls[0]["system"]
     assert {"who": "heard", "text": "what does a cow say"} in svc.status()["captions"]
 
 
@@ -120,7 +120,7 @@ async def test_unsafe_delegation_answer_is_replaced(live):
                                                         "content": [{"type": "input_text", "text": "a question"}]}})
     await wait_for(lambda: any(m.get("type") == "delegation.context.append" for m in server.received))
     text = next(m for m in server.received if m.get("type") == "delegation.context.append")["content"][0]["text"]
-    assert "secret" not in text and "grown-up" in text
+    assert "secret" not in text and text == NOT_SURE
 
 
 async def test_unsafe_words_cut_the_voice_and_end_the_call(live, ctx):
@@ -135,6 +135,51 @@ async def test_unsafe_words_cut_the_voice_and_end_the_call(live, ctx):
     assert {"provider": "live", "status": "live_safety_stop", "detail": "secrecy"} in alerts
     assert "captions" not in svc.status()  # nothing from the conversation is kept
     assert ctx.arbiter.holder(Resource.AUDIO_OUT) is None
+
+
+async def test_a_personal_question_is_noted_and_the_call_goes_on(live):
+    svc, server, audio, _provider, alerts = live
+    await connect(svc, server)
+    for part in ("Hello little one! ", "What's your name? ", "Can you clap?"):
+        server.send({"type": "output_transcript.added", "item": {"text": part}})
+    await wait_for(lambda: any("personal details" in n for n in notes(server)))
+    await asyncio.sleep(0.2)
+    assert svc.status()["active"] and not audio.muted and svc.status().get("safety_stop") is None
+    assert sum("personal details" in n for n in notes(server)) == 1  # once, though checked again as words arrive
+    assert not any(a.get("status") == "live_safety_stop" for a in alerts)
+
+
+async def test_everyday_answers_do_not_stop_the_call(live):
+    svc, server, _audio, _provider, _alerts = live
+    await connect(svc, server)
+    said = ("It's 18 degrees and sunny in Leeds. The Met Office website says showers after 4pm. "
+            "Shall I find a rainy-day song on YouTube? Remember, never leave a baby alone in the bath.")
+    for part in said.split(". "):
+        server.send({"type": "output_transcript.added", "item": {"text": part + ". "}})
+    server.send({"type": "turn.done", "turn": {"role": "assistant", "transcript": said}})
+    await wait_for(lambda: any(c["who"] == "robot" for c in svc.status().get("captions", [])))
+    assert svc.status()["active"]
+
+
+async def test_a_weather_hand_off_answer_is_passed_on_as_it_is(live):
+    svc, server, _audio, provider, _alerts = live
+    provider.text = "It's 18 degrees and sunny in Leeds today; the Met Office website says showers after 4pm."
+    await connect(svc, server)
+    delegate(server, "w1", "What's the weather like today?")
+    await wait_for(lambda: answers(server, "w1"))
+    assert answers(server, "w1") == [provider.text]
+    assert "never make up live facts" in provider.calls[0]["system"]
+
+
+async def test_a_childs_medicine_dose_in_a_hand_off_becomes_check_the_label(live):
+    from littlebot.safety.content import DOSE_FALLBACK
+
+    svc, server, _audio, provider, _alerts = live
+    provider.text = "For a 10 month old, give 2.5 ml of infant paracetamol."
+    await connect(svc, server)
+    delegate(server, "m1", "How much paracetamol can I give my baby?")
+    await wait_for(lambda: answers(server, "m1"))
+    assert answers(server, "m1") == [DOSE_FALLBACK]
 
 
 async def test_safe_words_do_not_stop_the_call(live):

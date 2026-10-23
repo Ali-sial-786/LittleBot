@@ -26,7 +26,7 @@ LittleBot can use **your own ChatGPT plan** instead of a paid API key, in two wa
 | | ChatGPT answers (typed / push-to-talk) | Live voice |
 |---|---|---|
 | Who starts it | LittleBot, when your child talks (or you press **Push to talk**) | Only you, from the dashboard, after ticking "I am with my child…" |
-| Child's age | 24 months or older (younger: scripted replies) | Any age: you are there |
+| Child's age | Any age once you switch it on (optional minimum: `ai.min_age_months_for_cloud`) | Any age: you are there |
 | Goes to OpenAI | Short text with personal info removed | The microphone **audio** of the call. Audio can't be cleaned of personal info |
 | Checked by LittleBot | Every reply, before it is spoken | Every caption of what the voice says, **while it is speaking** |
 | Limits | LittleBot's request limits + your plan's limits | 10-minute calls, hangs up after 90 s of quiet, your plan's limits |
@@ -70,11 +70,15 @@ from ChatGPT's security settings.
 4. Optional: in **Connection test** pick ChatGPT (listed as "Chatgpt") and press **Test**.
 
 The usual gates still apply on every turn ([AI_SAFETY.md §1](AI_SAFETY.md#1-who-gets-which-kind-of-conversation)):
-cloud AI on, Privacy cloud on, **your child's age set and at least 24 months** for open-ended
-cloud conversation, and the hourly and daily request limits. Until your child turns 2,
-LittleBot keeps answering with its scripted replies, whatever the provider. Each reply is
-length-limited and safety-checked before it is spoken. Personal info is removed from what your
-child said before it is sent. The nickname and interests are shared only if you switch that on.
+cloud AI on, Privacy cloud on, and the hourly and daily request limits. There is no age gate
+by default (set `ai.min_age_months_for_cloud`, e.g. to 24, to keep a young child on scripted
+replies). LittleBot answers like a home assistant for you (the weather, the news, facts,
+recipes, parenting and health questions, in two to four sentences) and keeps it short and
+playful with your child. Each reply is length-limited (`ai.max_words`, default 60) and checked
+before it is spoken, but the check only stops what could harm a small child
+([AI_SAFETY.md §2](AI_SAFETY.md#2-enforced-in-code-vs-asked-in-the-prompt)). Personal info is
+removed from what was said before it is sent. The nickname and interests are shared only if
+you switch that on.
 
 ChatGPT requests count as **$0** in "Usage today", so the daily budget never stops them. The
 request limits do, and so do your plan's own limits.
@@ -132,24 +136,29 @@ speaker volume from **Audio & devices**, capped for little ears.
 ### What LittleBot checks
 
 * **What the voice says.** Every caption of what the voice is saying is checked **while it
-  speaks**, with the same rules as typed replies: no secrets, no "best friend" or guilt, no
-  pretending to be a person, no personal questions, nothing unsafe, scary or rude, no medical
-  advice, no ads, no internet. If a rule is broken, LittleBot **silences the speaker at once,
-  ends the call** and shows a **"Live voice stopped"** alert with the rule's category only.
-  **Some words may already have been heard by then**, because the captions trail the voice a
-  little.
+  speaks**, with the same rules as typed replies, which only stop what could harm a small
+  child: secrets from you, turning the child away from you, inviting the child to do something
+  dangerous or to meet someone, sexual content, gore, violence, self-harm and slurs. If one of
+  those is broken, LittleBot **silences the speaker at once, ends the call** and shows a
+  **"Live voice stopped"** alert with the rule's category only. **Some words may already have
+  been heard by then**, because the captions trail the voice a little. If the voice asks your
+  child for personal details (name, address, school) or gives a child's medicine dose, the call
+  goes on and the voice is told not to. The weather, news, YouTube, websites, prices and health
+  information never stop a call.
 * **What it hears.** Worrying words such as "I'm hurt", "help" or "I ate a battery" show the usual
   **"Your child may need you"** alert (category only, never the words). Unlike typed
   conversation, the call carries on, and the voice is told to say "Let's get a grown-up right
   now".
-* **Look-ups.** When the voice needs a fact, it hands the question to LittleBot. LittleBot asks
-  the ChatGPT text model with its own child-safe prompt (at most 40 words) and checks the answer
-  with the same rules before the voice gets it. If the answer is unsafe or the look-up fails, the
-  voice is told to say it isn't sure and to suggest asking a grown-up.
-* **The voice's instructions** also ask for short, gentle sentences: it says it is a robot, never
-  a person or family member, keeps no secrets, asks no personal questions, gives no medical
-  advice, mentions no shopping, apps or websites, and suggests nothing risky. Instructions are
-  only guidance. The checks above are what LittleBot enforces.
+* **Look-ups.** When the voice needs a fact or anything live (the weather, the news, the time),
+  it hands the question to LittleBot. LittleBot asks the ChatGPT text model with its own prompt
+  (at most 60 words; with ChatGPT tools on it uses LittleBot's tools for live information) and
+  checks the answer with the same rules before the voice gets it. If the answer breaks a rule,
+  the voice is told to say it isn't sure; if the look-up fails, to say it didn't work this time.
+* **The voice's instructions** ask for short, gentle sentences with your child and full, plain
+  answers for you; it says it is a robot, gives helpful general health and development
+  information (no diagnosis, no medicine doses for a child), asks your child no personal
+  questions, keeps no secrets and suggests nothing risky. Instructions are only guidance. The
+  checks above are what LittleBot enforces.
 
 **Limits of the checks.** The rules read OpenAI's captions. If the captions don't match the
 audio, or the problem is in the tone rather than the words, the rules can't see it. Word rules
@@ -274,7 +283,7 @@ shirt?". It is **off by default**.
   robot), the photo goes to ChatGPT too and the first sure answer is used.
 * The answer comes back as text (at most 40 words) and is checked with LittleBot's safety rules
   before it is shown or spoken. If it fails the check, LittleBot says "I'm not sure what I see.
-  Let's ask a grown-up." instead. Only one photo is taken at a time.
+  Can you show me again?" instead. Only one photo is taken at a time.
 * The photo exists **only in memory** while the question is being answered. It is **never saved**
   on LittleBot, never put in logs, and never sent to the dashboard: your browser only ever gets
   the answer text and a count of photos sent today.
@@ -366,10 +375,10 @@ it didn't work out). Faces, the volume and status answers usually come back in a
 * **Any video can play (for now).** `media.allow_search: true` (the default) lets ChatGPT play any
   video it finds. With `false`, only your approved list plays: "play twinkle twinkle" then plays an
   approved video whose title matches.
-* **Words it avoids.** LittleBot's safety check of what it says stops replies with words like
-  YouTube, search, online, internet, website, app or link (and a live call that says one of them
-  ends, as a safety stop "links"). ChatGPT is told to say "Here comes Baby Shark!" instead, and
-  video titles are shortened before it gets them, but if the live voice slips, the call ends.
+* **Words are fine.** Since October 2026 LittleBot's check of what it says no longer stops words
+  like YouTube, search, online, website, app or link (and a live call that says them goes on).
+  Video titles are still shortened before ChatGPT gets them, so it says "Baby Shark" rather than
+  a long title.
 
 ### Weather, time and finding things out
 

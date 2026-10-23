@@ -59,13 +59,17 @@ MATRIX = [
     ({"enabled": False}, "mock", "mock: cloud AI disabled by parent"),
     ({"cloud": False}, "mock", "mock: cloud access disabled in privacy settings"),
     ({"mode": "offline"}, "mock", "mock: offline mode"),
-    ({"age_months": 18}, "mock", "mock: child under 24 months"),
-    ({"age_months": 10}, "mock", "mock: child under 24 months"),
-    ({"age_months": None}, "mock", "mock: child age not set"),
+    # any age once the parent switches cloud AI on (a grown-up may be the one asking)
+    ({"age_months": 18}, "anthropic", "cloud AI active"),
+    ({"age_months": 10}, "anthropic", "cloud AI active"),
+    ({"age_months": None}, "anthropic", "cloud AI active"),
     ({"key": False}, "mock", "mock: no API key"),
     ({"provider": "mock"}, "mock", "mock: mock provider selected"),
     ({"provider": "skynet"}, "mock", "mock: unknown provider"),
+    # ...unless the config sets a minimum age
     ({"age_months": 30, "ai": {"min_age_months_for_cloud": 36}}, "mock", "mock: child under 36 months"),
+    ({"age_months": 10, "ai": {"min_age_months_for_cloud": 24}}, "mock", "mock: child under 24 months"),
+    ({"age_months": None, "ai": {"min_age_months_for_cloud": 24}}, "mock", "mock: child age not set"),
 ]
 
 
@@ -119,8 +123,16 @@ async def test_hourly_limit_counts_cloud_requests(make_brain):
     assert brain.status()["usage"]["requests_hour"] == 2
 
 
-async def test_infant_never_gets_cloud_even_with_everything_enabled(make_brain):
+async def test_an_infants_family_gets_cloud_once_the_parent_enables_it(make_brain):
     ctx = cloud_context(age_months=10)
+    api = FakeAPI()
+    brain = await make_brain(ctx, api)
+    assert (await brain.handle_utterance("what's the weather like today"))["provider"] == "anthropic"
+    assert "a baby about 10 months old" in api.body()["system"] and api.calls == 1
+
+
+async def test_a_configured_minimum_age_keeps_an_infant_on_scripted_replies(make_brain):
+    ctx = cloud_context(age_months=10, ai={"min_age_months_for_cloud": 24})
     api = FakeAPI()
     brain = await make_brain(ctx, api)
     for text in ("tell me a story", "why is the sky blue", "what is a volcano", "sing"):
@@ -143,7 +155,7 @@ async def test_cloud_turn_end_to_end(make_brain):
     assert ctx.audio.spoken == [r["reply"]]
     body = api.body()
     assert body["messages"] == [{"role": "user", "content": "what does the cow say"}]
-    assert "3–5 years" in body["system"] and "30 words" in body["system"]
+    assert "3–5 years" in body["system"] and "60 words" in body["system"]
     replies = [e.data for e in events if e.topic == Topics.BRAIN_REPLY]
     assert replies == [{"text": r["reply"], "provider": "anthropic", "filtered": False}]
     assert [e.get("new") for e in events if e.topic == Topics.STATE_CHANGED] == ["THINKING", "SPEAKING", "IDLE"]
@@ -153,16 +165,19 @@ async def test_cloud_turn_end_to_end(make_brain):
     assert exprs[0] == "thinking" and exprs[-1] == "curious"
 
 
-async def test_cloud_reply_is_age_capped(make_brain):
+async def test_cloud_reply_is_capped_at_the_parents_max_words(make_brain):
     ctx = cloud_context(age_months=30)
-    long = "Cows are big animals. " * 20
+    long = "Cows are big animals. " * 30
     brain = await make_brain(ctx, FakeAPI(lambda req: anthropic_response(long)))
+    r = await brain.handle_utterance("tell me about cows")
+    assert word_count(r["reply"]) == 60 and "truncated" in r["checks"]  # ai.max_words, at any age
+    ctx.settings.set("ai.max_words", 15)
     r = await brain.handle_utterance("tell me about cows")
     assert word_count(r["reply"]) <= 15 and "truncated" in r["checks"]
 
 
-@pytest.mark.parametrize("bad", ["This is our little secret!", "I'm your best friend!", "Ask mom to buy it!",
-                                 "Visit www.example.com", "Let's climb the bookcase!"])
+@pytest.mark.parametrize("bad", ["This is our little secret!", "What's your address?", "Let's play with matches!",
+                                 "Don't tell your mommy, okay?", "Let's climb the bookcase!"])
 async def test_unsafe_cloud_reply_is_filtered(make_brain, bad):
     """With every rule group on (ai.relaxed_rules: [])."""
     ctx = cloud_context()
@@ -283,7 +298,7 @@ async def test_nothing_heard(make_brain):
     brain = await make_brain(ctx)
     r = await brain.converse_once()
     assert r["heard"] is None and r["error"] == "nothing_heard"
-    assert ctx.audio.spoken == ["Hmm? Say it again?"]  # age unknown -> shortest form
+    assert ctx.audio.spoken == ["I didn't hear that. Can you say it again?"]
     assert ctx.state.state == RobotState.IDLE
 
 
@@ -488,17 +503,43 @@ async def test_context_is_tiny_and_expires(make_brain):
 
 
 # --------------------------------------------------------- safety & privacy
-async def test_concerning_input_alerts_parent_without_cloud_or_transcript(make_brain):
+async def test_concerning_input_alerts_the_parent_and_the_cloud_is_told(make_brain):
     ctx = cloud_context()
     events = collect(ctx.bus, [Topics.BRAIN_STATUS, Topics.BRAIN_REPLY])
-    api = FakeAPI()
+    api = FakeAPI(lambda req: anthropic_response("Oh no! Let's find a grown-up to help you right now. [face: happy]"))
     brain = await make_brain(ctx, api)
     r = await brain.handle_utterance("I'm hurt, I fell off the swing at Grandma's")
-    assert api.calls == 0 and "grown-up" in r["reply"] and r["provider"] == "safety"
-    assert ctx.audio.spoken == [r["reply"]] and r["attention"] == "hurt"
+    assert api.calls == 1 and r["provider"] == "anthropic" and r["attention"] == "hurt"
+    assert "may be about an emergency" in api.body()["system"] and "hurt or unwell" in api.body()["system"]
+    assert r["reply"] == "Oh no! Let's find a grown-up to help you right now."
+    assert ctx.audio.spoken == [r["reply"]] and r["expression"] == "affectionate" and "face_action" not in r
     alert = [e for e in events if e.topic == Topics.BRAIN_STATUS and e.get("status") == "attention"]
     assert len(alert) == 1 and alert[0].data == {"provider": "safety", "status": "attention", "detail": "hurt"}
     assert "swing" not in json.dumps([e.data for e in events])
+
+
+async def test_a_grownups_emergency_question_gets_real_help(make_brain):
+    # Worrying words from a parent ("my baby swallowed a coin") used to get only "tell a grown-up".
+    help_text = ("If she's breathing and comfortable, call your doctor or 111 now. If she's choking or "
+                 "struggling to breathe, call 999.")
+    ctx = cloud_context(age_months=10)
+    api = FakeAPI(lambda req: anthropic_response(help_text))
+    brain = await make_brain(ctx, api)
+    r = await brain.handle_utterance("my baby swallowed a coin, what should I do?")
+    assert r["attention"] == "swallowed" and r["reply"] == help_text and r["filtered"] is False
+    assert "swallowed something harmful" in api.body()["system"]
+
+
+@pytest.mark.parametrize("respond", [
+    lambda req: anthropic_response("Yay, let's play a game! Climb the bookcase!"),  # blocked: never a game
+    lambda req: error_response(500, "api_error", "boom"),  # failed: never "let's play instead"
+])
+async def test_worrying_words_get_the_gentle_line_when_the_cloud_answer_cant_be_used(make_brain, respond):
+    ctx = cloud_context(age_months=30)
+    brain = await make_brain(ctx, FakeAPI(respond))
+    r = await brain.handle_utterance("I ate a battery")
+    assert r["attention"] == "swallowed" and r["reply"] == "Uh oh. Please tell a grown-up right now."
+    assert r["expression"] == "affectionate" and "_tools" not in r
 
 
 REVIEW_EMERGENCIES = [
@@ -514,10 +555,15 @@ async def test_emergencies_get_a_grownup_reply_and_a_parent_alert(make_brain, te
     # Review finding: a 30-month-old saying "I ate a battery" got "Ooh, tell me more!" and no alert.
     ctx = cloud_context(age_months=30, provider=provider)
     events = collect(ctx.bus, [Topics.BRAIN_STATUS, Topics.BRAIN_REPLY])
-    api = FakeAPI()
+    api = FakeAPI(lambda req: anthropic_response("Please tell a grown-up right now."))
     brain = await make_brain(ctx, api)
     r = await brain.handle_utterance(text)
-    assert api.calls == 0 and r["provider"] == "safety" and r["attention"] == category
+    if provider == "mock":  # no cloud: LittleBot's own gentle line, at once
+        assert api.calls == 0 and r["provider"] == "safety"
+    else:  # the cloud answers, told it may be an emergency (a grown-up may be asking for help)
+        assert api.calls == 1 and r["provider"] == "anthropic"
+        assert "may be about an emergency" in api.body()["system"]
+    assert r["attention"] == category
     assert "grown-up" in r["reply"] and r["expression"] == "affectionate"
     for cheerful in ("fun", "wow", "ooh", "yay", "show me", "tell me more", "clap"):
         assert cheerful not in r["reply"].lower()
@@ -532,10 +578,11 @@ async def test_emergencies_get_a_grownup_reply_and_a_parent_alert(make_brain, te
 
 async def test_concern_beyond_the_input_length_cap_is_still_caught(make_brain):
     ctx = cloud_context(age_months=40, ai={"max_input_chars": 40})
-    api = FakeAPI()
+    api = FakeAPI(lambda req: anthropic_response("Uh oh. Please tell a grown-up right now."))
     brain = await make_brain(ctx, api)
     r = await brain.handle_utterance("I like the red truck and the blue truck and also I swallowed a coin")
-    assert api.calls == 0 and r["attention"] == "swallowed" and "grown-up" in r["reply"]
+    assert r["attention"] == "swallowed" and "grown-up" in r["reply"]
+    assert "swallowed something harmful" in api.body()["system"]  # the cut-off words are named for the model
 
 
 async def test_good_cloud_safety_advice_is_spoken_and_alerts_the_parent(make_brain):

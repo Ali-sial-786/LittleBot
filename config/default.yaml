@@ -75,12 +75,12 @@ audio:
 ai:
   provider: mock         # mock | anthropic | openai  (cloud needs parent opt-in in the dashboard)
   max_output_tokens: 120
-  max_words: 30
+  max_words: 60          # reply length cap (any age): room for two to four sentences
   timeout_seconds: 12
   max_requests_per_hour: 60
   max_requests_per_day: 200
   daily_budget_usd: 0.50
-  min_age_months_for_cloud: 24
+  min_age_months_for_cloud: 0   # 0: cloud AI at any age once a parent switches it on; e.g. 24 for 2 years+
   store_transcripts: false   # true AND the parent "record history" setting are both needed to keep transcripts
   anthropic_model: claude-haiku-5-5   # fast, low-cost current Claude model
   openai_model: gpt-4o-mini

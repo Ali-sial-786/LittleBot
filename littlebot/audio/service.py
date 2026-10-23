@@ -32,11 +32,11 @@ Sharing the microphone with a background listener (the wake word)
 Privacy
     Microphone disabled -> ``listen()`` returns None immediately and the input
     stream is closed (also mid-listen). Cloud TTS/STT only while the same gates as
-    cloud AI conversation pass: ``ctx.privacy.cloud_enabled`` (not offline), a known
-    child age with ``age_policy().cloud_ai_allowed()`` (24 months+) and the parent's
-    ``ai.enabled`` opt-in; otherwise / on failure the local provider is used. Text for a
-    cloud voice has the child's nickname replaced by "friend" unless
-    ``ai.share_child_name`` is on.
+    cloud AI conversation pass: ``ctx.privacy.cloud_enabled`` (not offline),
+    ``age_policy().cloud_ai_allowed()`` (any age unless ``ai.min_age_months_for_cloud``
+    sets a minimum) and the parent's ``ai.enabled`` opt-in; otherwise / on failure the
+    local provider is used. Text for a cloud voice has the child's nickname replaced by
+    "friend" unless ``ai.share_child_name`` is on.
 """
 
 from __future__ import annotations
@@ -713,9 +713,9 @@ class AudioService(Service):
     def _cloud_block_reason(self) -> str:
         """Why cloud speech (TTS/STT) may not be used right now; "" when it may.
 
-        Same gates as the cloud AI conversation: the privacy cloud switch (never offline), a known
-        child age of at least ``ai.min_age_months_for_cloud`` (24 months: no infant's voice is
-        uploaded) and the parent's ``ai.enabled`` opt-in."""
+        Same gates as the cloud AI conversation: the privacy cloud switch (never offline), the
+        child's age if ``ai.min_age_months_for_cloud`` sets a minimum (by default any age: the
+        parent decides) and the parent's ``ai.enabled`` opt-in."""
         ctx = self.ctx
         try:
             if getattr(ctx.config, "is_offline", False):
@@ -723,10 +723,9 @@ class AudioService(Service):
             if not bool(ctx.privacy.cloud_enabled):
                 return "cloud features are turned off (privacy)"
             policy = ctx.age_policy()
-            if policy.age_months is None:
-                return "the child's age is not set"
             if not policy.cloud_ai_allowed():
-                return f"child under {policy.min_age_months_for_cloud_ai} months"
+                return ("the child's age is not set" if policy.age_months is None
+                        else f"child under {policy.min_age_months_for_cloud_ai} months")
             if not bool(ctx.settings.get("ai.enabled", False)):
                 return "cloud AI is turned off (ai.enabled)"
         except Exception:  # noqa: BLE001 - fail closed

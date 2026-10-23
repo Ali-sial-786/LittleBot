@@ -123,7 +123,7 @@ async def test_empty_question_asks_what_it_sees_and_pii_is_scrubbed(setup):
 
 async def test_unsafe_answer_is_replaced_by_a_safe_fallback(setup):
     ctx, look, provider, events = setup
-    provider.text = "I see a gun. Bang bang, kill!"
+    provider.text = "I see scissors. Let's play with the scissors!"
     out = await look.look("what is that?")
     assert out == {**out, "ok": True, "answer": FALLBACK, "error": None}
     provider.text = ""
@@ -517,7 +517,7 @@ async def test_a_one_sentence_answer_is_passed_on_whole(ctx):
 async def test_a_streamed_sentence_that_breaks_the_rules_is_never_passed_on(ctx):
     allow(ctx)
     ctx.vision = FakeVision()
-    look = CameraLook(ctx, provider=FastProvider("I see a gun, bang bang kill! ", "And a teddy."))
+    look = CameraLook(ctx, provider=FastProvider("I see scissors, let's play with the scissors! ", "And a teddy."))
     seen: list[str] = []
     out = await look.look("what is that?", on_first=seen.append)
     assert seen == [] and out["answer"] == FALLBACK and out["first"] is None

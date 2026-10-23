@@ -136,9 +136,9 @@ async def test_the_voice_is_told_it_can_control_the_robot(ctx, make_live):
     try:
         instructions = server.requests[0]["body"]["session"]["instructions"]
         for words in ("turn the volume up", "start the peekaboo activity", "play a baby shark song video",
-                      "how hot is the robot", "Never say the words YouTube"):
+                      "how hot is the robot", "LittleBot can look things up", "Never say you can't check the weather"):
             assert words in instructions
-        assert "searching online" not in instructions
+        assert "searching online" not in instructions and "Never say the words YouTube" not in instructions
     finally:
         await close(svc, server)
 

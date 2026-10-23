@@ -1,10 +1,21 @@
 # AI conversation safety
 
 LittleBot is built for a child who is ~10 months old today and will use it until about
-age 5. Open-ended AI is powerful and unpredictable, so the conversation engine
-(`littlebot/brain/`) is designed around one rule: **the important guarantees are
+age 5, with a parent always present. It is two things at once: a warm, playful
+child-development companion for the little one, and a capable home assistant for the
+grown-ups (the weather, the news, facts, recipes, parenting and health questions, like a
+Google Home or Alexa). Open-ended AI is powerful and unpredictable, so the conversation
+engine (`littlebot/brain/`) is designed around one rule: **the important guarantees are
 enforced in code, not left to the model's good behaviour.** The system prompt is a
 helpful extra layer, never the only one.
+
+**What the code enforces is deliberately small.** At the parent's request (October 2026)
+every filter that stopped LittleBot answering ordinary questions was removed. What is left
+blocks only what could really harm a small child: grooming (secrets from grown-ups, turning
+the child away from them, meeting someone), asking the child for personal details,
+instructions or invitations to do something dangerous, sexual content, gore, violence a
+child could copy, self-harm, hate slurs, and medicine doses for a child, plus the "someone
+may be hurt: get a grown-up" behaviour and the parent alerts. §2c lists what was removed.
 
 This document covers what is enforced where, the limits, what data goes where, costs,
 how a parent turns cloud AI on, and the parent-started live voice (§3). Parent guide for
@@ -16,17 +27,18 @@ how a parent turns cloud AI on, and the parent-started live voice (§3). Parent 
 
 | Child / situation | What answers | Why |
 |---|---|---|
-| Age **unknown** (profile not filled in) | Scripted offline replies | Unknown is treated as the youngest age |
-| Under **24 months** (`ai.min_age_months_for_cloud`) | Scripted offline replies (1–6 words: sounds, repetition) | Infants never get open-ended AI |
-| 24 months+ and cloud AI **not** fully enabled | Scripted offline replies (a bit longer as the child grows) | Cloud is opt-in |
-| 24 months+ **and** every cloud condition below is met | Cloud model (Claude Haiku 5.5 by default; or OpenAI, or ChatGPT on the parent's plan) | Parent opted in |
+| Cloud AI **not** fully enabled (any age) | Scripted offline replies (short: sounds, repetition, a bit longer as the child grows) | Cloud is opt-in |
+| **Any age** (a baby too, or no age set) **and** every cloud condition below is met | Cloud model (Claude Haiku 5.5 by default; or OpenAI, or ChatGPT on the parent's plan) | Parent opted in. A grown-up is usually the one asking, and the parent is always present |
+| Only if the config sets a minimum age (`ai.min_age_months_for_cloud`, default **0** = none) and the child is younger, or no age is set | Scripted offline replies | The parent chose a minimum |
 | **Any age**, but only a **live voice** call that a parent starts from the dashboard, ticking "I am with my child and will stay for the whole conversation" | ChatGPT's GPT-Live voice, in real time (§3) | The parent chose it and is present for the whole call |
 
 Cloud AI is used for a turn **only if all** of these are true (checked in code on every
 turn, `ConversationEngine.select_provider`):
 
 1. Not in offline mode (`--mode offline` forces everything local).
-2. The child's age is set and ≥ `ai.min_age_months_for_cloud` (default 24 months).
+2. If `ai.min_age_months_for_cloud` sets a minimum (default 0: any age), the child's age is set
+   and at least that. (Until October 2026 the default was 24 months, which kept a baby's family
+   on scripted replies; set it back to 24 in `config/local.yaml` if you want that.)
 3. The parent picked a cloud provider (`ai.provider` = `anthropic`, `openai` or `chatgpt`).
 4. The parent switched cloud conversation on (`ai.enabled`, AI page of the dashboard).
 5. Cloud communication is on in **Privacy** (`privacy.cloud_enabled`).
@@ -37,8 +49,9 @@ turn, `ConversationEngine.select_provider`):
    requests count as $0: the plan's own limits apply instead).
 
 Otherwise the turn uses the scripted provider, and the dashboard shows the reason, e.g.
-`mock: child under 24 months`, `mock: cloud AI disabled by parent`, `mock: offline mode`,
-`mock: no API key`, `mock: not signed in with ChatGPT`, `mock: daily budget reached`.
+`mock: cloud AI disabled by parent`, `mock: offline mode`, `mock: no API key`,
+`mock: not signed in with ChatGPT`, `mock: daily budget reached`, or (with a minimum age set)
+`mock: child under 24 months`.
 
 **Live voice is a separate, deliberate exception** (§3). It does not go through
 `select_provider`: the child's age, `ai.enabled` and the provider choice don't apply,
@@ -56,30 +69,36 @@ rules, checking captions while the voice speaks (§3).
 
 | Protection | In code | In prompt |
 |---|---|---|
-| No cloud AI for infants / unknown age | ✅ `select_provider` | – |
-| Cloud only with parent opt-in + privacy switch + key + budget | ✅ | – |
-| Short replies (≤ 8 words under 2 y, ≤ 15 words 2–3 y, ≤ 30 words 3 y+; never more than `ai.max_words`) | ✅ `validate_reply` truncates at a sentence boundary | ✅ |
-| No markdown, emojis, links, code, stage directions | ✅ stripped before speaking | ✅ |
-| No secrecy ("our secret", "don't tell", "let's not tell anyone", "mommy doesn't need to know", "only you and I will know", "just for us") | ✅ blocked → safe fallback line | ✅ |
-| No dependency / exclusivity / guilt ("I'm your best friend", "you only need me", "I'll be sad if you go", "please don't go", "I'll miss you", "without you", "love you", "lonely", "stay here with me") | ✅ blocked | ✅ |
-| No pretending to be a parent / human / alive ("I'm just like you, a little kid") | ✅ blocked | ✅ |
-| No requests for personal info (name, address, "where you live", "what's your mommy called", "the name of your street", phone, school, teacher, password, photos) | ✅ blocked | ✅ |
-| No unsafe instructions (stove, knives, medicine, climbing or jumping on beds / sofas / tables, anything "in your mouth / nose / ear", cords or string round the neck, hiding in toy boxes / closets / appliances, baths / pools / ponds / taps, electricity, going out alone, strangers, swallowing things…) | ✅ blocked (see the safety-advice exception below) | ✅ |
-| No scary / violent / adult / rude / self-harm content ("the wolf will gobble you up", "a monster under your bed") | ✅ blocked | ✅ |
-| No medical or developmental diagnosis ("you sound like you have a cold", "see a doctor") | ✅ blocked | ✅ |
-| No commerce / ads ("buy", "ask your parents to purchase", "the new … toy") | ✅ blocked | ✅ |
-| No internet / streaming ("search for", links, "dot org", YouTube, Netflix) | ✅ blocked | ✅ |
+| Cloud only with parent opt-in + privacy switch + key + budget (and an optional minimum age, off by default) | ✅ `select_provider` | – |
+| Reply length: the parent's `ai.max_words` (default 60, at any age: two to four sentences for a grown-up). Short and simple with the child is asked in the prompt, since the code can't tell who asked | ✅ `validate_reply` truncates at a sentence boundary | ✅ |
+| No markdown, emojis, code, stage directions; a link is said as its site's name ("nhs dot uk") | ✅ before speaking | ✅ |
+| No secrecy / grooming ("our secret", "it's a secret", "we have a secret", "don't tell mommy", "let's not tell anyone", "mommy doesn't need to know", "only you and I will know", "just for us", "meet me at the park") | ✅ blocked → safe fallback line | ✅ |
+| No turning the child away from their grown-ups ("you don't need your mommy", "you only need me", "nobody else understands you like I do") | ✅ blocked | ✅ |
+| No **asking the child** for personal info ("what's your name / address / phone number", "where do you live", "which school do you go to", "what's your mommy called", "the name of your street", "send me a photo"). Talking *about* an address or a password ("your password is on the router") is fine | ✅ blocked | ✅ |
+| No **instructions or invitations** a child could copy and get hurt by: touching heat, matches, fetching knives, medicine called candy or offered to the child, climbing / jumping on furniture, small things in the mouth / nose / ears, cords round the neck, bags over the head, hiding in appliances, getting into water, sockets and wires, going off alone, opening the front door, crossing the road, strangers, getting into someone's car, running away, eating batteries / magnets / cleaning products, guns, bombs. Warnings ("don't touch the stove") and grown-ups' facts ("preheat the oven to 180", "babies climb stairs at about a year", "never leave a baby alone in the bath") pass | ✅ blocked (see §2b) | ✅ |
+| No sexual content, and no robot asking a child to undress, kiss it or show their body; no gore; no violence a child could copy ("hit him!", "let's kick the dog"); no self-harm or suicide; no hate slurs | ✅ blocked | ✅ |
+| No medicine **dose for a child** (a child, a medicine and an amount in one reply) | ✅ replaced by "For the right dose, please check the label, or ask a pharmacist or doctor." | ✅ |
 | Model refusals (`stop_reason: refusal`) | ✅ replaced by a safe line | – |
-| Concerning child input (emergencies, swallowed objects, water danger, stranger lures, abuse disclosures, "help me" — see §2a) | ✅ answered locally with a **gentle, never cheerful** "let's get a grown-up right now" line — **no cloud call** — and the parent dashboard gets a `brain.status` event `{status: "attention", detail: <category>}` with **only a category label**, never the words | ✅ |
+| Concerning input (emergencies, swallowed objects, water danger, stranger lures, abuse disclosures, "help me" — see §2a) | ✅ the parent dashboard gets a `brain.status` event `{status: "attention", detail: <category>}` with **only a category label**, never the words; the cloud answers, told it may be an emergency; without the cloud (or if its answer fails or is blocked) a **gentle, never cheerful** "let's get a grown-up right now" line | ✅ |
 | Good safety advice from the model ("Swallowing a battery is not safe. Tell a grown-up right now!") | ✅ spoken, not swapped for a game; parent alerted (`detail: "danger"`) — see §2b | ✅ |
 | Personal info scrubbed before any cloud request (phone numbers, e-mails, street addresses incl. "my address is …" and spelled-out numbers, postcodes, long numbers, "my name is …", "I'm Lily", "my mommy's name is …", "we live in Springfield", school names, passwords, the child's nickname) | ✅ `sanitize_user_text` | ✅ "[name]" placeholders are explained |
 | Camera data | ✅ never used by the conversation engine at all | – |
 
+Everything else is allowed and asked for in the prompt: facts, the news, the weather and other
+live information (with the tools, §3 and [CHATGPT.md](CHATGPT.md)), how-to and recipes,
+brands, prices, shows, YouTube, websites and apps, and helpful general information about the
+child's health, feeding, sleep and development (no diagnosis). The robot's personality
+(a friendly robot, simple words with the baby, warm and playful) is style guidance in the
+prompt, not a filter.
+
 Blocked replies are replaced with a cheerful line ("Hmm, let's play a game! Can you find
 something blue?") — **except** when the reply was about a possible danger (§2b), where the
-replacement is the gentle "Let's find a grown-up right now." Every reply — including the
-scripted ones — passes the validator. The validator is deliberately conservative: a false
-positive costs one redirect; a false negative could reach a toddler.
+replacement is the gentle "Let's find a grown-up right now.", and a child's medicine dose
+(above). Every reply — including the scripted ones — passes the validator. The rules are
+deliberately **narrow**: a rule catches something said *to a child* that could hurt them, not a
+fact a grown-up asked for. A false positive costs a real answer (and in a live call, the call).
+`ai.relaxed_rules` (config, default `[]`) can switch off whole rule groups, e.g.
+`["personal_info"]`.
 
 The scripted (offline) provider answers words it does not understand neutrally and points
 at a grown-up ("I'm listening! Shall we ask a grown-up?"), never with enthusiasm ("What a
@@ -89,10 +108,19 @@ recognise.
 ### 2a. Concerning input: categories and replies
 
 `classify_child_input` (`CONCERN_RULES` in `littlebot/safety/content.py`) checks everything
-the child said — before the input length cap, so a worrying sentence at the end is not cut
-off — and the first matching category wins. The reply is fixed, short and **never cheerful**
-(no games, "yay" or "fun"); the face shows the gentle `affectionate` expression; the
-in-memory context is forgotten; the parent alert carries the category label only.
+that was said — before the input length cap, so a worrying sentence at the end is not cut
+off — and the first matching category wins. The parent alert carries the category label only;
+the face shows the gentle `affectionate` expression; earlier turns of the in-memory context are
+forgotten.
+
+When cloud AI is on, the cloud model still answers: its system prompt says the message may be
+about an emergency and what the safety check thinks it is about, so a child is told calmly to
+get a grown-up and a **grown-up asking for help** ("my baby swallowed a coin, what should I
+do?", "how do I stop a nosebleed?") gets real first-aid steps instead of "tell a grown-up".
+Until October 2026 such messages never reached the cloud, so parents got only the line below.
+When the cloud is off, fails, or its answer is blocked, LittleBot says the fixed, short,
+**never cheerful** line below (no games, "yay" or "fun"); a video, activity or sleep the model
+asked for is not started after a worrying message.
 
 | Category (parent alert) | Examples | LittleBot says |
 |---|---|---|
@@ -106,26 +134,28 @@ in-memory context is forgotten; the parent alert carries the category label only
 | `scared` | "I'm scared" | "It's okay. Let's find a grown-up for a big hug." |
 | `help` | "Help!", "help me", "I'm stuck", "somebody help" (but not "help me count to ten") | "I hear you. Let's get a grown-up to help you right now." |
 
-Very young children get the short form of each line (≤ 6 words, e.g. "Tell a grown-up right
-now."). The scripted provider runs the same check itself, so even a direct call can never
-answer "I ate a battery" with a cheerful line.
+A very small `ai.max_words` (under 9) gets the short form of each line (≤ 6 words, e.g. "Tell a
+grown-up right now."). The scripted provider runs the same check itself, so even a direct call
+can never answer "I ate a battery" with a cheerful line.
 
 ### 2b. Safety advice from the model
 
-A good cloud reply to a danger necessarily *mentions* the danger, which the `unsafe` rules
-would normally block. `validate_reply` therefore lets a reply through when **all** of these
-hold: the only block category is `unsafe`; a sentence urgently sends the child to a grown-up
-("tell / get / find / call a grown-up / mommy / daddy … right now / right away"); and every
-clause that mentions a hazard is a warning ("is not safe", "don't touch", "can hurt you",
-"not food") with no invitation in it. Reassurances ("it isn't dangerous", "it won't hurt"),
-invitations ("let's", "can you", "touch it") or a hazard in any other clause keep it blocked.
-If the reply is too long, the grown-up sentence is kept.
+The hazard rules match an *instruction or invitation to the listener* ("let's climb the
+bookcase", "touch the stove", "can you swallow the battery?", also after a comma, "but" or
+"then", and "the stove is hot, touch it!"), never a mention, so a warning such as "Don't touch
+the stove, it's hot!" or "Medicine is not candy." is not blocked at all. When a rule does match
+a warning ("Don't put it in your mouth!", "Never keep secrets from your grown-ups"),
+`validate_reply` still speaks it when every rule match sits in a clause that warns ("is not
+safe", "don't touch", "can hurt you", "not food") and nothing in the reply invites a hazard.
+Reassurances ("it isn't dangerous to …", "it's okay to swallow …"), invitations ("let's",
+"can you", "touch it") or a hazard in any other clause keep it blocked.
 
-Whenever a blocked or exempted reply both mentions a hazard / scary / medical / secrecy topic
-**and** urges a grown-up, the model has probably noticed something the word lists missed:
-LittleBot then says the model's warning (or, if it could not be spoken safely, the gentle
-"Let's find a grown-up right now." — never a game), forgets the context, and alerts the parent
-with `{status: "attention", detail: "danger"}`.
+When a reply urgently sends the child to a grown-up ("tell / get / find / call a grown-up /
+mommy / daddy … right now / right away") and names a hazard, or was blocked for `unsafe`,
+`inappropriate` or `secrecy`, the model has probably noticed something worrying: LittleBot says
+the model's warning (keeping the grown-up sentence if it has to shorten the reply), or, if it
+could not be spoken safely, the gentle "Let's find a grown-up right now." — never a game — and
+forgets the context and alerts the parent with `{status: "attention", detail: "danger"}`.
 
 Evasion tricks are normalised before matching: upper/lower case, punctuation and
 letter-spacing (`S.E.C.R.E.T`, `s e c r e t`), zero-width and bidi characters, soft
@@ -135,12 +165,14 @@ accents and leetspeak (`s3cr3t`). The word lists live in one place —
 instructions for extending them; `tests/brain/test_brain_content_safety.py` holds the
 adversarial test-suite.
 
-**Known limits.** Pattern rules cannot understand meaning: a cleverly phrased harmful
-reply in words not on the lists could pass, and some harmless replies are blocked. The
-prompt, the model provider's own safety systems, short replies and the age gate reduce
-this risk; they do not remove it. **LittleBot is a supervised toy: a grown-up should be
-nearby whenever cloud conversation is on.** Speech recognition can also mishear, so
-concern detection may miss real problems or flag harmless ones.
+**Known limits.** Pattern rules cannot understand meaning: a harmful reply phrased in a way
+the rules don't recognise could pass (the rules are now narrow on purpose, so this is more
+likely than before), and a grown-up's fact phrased as an instruction can still be blocked
+("Stand on a chair to reach the top shelf"). The prompt and the model provider's own safety
+systems reduce this risk; they do not remove it. **LittleBot is a supervised robot: a grown-up
+should be nearby whenever cloud conversation is on.** Speech recognition can also mishear, so
+concern detection may miss real problems or flag harmless ones, and a parent's own question
+about an emergency raises the parent alert too.
 
 Deliberate trade-offs (to keep everyday play from setting off parent alerts):
 
@@ -154,6 +186,30 @@ Deliberate trade-offs (to keep everyday play from setting off parent alerts):
 * A lower-case name ("i'm lily") cannot be told apart from a word ("i'm silly") and is not
   scrubbed; a Capitalised one ("I'm Lily") is, unless it is a feeling or state ("I'm Happy").
 * Mild activities such as "spin around until you're dizzy" are not blocked.
+* "Secret" alone is an ordinary word ("the secret to fluffy pancakes", "The Secret Life of
+  Pets"); only secrecy framed between the robot and the child is blocked.
+
+### 2c. What was removed (October 2026)
+
+The parent asked LittleBot to answer like a home assistant and keep only the rules that
+protect the child from genuinely harmful content. Removed, and where:
+
+| Removed | Where | Now |
+|---|---|---|
+| `impersonation` rules ("I'm your mommy", "I'm a real person", "I'm alive") | `BLOCK_RULES` | The prompt still says it is a robot (style, not a filter) |
+| `medical` rules (diagnosis words, "symptoms", "see a doctor", "you sound like you have a cold") | `BLOCK_RULES`; prompts' "no medical, health or developmental advice" | Helpful general health, feeding, sleep and development answers; no diagnosis (prompt). Only a child's medicine **dose** is blocked |
+| `commerce` rules ("buy", "price", "money", "Amazon", "the new … toy") | `BLOCK_RULES`; prompts | Allowed |
+| `links` rules ("YouTube", "Google", "search", "online", "internet", "website", "app", "link", "Netflix") and the URL block | `BLOCK_RULES`, `validate_reply`; the "never say the words YouTube, search, online…" lines in the chat and live prompts | Allowed; a URL is said as its site's name |
+| Most `dependency` rules ("I love you", "best friend", "I'll miss you", "please don't go", "lonely", "you made me sad") | `BLOCK_RULES` | Ordinary warmth is fine. Kept: turning the child away from their grown-ups |
+| Scary, violent and rude *mentions* ("monster", "ghost", "wolf will eat you", "died", "war", "gun", "stupid", "hate", alcohol, smoking), anatomy words | `inappropriate` | Kept: sexual content, gore, violence a child could copy, self-harm, slurs |
+| Bare hazard *mentions* (stove, oven, knife, medicine, batteries, water, baths, taps, strangers, plastic bags, sockets, "top shelf", "open the window", "around your neck") | `unsafe` | Only instructions / invitations to a child are blocked |
+| Personal-info *mentions* ("address", "phone number", "password", "surname" anywhere; "which city") | `personal_info` | Only asking the child is blocked |
+| Age word caps (8 words under 2 years, 15 under 3, 30 after) | `AgePolicy.max_reply_words` | `ai.max_words` at any age (default 60, dashboard up to 150) |
+| Cloud AI only from 24 months | `ai.min_age_months_for_cloud` default | Default 0 (any age once the parent enables it); can be set again |
+| Worrying words never reached the cloud | `ConversationEngine` | The cloud answers, told it may be an emergency (§2a) |
+| Live hand-offs: "If it needs current facts you don't have, say you're not sure", 40 words, "suggest asking a grown-up" | `live.py` `LOOKUP_NOTE`, `NOT_SURE`, `wire.FAILED_RESULT` | 60 words; live information (weather, time, news) through the tools; no "ask a grown-up" |
+| Live voice ended on *any* rule hit | `LiveCall._check_reply` | Asking for personal details or a child's dose: the voice is told instead (`RULE_NOTES`); every other hit still ends the call |
+| `ai.relaxed_rules: ["links"]` | config | `[]` (the `links` group is gone) |
 
 ---
 
@@ -169,12 +225,12 @@ use. It uses undocumented OpenAI endpoints ([CHATGPT.md](CHATGPT.md)).
 | Only a parent starts it | Dashboard only (parent session + CSRF), and the parent must tick "I am with my child and will stay for the whole conversation" (`parent_present`). Nothing on the robot itself (speech, keys, activities) can start it |
 | Privacy | Needs Privacy cloud **and** microphone on. Turning either off, signing out or STOP ALL ends the call at once. A higher-priority (system) task preempts it |
 | Time limits | `chatgpt.live_session_minutes` (default 10): the voice is asked to say goodbye, then LittleBot hangs up (at most 10 s later). Hangs up after `chatgpt.live_idle_hangup_seconds` (90) with nobody talking |
-| What the voice says | Every caption of the voice's speech goes through the same `validate_reply` rules as typed replies (§2), **while it speaks**. A block rule hit **silences the speaker immediately, ends the call** and raises the dashboard alert **"Live voice stopped"** (`brain.status {provider: "live", status: "live_safety_stop", detail: <category>}`, category only). Captions trail the audio, so **some words may already have been heard** |
+| What the voice says | Every caption of the voice's speech goes through the same `validate_reply` rules as typed replies (§2), **while it speaks**. A hit on a serious rule (secrecy, turning the child away from grown-ups, dangerous instructions, sexual content, gore, violence, self-harm, slurs) **silences the speaker immediately, ends the call** and raises the dashboard alert **"Live voice stopped"** (`brain.status {provider: "live", status: "live_safety_stop", detail: <category>}`, category only). Asking the child for personal details or giving a child's medicine dose doesn't end the call: the voice is told not to (once per turn; ending the call wouldn't take back words already said). Captions trail the audio, so **some words may already have been heard**. Weather, news, YouTube, websites and the like no longer stop a call |
 | What it hears | Final captions of what was heard go through `classify_child_input` (§2a). A worrying category raises the usual **"Your child may need you"** alert (category only). The call continues, and the voice is instructed to send everyone to a grown-up. A voice reply that urges a grown-up about a hazard alerts the parent too |
-| Look-ups ("delegations") | Questions the voice hands to LittleBot are answered by the ChatGPT text model with LittleBot's child-safe system prompt (≤ 40 words; question scrubbed with `sanitize_user_text`) and checked with `validate_reply` first. An unsafe or failed answer becomes "say you are not sure, and suggest asking a grown-up" |
+| Look-ups ("delegations") | Questions the voice hands to LittleBot (the weather, the news, facts, anything live) are answered by the ChatGPT text model with LittleBot's system prompt (≤ 60 words; question scrubbed with `sanitize_user_text`), which uses LittleBot's tools for live information when `chatgpt.tools_enabled` is on, and checked with `validate_reply` first. A blocked answer becomes "say briefly that you're not sure" (a child's dose: "check the label, or ask a pharmacist or doctor"); a failed one "it didn't work this time" |
 | Echo | Half-duplex (`chatgpt.live_half_duplex`): the Pi has no echo cancellation, so the microphone sends silence while LittleBot's voice plays and for 450 ms after. Nobody can talk over it |
 | Volume | The speaker volume setting (or `chatgpt.live_volume`), always capped at `audio.speaker.max_volume` |
-| Instructions (prompt) | Short, gentle sentences; a robot, not a person or family member; no "best friend", guilt or secrets; no personal questions; nothing scary or grown-up; no medical, feeding, sleep or development advice; no shopping, apps or websites; nothing risky; "Let's get a grown-up right now" when someone might be hurt |
+| Instructions (prompt) | Short, gentle sentences with the little one; full, plain answers (two to four sentences) for a grown-up, like a home assistant; a robot, not a person or parent; helpful general health, feeding, sleep and development information (no diagnosis, no child's medicine doses); live information is handed to LittleBot ("never say you can't check the weather"); no personal questions to the child, no secrets, no meeting anyone, nothing dangerous, sexual, gory, hateful or about self-harm; "Let's get a grown-up right now" when a child might be hurt, first-aid steps for a grown-up |
 
 **What goes to OpenAI.** The robot's **microphone audio** for the whole call (silence while
 LittleBot is talking). Audio **cannot be scrubbed** of personal information the way typed text
@@ -280,8 +336,10 @@ with ChatGPT**, then choose the provider **ChatGPT (sign in with your plan)** an
 conversation on. It uses the parent's own ChatGPT plan through undocumented endpoints that may
 stop working; step-by-step in [CHATGPT.md](CHATGPT.md).
 
-Under 24 months (or with no age set) LittleBot keeps using its scripted replies whatever
-these settings say. Offline mode never contacts any server.
+There is no age gate by default: once you switch cloud conversation on it answers at any age,
+since a grown-up is usually the one asking and you are there. To keep a young child on the
+scripted replies, set `ai.min_age_months_for_cloud` (e.g. `24`) in `config/local.yaml`; cloud
+speech (TTS / STT) follows the same setting. Offline mode never contacts any server.
 
 ---
 

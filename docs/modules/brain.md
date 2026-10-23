@@ -57,13 +57,17 @@ while urging a grown-up (see AI_SAFETY.md §2a/§2b).
 2. **State** `LISTENING` (push-to-talk only; face `listening`) → `THINKING` (face `thinking`).
    A sleeping robot is woken (`SLEEPING → IDLE`) by an explicit turn.
 3. **Concerning input?** (`classify_child_input`, run on the whole input *before* the `max_input_chars`
-   cap) → fixed, gentle, never cheerful "let's get a grown-up right now" reply for the category,
-   `affectionate` face, context cleared,
-   `brain.status {provider: "safety", status: "attention", detail: <category>}`, no cloud.
+   cap) → `brain.status {provider: "safety", status: "attention", detail: <category>}`, earlier context
+   cleared, `affectionate` face. The cloud still answers, its prompt told it may be an emergency
+   (`build_system_prompt(emergency=<category>)`), so a grown-up asking for help gets real steps; with no
+   cloud, a provider error or a blocked answer: the fixed, gentle, never cheerful "let's get a grown-up
+   right now" reply for the category.
 4. **Provider choice** (`select_provider`, see AI_SAFETY.md §1) — reason reported in `status()`.
-5. **Cloud call**: scrub PII (`sanitize_user_text`), age-aware system prompt, tiny context,
-   `asyncio.wait_for(timeout_seconds + 0.5)`; usage counted before sending, tokens/cost after.
-6. **Validate** every reply (`validate_reply`): strip, cap words (age-aware), block → fallback.
+5. **Cloud call**: scrub PII (`sanitize_user_text`), age-aware system prompt (the child's companion and the
+   grown-ups' home assistant), tiny context, `asyncio.wait_for(timeout_seconds + 0.5)`; usage counted
+   before sending, tokens/cost after.
+6. **Validate** every reply (`validate_reply`): strip, say links as site names, cap words (`ai.max_words`,
+   any age), the few rules that protect the child (AI_SAFETY.md §2) → fallback.
    A reply that urges a grown-up about a hazard (`ValidationResult.concern == "danger"`) is either spoken
    (pure safety advice: every hazard mention is a warning) or replaced by the gentle
    `GROWNUP_FALLBACK` ("Let's find a grown-up right now.") — never a cheerful game — and the engine

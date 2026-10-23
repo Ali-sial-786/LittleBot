@@ -67,7 +67,7 @@ export default {
     const provider = h('select', { id: 'ai-provider' }, PROVIDERS.map((p) => h('option', { value: p.value, text: p.label })));
     const keys = h('div', { class: 'chips' });
     const num = (id, min, max, step = 1) => h('input', { type: 'number', id, min, max, step, inputmode: step < 1 ? 'decimal' : 'numeric' });
-    const maxWords = num('ai-words', 3, 60);
+    const maxWords = num('ai-words', 3, 150);
     const perHour = num('ai-hour', 0, 600);
     const perDay = num('ai-day', 0, 5000);
     const budget = num('ai-budget', 0, 20, 0.05);
@@ -152,7 +152,7 @@ export default {
           h('section', { class: 'card' },
             h('div', { class: 'card-head' }, h('h2', {}, icon('sliders'), 'Limits')),
             h('div', { class: 'form-grid two' },
-              h('div', { class: 'field' }, h('label', { for: 'ai-words', text: 'Max words per reply' }), maxWords, h('span', { class: 'hint', text: 'Younger children get even shorter replies automatically.' })),
+              h('div', { class: 'field' }, h('label', { for: 'ai-words', text: 'Max words per reply' }), maxWords, h('span', { class: 'hint', text: 'Grown-ups get full answers up to this length; LittleBot keeps it short and simple with your child.' })),
               h('div', { class: 'field' }, h('label', { for: 'ai-budget', text: 'Daily budget (USD)' }), budget),
               h('div', { class: 'field' }, h('label', { for: 'ai-hour', text: 'Requests per hour' }), perHour),
               h('div', { class: 'field' }, h('label', { for: 'ai-day', text: 'Requests per day' }), perDay)),
@@ -361,7 +361,7 @@ export default {
       if (st.enabled && st.provider === 'anthropic' && !d.keys?.has_anthropic_key) notices.append(banner('warn', 'key', 'No Anthropic key', 'Add ANTHROPIC_API_KEY to the .env file on the robot, then restart LittleBot.'));
       if (st.enabled && st.provider === 'chatgpt' && d.brain?.provider_status?.chatgpt === 'not_configured') notices.append(banner('warn', 'key', 'Not signed in with ChatGPT', 'Sign in with ChatGPT below to use your plan.'));
       if (st.enabled && st.provider === 'openai' && !d.keys?.has_openai_key) notices.append(banner('warn', 'key', 'No OpenAI key', 'Add OPENAI_API_KEY to the .env file on the robot, then restart LittleBot.'));
-      if (!d.policy?.cloud_ai_age_ok) notices.append(banner('info', 'shield', 'Scripted replies only for now', `Your child is under ${Math.round((d.policy?.min_age_months_for_cloud ?? 24) / 12)} years (or no age is set). LittleBot answers with gentle scripted responses of up to ${d.policy?.max_reply_words ?? 8} words.`));
+      if (!d.policy?.cloud_ai_age_ok) notices.append(banner('info', 'shield', 'Scripted replies only for now', `Your child is under the minimum age set for cloud AI (${d.policy?.min_age_months_for_cloud ?? 0} months, ai.min_age_months_for_cloud), or no age is set. LittleBot answers with gentle scripted responses.`));
       kvRows(usage, d.brain?.usage);
       kvRows(brainState, { active_provider: d.brain?.active_provider, cloud_allowed: d.brain?.cloud_allowed, reason: d.brain?.reason, last_error: d.brain?.last_error });
     }
