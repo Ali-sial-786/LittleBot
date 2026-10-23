@@ -295,6 +295,25 @@ async def test_log_says_why_the_earcon_was_not_heard(rig, caplog):
            "heard): the volume is 0, so nothing was heard)" in caplog.text
 
 
+async def test_log_says_when_the_microphone_works_again(rig, caplog, monkeypatch):
+    caplog.set_level(logging.INFO, logger="littlebot.wake")
+    monkeypatch.setattr(wakeword, "RETRY_SECONDS", 0.05)
+    r = await rig(start_wake=False)
+    real_open, fails = r.mic.open, [1, 2]
+
+    def flaky_open() -> None:
+        if fails:
+            fails.pop()
+            raise AudioDeviceError("Device or resource busy")
+        real_open()
+
+    r.mic.open = flaky_open
+    await r.wake.start()
+    await _listening(r)
+    assert caplog.text.count("could not open the microphone") == 1  # only the first failure is a warning
+    assert "wake word: the microphone works again (after 2 tries)" in caplog.text
+
+
 async def test_a_stuck_speaker_never_holds_up_live_voice(rig, caplog, monkeypatch):
     caplog.set_level(logging.INFO, logger="littlebot.wake")
     monkeypatch.setattr(wakeword, "EARCON_TIMEOUT", 0.2)

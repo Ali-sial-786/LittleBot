@@ -501,6 +501,9 @@ class WakeWordService(Service):
         except AudioDeviceError as e:
             self._mic_failed(f"could not open the microphone: {e}")
             return False
+        if self._mic_failures:
+            log.info("wake word: the microphone works again (after %d %s)", self._mic_failures,
+                     "try" if self._mic_failures == 1 else "tries")
         self._mic_failures = 0
         rec.reset()
         self._refresh_gain()
