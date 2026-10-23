@@ -826,6 +826,7 @@ class LiveCall:
         if result.get("ok") and answer:
             self.photos += 1
             job.ok, job.text, job.outcome = True, answer, "ok"
+            self._caption("note", f"Camera answer: {answer}")  # the parent sees what the camera said
             return
         code = job.outcome = str(result.get("error") or "no_answer")[:40]
         self._caption("note", f"Looking didn't work: {result.get('detail') or _look_note(code)}")
