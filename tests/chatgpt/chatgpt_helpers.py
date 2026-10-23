@@ -117,6 +117,8 @@ class FakeOpenAI:
         self.pc: Any = None
         self.channel: Any = None
         self.channel_ready = asyncio.Event()
+        self.heard: list[np.ndarray] = []  # the client's microphone sound, int16 frames
+        self._tasks: list[Any] = []
 
     async def __call__(self, request: Any) -> Any:
         import httpx
@@ -136,6 +138,17 @@ class FakeOpenAI:
             ch.on("message", lambda m: self.received.append(json.loads(m)))
             self.channel_ready.set()
 
+        async def listen(track: Any) -> None:
+            from aiortc.mediastreams import MediaStreamError
+
+            while True:
+                try:
+                    frame = await track.recv()
+                except MediaStreamError:
+                    return
+                self.heard.append(frame.to_ndarray().reshape(-1))
+
+        pc.on("track", lambda t: self._tasks.append(asyncio.ensure_future(listen(t))) if t.kind == "audio" else None)
         pc.addTrack(tone_track())
         await pc.setRemoteDescription(RTCSessionDescription(sdp=body["sdp"], type="offer"))
         await pc.setLocalDescription(await pc.createAnswer())
@@ -147,3 +160,5 @@ class FakeOpenAI:
     async def close(self) -> None:
         if self.pc is not None:
             await self.pc.close()
+        for t in self._tasks:
+            t.cancel()
