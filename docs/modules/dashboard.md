@@ -15,7 +15,7 @@ is explicitly enabled. Parent-facing instructions: [DASHBOARD_GUIDE.md](../DASHB
 | `deps.py` | `DashState` (ctx, lazy robot facade, auth, background tasks, parent alerts, aggregated `status()`, STOP fallback, `ensure_setup_code()`), `HostAllowlist`, bind-host / URL helpers |
 | `models.py` | pydantic request bodies (`extra="forbid"`, length limits, unicode/control-char cleaning) |
 | `scrub.py` | second safety net that hides secret-looking keys/values in anything sent to the browser |
-| `routes/*.py` | one router per section (auth, robot/system, face, activities, media, profile, ai, privacy, devices, motion, simulator) |
+| `routes/*.py` | one router per section (auth, robot/system, face, activities, media, profile, ai, chatgpt, privacy, devices, motion, simulator) |
 | `__main__.py` | `python -m littlebot.dashboard reset-password [--data-dir] [--port] [--yes]` (forgotten password recovery, run on the robot; works while LittleBot is running) |
 | `static/` | `index.html`, `app.css`, `favicon.svg`, `js/app.js` (boot, auth screens, router, polling), `js/api.js`, `js/ui.js`, `js/pages/*.js` |
 
@@ -179,10 +179,23 @@ same origin) or, failing that, `["url"]` with a localhost host rewritten to the 
 | Method | Path | Body | Calls |
 |---|---|---|---|
 | GET | `/api/ai` | | settings `ai.*`, `keys.has_*_key`, models, `brain.status()`, `brain.providers()`, age policy, privacy |
-| PUT | `/api/ai/settings` | `{enabled?, provider? ∈ mock\|anthropic\|openai, max_words 3..60?, max_requests_per_hour 0..600?, max_requests_per_day 0..5000?, daily_budget_usd 0..20?, share_child_name?, share_interests?}` | enabling in offline mode -> 403 |
+| PUT | `/api/ai/settings` | `{enabled?, provider? ∈ mock\|anthropic\|openai\|chatgpt, max_words 3..60?, max_requests_per_hour 0..600?, max_requests_per_day 0..5000?, daily_budget_usd 0..20?, share_child_name?, share_interests?}` | enabling in offline mode -> 403 |
 | GET | `/api/ai/providers` | | `brain.providers()` |
 | POST | `/api/ai/test` | `{provider}` | `brain.test_provider()`; cloud provider while privacy cloud is off -> 403 |
 | POST | `/api/ai/push-to-talk` | | `await brain.converse_once()` (45 s timeout -> 504); buttons on the AI and Simulator pages |
+
+### ChatGPT sign-in and live voice ([CHATGPT.md](../CHATGPT.md))
+
+Responses carry `{account: {signed_in, email (masked), plan, pending: {user_code, verification_url, expires_in}?, error}, live: live.status(), privacy}` — never a token.
+
+| Method | Path | Body | Calls |
+|---|---|---|---|
+| GET | `/api/chatgpt` | | the view above |
+| POST | `/api/chatgpt/sign-in` | | `get_auth(ctx).start_sign_in()` (device code); offline mode or privacy cloud off -> 403; OpenAI refused -> 502 with a friendly message |
+| POST | `/api/chatgpt/sign-in/cancel` | | `cancel_sign_in()` |
+| POST | `/api/chatgpt/sign-out` | | ends a live call, then `sign_out()` (revoke best effort + delete the token file); `{revoked}` |
+| POST | `/api/chatgpt/live/start` | `{parent_present: bool}` | `ctx.live.start_session()`; blocked -> 403 (`already_running` / `busy` -> 409) with a parent-facing `detail` |
+| POST | `/api/chatgpt/live/stop` | | `ctx.live.stop_session("stopped by parent")` |
 
 ### Privacy
 

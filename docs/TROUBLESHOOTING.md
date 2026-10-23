@@ -148,6 +148,12 @@ the screen, which (most likely) has no speaker.
 - A file system that suddenly turns read-only usually means a failing card or a power
   problem: back up `data/` and `config/` immediately (PI_SETUP.md, Backups).
 
+## ChatGPT sign-in or live voice
+
+See the troubleshooting table in [CHATGPT.md](CHATGPT.md#5-troubleshooting): code sign-in off,
+expired sign-in, "not available for this account or region" (403), plan usage limit (429),
+endpoint changed (404), "Not installed on this robot yet", echo, volume.
+
 ## Anything else
 
 Collect and share: `diagnose.py --json`, the last 100 lines of

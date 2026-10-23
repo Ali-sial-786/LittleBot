@@ -100,6 +100,20 @@ motion:
   i2c_address: 0x40        # PCA9685 default address
 
 # ---------------------------------------------------------------------------
+# Sign in with ChatGPT + live voice (docs/CHATGPT.md). Sign in and start calls on the
+# dashboard's AI page; the sign-in is stored in data/chatgpt_auth.json (mode 0600), never
+# here. Live voice needs the "live" extra (install_pi.sh installs it unless --no-live).
+# The defaults suit the robot; uncomment to change them.
+# ---------------------------------------------------------------------------
+# chatgpt:
+#   live_voice: cove               # cove | arbor | breeze | ember | juniper | maple | sol | spruce | vale
+#   live_session_minutes: 10       # hard limit per call (the voice says goodbye, then hangs up)
+#   live_idle_hangup_seconds: 90   # hang up after this long with nobody talking (0 = never)
+#   live_half_duplex: true         # no echo cancellation on the Pi: mic sends silence while LittleBot talks
+#   live_echo_tail_ms: 450         # ...and for this long after; raise it if the voice hears itself
+#   live_volume: null              # null = the speaker volume; always capped at audio.speaker.max_volume
+
+# ---------------------------------------------------------------------------
 # Parent dashboard.
 # lan_access: false -> only this Pi can open http://127.0.0.1:8765 (safest default).
 # lan_access: true  -> phones on your home Wi-Fi can reach http://<pi-ip>:8765 (or

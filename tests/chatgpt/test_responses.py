@@ -116,3 +116,12 @@ async def test_not_signed_in(tmp_path):
     with pytest.raises(AuthenticationError) as e:
         await p.reply([{"role": "user", "content": "hi"}], system="x", max_tokens=10, timeout=5)
     assert e.value.kind == "not_signed_in"
+
+
+async def test_403_is_not_treated_as_a_bad_sign_in(tmp_path):
+    def forbidden(r: httpx.Request) -> httpx.Response:
+        return httpx.Response(403, json={"error": {"code": "unsupported_country"}})
+
+    with pytest.raises(ProviderError) as e:
+        await provider(tmp_path, forbidden).reply([{"role": "user", "content": "hi"}], system="x", max_tokens=10, timeout=5)
+    assert e.value.kind == "forbidden" and not isinstance(e.value, AuthenticationError)

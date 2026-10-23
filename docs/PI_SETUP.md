@@ -107,13 +107,14 @@ What it does (idempotent - safe to run again after `git pull`):
 | Chromium | Bookworm: `chromium-browser` (Raspberry Pi's build); Trixie: `chromium`. Detected with `apt-cache policy`; skipped if already installed or with `--no-chromium` |
 | Groups | adds you to `video audio input render` only if missing (log out/in afterwards) |
 | `.venv` | created once, never deleted or recreated; `pip install -e ".[vision,audio,pi]"` |
+| Live voice | `pip install -e ".[live]"` as its own step: aiortc for GPT-Live voice ([CHATGPT.md](CHATGPT.md)), prebuilt aarch64 wheels (~40 MB, nothing compiled). A failure only warns; `--no-live` skips it |
 | Face model | `scripts/download_models.py yunet` (vision module; ~0.3 MB into `models/`, skipped when already verified; needs internet; `--no-models` skips) |
 | Files | `data/logs/`; `config/local.yaml` from `config/hardware.example.yaml` and `.env` from `.env.example` **only if missing**; `.env` set to mode 600 |
 | Never | edits `config.txt`/`cmdline.txt`, enables I2C (unless `--enable-i2c`), enables servos |
 
 Options: `--with-service` (autostart, section 10), `--headless-service`, `--enable-i2c`
 (later, for the servo board), `--system-opencv`, `--dev` (pytest on the Pi),
-`--skip-apt`, `--no-chromium`, `--no-models`, `--yes`. See `scripts/install_pi.sh --help`.
+`--skip-apt`, `--no-chromium`, `--no-models`, `--no-live`, `--yes`. See `scripts/install_pi.sh --help`.
 
 ### Why a plain venv with pip wheels (and when to use `--system-opencv`)
 
@@ -121,9 +122,9 @@ The default venv is isolated (no `--system-site-packages`). PyPI has ready-made
 **aarch64 wheels** for everything LittleBot needs (pygame-ce, numpy,
 opencv-python-headless, pydantic-core, psutil), so nothing is compiled, versions match
 the development machine, and an `apt upgrade` can never break the app's Python packages.
-The installer passes `--only-binary` for numpy / pygame-ce / OpenCV so that, if a wheel
-is ever missing, pip fails within seconds instead of compiling for an hour and running
-a 2 GB Pi out of memory.
+The installer passes `--only-binary` for numpy / pygame-ce / OpenCV (and for PyAV, pylibsrtp,
+cryptography and google-crc32c in the live-voice step) so that, if a wheel is ever missing, pip
+fails within seconds instead of compiling for an hour and running a 2 GB Pi out of memory.
 
 `--system-opencv` instead uses Debian's `python3-opencv` (+ `opencv-data` for the Haar
 cascade files) through a `--system-site-packages` venv. Choose it only if the pip
@@ -301,6 +302,9 @@ What is worth keeping (everything else can be re-installed):
 | `config/local.yaml`, `config/calibration.yaml` | this robot's hardware settings and servo calibration |
 | `.env` | API keys (secret: store the backup safely) |
 
+The ChatGPT sign-in (`data/chatgpt_auth.json`) is deliberately left out: after a restore, sign
+in again on the AI page ([CHATGPT.md](CHATGPT.md)).
+
 ```bash
 systemctl --user stop littlebot     # so the database is not being written
 tar czf ~/littlebot-backup-$(date +%F).tar.gz -C ~/LittleBot data/littlebot.db config/local.yaml config/calibration.yaml .env 2>/dev/null
@@ -313,4 +317,4 @@ A full SD card image (Imager/`dd` on your computer) is the quickest way back aft
 ## 13. Shutting down
 
 Always use `scripts/safe_shutdown.sh` (or the desktop's Shutdown menu) - never pull the
-power while the Pi is running. Details in [POWER.md](POWER.md#safe-shutdown).
+power while the Pi is running. Details in [POWER.md](POWER.md#6-safe-shutdown).

@@ -24,6 +24,7 @@ tests; nothing has run on the Pi or on real devices yet. See **`PROJECT_STATUS.m
 git clone <this repo> LittleBot && cd LittleBot
 python3 -m venv .venv && . .venv/bin/activate
 pip install -e ".[vision,audio,dev]"        # Linux: also `sudo apt install libportaudio2 espeak-ng`
+                                             # add ",live" for live voice (or use ".[all]")
 python -m littlebot                          # face window + simulator panel + dashboard
 ```
 
@@ -63,7 +64,8 @@ remove them.
 | **Videos** | Parent allowlist of YouTube videos/playlists played through YouTube's official embedded player, with session/daily limits, no autoplay into unapproved content, off by default under 18 months. |
 | **Audio** | Gentle synthesised sound effects and melodies, espeak-ng voice (Piper / OpenAI optional), half-duplex listening so LittleBot never hears itself, hard volume ceiling, nothing recorded or stored. |
 | **Camera** | Local face detection (YuNet, Haar fallback) at reduced resolution; eyes follow the child; wakes when someone arrives; no recognition, no images stored or sent. |
-| **AI conversation** | Mock (offline) by default. Claude or OpenAI only for children 2+ when a parent enables it and adds a paid API key. Replies are short and validated in code (no secrecy, dependency, impersonation or personal-info requests), with rate and budget limits. |
+| **AI conversation** | Mock (offline) by default. Claude or OpenAI (paid API key), or **Sign in with ChatGPT** on the parent's own plan, only for children 2+ when a parent enables it. Replies are short and validated in code (no secrecy, dependency, impersonation or personal-info requests), with rate and budget limits. |
+| **Live voice (GPT-Live)** | A real-time spoken conversation with ChatGPT's voice, on the parent's ChatGPT plan. Only a parent can start it, from the dashboard, while staying with the child. Time limit and idle hang-up. What the voice says is checked against the same safety rules while it speaks (a hit cuts it off and alerts the parent). Nothing is recorded. Uses undocumented OpenAI endpoints; not yet tested against OpenAI or on the Pi (`docs/CHATGPT.md`). |
 | **Motion** | Head + two arms in simulation: gestures, smooth limited motion, latched emergency stop. Real servos stay disabled until wired, calibrated and armed by a parent. |
 | **3D-printable body** | Two parametric OpenSCAD enclosures with ready-to-print STLs: v1 "TV head" (compact, 11 parts) and v2 "companion" (35 cm character with LED ears, camera pod and a wheel-ready base). Both include automated interference / pinch checks (`hardware/README.md`). |
 
@@ -85,11 +87,16 @@ remove them.
 | `docs/TROUBLESHOOTING.md`, `docs/PERFORMANCE.md` | Fixing problems, measuring the Pi |
 | `docs/DASHBOARD_GUIDE.md`, `docs/ACTIVITY_GUIDE.md` | For parents |
 | `docs/AI_SAFETY.md`, `docs/MOTION_SAFETY.md`, `docs/YOUTUBE_ON_PI.md` | Safety and feasibility notes |
+| `docs/CHATGPT.md` | Sign in with ChatGPT and live voice: setup, safety, privacy, troubleshooting |
 | `docs/DEV_CONVENTIONS.md`, `docs/modules/*.md` | For developers |
 | `hardware/README.md` | The two 3D-printable enclosures: parts, hardware lists, assembly, safety |
 
-## API keys (optional)
+## API keys or ChatGPT sign-in (optional)
 
 Copy `.env.example` to `.env` and add `ANTHROPIC_API_KEY` and/or `OPENAI_API_KEY`. These are separate,
 paid developer accounts — a Claude.ai / Claude Code subscription does not include API access. Keys stay
 on the robot and are never shown in the dashboard. Cloud AI stays off until you enable it on the AI page.
+
+No API key? On the dashboard's AI page, **Sign in with ChatGPT** to use your own ChatGPT plan for
+replies and live voice. It is unofficial (undocumented OpenAI endpoints that may change) and counts
+against your plan's limits. See `docs/CHATGPT.md`.

@@ -98,7 +98,7 @@ def test_my_shell_scripts_exist_and_are_executable() -> None:
 def test_install_help() -> None:
     res = subprocess.run([BASH, str(SCRIPTS / "install_pi.sh"), "--help"], capture_output=True, text=True)
     assert res.returncode == 0
-    for opt in ("--dry-run", "--with-service", "--enable-i2c", "--system-opencv", "--headless-service"):
+    for opt in ("--dry-run", "--with-service", "--enable-i2c", "--system-opencv", "--headless-service", "--no-live"):
         assert opt in res.stdout
 
 
@@ -131,6 +131,41 @@ def test_install_dry_run_changes_nothing(stub_path, tmp_path: Path) -> None:
     assert all(("is-enabled" in c or "is-active" in c) for c in calls if c.startswith("systemctl")), calls
     assert not (tmp_path / "home" / ".config").exists()
     assert {p: p.exists() for p in before} == before
+
+
+@pytest.mark.skipif(BASH is None, reason="bash not installed")
+@pytest.mark.parametrize("no_live", [False, True], ids=["default", "no-live"])
+def test_install_live_voice_extra(stub_path, tmp_path: Path, no_live: bool) -> None:
+    """Live voice (aiortc) is installed by default in its own, non-fatal pip step; --no-live skips it."""
+    env, log = stub_path
+    env["HOME"] = str(tmp_path / "home")
+    args = ["--dry-run", "--allow-non-pi", "--skip-apt", "--no-chromium", "--no-models"] + (["--no-live"] if no_live else [])
+    res = subprocess.run([BASH, str(SCRIPTS / "install_pi.sh"), *args], capture_output=True, text=True, env=env,
+                         cwd=ROOT, timeout=120)
+    if "This installer is for Raspberry Pi OS / Debian" in res.stderr:
+        pytest.skip("not a Debian-family system")
+    assert res.returncode == 0, res.stdout + res.stderr
+    pip_lines = [line for line in res.stdout.splitlines() if "[dry-run]" in line and "pip install" in line]
+    core = [line for line in pip_lines if "[vision,audio,pi]" in line]
+    live = [line for line in pip_lines if line.rstrip().endswith("[live]")]
+    assert len(core) == 1, pip_lines  # the core extras are unchanged (and never include live)
+    assert "live" not in core[0].split("-e", 1)[1]
+    if no_live:
+        assert not live and "live voice: skipped (--no-live)" in res.stdout
+    else:
+        assert len(live) == 1 and "--only-binary=av," in live[0], pip_lines
+        assert 'live voice: pip install -e ".[live]"' in res.stdout
+        assert res.stdout.index("[vision,audio,pi]") < res.stdout.index("Live voice (aiortc)")
+    assert not [c for c in _calls(log) if c.split()[0] in ("sudo", "apt-get", "apt")]
+
+
+def test_live_extra_matches_the_installer() -> None:
+    """The installer's `[live]` step needs the extra in pyproject.toml (aiortc 1.x)."""
+    import tomllib
+
+    extras = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]["optional-dependencies"]
+    assert extras["live"] == ["aiortc>=1.10,<2"]
+    assert "live" in extras["all"][0]
 
 
 def test_templates_use_only_known_placeholders() -> None:
@@ -441,3 +476,16 @@ def test_hardware_example_config_is_valid_and_safe() -> None:
     assert cfg.display.fullscreen is True
     assert (cfg.display.width, cfg.display.height) == (480, 320)
     assert cfg.audio.speaker.max_volume <= 0.8
+
+
+def test_hardware_example_chatgpt_block_is_valid_when_uncommented(tmp_path: Path) -> None:
+    """The commented `chatgpt:` example must stay loadable and show the real defaults."""
+    import re
+
+    text = (ROOT / "config" / "hardware.example.yaml").read_text()
+    uncommented = re.sub(r"(?m)^#   (live_\w+:)", r"  \1", re.sub(r"(?m)^# (chatgpt:)", r"\1", text))
+    assert uncommented.count("\n  live_") >= 5
+    (tmp_path / "hw.yaml").write_text(uncommented)
+    kw = dict(environ={}, use_dotenv=False, include_local=False)
+    cfg = load_config("pi", config_file=tmp_path / "hw.yaml", **kw)
+    assert cfg.chatgpt == load_config("pi", config_file=ROOT / "config" / "hardware.example.yaml", **kw).chatgpt

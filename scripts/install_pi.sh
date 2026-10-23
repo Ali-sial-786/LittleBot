@@ -25,13 +25,15 @@ NO_CHROMIUM=0
 WITH_DEV=0
 ALLOW_NON_PI=0
 NO_MODELS=0
+NO_LIVE=0
 
 usage() {
     cat <<'EOF'
 Usage: scripts/install_pi.sh [options]
 
 Installs system packages, creates .venv, installs LittleBot with the vision/audio/pi
-extras, creates data/ and config/local.yaml (from config/hardware.example.yaml) if absent.
+extras and the live extra (GPT-Live voice), creates data/ and config/local.yaml (from
+config/hardware.example.yaml) if absent.
 
 Options:
   --dry-run            print every action, change nothing
@@ -47,6 +49,8 @@ Options:
   --no-chromium        do not install Chromium (YouTube player)
   --dev                also install test tools (pytest) to run the test-suite on the Pi
   --no-models          do not download the YuNet face-detection model (scripts/download_models.py)
+  --no-live            do not install live voice (the "live" extra: aiortc WebRTC, ~40 MB of
+                       prebuilt wheels; docs/CHATGPT.md). Sign in with ChatGPT text works without it
   --allow-non-pi       allow running on a non-Raspberry-Pi Debian system (testing)
   -h, --help           show this help
 EOF
@@ -64,6 +68,7 @@ while (($#)); do
         --no-chromium) NO_CHROMIUM=1 ;;
         --dev) WITH_DEV=1 ;;
         --no-models) NO_MODELS=1 ;;
+        --no-live) NO_LIVE=1 ;;
         --allow-non-pi) ALLOW_NON_PI=1 ;;
         -h | --help) usage; exit 0 ;;
         *) echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;
@@ -273,6 +278,11 @@ else
 fi
 info "pip: install -e \".[$EXTRAS]\" (binary wheels only for numpy / pygame-ce / OpenCV)"
 info "files: data/, data/logs/; config/local.yaml and .env only if missing (never overwritten)"
+if ((NO_LIVE)); then
+    info "live voice: skipped (--no-live)"
+else
+    info "live voice: pip install -e \".[live]\" (aiortc, prebuilt wheels ~40 MB; a failure only warns)"
+fi
 if ((NO_MODELS == 0)) && [[ -f "$REPO_DIR/scripts/download_models.py" ]]; then
     info "models: YuNet face detector via scripts/download_models.py (skipped if already verified)"
 fi
@@ -353,6 +363,15 @@ run "${PIP[@]}" install --prefer-binary --only-binary=numpy,pygame-ce,opencv-pyt
 if ((SYSTEM_OPENCV)) && ((DRY_RUN == 0)); then
     "$VENV_DIR/bin/python" -c 'import cv2; print("    OpenCV (apt):", cv2.__version__)' \
         || warn "cv2 is not importable from the venv - is python3-opencv installed and the venv using system site-packages?"
+fi
+
+# Live voice (GPT-Live over WebRTC, docs/CHATGPT.md) is optional, so its own step: a failure
+# only warns and LittleBot's AI page then says "Not installed on this robot yet". aiortc is pure
+# Python; --only-binary makes pip fail fast instead of compiling PyAV / SRTP / cryptography.
+if ((NO_LIVE == 0)); then
+    step "Live voice (aiortc)"
+    run "${PIP[@]}" install --prefer-binary --only-binary=av,pylibsrtp,cryptography,google-crc32c -e "${REPO_DIR}[live]" \
+        || warn "Live voice could not be installed (no internet?). Later: .venv/bin/python -m pip install -e '.[live]'"
 fi
 
 # The OpenCV 5 pip wheel has no Haar cascade support, so the vision module uses YuNet,

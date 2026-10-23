@@ -68,7 +68,8 @@ ERRORS = {
     "cloud_off": "Cloud communication is turned off in Privacy.",
     "mic_off": "The microphone is turned off in Privacy.",
     "not_signed_in": "Sign in with ChatGPT first.",
-    "unavailable": "Live voice needs the 'live' extra on the robot: pip install -e '.[live]' (installs aiortc).",
+    "unavailable": "Live voice isn't installed on this robot yet: re-run scripts/install_pi.sh, or run "
+                   "cd ~/LittleBot && .venv/bin/python -m pip install -e '.[live]' and restart LittleBot.",
     "no_audio": "LittleBot's audio system is not running.",
     "already_running": "A live conversation is already running.",
     "busy": "LittleBot is busy with something else. Stop it first.",
@@ -164,7 +165,7 @@ class LiveVoiceService(Service):
         ]
         err = aiortc_error()
         if err:
-            self.set_status(ServiceStatus.DEGRADED, "live voice needs aiortc (pip install -e '.[live]')")
+            self.set_status(ServiceStatus.DEGRADED, "live voice not installed (.venv/bin/python -m pip install -e '.[live]')")
         else:
             self.set_status(ServiceStatus.RUNNING, "")
 

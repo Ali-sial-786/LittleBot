@@ -78,6 +78,9 @@ def test_peekaboo_drives_real_face_and_audio(robot: LittleBot):
     assert Topics.ACTIVITY_STARTED in topics and Topics.ACTIVITY_FINISHED in topics
     finished = [e for e in seen if e.topic == Topics.ACTIVITY_FINISHED][-1]
     assert finished.data["completed"] is True
+    # Activities run instantly here (time_scale 0) but the headless face applies queued commands on its
+    # 10 Hz ticker, so its expression events can arrive just after the activity ends.
+    wait_until(lambda: any(e.topic == Topics.FACE_EXPRESSION for e in seen), timeout=3)
     expressions = [e.data["expression"] for e in seen if e.topic == Topics.FACE_EXPRESSION]
     assert "surprised" in expressions or "happy" in expressions
     sounds = [e.data["name"] for e in seen if e.topic == Topics.AUDIO_SOUND_STARTED]

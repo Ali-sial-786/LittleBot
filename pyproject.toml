@@ -29,10 +29,16 @@ audio = ["sounddevice>=0.4.6"]
 pi = ["smbus2>=0.4"]
 # Optional local speech recognition (small offline model, ~50 MB).
 local-stt = ["vosk>=0.3.45"]
+# GPT-Live voice over WebRTC (Sign in with ChatGPT, docs/CHATGPT.md). aiortc is a pure-Python
+# wheel; its dependencies (PyAV, pylibsrtp, cryptography, ...) have prebuilt aarch64 wheels
+# (~40 MB download, nothing to compile). Without it, live voice reports itself as not installed.
+live = ["aiortc>=1.10,<2"]
 dev = ["pytest>=8", "pytest-asyncio>=0.23", "pytest-timeout>=2.2"]
 # Optional: drives the YouTube player page in headless Chromium in tests (skipped when absent).
 browser-tests = ["playwright>=1.40"]
-all = ["littlebot[vision,audio,dev]"]
+# Desktop development: everything needed to run the app and the full test-suite
+# (the live-voice tests are skipped without aiortc).
+all = ["littlebot[vision,audio,live,dev]"]
 
 [project.scripts]
 littlebot = "littlebot.app.main:main"

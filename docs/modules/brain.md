@@ -16,6 +16,9 @@ littlebot/brain/
                        replies for unknown input, grown-up line for concerning input
     anthropic.py       AnthropicProvider: POST /v1/messages (raw REST)
     openai.py          OpenAIProvider: POST /v1/chat/completions (raw REST)
+littlebot/chatgpt/responses.py  ChatGPTProvider ("chatgpt"): the parent's ChatGPT plan via the
+                              undocumented Codex Responses endpoint (sign-in: littlebot/chatgpt/auth.py,
+                              ../CHATGPT.md); requests counted at $0 in the usage tracker
 littlebot/safety/content.py   validate_reply, sanitize_user_text, classify_child_input (word lists),
                               directs_to_grownup, grownup_fallback
 ```
@@ -41,7 +44,7 @@ provider failures `auth_error`, `rate_limited`, `quota_exceeded`, `timeout`, `ne
 `internal_error`. Provider failures still produce a friendly spoken `reply`
 ("Hmm, my thinking cap is sleepy. Let's play instead!") with a `confused` face.
 
-`provider` is `mock`, `anthropic`, `openai` or `safety` (concerning-input reply). `attention` is present
+`provider` is `mock`, `anthropic`, `openai`, `chatgpt` or `safety` (concerning-input reply). `attention` is present
 when the parent was alerted: a concern category (`safety`, `water`, `swallowed`, `emergency`, `stranger`,
 `hurt`, `lost`, `scared`, `help`) for concerning input, or `danger` when a cloud reply talked about a hazard
 while urging a grown-up (see AI_SAFETY.md §2a/§2b).

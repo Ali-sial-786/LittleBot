@@ -226,8 +226,9 @@ def _http_error(status: int, headers: httpx.Headers, body: str, now: float) -> E
         return RateLimitError("chatgpt: busy", status_code=503, retry_after=_retry_after(headers), kind="overloaded")
     if status == 400 and MODEL_UNAVAILABLE.search(detail):
         return _ModelUnavailable()
-    if status == 403:
-        return AuthenticationError("chatgpt: not allowed for this account", status_code=403, kind="forbidden")
+    if status == 403:  # account / region / plan not allowed: signing in again would not help
+        return ProviderError("chatgpt: not available for this ChatGPT account or region", status_code=403,
+                             kind="forbidden")
     if status in (404, 405, 410):
         return ProviderError("chatgpt: the ChatGPT endpoint changed or is unavailable", status_code=status,
                              kind="endpoint_changed")
