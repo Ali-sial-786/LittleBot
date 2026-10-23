@@ -175,3 +175,20 @@ def draw_cartoon_face(frame: np.ndarray, cx: float, cy: float, width: float,
     draw_ellipse(frame, cx - eye_dx, eye_y, eye_r * 1.3, eye_r, dark)
     draw_ellipse(frame, cx + eye_dx, eye_y, eye_r * 1.3, eye_r, dark)
     draw_ellipse(frame, cx, cy + ry * 0.45, width * 0.18, max(1.0, width * 0.04), (60, 50, 120))
+
+
+def brighten_if_dark(img: Any, *, dark_below: float = 70.0, target: float = 115.0) -> Any:
+    """Lift a dim photo (mean brightness < ``dark_below`` of 255) with a gamma curve so a vision model
+    can make out hands and toys in a dim room. Bright enough photos are returned unchanged."""
+    cv2 = get_cv2()
+    if cv2 is None or img is None or getattr(img, "size", 0) == 0:
+        return img
+    import numpy as np  # noqa: PLC0415
+
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if img.ndim == 3 else img
+    mean = float(gray.mean())
+    if mean >= dark_below or mean < 1.0:
+        return img
+    gamma = max(0.25, min(1.0, np.log(target / 255.0) / np.log(mean / 255.0)))
+    lut = np.array([((i / 255.0) ** gamma) * 255 for i in range(256)], dtype=np.uint8)
+    return cv2.LUT(img, lut)

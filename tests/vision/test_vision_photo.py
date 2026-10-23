@@ -194,3 +194,18 @@ async def test_photo_while_media_pauses_detection(make_ctx):
     data = await photo_with_cycle(svc, clock)
     assert data.startswith(b"\xff\xd8") and cam.frames_read == before + 1
     await svc.stop()
+
+
+def test_dark_photos_are_brightened_and_bright_ones_left_alone():
+    import numpy as np
+
+    from littlebot.vision.imaging import brighten_if_dark
+
+    dark = np.full((48, 64, 3), 25, np.uint8)
+    dark[10:20, 10:20] = 60  # a dim hand
+    out = brighten_if_dark(dark)
+    assert out.mean() > 80 and out[15, 15, 0] > out[30, 40, 0]  # brighter, contrast kept
+    bright = np.full((48, 64, 3), 140, np.uint8)
+    assert brighten_if_dark(bright) is bright
+    black = np.zeros((48, 64, 3), np.uint8)
+    assert brighten_if_dark(black) is black  # nothing to lift (lens covered)

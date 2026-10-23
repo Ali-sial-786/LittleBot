@@ -37,7 +37,7 @@ from littlebot.vision.detector import (
     Detection, FaceDetector, MockDetector, NullDetector, configure_opencv_threads, detector_from_config,
 )
 from littlebot.vision.gestures import GestureDetector
-from littlebot.vision.imaging import RateMeter, get_cv2, resize_to_width
+from littlebot.vision.imaging import RateMeter, brighten_if_dark, get_cv2, resize_to_width
 from littlebot.vision.tracker import FaceTracker, TrackedFace, TrackerUpdate
 
 CameraFactory = Callable[[str], CameraDevice]
@@ -342,7 +342,9 @@ class VisionService(Service):
             try:
                 if cv2 is None:
                     raise RuntimeError("OpenCV unavailable")
-                ok, buf = cv2.imencode(".jpg", resize_to_width(frame, width), [int(cv2.IMWRITE_JPEG_QUALITY), quality])
+                img = brighten_if_dark(resize_to_width(frame, width))  # dim rooms: lift it so the AI can see
+                ok, buf = cv2.imencode(".jpg", img, [int(cv2.IMWRITE_JPEG_QUALITY), quality])
+                del img
                 if not ok:
                     raise RuntimeError("imencode failed")
                 _resolve(fut, buf.tobytes())

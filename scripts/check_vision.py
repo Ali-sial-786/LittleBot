@@ -50,7 +50,8 @@ def camera_photo(device: object) -> bytes:
         if not cap.isOpened():
             raise SystemExit(f"Could not open the camera ({device!r}). Is LittleBot still running?")
         frame = None
-        for _ in range(15):  # let auto-exposure settle
+        end = time.monotonic() + 2.5  # let auto-exposure and focus settle, like the running robot's camera
+        while time.monotonic() < end:
             ok, f = cap.read()
             if ok:
                 frame = f
@@ -58,7 +59,11 @@ def camera_photo(device: object) -> bytes:
             raise SystemExit("The camera gave no picture.")
     finally:
         cap.release()
-    ok, buf = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
+    from littlebot.vision.imaging import brighten_if_dark
+
+    print(f"   Camera brightness: {float(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY).mean()):.0f} of 255 "
+          "(under ~60 is dark: turn on a light)")
+    ok, buf = cv2.imencode(".jpg", brighten_if_dark(frame), [int(cv2.IMWRITE_JPEG_QUALITY), 80])
     assert ok
     return buf.tobytes()
 
