@@ -108,7 +108,7 @@ What it does (idempotent - safe to run again after `git pull`):
 | Groups | adds you to `video audio input render` only if missing (log out/in afterwards) |
 | `.venv` | created once, never deleted or recreated; `pip install -e ".[vision,audio,pi]"` |
 | Live voice | `pip install -e ".[live]"` as its own step: aiortc for GPT-Live voice ([CHATGPT.md](CHATGPT.md)), prebuilt aarch64 wheels (~40 MB, nothing compiled). A failure only warns; `--no-live` skips it |
-| Face model | `scripts/download_models.py yunet` (vision module; ~0.3 MB into `models/`, skipped when already verified; needs internet; `--no-models` skips) |
+| Face and hand models | `scripts/download_models.py yunet hands` (vision module; ~8 MB into `models/`: the face detector and the hand models that count fingers on the robot; skipped when already verified; needs internet; `--no-models` skips) |
 | Wake word | "Hey LittleBot" starts live voice ([CHATGPT.md](CHATGPT.md#wake-word-hey-littlebot)), heard offline on the robot: `pip install -e ".[local-stt]"` (vosk, one prebuilt aarch64 wheel, ~3 MB) and `scripts/download_models.py vosk-en` (40 MB download, unpacked to `models/vosk-model-small-en-us-0.15/`, ~140 MB RAM while the wake word is on). A failure only warns; `--no-wake-word` skips both, `--no-models` only the model |
 | Files | `data/logs/`; `config/local.yaml` from `config/hardware.example.yaml` and `.env` from `.env.example` **only if missing**; `.env` set to mode 600 |
 | Sound output | `scripts/set_default_speaker.sh`: the USB speaker and USB microphone become the default sound devices instead of the HDMI screen (a WirePlumber rule in `~/.config/wireplumber` + `wpctl set-default`; no sudo). A failure only warns; `--no-audio-default` skips it |

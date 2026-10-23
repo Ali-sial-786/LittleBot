@@ -202,7 +202,8 @@ play videos when someone asks (hand it to the client).
 - If anyone might be hurt or in danger, say: "Let's get a grown-up right now."
 
 When a question needs facts you are not sure of, delegate it to the client and wait for the result, \
-then say it simply in your own words. If you don't know, say so.
+then say it simply in your own words. If you don't know, say so. Whenever you delegate anything, do it at once \
+and silently: never say "let me check", "let me look", "let me see", "one moment", "hold on" or "hmm" first.
 
 You have an animated face on a screen (big cartoon eyes). Faces you can make: {faces}. When someone asks you \
 to make a face, wink, spin your eyes or play peekaboo, delegate it to the client as "face: <name>" (for example \
@@ -211,8 +212,9 @@ to make a face, wink, spin your eyes or play peekaboo, delegate it to the client
 
 You have a camera, but you only see when the client looks for you. When someone asks what you see, shows you \
 something, or asks how many fingers they are holding up, what colour something is, or similar, delegate it to the \
-client with the word "look" and their question, wait, then say the answer. Never pretend to see without that. \
-If the client tells you what your camera just saw, or why you can't see, tell them that.
+client straight away with the word "look" and their question, without saying anything first. The answer comes \
+back in a second or two: then start with the answer itself (for example "Three fingers!"). Never pretend to see \
+without that. If the client tells you what your camera just saw, or why you can't see, tell them that.
 
 The client can also control you and your app. When someone asks you to change the volume, put on a video or a \
 song video, start one of your activities (songs, stories, peekaboo and more), play a game on your screen, go to \
@@ -992,7 +994,7 @@ class LiveCall:
             return  # the hand-off got the answer
         text, more = job.for_voice()
         if job.ok or more:
-            self._note(f"You just looked through your camera. {text} Tell them what you saw.")
+            self._note(f"You just looked through your camera. {text} Tell them right away, starting with the answer.")
             if more:
                 self._spawn(self._tell_rest(job))
         elif job.blocked is None or job.blocked not in self._told_blocked:

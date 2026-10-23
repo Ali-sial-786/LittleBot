@@ -404,7 +404,7 @@ async def test_asking_to_see_looks_even_without_a_hand_off(live, ctx):
     await wait_for(lambda: notes(server))
     assert look.asked == [("How many fingers am I holding up?", "live")]
     assert notes(server) == ["You just looked through your camera. You are holding up three fingers. "
-                             "Tell them what you saw."]
+                             "Tell them right away, starting with the answer."]
     assert svc.status()["photos"] == 1 and provider.calls == []
 
 

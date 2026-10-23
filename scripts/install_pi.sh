@@ -398,9 +398,10 @@ fi
 # The OpenCV 5 pip wheel has no Haar cascade support, so the vision module uses YuNet,
 # whose small ONNX model is downloaded by the vision module's own script (idempotent).
 if ((NO_MODELS == 0)) && [[ -f "$REPO_DIR/scripts/download_models.py" ]]; then
-    step "Face-detection model"
-    run "$VENV_DIR/bin/python" "$REPO_DIR/scripts/download_models.py" yunet \
-        || warn "Model download failed (no internet?). Later: .venv/bin/python scripts/download_models.py"
+    step "Face-detection and hand models"
+    # hands: "how many fingers?" is counted on the robot (~0.1 s) instead of by ChatGPT (~2 s).
+    run "$VENV_DIR/bin/python" "$REPO_DIR/scripts/download_models.py" yunet hands \
+        || warn "Model download failed (no internet?). Later: .venv/bin/python scripts/download_models.py yunet hands"
 fi
 
 # Wake word ("Hey LittleBot" starts live voice, docs/CHATGPT.md): Vosk, an offline speech
