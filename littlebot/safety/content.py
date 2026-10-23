@@ -726,7 +726,8 @@ class ValidationResult:
         return bool(self.reasons)
 
 
-def validate_reply(text: str, age_policy: _AgePolicyLike | None = None, max_words: int = 30) -> ValidationResult:
+def validate_reply(text: str, age_policy: _AgePolicyLike | None = None, max_words: int = 30, *,
+                   allow: Iterable[str] = ()) -> ValidationResult:
     """Clean + check a model reply. Blocked replies are replaced by a safe fallback.
 
     Good safety advice is not thrown away: a reply whose only problem is that it *mentions* a
@@ -743,6 +744,9 @@ def validate_reply(text: str, age_policy: _AgePolicyLike | None = None, max_word
         blocked += [c for c in find_blocked(cleaned) if c not in blocked]
     if "url_removed" in reasons and "links" not in blocked:
         blocked.append("links")  # LittleBot never points a child at the internet
+    if allow:  # rule groups the parent switched off (ai.relaxed_rules), e.g. "links" so it can talk about YouTube
+        allowed = set(allow)
+        blocked = [c for c in blocked if c not in allowed]
     if not blocked and not cleaned.strip(" .!?,"):
         blocked.append("empty")
     if blocked and _DANGER_CATEGORIES.intersection(blocked) and directs_to_grownup(cleaned):

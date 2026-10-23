@@ -164,7 +164,9 @@ async def test_cloud_reply_is_age_capped(make_brain):
 @pytest.mark.parametrize("bad", ["This is our little secret!", "I'm your best friend!", "Ask mom to buy it!",
                                  "Visit www.example.com", "Let's climb the bookcase!"])
 async def test_unsafe_cloud_reply_is_filtered(make_brain, bad):
+    """With every rule group on (ai.relaxed_rules: [])."""
     ctx = cloud_context()
+    ctx.config.ai.relaxed_rules = []
     events = collect(ctx.bus, [Topics.BRAIN_REPLY])
     brain = await make_brain(ctx, FakeAPI(lambda req: anthropic_response(bad)))
     r = await brain.handle_utterance("hello")

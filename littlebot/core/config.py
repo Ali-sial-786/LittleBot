@@ -79,7 +79,7 @@ class DisplayConfig(_Section):
 
 class FaceConfig(_Section):
     eye_color: tuple[int, int, int] = (90, 210, 255)
-    background_color: tuple[int, int, int] = (6, 8, 14)
+    background_color: tuple[int, int, int] = (255, 214, 228)  # soft light pink (a dark colour gives glowing eyes)
     glow: bool = True
     blink_interval: tuple[float, float] = (2.5, 6.0)  # random seconds between blinks
     double_blink_chance: float = 0.18
@@ -173,6 +173,22 @@ class AudioConfig(_Section):
     store_recordings: bool = False  # never store audio unless explicitly enabled
 
 
+class WakeConfig(_Section):
+    """Wake word: saying a phrase starts live voice hands-free (littlebot/audio/wakeword.py).
+
+    Recognised on the robot with Vosk (offline); nothing is sent anywhere until a phrase is heard."""
+
+    enabled: bool = True  # default of the parent's dashboard switch (setting ``wake.enabled``)
+    # Words the model knows; "littlebot" is heard as "little bot". Two-word phrases ("hey bot")
+    # trigger by mistake more often (e.g. on "hey but"): remove it here if that happens.
+    phrases: list[str] = Field(default_factory=lambda: ["hey little bot", "hey littlebot", "hey bot"])
+    model_path: str = "models/vosk-model-small-en-us-0.15"  # scripts/download_models.py vosk-en
+    min_confidence: float = Field(default=0.5, ge=0.0, le=1.0)  # per word; higher = fewer false triggers
+    distractors: bool = True  # also offer common words to the recogniser: far fewer false triggers
+    cooldown_seconds: float = Field(default=4.0, ge=0.0)  # no new trigger this soon after the last one
+    sound: str = "listen"  # earcon played when a phrase is heard
+
+
 class AIConfig(_Section):
     provider: Literal["mock", "anthropic", "openai", "chatgpt"] = "mock"
     anthropic_model: str = "claude-haiku-5-5"
@@ -206,6 +222,9 @@ class AIConfig(_Section):
     # Personal info is NOT sent to cloud providers unless a parent opts in.
     share_child_name: bool = False
     share_interests: bool = False
+    # Safety-rule groups switched off for AI replies (parent's choice; [] = every rule on). "links" lets it
+    # talk about YouTube, shows, apps and searching (links themselves are still stripped before speaking).
+    relaxed_rules: list[str] = Field(default_factory=lambda: ["links"])
 
 
 class ChatGPTConfig(_Section):
@@ -234,6 +253,11 @@ class ChatGPTConfig(_Section):
     live_echo_tail_ms: int = 450
     live_voice_level: float = 0.012  # RMS (0..1) above which the model's audio counts as speaking
     live_volume: float | None = None  # None = the speaker volume setting (always capped at max_volume)
+    # --- asking LittleBot to do things (function calling, littlebot/chatgpt/tools.py) ---
+    # Typed / push-to-talk chat and live-voice hand-offs may control the robot: volume, faces,
+    # videos (YouTube search), activities, games, sleep, status ("how hot are you?").
+    tools_enabled: bool = True
+    max_tool_rounds: int = 6  # tool calls per answer ("play baby shark" = search + play)
 
 
 class MediaConfig(_Section):
@@ -257,6 +281,12 @@ class MediaConfig(_Section):
     limit_check_seconds: float = 1.0  # limit/timeout watchdog period while a session is active
     kiosk_close_delay_seconds: float = 1.5  # let the page fade out before the kiosk window closes
     kiosk_extra_args: list[str] = Field(default_factory=list)
+    # YouTube search (no API key: yt-dlp's "ytsearch"). allow_search lets the AI find and play any
+    # YouTube video when asked, not only the approved list (the time limits and age gate still apply).
+    allow_search: bool = True
+    search_results: int = 5
+    search_timeout_seconds: float = 20.0
+    ytdlp_command: str | None = None  # None = the yt_dlp module in LittleBot's Python, else yt-dlp on PATH
 
 
 class ServoChannelConfig(_Section):
@@ -350,6 +380,7 @@ class LittleBotConfig(BaseModel):
     camera: CameraConfig = Field(default_factory=CameraConfig)
     vision: VisionConfig = Field(default_factory=VisionConfig)
     audio: AudioConfig = Field(default_factory=AudioConfig)
+    wake: WakeConfig = Field(default_factory=WakeConfig)
     ai: AIConfig = Field(default_factory=AIConfig)
     chatgpt: ChatGPTConfig = Field(default_factory=ChatGPTConfig)
     media: MediaConfig = Field(default_factory=MediaConfig)

@@ -78,6 +78,16 @@ export default {
     const account = h('div', { class: 'stack-sm' }, h('p', { class: 'muted', text: 'Loading…' }));
     const live = h('div', { class: 'stack-sm' });
     const present = h('input', { type: 'checkbox', id: 'live-present' });
+    const wakeSwitch = switchRow({
+      title: 'Wake word: say “Hey LittleBot” to start live voice',
+      text: 'LittleBot listens for “Hey LittleBot” or “Hey Bot” on the robot itself, offline - nothing is sent anywhere until it hears one. Then it plays a short “listening” sound and starts live voice, as if you had pressed Start.',
+      onChange: async (v) => {
+        const r = await app.act(() => put('/chatgpt/wake', { enabled: v }), v ? 'Wake word on.' : 'Wake word off.');
+        if (r) { fillChatGPT(r); schedule(1500); }  // the listener needs a moment to start / stop
+        return r !== null;
+      },
+    });
+    const wakeState = h('div', { class: 'stack-sm', 'aria-live': 'polite' });
     const lookQuestion = h('input', { type: 'text', id: 'look-question', maxlength: 300, autocomplete: 'off', placeholder: 'How many fingers am I holding up?' });
     const lookSpeak = h('input', { type: 'checkbox', id: 'look-speak' });
     const lookState = h('div', { class: 'stack-sm' });
@@ -117,8 +127,10 @@ export default {
             account),
           h('section', { class: 'card' },
             h('div', { class: 'card-head' }, h('h2', {}, icon('wave'), 'Live voice (GPT-Live)')),
-            h('p', { class: 'muted', text: 'A real-time spoken conversation with ChatGPT’s voice, on your plan. You start and stop it here; it ends by itself after the time limit or when nobody talks. Everything it says is checked against LittleBot’s safety rules while it talks: a rule break cuts the voice, ends the call and alerts you. Some words may already be heard by then, so stay with your child. Your voices go to OpenAI; nothing is recorded on LittleBot.' }),
-            live)),
+            h('p', { class: 'muted', text: 'A real-time spoken conversation with ChatGPT’s voice, on your plan. You start and stop it here (or say “Hey LittleBot”); it ends by itself after the time limit or when nobody talks. Everything it says is checked against LittleBot’s safety rules while it talks: a rule break cuts the voice, ends the call and alerts you. Some words may already be heard by then, so stay with your child. Your voices go to OpenAI; nothing is recorded on LittleBot.' }),
+            live,
+            h('div', { class: 'divider mt-2' }),
+            h('div', { class: 'mt-1' }, wakeSwitch.el, wakeState))),
         h('section', { class: 'card' },
           h('div', { class: 'card-head' }, h('h2', {}, icon('camera'), 'Ask what LittleBot sees')),
           h('p', { class: 'muted', text: 'LittleBot takes one photo with its camera and sends it with your question to ChatGPT - only when you press the button, or when someone asks during live voice (for example “how many fingers am I holding up?”). The photo is kept in memory just long enough to send, never stored on LittleBot and never shown here; you only see the answer. Needs “Let the AI look through the camera when asked” on in Privacy (off by default).' }),
@@ -265,11 +277,32 @@ export default {
       schedule(300);
     }
 
+    const WAKE_RESULTS = { starting: 'starting live voice…', started: 'live voice started', connected: 'live voice started', blocked: 'live voice could not start', failed: 'live voice did not start' };
+    function renderWake(w) {
+      clear(wakeState);
+      if (!w) return;
+      wakeSwitch.set(w.enabled);
+      if (w.enabled && w.state === 'unavailable') {
+        wakeState.append(banner('info', 'info', w.model_missing ? 'The wake-word model is missing' : 'The wake word isn’t available', w.detail || ''));
+      } else if (w.enabled) {
+        wakeState.append(h('p', { class: `muted wake-state ${w.listening ? 'listening' : ''}` }, w.listening ? [icon('mic'), ' '] : null, w.detail || ''));
+      } else if (w.unavailable_detail) {
+        wakeState.append(h('p', { class: 'muted', text: `Not ready on this robot yet: ${w.unavailable_detail}` }));
+      }
+      const last = w.last_heard;
+      if (last && last.phrase) {
+        const ago = last.at ? ` ${fmtDuration(Date.now() / 1000 - last.at)} ago` : '';
+        const why = ['blocked', 'failed'].includes(last.result) && last.detail ? ` (${last.detail})` : '';
+        wakeState.append(h('p', { class: 'muted', text: `Last heard “${last.phrase}”${ago}: ${WAKE_RESULTS[last.result] || last.result}${why}.` }));
+      }
+    }
+
     function fillChatGPT(d) {
       const fast = Boolean(d.account?.pending || d.live?.active);
       renderAccount(d);
       renderLive(d);
       renderLook(d.look);
+      renderWake(d.wake);
       if (fast !== wasFast) { wasFast = fast; schedule(fast ? 1000 : 10000); }
     }
 

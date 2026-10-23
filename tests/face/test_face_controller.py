@@ -144,6 +144,27 @@ def test_speaking_responds_to_bus_events(controller, face_ctx):
     assert controller.animator.level < 0.05
 
 
+def test_mouth_shapes_from_bus_events_reach_the_animator(controller, face_ctx):
+    bus = face_ctx.bus
+    bus.publish(Topics.AUDIO_SPEECH_STARTED, {"text": "moon", "duration_estimate": 1.0})
+    for shape in ("closed", "oo", "ee", "ah"):
+        for _ in range(4):
+            bus.publish(Topics.AUDIO_VISEME, {"level": 0.8, "shape": shape})
+            controller.update(1 / 30)
+        assert controller.animator.mouth_shape == shape
+        assert controller.frame().mouth.shape == shape
+    m = controller.frame().mouth
+    assert m.open > 0.6  # "ah"
+    bus.publish(Topics.AUDIO_VISEME, {"level": 0.9, "shape": ["not", "a", "shape"]})  # ignored: level only
+    bus.publish(Topics.AUDIO_VISEME, {"level": 0.9})  # old-style event: shape guessed from loudness
+    controller.update(1 / 30)
+    assert controller.animator.mouth_shape == "ah"
+    bus.publish(Topics.AUDIO_SPEECH_FINISHED, {"text": "moon", "interrupted": False})
+    step(controller, 0.5)
+    m = controller.frame().mouth
+    assert m is not None and m.shape == "" and m.open < 0.05  # resting smile again
+
+
 def test_listening_responds_to_bus_events(controller, face_ctx):
     face_ctx.bus.publish(Topics.AUDIO_LISTENING_STARTED, {})
     assert controller.status()["listening"] is True

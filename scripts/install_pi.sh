@@ -26,6 +26,7 @@ WITH_DEV=0
 ALLOW_NON_PI=0
 NO_MODELS=0
 NO_LIVE=0
+NO_WAKE=0
 NO_AUDIO_DEFAULT=0
 
 usage() {
@@ -33,7 +34,8 @@ usage() {
 Usage: scripts/install_pi.sh [options]
 
 Installs system packages, creates .venv, installs LittleBot with the vision/audio/pi
-extras and the live extra (GPT-Live voice), creates data/ and config/local.yaml (from
+extras, the live extra (GPT-Live voice) and the wake word ("Hey LittleBot": Vosk + a small
+offline English model), creates data/ and config/local.yaml (from
 config/hardware.example.yaml) if absent.
 
 Options:
@@ -49,9 +51,12 @@ Options:
   --skip-apt           do not install system packages
   --no-chromium        do not install Chromium (YouTube player)
   --dev                also install test tools (pytest) to run the test-suite on the Pi
-  --no-models          do not download the YuNet face-detection model (scripts/download_models.py)
+  --no-models          do not download models (scripts/download_models.py): the YuNet face
+                       detector and the wake-word speech model
   --no-live            do not install live voice (the "live" extra: aiortc WebRTC, ~40 MB of
                        prebuilt wheels; docs/CHATGPT.md). Sign in with ChatGPT text works without it
+  --no-wake-word       do not install the wake word ("Hey LittleBot" starts live voice): the
+                       "local-stt" extra (Vosk, offline) and its 40 MB English model
   --no-audio-default   do not make the USB speaker / USB microphone the default sound devices
                        (scripts/set_default_speaker.sh; otherwise sound may go to the HDMI screen)
   --allow-non-pi       allow running on a non-Raspberry-Pi Debian system (testing)
@@ -72,6 +77,7 @@ while (($#)); do
         --dev) WITH_DEV=1 ;;
         --no-models) NO_MODELS=1 ;;
         --no-live) NO_LIVE=1 ;;
+        --no-wake-word) NO_WAKE=1 ;;
         --no-audio-default) NO_AUDIO_DEFAULT=1 ;;
         --allow-non-pi) ALLOW_NON_PI=1 ;;
         -h | --help) usage; exit 0 ;;
@@ -290,6 +296,11 @@ fi
 if ((NO_MODELS == 0)) && [[ -f "$REPO_DIR/scripts/download_models.py" ]]; then
     info "models: YuNet face detector via scripts/download_models.py (skipped if already verified)"
 fi
+if ((NO_WAKE)); then
+    info "wake word: skipped (--no-wake-word)"
+else
+    info "wake word: pip install -e \".[local-stt]\" (Vosk, offline, ~3 MB)$( ((NO_MODELS)) || echo ' + its English model (40 MB)'); a failure only warns"
+fi
 ((ENABLE_I2C)) && info "i2c: enable the I2C bus with raspi-config (servos remain disabled in config)"
 if ((NO_AUDIO_DEFAULT)); then
     info "audio default: skipped (--no-audio-default)"
@@ -390,6 +401,20 @@ if ((NO_MODELS == 0)) && [[ -f "$REPO_DIR/scripts/download_models.py" ]]; then
     step "Face-detection model"
     run "$VENV_DIR/bin/python" "$REPO_DIR/scripts/download_models.py" yunet \
         || warn "Model download failed (no internet?). Later: .venv/bin/python scripts/download_models.py"
+fi
+
+# Wake word ("Hey LittleBot" starts live voice, docs/CHATGPT.md): Vosk, an offline speech
+# recogniser (one prebuilt aarch64 wheel for every Python 3; its small helper "srt" is pure
+# Python) and its small English model, unpacked into models/vosk-model-small-en-us-0.15. Optional,
+# so its own step: a failure only warns and the AI page then says what is missing.
+if ((NO_WAKE == 0)); then
+    step "Wake word (offline speech recogniser)"
+    run "${PIP[@]}" install --prefer-binary --only-binary=vosk,cffi -e "${REPO_DIR}[local-stt]" \
+        || warn "The wake word could not be installed (no internet?). Later: .venv/bin/python -m pip install -e '.[local-stt]'"
+    if ((NO_MODELS == 0)) && [[ -f "$REPO_DIR/scripts/download_models.py" ]]; then
+        run "$VENV_DIR/bin/python" "$REPO_DIR/scripts/download_models.py" vosk-en \
+            || warn "Wake-word model download failed (no internet?). Later: .venv/bin/python scripts/download_models.py vosk-en"
+    fi
 fi
 
 # ---------------------------------------------------------------------------

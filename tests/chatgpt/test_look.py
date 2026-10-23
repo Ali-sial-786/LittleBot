@@ -79,7 +79,7 @@ async def test_look_sends_one_photo_and_answers(setup):
     out = await look.look("how many fingers am I holding?")
     assert out["ok"] is True and out["answer"] == "You are holding up three fingers."
     assert out["error"] is None and out["detail"] is None and isinstance(out["latency_ms"], int)
-    assert ctx.vision.photos == [{"max_width": 768, "quality": 80, "timeout": 3.0}]
+    assert ctx.vision.photos == [{"max_width": 640, "quality": 75, "timeout": 3.0}]
     (call,) = provider.calls
     assert call["images"] == [JPEG]
     assert call["messages"] == [{"role": "user", "content": "Look at this photo from your camera. how many fingers am I holding?"}]
@@ -313,3 +313,364 @@ async def test_endpoint_error_is_logged_with_status_and_code_only(setup, caplog)
     provider.error = ProviderTimeoutError("slow")
     await look.look("hi")
     assert "camera look: ChatGPT failed (timeout) [kind=" in caplog.text
+
+
+# --------------------------------------------------------------------------- speed-ups
+import json  # noqa: E402
+
+import httpx  # noqa: E402
+from chatgpt_helpers import signed_in_auth  # noqa: E402
+
+from littlebot.chatgpt import look as look_mod  # noqa: E402
+from littlebot.chatgpt.responses import ChatGPTProvider  # noqa: E402
+from littlebot.vision.hands import HandCount  # noqa: E402
+
+WARM = b"\xff\xd8\xff\xe0 warm photo"
+
+
+class FastProvider(ImageProvider):
+    """Takes the per-call options (as ChatGPTProvider does) and can stream its answer in pieces."""
+
+    def __init__(self, *pieces: str, **kw: Any) -> None:
+        super().__init__("".join(pieces) or "You are holding up three fingers.", **kw)
+        self.pieces = list(pieces) or [self.text]
+        self.options: list[dict[str, Any]] = []
+        self.first_seen_before_return: list[Any] = []
+
+    async def reply(self, messages, *, system, max_tokens, timeout, images=None, tools=None, run_tool=None,
+                    max_tool_rounds=6, detail=None, effort=None, on_delta=None) -> ProviderReply:
+        self.options.append({"detail": detail, "effort": effort, "streams": on_delta is not None})
+        for piece in self.pieces:
+            if on_delta is not None:
+                on_delta(piece)
+            await asyncio.sleep(0)
+        return await super().reply(messages, system=system, max_tokens=max_tokens, timeout=timeout, images=images)
+
+
+class WarmVision(FakeVision):
+    def __init__(self, *, age: float = 0.1, **kw: Any) -> None:
+        super().__init__(**kw)
+        self.age = age
+        self.warm: dict[str, Any] = {}
+        self.asked_ages: list[float] = []
+
+    def keep_photo_warm(self, owner, on=True, *, allowed=None, every=0.5, width=640, quality=75) -> None:
+        if on:
+            self.warm[owner] = {"allowed": allowed, "every": every, "width": width, "quality": quality}
+        else:
+            self.warm.pop(owner, None)
+
+    def latest_photo(self, max_age: float = 1.0):
+        self.asked_ages.append(max_age)
+        if not self.warm or self.age > max_age:
+            return None
+        return WARM, self.age
+
+
+class FakeCounter:
+    def __init__(self, result: HandCount) -> None:
+        self.result = result
+        self.photos: list[bytes] = []
+
+    def count_jpeg(self, jpeg: bytes) -> HandCount:
+        self.photos.append(jpeg)
+        return self.result
+
+
+@pytest.fixture
+def fast(ctx):
+    allow(ctx)
+    ctx.vision = WarmVision()
+    provider = FastProvider()
+    look = CameraLook(ctx, provider=provider)
+    events: list[Any] = []
+    ctx.bus.subscribe(Topics.VISION_PHOTO, events.append)
+    yield ctx, look, provider, events
+    look.keep_warm(False)
+
+
+async def test_a_warm_photo_is_used_without_waiting_for_the_camera(fast):
+    ctx, look, provider, events = fast
+    look.keep_warm(True)
+    spec = ctx.vision.warm["live"]
+    assert spec["every"] == look_mod.WARM_EVERY_S and spec["width"] == 640 and spec["quality"] == 75
+    assert spec["allowed"]() is True  # the consent switches are re-checked by the camera before each refresh
+    out = await look.look("what colour is my teddy?")
+    assert out["ok"] and ctx.vision.photos == []  # no new photo needed
+    assert provider.calls[0]["images"] == [WARM]
+    assert ctx.vision.asked_ages == [look_mod.WARM_MAX_AGE_S]
+    assert [e.data for e in events] == [{"asked_by": "parent"}]  # still visibly a photo
+    assert look.status()["photos_today"] == 1
+
+
+async def test_hands_need_a_very_fresh_warm_photo(fast):
+    ctx, look, provider, events = fast
+    look.keep_warm(True)
+    ctx.vision.age = 0.6  # fine for "what colour", too old for a hand that is still moving into place
+    await look.look("what am I holding?")
+    assert ctx.vision.asked_ages == [look_mod.WARM_MAX_AGE_HANDS_S]
+    assert len(ctx.vision.photos) == 1 and provider.calls[0]["images"] == [JPEG]  # took a new one
+
+
+async def test_no_warm_photo_unless_kept_warm_or_allowed(fast):
+    ctx, look, provider, events = fast
+    await look.look("what colour is it?")  # not kept warm: a new photo
+    assert len(ctx.vision.photos) == 1 and ctx.vision.asked_ages == []
+    look.keep_warm(True)
+    ctx.privacy.set(ai_camera_enabled=False)
+    assert ctx.vision.warm["live"]["allowed"]() is False  # the camera drops it on its next refresh
+    look.keep_warm(False)
+    assert ctx.vision.warm == {}
+
+
+async def test_keep_warm_opens_the_chatgpt_connection_and_stops_with_the_call(fast, monkeypatch):
+    ctx, look, provider, events = fast
+    warmed: list[int] = []
+
+    async def warm() -> bool:
+        warmed.append(1)
+        return True
+
+    provider.warm = warm  # type: ignore[attr-defined]
+    look.keep_warm(True)
+    await asyncio.sleep(0.05)
+    assert warmed == [1]
+    task = look._keep_alive
+    look.keep_warm(False)
+    await asyncio.sleep(0)
+    assert task is not None and task.cancelled() and look._keep_alive is None
+
+
+async def test_fingers_are_counted_on_the_robot_when_it_is_sure(fast, caplog):
+    ctx, look, provider, events = fast
+    counter = look._counter = FakeCounter(HandCount(3, 1, True, per_hand=(3,)))
+    firsts: list[str] = []
+    caplog.set_level(logging.INFO)
+    out = await look.look("How many fingers am I holding up?", on_first=firsts.append)
+    assert out["ok"] and out["answer"] == "I see three fingers held up!" and out["source"] == "robot"
+    assert firsts == [out["answer"]] and provider.calls == []  # instant, and the photo never left the robot
+    assert counter.photos == [JPEG] and [e.data for e in events] == [{"asked_by": "parent"}]
+    assert "no photo sent" in caplog.text and "photo sent to ChatGPT" not in caplog.text
+    look._counter = FakeCounter(HandCount(1, 1, True, per_hand=(1,)))
+    assert (await look.look("how many fingers?"))["answer"] == "I see one finger held up!"
+
+
+@pytest.mark.parametrize("count", [HandCount(0, 0, False, "no_hand"), HandCount(0, 1, False, "fist"),
+                                   HandCount(4, 1, False, "unclear_finger")])
+async def test_unsure_finger_counts_go_to_chatgpt_with_high_detail(fast, count):
+    ctx, look, provider, events = fast
+    look._counter = FakeCounter(count)
+    out = await look.look("how many fingers am I holding up?")
+    assert out["source"] == "chatgpt" and out["answer"] == "You are holding up three fingers."
+    assert provider.options == [{"detail": "high", "effort": look_mod.COUNT_EFFORT, "streams": True}]
+
+
+async def test_other_questions_never_use_the_counter(fast):
+    ctx, look, provider, events = fast
+    counter = look._counter = FakeCounter(HandCount(5, 1, True))
+    await look.look("how many toes and fingers does a cat have?")
+    await look.look("what colour is my hat?")
+    assert counter.photos == [] and len(provider.calls) == 2
+
+
+async def test_simple_questions_get_a_lighter_request(fast):
+    ctx, look, provider, events = fast
+    await look.look("what colour is my hat?")
+    await look.look("can you read this word?")
+    assert provider.options == [{"detail": "low", "effort": look_mod.LOOK_EFFORT, "streams": True},
+                                {"detail": "high", "effort": look_mod.COUNT_EFFORT, "streams": True}]
+
+
+async def test_a_plain_provider_gets_no_new_options(setup):
+    ctx, look, provider, events = setup  # ImageProvider.reply has no detail/effort/on_delta
+    firsts: list[str] = []
+    out = await look.look("what colour is my hat?", on_first=firsts.append)
+    assert out["ok"] and firsts == [] and out["first"] is None
+
+
+async def test_the_first_sentence_is_passed_on_while_the_rest_streams(ctx):
+    allow(ctx)
+    ctx.vision = FakeVision()
+    provider = FastProvider("A red ball! ", "It is on the green rug", " next to a teddy.")
+    look = CameraLook(ctx, provider=provider)
+    seen: list[tuple[str, int]] = []
+    out = await look.look("what is this?", on_first=lambda s: seen.append((s, len(provider.calls))))
+    assert seen == [("A red ball!", 0)]  # before the reply was complete
+    assert out["answer"] == "A red ball! It is on the green rug next to a teddy."
+    assert out["first"] == "A red ball!" and out["rest"] == "It is on the green rug next to a teddy."
+
+
+async def test_a_one_sentence_answer_is_passed_on_whole(ctx):
+    allow(ctx)
+    ctx.vision = FakeVision()
+    look = CameraLook(ctx, provider=FastProvider("You are holding up ", "two fingers."))
+    seen: list[str] = []
+    out = await look.look("how many fingers?", on_first=seen.append)
+    assert seen == ["You are holding up two fingers."] and out["rest"] is None
+
+
+async def test_a_streamed_sentence_that_breaks_the_rules_is_never_passed_on(ctx):
+    allow(ctx)
+    ctx.vision = FakeVision()
+    look = CameraLook(ctx, provider=FastProvider("I see a gun, bang bang kill! ", "And a teddy."))
+    seen: list[str] = []
+    out = await look.look("what is that?", on_first=seen.append)
+    assert seen == [] and out["answer"] == FALLBACK and out["first"] is None
+
+
+async def test_decimals_do_not_end_a_sentence_early(ctx):
+    allow(ctx)
+    ctx.vision = FakeVision()
+    look = CameraLook(ctx, provider=FastProvider("It is about 1.", "5 metres away. ", "Wow!"))
+    seen: list[str] = []
+    await look.look("how far is the ball?", on_first=seen.append)
+    assert seen == ["It is about 1.5 metres away."]
+
+
+async def test_timing_is_logged_without_content(fast, caplog):
+    ctx, look, provider, events = fast
+    caplog.set_level(logging.INFO)
+    await look.look("is my secret banana red?")
+    line = next(r.getMessage() for r in caplog.records if "camera look timing" in r.getMessage())
+    assert "photo=new" in line and "photo_ms=" in line and "chatgpt_ms=" in line and "first_token_ms=" in line
+    assert "detail=low" in line and "banana" not in caplog.text and "fake photo" not in caplog.text
+
+
+# --------------------------------------------------------------------------- the provider's per-call options
+def sse(*events: dict) -> str:
+    return "".join(f"event: {e['type']}\ndata: {json.dumps(e)}\n\n" for e in events)
+
+
+ANSWER = sse({"type": "response.output_text.delta", "delta": "Three "},
+             {"type": "response.output_text.delta", "delta": "fingers!"},
+             {"type": "response.completed", "response": {"usage": {"input_tokens": 9, "output_tokens": 3}}})
+
+
+def chatgpt(tmp_path, handler) -> ChatGPTProvider:
+    return ChatGPTProvider(signed_in_auth(tmp_path), models=["gpt-6-luna"], effort="low",
+                           transport=httpx.MockTransport(handler))
+
+
+async def test_provider_sends_detail_and_effort_and_streams_deltas(tmp_path):
+    bodies: list[dict[str, Any]] = []
+
+    def handler(r: httpx.Request) -> httpx.Response:
+        bodies.append(json.loads(r.content))
+        return httpx.Response(200, text=ANSWER)
+
+    p = chatgpt(tmp_path, handler)
+    deltas: list[str] = []
+    reply = await p.reply([{"role": "user", "content": "how many?"}], system="x", max_tokens=10, timeout=5,
+                          images=[JPEG], detail="low", effort="none", on_delta=deltas.append)
+    assert reply.text == "Three fingers!" and deltas == ["Three ", "fingers!"]
+    assert bodies[0]["reasoning"] == {"effort": "none"}
+    assert bodies[0]["input"][0]["content"][0]["detail"] == "low"
+    await p.reply([{"role": "user", "content": "hi"}], system="x", max_tokens=10, timeout=5, images=[JPEG])
+    assert bodies[1]["reasoning"] == {"effort": "low"} and bodies[1]["input"][0]["content"][0]["detail"] == "high"
+    await p.aclose()
+
+
+async def test_provider_falls_back_when_an_effort_is_refused_and_remembers(tmp_path):
+    efforts: list[str] = []
+
+    def handler(r: httpx.Request) -> httpx.Response:
+        effort = json.loads(r.content)["reasoning"]["effort"]
+        efforts.append(effort)
+        if effort in ("none", "minimal"):
+            return httpx.Response(400, json={"error": {
+                "message": f"Unsupported value: '{effort}' is not supported with this model.",
+                "type": "invalid_request_error", "param": "reasoning.effort", "code": "unsupported_value"}})
+        return httpx.Response(200, text=ANSWER)
+
+    p = chatgpt(tmp_path, handler)
+    reply = await p.reply([{"role": "user", "content": "hi"}], system="x", max_tokens=10, timeout=5, effort="none")
+    assert reply.text == "Three fingers!" and efforts == ["none", "minimal", "low"]
+    await p.reply([{"role": "user", "content": "hi"}], system="x", max_tokens=10, timeout=5, effort="none")
+    assert efforts[3:] == ["low"]  # remembered: no more refused requests
+    assert p.model == "gpt-6-luna"  # an effort refusal is not a missing model
+    await p.aclose()
+
+
+async def test_provider_effort_refusal_in_codex_detail_shape(tmp_path):
+    efforts: list[str] = []
+
+    def handler(r: httpx.Request) -> httpx.Response:
+        effort = json.loads(r.content)["reasoning"]["effort"]
+        efforts.append(effort)
+        if effort == "minimal":
+            return httpx.Response(400, json={"detail": "Reasoning effort 'minimal' is not supported for this model."})
+        return httpx.Response(200, text=ANSWER)
+
+    p = chatgpt(tmp_path, handler)
+    await p.reply([{"role": "user", "content": "hi"}], system="x", max_tokens=10, timeout=5, effort="minimal")
+    assert efforts == ["minimal", "low"]
+    await p.aclose()
+
+
+async def test_provider_gives_up_when_even_the_configured_effort_is_refused(tmp_path):
+    def handler(r: httpx.Request) -> httpx.Response:
+        return httpx.Response(400, json={"error": {"type": "invalid_request_error", "param": "reasoning.effort"}})
+
+    p = chatgpt(tmp_path, handler)
+    with pytest.raises(ProviderError) as e:
+        await p.reply([{"role": "user", "content": "hi"}], system="x", max_tokens=10, timeout=5, effort="none")
+    assert e.value.kind == "bad_request" and e.value.api_error["param"] == "reasoning.effort"
+    await p.aclose()
+
+
+async def test_provider_warm_opens_a_kept_alive_connection_without_signing_in(tmp_path):
+    seen: list[httpx.Request] = []
+
+    def handler(r: httpx.Request) -> httpx.Response:
+        seen.append(r)
+        return httpx.Response(405)
+
+    p = chatgpt(tmp_path, handler)
+    assert await p.warm() is True
+    (req,) = seen
+    assert req.method == "HEAD" and "authorization" not in req.headers and not req.content
+    assert p._get_client()._transport is not None  # one shared client: the connection is reused
+
+    def broken(r: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("offline")
+
+    assert await chatgpt(tmp_path, broken).warm() is False
+    await p.aclose()
+
+
+async def test_a_listener_bug_does_not_break_the_answer(tmp_path):
+    p = chatgpt(tmp_path, lambda r: httpx.Response(200, text=ANSWER))
+
+    def boom(_text: str) -> None:
+        raise RuntimeError("listener bug")
+
+    reply = await p.reply([{"role": "user", "content": "hi"}], system="x", max_tokens=10, timeout=5, on_delta=boom)
+    assert reply.text == "Three fingers!"
+    await p.aclose()
+
+
+async def test_provider_goes_back_to_the_configured_effort_after_an_unexplained_400(tmp_path):
+    efforts: list[str] = []
+
+    def handler(r: httpx.Request) -> httpx.Response:
+        effort = json.loads(r.content)["reasoning"]["effort"]
+        efforts.append(effort)
+        if effort != "low":
+            return httpx.Response(400, json={"detail": "Unsupported value."})  # doesn't say what
+        return httpx.Response(200, text=ANSWER)
+
+    p = chatgpt(tmp_path, handler)
+    reply = await p.reply([{"role": "user", "content": "hi"}], system="x", max_tokens=10, timeout=5, effort="none")
+    assert reply.text == "Three fingers!" and efforts == ["none", "low"]
+    await p.reply([{"role": "user", "content": "hi"}], system="x", max_tokens=10, timeout=5, effort="minimal")
+    assert efforts[2:] == ["low"]
+    await p.aclose()
+
+
+async def test_a_one_word_exclamation_waits_for_the_real_answer(ctx):
+    allow(ctx)
+    ctx.vision = FakeVision()
+    look = CameraLook(ctx, provider=FastProvider("Oh! ", "Three fingers! ", "Well done."))
+    seen: list[str] = []
+    out = await look.look("how many fingers?", on_first=seen.append)
+    assert seen == ["Oh! Three fingers!"] and out["rest"] == "Well done."

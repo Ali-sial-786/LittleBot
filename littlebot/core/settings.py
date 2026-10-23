@@ -40,6 +40,8 @@ def build_defaults(cfg: LittleBotConfig) -> dict[str, Any]:
         "audio.volume": cfg.audio.speaker.volume,
         "audio.tts_rate": cfg.audio.tts.rate,
         "audio.input_gain": cfg.audio.microphone.input_gain,
+        # wake word: "Hey LittleBot" starts live voice (heard on the robot, offline)
+        "wake.enabled": cfg.wake.enabled,
         # ai
         "ai.enabled": False,  # cloud conversation, parent must opt in
         "ai.provider": cfg.ai.provider,

@@ -1,6 +1,6 @@
-"""Sign in with ChatGPT, live voice and "ask what LittleBot sees". Tokens never leave the robot: only the
-masked e-mail, the plan name and the one-time sign-in code (which the parent types on OpenAI's page) are
-returned. Camera photos never reach the browser either - only the AI's answer text does."""
+"""Sign in with ChatGPT, live voice (and its wake word) and "ask what LittleBot sees". Tokens never leave the
+robot: only the masked e-mail, the plan name and the one-time sign-in code (which the parent types on OpenAI's
+page) are returned. Camera photos never reach the browser either - only the AI's answer text does."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from littlebot.chatgpt import get_auth
 from littlebot.chatgpt.auth import ChatGPTAuthError
 from littlebot.dashboard.deps import DashState, get_dash, log
-from littlebot.dashboard.models import LiveStartBody, LookBody
+from littlebot.dashboard.models import Body, LiveStartBody, LookBody
 
 router = APIRouter(prefix="/api/chatgpt", tags=["chatgpt"])
 
@@ -20,6 +20,27 @@ _LOOK_BLOCKED = {"offline", "cloud_off", "camera_off", "ai_camera_off", "not_sig
 _LOOK_UNAVAILABLE = {"enabled": False, "blocked": "unavailable",
                      "blocked_detail": "Looking through the camera isn't available on this robot yet.",
                      "photos_today": 0, "last_at": None}
+
+
+class WakeBody(Body):
+    # The parent's switch: saying "Hey LittleBot" / "Hey Bot" starts live voice.
+    enabled: bool
+
+
+def _wake_status(dash: DashState) -> dict[str, Any]:
+    """The wake word's status (``ctx.wake``); a stand-in when this robot doesn't run it."""
+    enabled = bool(dash.ctx.settings.get("wake.enabled", True))
+    fallback = {"enabled": enabled, "available": False, "listening": False, "state": "unavailable", "paused": None,
+                "detail": "The wake word isn't running on this robot.", "unavailable": "not_running",
+                "unavailable_detail": None, "model_missing": False, "phrases": [], "triggers": 0, "last_heard": None}
+    wake = getattr(dash.ctx, "wake", None)
+    if wake is None:
+        return fallback
+    try:
+        return wake.status()
+    except Exception:  # never break the AI page's poll
+        log.exception("wake word status failed")
+        return fallback
 
 
 def _camera_look(dash: DashState) -> Any:
@@ -62,6 +83,7 @@ def _view(dash: DashState) -> dict[str, Any]:
                     "ai_camera_enabled": bool(getattr(dash.ctx.privacy, "ai_camera_enabled", False)),
                     "offline_mode": dash.ctx.config.is_offline},
         "look": _look_status(dash),
+        "wake": _wake_status(dash),
     }
 
 
@@ -114,6 +136,14 @@ async def live_start(body: LiveStartBody, dash: DashState = Depends(get_dash)) -
 async def live_stop(dash: DashState = Depends(get_dash)) -> dict[str, Any]:
     live = dash.need("live")
     await live.stop_session("stopped by parent")
+    return {"ok": True, **_view(dash)}
+
+
+@router.put("/wake")
+async def set_wake(body: WakeBody, dash: DashState = Depends(get_dash)) -> dict[str, Any]:
+    """Turn the wake word on or off (heard on the robot; nothing is sent until live voice starts)."""
+    dash.ctx.settings.set("wake.enabled", body.enabled, source="dashboard")
+    log.info("wake word turned %s from the dashboard", "on" if body.enabled else "off")
     return {"ok": True, **_view(dash)}
 
 

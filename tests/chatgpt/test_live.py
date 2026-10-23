@@ -614,3 +614,147 @@ async def test_a_crashing_or_hanging_look_up_still_answers_the_voice(live, monke
     await wait_for(lambda: answers(server, "h2"), timeout=5)
     assert answers(server, "h2") == [wire.FAILED_RESULT]
     assert svc.status()["active"]
+
+
+# --------------------------------------------------------------------------- faster looks
+def partial(server: FakeOpenAI, text: str) -> None:
+    server.send({"type": "input_transcript.added", "item": {"text": text}})
+
+
+class StreamingLook(FakeLook):
+    """A look whose answer's first sentence arrives before the rest (as CameraLook streams it)."""
+
+    def __init__(self, first: str = "A red ball!", rest: str | None = "It is on the green rug.",
+                 delay: float = 0.6, **kw: Any) -> None:
+        super().__init__(answer=f"{first} {rest}" if rest else first, **kw)
+        self.first, self.rest, self.delay_rest = first, rest, delay
+        self.warm: list[tuple[bool, str]] = []
+
+    def keep_warm(self, on: bool, owner: str = "live") -> None:
+        self.warm.append((on, owner))
+
+    async def look(self, question: str, *, asked_by: str = "parent", on_first=None) -> dict[str, Any]:
+        self.asked.append((question, asked_by))
+        if on_first is not None:
+            on_first(self.first)
+        await asyncio.sleep(self.delay_rest)
+        return {"ok": True, "answer": self.answer, "error": None, "detail": None, "latency_ms": 5,
+                "source": "chatgpt", "first": self.first, "rest": self.rest}
+
+
+async def test_a_look_starts_while_the_person_is_still_talking(live, ctx, caplog):
+    pytest.importorskip("littlebot.chatgpt.look")
+    svc, server, _audio, provider, _alerts = live
+    look = ctx.extras["camera_look"] = FakeLook(delay=0.3)
+    caplog.set_level(logging.INFO)
+    await connect(svc, server)
+    for piece in ("How many ", "fingers ", "am"):
+        partial(server, piece)
+    await asyncio.sleep(0.3)
+    assert look.asked == []  # "how many fingers" waits for two more words (not "...does a cat have")
+    partial(server, " I holding")
+    await wait_for(lambda: look.asked)
+    assert look.asked == [("How many fingers am I holding", "live")]  # before the person even finished
+    hear(server, "How many fingers am I holding up?")
+    delegate(server, "p1", "Look: how many fingers is the person holding up?")
+    await wait_for(lambda: answers(server, "p1"))
+    assert answers(server, "p1") == ["You are holding up three fingers."]
+    await asyncio.sleep(1.2)
+    assert len(look.asked) == 1 and svc.status()["photos"] == 1 and provider.calls == []
+    assert notes(server) == []  # the hand-off got it: said once
+    assert "look triggered (from=partial) -> ok in" in caplog.text
+    assert "the partial look started" in caplog.text
+
+
+async def test_cumulative_partial_transcripts_work_too(live, ctx):
+    pytest.importorskip("littlebot.chatgpt.look")
+    svc, server, _audio, _provider, _alerts = live
+    look = ctx.extras["camera_look"] = FakeLook()
+    await connect(svc, server)
+    for text in ("what", "what colour", "what colour is this"):
+        partial(server, text)
+    await wait_for(lambda: look.asked)
+    assert look.asked == [("what colour is this", "live")]
+    await wait_for(lambda: notes(server))  # nobody handed it over: the voice is told
+    assert notes(server)[0].startswith("You just looked through your camera.")
+
+
+async def test_partial_words_that_are_not_about_seeing_take_no_photo(live, ctx):
+    pytest.importorskip("littlebot.chatgpt.look")
+    svc, server, _audio, _provider, _alerts = live
+    look = ctx.extras["camera_look"] = FakeLook()
+    await connect(svc, server)
+    for piece in ("How many ", "fingers ", "does a ", "cat have?"):
+        partial(server, piece)
+    hear(server, "How many fingers does a cat have?")
+    partial(server, "see you ")
+    partial(server, "later")
+    await asyncio.sleep(0.5)
+    assert look.asked == []
+
+
+async def test_the_first_sentence_answers_the_hand_off_and_the_rest_follows(live, ctx):
+    pytest.importorskip("littlebot.chatgpt.look")
+    svc, server, _audio, _provider, _alerts = live
+    look = ctx.extras["camera_look"] = StreamingLook(delay=0.8)
+    await connect(svc, server)
+    delegate(server, "f1", "Look: what is the person holding?")
+    await wait_for(lambda: answers(server, "f1"), timeout=0.7)  # well before the whole answer
+    assert answers(server, "f1") == ["A red ball!"]
+    await wait_for(lambda: notes(server))
+    assert notes(server) == ["More of what your camera saw: It is on the green rug."]
+    assert len(look.asked) == 1
+
+
+async def test_a_one_sentence_answer_has_no_follow_up(live, ctx):
+    pytest.importorskip("littlebot.chatgpt.look")
+    svc, server, _audio, _provider, _alerts = live
+    look = ctx.extras["camera_look"] = StreamingLook(first="Three fingers!", rest=None, delay=0.2)
+    await connect(svc, server)
+    delegate(server, "f2", "Look: how many fingers?")
+    await wait_for(lambda: answers(server, "f2"))
+    await asyncio.sleep(0.6)
+    assert answers(server, "f2") == ["Three fingers!"] and notes(server) == [] and look.asked
+
+
+async def test_the_camera_is_kept_warm_only_during_the_call(live, ctx):
+    pytest.importorskip("littlebot.chatgpt.look")
+    svc, server, _audio, _provider, _alerts = live
+    look = ctx.extras["camera_look"] = StreamingLook()
+    await connect(svc, server)
+    assert look.warm == [(True, "live_voice")]
+    await svc.stop_session()
+    assert look.warm == [(True, "live_voice"), (False, "live_voice")]
+
+
+async def test_a_robot_counted_answer_is_captioned_as_such(live, ctx):
+    pytest.importorskip("littlebot.chatgpt.look")
+    svc, server, _audio, _provider, _alerts = live
+
+    class CountingLook(FakeLook):
+        async def look(self, question: str, *, asked_by: str = "parent", on_first=None) -> dict[str, Any]:
+            self.asked.append((question, asked_by))
+            if on_first is not None:
+                on_first("I see two fingers held up!")
+            return {"ok": True, "answer": "I see two fingers held up!", "error": None, "detail": None,
+                    "latency_ms": 90, "source": "robot", "first": "I see two fingers held up!", "rest": None}
+
+    ctx.extras["camera_look"] = CountingLook()
+    await connect(svc, server)
+    delegate(server, "r1", "Look: how many fingers?")
+    await wait_for(lambda: answers(server, "r1"))
+    assert answers(server, "r1") == ["I see two fingers held up!"]
+    assert "Camera answer (counted on the robot; the photo was not sent): I see two fingers held up!" \
+        in note_captions(svc)
+
+
+def test_seeing_words_while_still_talking():
+    from littlebot.chatgpt.live import asks_to_see
+
+    for text in ("how many fingers am I", "how many fingers do you see", "what am I holding", "can you see me",
+                 "look at this", "what colour is this", "How many fingers is daddy holding"):
+        assert asks_to_see(text, partial=True), text
+    for text in ("how many fingers", "how many fingers am", "how many fingers does", "how many fingers does a",
+                 "how many fingers do you", "see you later", "I like to look up"):
+        assert not asks_to_see(text, partial=True), text
+    assert asks_to_see("how many fingers")  # a finished sentence that says just that is a clear ask

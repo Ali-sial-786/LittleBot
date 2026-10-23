@@ -19,7 +19,13 @@ Safety, enforced here in code (docs/AI_SAFETY.md, "Live voice"):
 * what the person says is checked with ``classify_child_input``; a worrying category alerts the
   parent (category only, never the words);
 * look-ups the voice hands over (delegations) are answered by the ChatGPT text model with
-  LittleBot's child-safe prompt and validated before the voice is given them;
+  LittleBot's child-safe prompt and validated before the voice is given them; with
+  ``chatgpt.tools_enabled`` that model may also act on the robot (volume, videos, activities, games,
+  sleep, its own status: littlebot/chatgpt/tools.py). A video, an activity or sleep starts only after
+  the voice has said its line; the call then ends ("handed over"), as they need the speaker and screen;
+* every hand-off is answered within ``HANDOFF_INTERIM_S`` (5 s): if the answer isn't ready, the voice
+  is told to say it's thinking, and the answer follows as a note when it comes (at most
+  ``HANDOFF_TIMEOUT_S`` in all, else a short "that didn't work" note);
 * a photo is taken only for a question that needs it (the voice's hand-off, or the person's own
   words when the voice doesn't hand it over), only if the parent allows it in Privacy, and at
   most one per question; when looking isn't allowed the voice is told why instead of guessing;
@@ -88,6 +94,7 @@ USER_WANTS_LOOK = re.compile(r"\b(?:" + "|".join((
 )) + r")")
 LOOK_REUSE_S = 8.0  # a look this recent answers the same question again: one photo per question
 NOTE_GRACE_S = 1.0  # a hand-off on its way gets a look's answer instead of a note, so the voice hears it once
+PARTIAL_MAX_CHARS = 300  # what the person is still saying, kept to start a look before they finish
 CANT_SEE = "You couldn't look. Say you can't see right now, and suggest the grown-up shows you again later; " \
            "don't guess what is there."
 # Why LittleBot can't look (CameraLook.blocked_reason), with the words for the voice to use. The wording
@@ -132,7 +139,19 @@ GOODBYE_QUIET_S = 0.8
 GOODBYE_MAX_S = 10.0
 FIRST_WORDS_MIN_S = 30.0
 MAX_CAPTIONS = 8
-HANDOFF_TIMEOUT_S = 25.0  # a hand-off the voice waits on always gets an answer within this
+HANDOFF_INTERIM_S = 5.0  # no answer yet: the voice is told to say it's thinking (the answer follows as a note)
+HANDOFF_TIMEOUT_S = 25.0  # a hand-off the voice waits on always gets an answer (or a "didn't work" note) within this
+HANDOVER_MAX_S = 15.0  # a video / activity / sleep was promised: the call ends this long after, at the latest
+HANDOVER_REASON = "handed over to what was asked for"
+STILL_WORKING = ("LittleBot is still working on that. Say, in a few words, that you're thinking about it and will "
+                 "tell them in a moment, then wait: the answer comes next.")
+LATE_ANSWER = "Here is the answer to what they asked a moment ago: {answer} Tell them now, in your own words."
+LATE_FAILED = "What they asked a moment ago didn't work out. Say you are not sure, and suggest asking a grown-up."
+# Hand-offs that ask LittleBot to do something with the robot or the app, not to make a face or to look
+# ("start the peekaboo activity", "show me a video of a dog", "go to sleep"): LittleBot's tools answer them.
+CONTROL_WORDS = re.compile(r"\b(?:activit(?:y|ies)|games?|videos?|youtube|cartoons?|volume|louder|quieter|"
+                           r"(?:go(?:es|ing)?|went|put \w+) to (?:sleep|bed)|wake (?:up|\w+ up)|temperature|"
+                           r"how hot|cpu|memory|wi-?fi|stop everything)\b", re.I)
 CHECK_WINDOW = 320  # characters of a reply in progress checked at a time
 NOT_SURE = "Say you are not sure, and suggest asking a grown-up."
 
@@ -177,7 +196,7 @@ Off-limits:
 - Never ask for or repeat personal information: names, address, school, phone numbers, passwords.
 - Nothing scary, violent, rude or grown-up. No medical, health, feeding, sleep or development advice; \
 suggest asking a doctor instead.
-- No buying things, brands, ads, apps, websites or searching online.
+- No buying things, brands, ads, apps or websites.
 - Never suggest anything risky: climbing, water, small objects, heat, sharp things, medicine, going outside alone, strangers.
 - If anyone might be hurt or in danger, say: "Let's get a grown-up right now."
 
@@ -192,12 +211,28 @@ to make a face, wink, spin your eyes or play peekaboo, delegate it to the client
 You have a camera, but you only see when the client looks for you. When someone asks what you see, shows you \
 something, or asks how many fingers they are holding up, what colour something is, or similar, delegate it to the \
 client with the word "look" and their question, wait, then say the answer. Never pretend to see without that. \
-If the client tells you what your camera just saw, or why you can't see, tell them that."""
+If the client tells you what your camera just saw, or why you can't see, tell them that.
+
+The client can also control you and your app. When someone asks you to change the volume, put on a video or a \
+song video, start one of your activities (songs, stories, peekaboo and more), play a game on your screen, go to \
+sleep or wake up, stop everything, or asks about yourself (how hot you are, your memory, your Wi-Fi, what is \
+connected, what you can do), delegate it to the client in plain words, for example "turn the volume up", "play a \
+baby shark song video", "start the peekaboo activity", "play a game", "go to sleep", "how hot is the robot", \
+"what can the robot do". Wait, then say what the client tells you, briefly. A video, an activity or going to sleep \
+starts after you finish speaking, and then this voice chat ends: say a short goodbye. If the client says it is \
+still working on something, say you are thinking and wait; the answer comes soon. Never say the words YouTube, \
+search, online, internet, website, app or link: say "video", "find" or "Wi-Fi" instead."""
 
 LOOKUP_NOTE = """
 You are answering a question that LittleBot's voice will say out loud to a family with a very young child; \
 a grown-up may have asked it. Answer in one or two short, plain sentences (at most 40 words). \
 If it needs current facts you don't have, say you're not sure."""
+
+LIVE_TOOLS_NOTE = """
+The hand-off may also ask LittleBot to do something (the volume, a video, an activity, a game, sleep) or ask about \
+LittleBot itself (how hot it is, its memory, Wi-Fi, what it can do): use your tools for that, then answer with one \
+short sentence for the voice to say."""
+HANDOVER_WHAT = {"video": "the video starts", "activity": "the activity starts", "sleep": "LittleBot goes to sleep"}
 
 
 def aiortc_error() -> str | None:
@@ -372,6 +407,9 @@ class LiveVoiceService(Service):
             if self._call is call:
                 self._call = None
             self.last_call = call.summary()
+        done = await call.run_handover()  # the speaker, microphone, lease and state are given back by now
+        if done and self.last_call is not None:
+            self.last_call["handed_over"] = done
 
     async def stop_session(self, reason: str = "stopped by parent") -> dict[str, Any]:
         call, task = self._call, self._task
@@ -419,11 +457,18 @@ class LiveCall:
         self.voice: str | None = None
         self.photos = 0
         self._look_job: _LookJob | None = None
+        self._heard_partial = ""  # what the person is saying right now (before the final transcript)
         self._user_turns = 0  # final things the person said; a look is shared only within one of them
         self._told_blocked: set[str] = set()
         self._recent_face: tuple[str, float] | None = None  # (name, when) the latest face played
         self._voice_face_this_turn = False
         self._seen_types: set[str] = set()
+        # A video / activity / sleep the tools queued (RobotToolbox): runs once the voice said its line.
+        self._handover: Any = None
+        self._handover_at: float | None = None  # when the voice was given the answer that promised it
+        self._handover_spoke = False
+        self._handover_was_quiet = False
+        self._handover_quiet_since: float | None = None
 
     # ------------------------------------------------------------ views
     def snapshot(self) -> dict[str, Any]:
@@ -472,6 +517,7 @@ class LiveCall:
     # ------------------------------------------------------------ run
     async def run(self) -> None:
         try:
+            self._warm_camera(True)  # while connecting: the camera keeps a photo ready, ChatGPT's line opens
             await self._connect()
             if not self._ended.is_set():
                 await self._watch()
@@ -616,7 +662,10 @@ class LiveCall:
         elif isinstance(event, wire.UserText):
             self._last_activity = now
             self._heard_user = True
-            if event.final:
+            if not event.final:
+                self._look_if_asked_early(event.text)  # words still coming: look as soon as they clearly ask
+            else:
+                self._heard_partial = ""
                 self._caption("heard", event.text)
                 if event.text.strip():
                     self._user_turns += 1
@@ -627,7 +676,8 @@ class LiveCall:
                                                         "detail": concern.category})
                 # The person's own words: only when clearly about the face, so everyday talk
                 # ("that makes me sad", "give me a hug") doesn't change it.
-                action = _face_request(event.text) if USER_FACE_CUE.search(event.text) else None
+                action = _face_request(event.text) if USER_FACE_CUE.search(event.text) \
+                    and not self._is_control(event.text) else None  # "start the peekaboo activity": tools
                 if action is None:
                     self._look_if_asked(event.text)
                 elif self._play_face(action, "user"):
@@ -659,7 +709,7 @@ class LiveCall:
             text = text[cut + 2:] if cut >= 0 else text[-CHECK_WINDOW:]
         if not text.strip(" .!?,"):
             return
-        result = validate_reply(text, max_words=10_000)
+        result = validate_reply(text, max_words=10_000, allow=self.ctx.config.ai.relaxed_rules)
         if result.blocked:
             rules = [r for r in result.reasons if r in BLOCK_RULES or r == "grownup_redirect"]
             category = rules[0] if rules else "safety"
@@ -678,8 +728,9 @@ class LiveCall:
             if not question:
                 heard = [c["text"] for c in self._captions if c["who"] == "heard"]
                 question = heard[-1] if heard else ""
-            action = _face_request(question)
-            kind = ("face" if action is not None else "empty" if not question
+            control = self._is_control(question)  # "start the peekaboo activity", "show me a video": tools
+            action = None if control else _face_request(question)
+            kind = ("face" if action is not None else "empty" if not question else "control" if control
                     else "look" if self._needs_camera(question) else "lookup")
             log.info("live voice: hand-off received (kind=%s)", kind)
             if action is not None:
@@ -689,29 +740,136 @@ class LiveCall:
                 self._play_face(action, "delegation")
                 return
             if kind == "empty":
-                work = None
-            elif kind == "look":
+                self._send_result(d.id, wire.NO_INPUT_RESULT)
+                return
+            if kind == "look":
                 work = self._look_for_voice(question)
             else:
-                work = self._look_up(sanitize_user_text(question, max_chars=600))
-            # The voice waits silently for every hand-off until it gets an answer, so it always gets one.
-            try:
-                text = wire.NO_INPUT_RESULT if work is None else await asyncio.wait_for(work, HANDOFF_TIMEOUT_S)
-            except asyncio.TimeoutError:
-                log.warning("live voice: hand-off took too long (kind=%s); answered anyway", kind)
-                text = wire.FAILED_RESULT
-            except Exception:  # noqa: BLE001
-                log.warning("live voice: hand-off failed (kind=%s); answered anyway", kind, exc_info=True)
-                text = wire.FAILED_RESULT
-            self._send_result(d.id, text)
+                work = self._ask_robot(sanitize_user_text(question, max_chars=600))
+            await self._deliver(d.id, self._spawn(work), kind)
         finally:
             self._delegations -= 1
             self._last_activity = self.svc._now()
+
+    async def _deliver(self, delegation_id: str, task: "asyncio.Task[str]", kind: str) -> None:
+        """Answer a hand-off. The voice waits silently until a hand-off is answered, so: the answer if
+        it's ready within HANDOFF_INTERIM_S; else "say you're thinking" right away, and the answer
+        follows as a note when it comes (HANDOFF_TIMEOUT_S in all, else a short "didn't work" note)."""
+        first = min(HANDOFF_INTERIM_S, HANDOFF_TIMEOUT_S)
+        try:
+            text = await asyncio.wait_for(asyncio.shield(task), first)
+        except asyncio.TimeoutError:
+            if task.done() or first >= HANDOFF_TIMEOUT_S:
+                task.cancel()
+                log.warning("live voice: hand-off took too long (kind=%s); answered anyway", kind)
+                self._send_result(delegation_id, wire.FAILED_RESULT)
+                return
+            log.info("live voice: hand-off not ready after %.0f s (kind=%s); the voice was told to wait", first, kind)
+            self._send_result(delegation_id, STILL_WORKING)
+            try:
+                text = await asyncio.wait_for(task, HANDOFF_TIMEOUT_S - first)
+            except asyncio.TimeoutError:
+                log.warning("live voice: hand-off took too long (kind=%s); the voice was told", kind)
+                self._note(LATE_FAILED)
+                return
+            except Exception:  # noqa: BLE001
+                log.warning("live voice: hand-off failed (kind=%s); the voice was told", kind, exc_info=True)
+                self._note(LATE_FAILED)
+                return
+            self._note(LATE_ANSWER.format(answer=text))
+            self._arm_handover()
+            return
+        except Exception:  # noqa: BLE001
+            log.warning("live voice: hand-off failed (kind=%s); answered anyway", kind, exc_info=True)
+            text = wire.FAILED_RESULT
+        self._send_result(delegation_id, text)
+        self._arm_handover()
 
     def _send_result(self, delegation_id: str, text: str) -> None:
         if not self._ended.is_set() and self.channel is not None and self.channel.readyState == "open":
             for frame in wire.result_frames(delegation_id, text):
                 self.channel.send(frame)
+
+    # ------------------------------------------------------------ tools (littlebot/chatgpt/tools.py)
+    def _tools_on(self) -> bool:
+        return bool(self.cfg.tools_enabled and getattr(self.svc.provider(), "supports_tools", False))
+
+    def _is_control(self, text: str) -> bool:
+        """A hand-off (or the person's words) asking LittleBot to do something with the robot / app."""
+        return bool(text and CONTROL_WORDS.search(text)) and self._tools_on()
+
+    async def _ask_robot(self, question: str) -> str:
+        """A hand-off for the text model, which may also act on the robot with LittleBot's tools
+        (volume, videos, activities, games, sleep, its own status). Without tools: ``_look_up``."""
+        if not self._tools_on():
+            return await self._look_up(question)
+        from littlebot.brain.face_actions import extract_tags  # noqa: PLC0415
+        from littlebot.chatgpt.tools import RobotToolbox  # noqa: PLC0415
+
+        box = RobotToolbox(self.ctx, mode="live", defer=True)
+        policy = self.ctx.age_policy()
+        system = build_system_prompt(robot_name=self.ctx.config.robot_name, age_months=policy.age_months,
+                                     max_words=40, tools=True) + LOOKUP_NOTE + LIVE_TOOLS_NOTE
+        history = []
+        for c in [c for c in self._captions if c["who"] != "note"][-6:]:
+            history.append({"role": "user" if c["who"] == "heard" else "assistant", "content": c["text"]})
+        while history and history[0]["role"] != "user":
+            history.pop(0)
+        answer, failed = None, False
+        try:
+            reply = await self.svc.provider().reply(
+                history + [{"role": "user", "content": question}], system=system, max_tokens=200, timeout=15.0,
+                tools=box.specs(), run_tool=box.run, max_tool_rounds=self.cfg.max_tool_rounds)
+            text, _ = extract_tags(reply.text)  # a stray [face: ...] tag must never be read out
+            checked = validate_reply(text, max_words=40, allow=self.ctx.config.ai.relaxed_rules)
+            answer = checked.text if checked.ok and text.strip() else None
+        except (ProviderError, asyncio.TimeoutError):
+            failed = True
+        if box.calls:
+            log.info("live voice: tools used: %s", ",".join(box.calls))
+        if not answer and box.done:  # the words didn't pass, but something was done: say that much
+            answer = f"Done: {'; '.join(box.done[:3])}. Tell them in a few words."
+        if box.pending:
+            self._handover = box  # runs once the voice has said this (the newest request wins)
+            label = box.pending[-1].label.split(" ", 1)[0]
+            answer = (answer or "Done.") + (f" After you say this, this voice chat ends and "
+                                            f"{HANDOVER_WHAT.get(label, 'it starts')}, so finish with a short goodbye.")
+        return answer or (wire.FAILED_RESULT if failed else NOT_SURE)
+
+    def _arm_handover(self) -> None:
+        """The voice was just given the answer that promised a video / activity / sleep: end the call
+        once it has said it (``_handover_due``), then ``run_handover`` starts it."""
+        box = self._handover
+        if box is None or not box.pending or self._handover_at is not None or self._ended.is_set():
+            return
+        self._handover_at = self.svc._now()
+        self._handover_spoke = False
+        self._handover_was_quiet = not bool(getattr(self.audio, "speaking", False))
+        self._handover_quiet_since = None
+        self.detail = "Saying goodbye: what was asked for starts next."
+        log.info("live voice: hand-over armed (%s)", box.pending[-1].label.split(" ", 1)[0])
+
+    def _handover_due(self, now: float, speaking: bool) -> bool:
+        """The voice has spoken (and gone quiet) since the hand-over was armed, or it has been long enough."""
+        assert self._handover_at is not None
+        if speaking:
+            self._handover_spoke = self._handover_spoke or self._handover_was_quiet
+            self._handover_quiet_since = None
+        else:
+            self._handover_was_quiet = True
+            self._handover_quiet_since = self._handover_quiet_since or now
+        if self._handover_spoke and self._handover_quiet_since is not None \
+                and now - self._handover_quiet_since >= GOODBYE_QUIET_S:
+            return True
+        return now - self._handover_at >= HANDOVER_MAX_S
+
+    async def run_handover(self) -> list[str]:
+        """After the call: start what the voice promised, unless the call ended for another reason."""
+        box, self._handover = self._handover, None
+        promised = self._handover_at is not None and self.end_reason == "time limit reached"
+        if box is None or not (self.end_reason == HANDOVER_REASON or promised):
+            return []
+        return await box.run_pending()
 
     def _play_face(self, action: Any, source: str) -> bool:
         """Play a face now, unless the same one just played (words and a hand-off often both ask)."""
@@ -753,17 +911,26 @@ class LiveCall:
         return bool(LOOK_WORDS.search(question) or asks_to_see(question))  # else the text model answers
 
     async def _look_for_voice(self, question: str) -> str:
-        """A seeing hand-off: use the look already taken for this question, else take one."""
+        """A seeing hand-off: use the look already taken for this question, else take one.
+
+        Answers as soon as the camera answer's first sentence is ready; any rest follows as a note."""
+        t0 = self.svc._now()
         job = self._shared_look()
         if job is not None:
             job.claimed = True
-            log.info("live voice: look shared (from=delegation)")
+            log.info("live voice: look shared (from=delegation; the %s look started %d ms earlier)", job.source,
+                     int((t0 - job.started) * 1000))
         else:
-            job = self._start_look(question, by_user=False)
-        await asyncio.shield(job.task)
+            job = self._start_look(question, source="delegation")
+        await asyncio.shield(job.progress.wait())
         if job.blocked:
             self._told_blocked.add(job.blocked)
-        return job.text
+        text, more = job.for_voice()
+        if more:
+            self._spawn(self._tell_rest(job))
+        log.info("live voice: hand-off answered %d ms after it arrived (%s)", int((self.svc._now() - t0) * 1000),
+                 "first sentence" if more else job.outcome)
+        return text
 
     def _shared_look(self) -> "_LookJob | None":
         job = self._look_job
@@ -774,19 +941,32 @@ class LiveCall:
         fresh = self.svc._now() - job.ended < LOOK_REUSE_S
         return job if job.by_user and not job.claimed and job.turn == self._user_turns and fresh else None
 
-    def _look_if_asked(self, text: str) -> None:
-        """The person asked LittleBot to look: look even if the voice doesn't hand the question over."""
-        if not asks_to_see(text):
+    def _look_if_asked(self, text: str, *, partial: bool = False) -> None:
+        """The person asked LittleBot to look: look even if the voice doesn't hand the question over.
+
+        ``partial``: they are still talking ("how many fingers am I ..."): the look starts right away,
+        well before the voice hands the question over, and is shared with that hand-off."""
+        if not asks_to_see(text, partial=partial):
             return
         job = self._look_job
         if job is not None and (job.ended is None or self.svc._now() - job.ended < LOOK_REUSE_S):
             return  # a look for this question is under way or just happened
         if self._camera() is None:
             return
-        self._spawn(self._tell_voice(self._start_look(text, by_user=True)))
+        self._spawn(self._tell_voice(self._start_look(text, source="partial" if partial else "user")))
 
-    def _start_look(self, question: str, *, by_user: bool) -> "_LookJob":
-        job = self._look_job = _LookJob(started=self.svc._now(), by_user=by_user, turn=self._user_turns)
+    def _look_if_asked_early(self, text: str) -> None:
+        """A piece of what the person is saying (``input_transcript.added``): look once the words ask to."""
+        prev = self._heard_partial
+        self._heard_partial = (text if prev and text.startswith(prev) else prev + text)[-PARTIAL_MAX_CHARS:]
+        if not self._ended.is_set():
+            self._look_if_asked(self._heard_partial, partial=True)
+
+    def _start_look(self, question: str, *, source: str) -> "_LookJob":
+        # a look started while the person is still talking belongs to the turn their words will end
+        turn = self._user_turns + (1 if source == "partial" else 0)
+        job = self._look_job = _LookJob(started=self.svc._now(), by_user=source != "delegation", turn=turn,
+                                        source=source)
         job.task = self._spawn(self._run_look(job, question))
         return job
 
@@ -797,24 +977,46 @@ class LiveCall:
             log.warning("live voice: looking failed", exc_info=True)
         finally:
             job.ended = self.svc._now()
-            log.info("live voice: look triggered (from=%s) -> %s", "user" if job.by_user else "delegation",
-                     job.outcome)
+            job.progress.set()
+            log.info("live voice: look triggered (from=%s) -> %s in %d ms", job.source, job.outcome,
+                     int((job.ended - job.started) * 1000))
 
     async def _tell_voice(self, job: "_LookJob") -> None:
         """After a look the person asked for in their own words: tell the voice, unless it asked itself."""
-        await asyncio.shield(job.task)
+        await asyncio.shield(job.progress.wait())  # the answer's first sentence, or the whole look
         wait = NOTE_GRACE_S - (self.svc._now() - job.started)
         if wait > 0:
             await asyncio.sleep(wait)
         if job.claimed or self._ended.is_set():
             return  # the hand-off got the answer
-        if job.ok:
-            self._note(f"You just looked through your camera. {job.text} Tell them what you saw.")
+        text, more = job.for_voice()
+        if job.ok or more:
+            self._note(f"You just looked through your camera. {text} Tell them what you saw.")
+            if more:
+                self._spawn(self._tell_rest(job))
         elif job.blocked is None or job.blocked not in self._told_blocked:
             if job.blocked:
                 self._told_blocked.add(job.blocked)  # say why once per call, not on every "look at me!"
             self._note(f"They asked you to look. {job.text}")
         self._last_activity = self.svc._now()
+
+    async def _tell_rest(self, job: "_LookJob") -> None:
+        """The rest of a camera answer whose first sentence the voice already has (once, if there is any)."""
+        await asyncio.shield(job.task)
+        if job.rest_told or not job.ok or not job.rest or self._ended.is_set():
+            return
+        job.rest_told = True
+        self._note(f"More of what your camera saw: {job.rest}")
+
+    def _warm_camera(self, on: bool) -> None:
+        """During the call the camera keeps a photo ready and ChatGPT's connection stays open (if allowed)."""
+        try:
+            look = self._camera()
+            keep = getattr(look, "keep_warm", None)
+            if keep is not None:
+                keep(on, owner=OWNER)
+        except Exception:  # noqa: BLE001 - getting ready must never stop the call
+            log.debug("live voice: keeping the camera warm failed", exc_info=True)
 
     async def _look(self, job: "_LookJob", question: str) -> None:
         """One photo, answered by the ChatGPT text model (validated there); never kept.
@@ -830,13 +1032,15 @@ class LiveCall:
             self._caption("note", f"No photo taken: {_look_note(reason)}")
             job.text, job.blocked, job.outcome = CANT_LOOK.get(reason, CANT_SEE), reason, f"blocked:{reason}"
             return
-        self._caption("note", "LittleBot is taking a photo to answer (sent to ChatGPT, not kept)")
-        result = await look.look(question, asked_by="live")
+        self._caption("note", "LittleBot is taking a photo to answer (not kept)")
+        result = await _ask_camera(look, question, job)
         answer = str(result.get("answer") or "").strip()
         if result.get("ok") and answer:
             self.photos += 1
             job.ok, job.text, job.outcome = True, answer, "ok"
-            self._caption("note", f"Camera answer: {answer}")  # the parent sees what the camera said
+            job.rest = (str(result.get("rest") or "").strip() or None) if job.first is not None else None
+            where = " (counted on the robot; the photo was not sent)" if result.get("source") == "robot" else ""
+            self._caption("note", f"Camera answer{where}: {answer}")  # the parent sees what the camera said
             return
         code = job.outcome = str(result.get("error") or "no_answer")[:40]
         self._caption("note", f"Looking didn't work: {result.get('detail') or _look_note(code)}")
@@ -864,14 +1068,15 @@ class LiveCall:
         from littlebot.brain.face_actions import extract_tags  # noqa: PLC0415
 
         text, _ = extract_tags(reply.text)  # a stray [face: ...] tag must never be read out
-        checked = validate_reply(text, max_words=40)
+        checked = validate_reply(text, max_words=40, allow=self.ctx.config.ai.relaxed_rules)
         return checked.text if checked.ok and text.strip() else NOT_SURE
 
     # ------------------------------------------------------------ watch
     async def _watch(self) -> None:
         limit = self.cfg.live_session_minutes * 60
         idle = self.cfg.live_idle_hangup_seconds
-        last_level = -1.0
+        last_mouth: tuple[float, str] | None = None
+        mouth_sent = 0.0
         while not self._ended.is_set():
             now = self.svc._now()
             speaking = bool(self.audio.speaking)
@@ -882,10 +1087,13 @@ class LiveCall:
                 self.phase = phase
                 self._set_state({"speaking": RobotState.SPEAKING, "thinking": RobotState.THINKING}.get(
                     phase, RobotState.LISTENING))
-            level = round(min(1.0, float(self.audio.level) * 8.0), 2) if speaking else 0.0
-            if level != last_level:
-                last_level = level
-                self._publish(Topics.AUDIO_VISEME, {"level": level})
+            mouth = getattr(self.audio, "mouth", None) if speaking else (0.0, "closed")  # (level, shape) heard now
+            if mouth is None:  # an audio object without lip-sync: loudness only
+                mouth = (min(1.0, float(self.audio.level) * 8.0), "")
+            mouth = (round(float(mouth[0]), 2), str(mouth[1]))
+            if mouth != last_mouth or (speaking and now - mouth_sent >= 0.15):  # re-send a steady sound
+                last_mouth, mouth_sent = mouth, now
+                self._publish(Topics.AUDIO_VISEME, {"level": mouth[0], **({"shape": mouth[1]} if mouth[1] else {})})
             state = getattr(self.pc, "connectionState", "new")
             if state in ("failed", "closed"):
                 self.error = "The connection to ChatGPT was lost."
@@ -903,6 +1111,9 @@ class LiveCall:
                 if said_it or now - self._goodbye_at >= GOODBYE_MAX_S:
                     self.end("time limit reached")
                     break
+            if self._handover_at is not None and self._handover_due(now, speaking):
+                self.end(HANDOVER_REASON)  # LiveVoiceService._run then starts the video / activity / sleep
+                break
             idle_limit = idle if self._heard_user else max(idle, FIRST_WORDS_MIN_S)
             if idle > 0 and now - self._last_activity >= idle_limit:
                 self.end(f"hung up after {int(idle_limit)} s of quiet")
@@ -922,6 +1133,7 @@ class LiveCall:
         self._ended.set()
         if self.audio is not None:
             self.audio.mute()
+        self._warm_camera(False)  # the warm photo is dropped now
         for t in list(self._tasks):
             t.cancel()
         if self._tasks:
@@ -957,14 +1169,41 @@ def _face_menu() -> str:
         return "happy, surprised, sleepy, curious, excited, sad, playful, celebrating, wink, spin_eyes, peekaboo"
 
 
-def asks_to_see(text: str) -> bool:
-    """True when the person's own words ask LittleBot to look ("how many fingers am I holding up?")."""
+def asks_to_see(text: str, *, partial: bool = False) -> bool:
+    """True when the person's own words ask LittleBot to look ("how many fingers am I holding up?").
+
+    ``partial``: words still being said. A plain "how many fingers" then waits for two more words, so
+    "how many fingers does a cat have" never takes a photo; every other phrase is already a clear ask
+    and later words can't undo it."""
     t = str(text or "").lower().replace("\u2019", "'")
     t = re.sub(r"\b(what|that|it|who)'s\b|\bwhats\b", lambda m: f"{m.group(1) or 'what'} is", t)
     t = re.sub(r"\bi'?m\b", "i am", t)
     t = re.sub(r"\b(you|we|they)'re\b", r"\1 are", t)
     t = re.sub(r"[^a-z0-9' ]+", " ", t)
-    return bool(USER_WANTS_LOOK.search(re.sub(r"\s+", " ", t)))
+    t = re.sub(r"\s+", " ", t)
+    for m in USER_WANTS_LOOK.finditer(t):
+        if partial and m.group(0) == "how many fingers" and len(t[m.end():].split()) < 2:
+            continue  # its "not about a cat" check needs the next words
+        return True
+    return False
+
+
+async def _ask_camera(look: Any, question: str, job: "_LookJob") -> dict[str, Any]:
+    """``look.look`` for the live voice, passing each answer's first sentence on to ``job`` as it arrives."""
+    import inspect  # noqa: PLC0415
+
+    def first(text: str) -> None:
+        if job.first is None and job.ended is None:
+            job.first = text
+            job.progress.set()  # a waiting hand-off or note can go ahead with this sentence
+
+    try:
+        streams = "on_first" in inspect.signature(look.look).parameters
+    except (TypeError, ValueError):
+        streams = False
+    if streams:
+        return await look.look(question, asked_by="live", on_first=first)
+    return await look.look(question, asked_by="live")
 
 
 def _look_note(code: str) -> str:
@@ -984,7 +1223,8 @@ class _LookJob:
 
     started: float
     by_user: bool  # started from the person's own words, not a hand-off
-    turn: int  # LiveCall._user_turns when it started
+    turn: int  # the LiveCall._user_turns its question belongs to
+    source: str = "user"  # partial (words still coming) | user (their finished words) | delegation (hand-off)
     task: asyncio.Task[None] | None = None
     ended: float | None = None
     claimed: bool = False  # a hand-off got its answer, so the voice isn't also sent a note
@@ -992,6 +1232,16 @@ class _LookJob:
     text: str = CANT_SEE
     blocked: str | None = None
     outcome: str = "failed"  # for the log: ok, an error code or blocked:<reason>
+    first: str | None = None  # the answer's first sentence, passed on while the rest was still coming
+    rest: str | None = None  # what the answer says after ``first`` (told as a note, once)
+    rest_told: bool = False
+    progress: asyncio.Event = dataclasses.field(default_factory=asyncio.Event)  # first sentence ready, or ended
+
+    def for_voice(self) -> tuple[str, bool]:
+        """What to tell the voice now, and whether more will follow (only a first sentence is ready yet)."""
+        if self.ended is None and self.first is not None:
+            return self.first, True
+        return self.text, False
 
 
 def _voice_face(text: str) -> Any:

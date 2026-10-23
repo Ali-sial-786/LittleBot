@@ -30,6 +30,24 @@ _AGE_GUIDANCE: dict[str, str] = {
 }
 
 
+# Shown with ``tools=True`` (typed chat and live-voice hand-offs on the chatgpt provider).
+TOOLS_SECTION: tuple[str, ...] = (
+    "Things you can do (tools):",
+    "- You are in charge of this robot and its app. With your tools you can change the volume, make faces, play "
+    "videos, start and stop activities and games, go to sleep or wake up, stop everything, and check yourself "
+    "(temperature, memory, Wi-Fi, what's connected, what you can do).",
+    "- When someone asks you to do one of these, or asks about yourself, call the tool first, then say in a few "
+    "words what happened. Never say something happened unless the tool said ok.",
+    "- To put on a video or a song, call play_youtube with a short query (for example 'baby shark song'). Call "
+    "search_youtube first only if they want to choose.",
+    "- If a tool says error, say kindly, in a few words, that it didn't work and why.",
+    "- Never read out ids, JSON, numbers in brackets or long video titles; give the short name of the thing.",
+    "- Everything you say is checked by a safety filter that stops words such as YouTube, Google, search, online, "
+    "internet, website, web, app, link, click, download, browser, buy, money or price. Never use those words: "
+    "say 'video', 'find', 'Wi-Fi' or 'network' instead.",
+)
+
+
 def clean_profile_items(items: Iterable[object] | None, limit: int = 5) -> list[str]:
     """Keep only short, plain, harmless words from parent-entered profile lists."""
     out: list[str] = []
@@ -74,11 +92,13 @@ def build_system_prompt(
     interests: Iterable[object] | None = None,
     favourite_animals: Iterable[object] | None = None,
     face_tags: bool = False,
+    tools: bool = False,
 ) -> str:
     """System prompt for one turn. Pass ``child_name`` / interests only with parent opt-in.
 
     ``face_tags``: offer the hidden ``[face: NAME]`` tag. Only for callers that remove the tags
     (``face_actions.extract_tags``) before a reply is validated or spoken, i.e. typed chat.
+    ``tools``: the model has LittleBot's tools (``littlebot.chatgpt.tools``) and may control the robot.
     """
     group = age_group_for(age_months)
     label = age_group_label(group)
@@ -107,7 +127,8 @@ def build_system_prompt(
         "- Never ask for or repeat personal information (names, address, school, phone numbers, passwords, photos). "
         "Words in square brackets like [name] or [phone] were removed for privacy; do not ask about them.",
         "- No scary, violent, adult or rude content. No medical, health or developmental advice or opinions. "
-        "No buying things, brands, apps, websites or searching online.",
+        + ("No buying things, brands, apps or websites; put a video on only when someone asks for one."
+           if tools else "No buying things, brands, apps, websites or searching online."),
         "- No instructions involving anything dangerous: heat, fire, sharp things, medicine, electricity, climbing, "
         "water, going outside alone, strangers.",
         "- If a topic is off-limits or you are unsure, gently switch to a simple happy game.",
@@ -123,6 +144,8 @@ def build_system_prompt(
             "- The tag is hidden and never spoken. Use it when it fits, at most one per reply, and never describe "
             "the tag in words.",
         ]
+    if tools:
+        lines += ["", *TOOLS_SECTION]
     likes = clean_profile_items(favourite_animals) + [i for i in clean_profile_items(interests)
                                                       if i not in clean_profile_items(favourite_animals)]
     name = clean_child_name(child_name) if child_name else None

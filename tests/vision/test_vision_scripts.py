@@ -118,8 +118,19 @@ def test_download_models_list_and_unknown(dl, tmp_path, capsys):
     assert "yunet" in out and "not downloaded" in out
     with pytest.raises(SystemExit):
         dl.main(["nope", "--dest", str(tmp_path)])
-    assert set(dl.MODELS) == {"yunet", "haar"}
+    assert {"yunet", "haar", "hand_palm", "hand_pose"} <= set(dl.MODELS)
     assert all(len(m.sha256) == 64 and m.urls for m in dl.MODELS.values())
+
+
+def test_download_models_hands_fetches_both_hand_models(dl, tmp_path, monkeypatch):
+    fetched: list[str] = []
+    monkeypatch.setattr(dl, "download", lambda m, dest, **kw: fetched.append(m.filename) or True)
+    assert dl.main(["hands", "--dest", str(tmp_path)]) == 0
+    assert fetched == ["palm_detection_mediapipe_2023feb.onnx", "handpose_estimation_mediapipe_2023feb.onnx"]
+    from littlebot.vision import hands
+
+    palm, hand = hands.model_paths()
+    assert (palm.name, hand.name) == tuple(fetched)  # where the counter looks for them
 
 
 def test_synthetic_fixture_helpers_are_deterministic():

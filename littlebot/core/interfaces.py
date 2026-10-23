@@ -43,6 +43,7 @@ GESTURE_NAMES: tuple[str, ...] = (
 SOUND_NAMES: tuple[str, ...] = (
     "chime", "pop", "boop", "boing", "peekaboo", "tada", "clap", "whoosh", "sparkle", "drum",
     "bell", "giggle", "uhoh", "yay", "blip", "notes", "sleep", "wake", "click", "success",
+    "listen",  # the wake word was heard ("Hey LittleBot"): LittleBot is listening
 )
 
 # Approximate developmental age groups (flexible recommendations, never diagnostic).
@@ -200,6 +201,20 @@ class MediaAPI(Protocol):
 
     async def play(self, item_id: int, *, parent_override: bool = False) -> dict[str, Any]:
         """Raises PermissionError (age gate / limits / disabled), KeyError (unknown)."""
+
+    async def search(self, query: str, *, limit: int | None = None) -> list[dict[str, Any]]:
+        """YouTube search (no API key): [{video_id, title, channel, duration_seconds}].
+        Raises PermissionError (search off / videos off / offline) or media.search.SearchError."""
+
+    async def play_video(self, video_id: str, *, title: str | None = None, channel: str | None = None,
+                         duration_seconds: int | None = None, alternatives: list[dict[str, Any]] | None = None,
+                         parent_override: bool = False) -> dict[str, Any]:
+        """Play any YouTube video id (e.g. a search result) when ``media.allow_search`` is on; the
+        same limits and checks as ``play``. ``alternatives``: more results for skip / fallback.
+        Raises ValueError (bad id), PermissionError."""
+
+    def video_blocked_reason(self) -> str | None:
+        """Why no video could start right now (videos off, offline, age gate, limits), else None."""
 
     async def pause(self) -> bool: ...
 

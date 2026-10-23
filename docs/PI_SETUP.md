@@ -109,13 +109,19 @@ What it does (idempotent - safe to run again after `git pull`):
 | `.venv` | created once, never deleted or recreated; `pip install -e ".[vision,audio,pi]"` |
 | Live voice | `pip install -e ".[live]"` as its own step: aiortc for GPT-Live voice ([CHATGPT.md](CHATGPT.md)), prebuilt aarch64 wheels (~40 MB, nothing compiled). A failure only warns; `--no-live` skips it |
 | Face model | `scripts/download_models.py yunet` (vision module; ~0.3 MB into `models/`, skipped when already verified; needs internet; `--no-models` skips) |
+| Wake word | "Hey LittleBot" starts live voice ([CHATGPT.md](CHATGPT.md#wake-word-hey-littlebot)), heard offline on the robot: `pip install -e ".[local-stt]"` (vosk, one prebuilt aarch64 wheel, ~3 MB) and `scripts/download_models.py vosk-en` (40 MB download, unpacked to `models/vosk-model-small-en-us-0.15/`, ~140 MB RAM while the wake word is on). A failure only warns; `--no-wake-word` skips both, `--no-models` only the model |
 | Files | `data/logs/`; `config/local.yaml` from `config/hardware.example.yaml` and `.env` from `.env.example` **only if missing**; `.env` set to mode 600 |
 | Sound output | `scripts/set_default_speaker.sh`: the USB speaker and USB microphone become the default sound devices instead of the HDMI screen (a WirePlumber rule in `~/.config/wireplumber` + `wpctl set-default`; no sudo). A failure only warns; `--no-audio-default` skips it |
 | Never | edits `config.txt`/`cmdline.txt`, enables I2C (unless `--enable-i2c`), enables servos |
 
 Options: `--with-service` (autostart, section 10), `--headless-service`, `--enable-i2c`
 (later, for the servo board), `--system-opencv`, `--dev` (pytest on the Pi),
-`--skip-apt`, `--no-chromium`, `--no-models`, `--no-live`, `--no-audio-default`, `--yes`. See `scripts/install_pi.sh --help`.
+`--skip-apt`, `--no-chromium`, `--no-models`, `--no-live`, `--no-wake-word`, `--no-audio-default`, `--yes`. See
+`scripts/install_pi.sh --help`.
+
+The wake word keeps the USB microphone open while it is switched on (**AI** → **Live voice**), and
+hands it over to push to talk, the microphone test and live voice. On a 2 GB Pi it costs about
+140 MB of RAM and roughly a tenth of one CPU core; turn the switch off if you don't use it.
 
 ### Why a plain venv with pip wheels (and when to use `--system-opencv`)
 

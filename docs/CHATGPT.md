@@ -10,6 +10,10 @@ LittleBot can use **your own ChatGPT plan** instead of a paid API key, in two wa
 * **Letting the AI see (camera), optional and off by default:** ask "how many fingers am I
   holding up?" and LittleBot takes **one photo** and sends it with the question to ChatGPT
   ([section 4](#4-letting-the-ai-see-camera)).
+* **Asking LittleBot to do things:** "turn the volume up", "play baby shark", "start the peekaboo
+  activity", "play a game", "go to sleep", "how hot are you?", "what can you do?". ChatGPT controls
+  LittleBot and its app, and can find and play **YouTube videos** when asked
+  ([section 5](#5-asking-littlebot-to-do-things)).
 
 > **Unofficial and untested against OpenAI.** This uses OpenAI's public Codex sign-in (the one
 > the Codex CLI uses) and **undocumented** Codex endpoints on chatgpt.com, the same approach as the
@@ -43,7 +47,7 @@ If OpenAI says code sign-in is off, open ChatGPT → **Settings** → **Security
 **device code login**, and press **Sign in with ChatGPT** again.
 
 Which ChatGPT plans and countries can use this is up to OpenAI. If yours is not included you
-will see "not available for this account" (see [Troubleshooting](#6-troubleshooting)).
+will see "not available for this account" (see [Troubleshooting](#7-troubleshooting)).
 
 **Where the sign-in is kept.** The tokens stay on the robot in `data/chatgpt_auth.json`, which
 only LittleBot's user account can read (mode 0600). They are never shown in the dashboard, never
@@ -100,7 +104,8 @@ With the switch off, no photo is taken and the voice says it can't see right now
 [section 4](#4-letting-the-ai-see-camera).
 
 The provider choice, the "Use cloud AI" switch and your child's age don't matter here. You
-start every call yourself, and you are there for all of it.
+start every call yourself (here, or by saying "Hey LittleBot": [wake word](#wake-word-hey-littlebot)),
+and you are there for all of it.
 
 **It stops when:**
 
@@ -182,6 +187,56 @@ to download, nothing to compile). `scripts/install_pi.sh` installs it by default
 skips it). Without it, the card says **Not installed on this robot yet**, and everything else,
 including ChatGPT text answers, still works.
 
+### Wake word: "Hey LittleBot"
+
+Say **"Hey LittleBot"** (or **"Hey Bot"**) near the robot: it plays a short "listening" sound (two
+soft rising tones, like a smart speaker), its face starts listening and live voice starts, just
+as if you had pressed **Start live voice**. Wait for the sound, then talk.
+
+* **Heard on the robot, offline.** LittleBot recognises the phrase itself, with
+  [Vosk](https://alphacephei.com/vosk/) and a small English model (40 MB). Microphone audio is
+  processed in memory a tenth of a second at a time and thrown away; **nothing is sent anywhere
+  until it hears the phrase**. From then on it is a normal live voice call (privacy above).
+* **The switch:** **AI** → **Live voice** → **Wake word: say "Hey LittleBot" to start live voice**
+  (on by default). The line under it says "Listening for …", why it is paused or what is missing,
+  and what happened the last time it heard you. Saying the phrase counts as a grown-up starting
+  the call; turn the switch off if your child could start calls when you are not there.
+* **It pauses** while live voice is on, while LittleBot listens for push to talk or tests the
+  microphone, while a video plays and while the microphone is off in **Privacy**. It ignores what
+  it hears while LittleBot itself is making a sound.
+* **If live voice can't start** (not signed in, cloud communication off, no connection …) you hear
+  "uh-oh", the status line says why and the log has `wake word: live voice could not start (...)`.
+  It listens again after 4 seconds (`wake.cooldown_seconds`); it never retries by itself.
+* **False starts.** "Hey Bot" is short and sounds like "hey but", "hey bud" or "hey boss";
+  "Hey LittleBot" is much safer. With synthetic voices and 69 deliberately similar phrases
+  ("hey there little guy", "little bottle", "hey bob" …) "Hey LittleBot" never started by mistake,
+  "Hey Bot" did for a handful. If it happens to you, keep only the long phrase:
+  `wake: {phrases: ["hey little bot"]}` in `config/local.yaml`. Real children's voices, accents and
+  distance have not been tested yet.
+* **Cost:** about 140 MB of memory while it is switched on (freed when it is off, or during a
+  video) and a few percent of one CPU core (about 4 % of one desktop core measured; roughly 10 % of
+  one Pi 5 core expected). The model is shared with `audio.stt.vosk_model_path` if that points to
+  the same folder.
+* **Installing:** `scripts/install_pi.sh` installs it by default (`--no-wake-word` skips it): the
+  `local-stt` extra (vosk: one prebuilt aarch64 wheel) and the model. By hand:
+
+  ```bash
+  cd ~/LittleBot
+  .venv/bin/python -m pip install --prefer-binary -e '.[local-stt]'
+  .venv/bin/python scripts/download_models.py vosk-en      # -> models/vosk-model-small-en-us-0.15/
+  systemctl --user restart littlebot
+  ```
+
+```yaml
+wake:                                # config/local.yaml
+  enabled: true                      # default of the dashboard switch
+  phrases: ["hey little bot", "hey littlebot", "hey bot"]   # "littlebot" is heard as "little bot"
+  model_path: models/vosk-model-small-en-us-0.15
+  min_confidence: 0.5                # per word, 0..1: higher = fewer false starts, more misses
+  distractors: true                  # common words the recogniser may pick instead: fewer false starts
+  cooldown_seconds: 4
+```
+
 ## 4. Letting the AI see (camera)
 
 ChatGPT can look through LittleBot's camera to answer a question about what is in front of it:
@@ -252,7 +307,82 @@ confetti.
 * **Typed / push-to-talk:** ChatGPT may end a reply with a hidden tag such as `[face: happy]`.
   LittleBot removes it before speaking (it is never spoken, stored or shown) and plays that face.
 
-## 5. Settings you may want to change
+## 5. Asking LittleBot to do things
+
+With **Sign in with ChatGPT**, you (or your child) can ask LittleBot to control itself and its app:
+in typed chat, with **Push to talk**, or during a **live voice** call. ChatGPT picks one of LittleBot's
+*tools*, LittleBot does it, and ChatGPT says in a few words what happened. Switch it off with
+`chatgpt.tools_enabled: false` (ChatGPT then only answers).
+
+| Ask | What LittleBot does |
+|---|---|
+| "Turn the volume up", "quieter", "set the volume to 30" | changes the speaker volume (and the video volume), never above the safe maximum (`audio.speaker.max_volume`, `media.max_volume`) |
+| "Play baby shark", "put on a video of diggers" | finds the video on YouTube and plays it on its screen ([YouTube videos](#youtube-videos)) |
+| "Start the peekaboo activity", "let's do Old MacDonald" | starts one of its activities (by name, or close to it) |
+| "Play a game", "stop the game" | starts or stops an on-screen game (when the games are installed) |
+| "Make a surprised face", "wink" | shows that face |
+| "Go to sleep", "wake up" | goes to sleep or wakes up |
+| "Stop everything" | stops any video, activity or game. The conversation carries on (the red **STOP** still stops everything, the conversation too) |
+| "How hot are you?", "are you on Wi-Fi?", "what's connected?", "which ChatGPT plan?" | answers from its status: CPU temperature and load, memory, how long it has been running, Wi-Fi signal, camera / microphone / speaker / screen / motors, volume, the signed-in plan, live voice on or off, what is playing, the Privacy switches |
+| "What can you do?", "tell me about yourself" | a short summary of what it can do |
+| Typed chat only: "what am I holding?" | one camera photo, if you allowed it in Privacy ([section 4](#4-letting-the-ai-see-camera)). In live voice the call's own camera look is used |
+
+**When things start.** A video, an activity or going to sleep needs the screen and the speaker that
+the conversation is using, so it starts **after** LittleBot has said its answer. In a **live voice
+call** that also ends the call: the voice says a short goodbye, LittleBot hangs up (at most 15 s
+later), then the video or activity starts. The call's microphone would otherwise hear the video.
+The last call then shows "handed over". The red **STOP** before that cancels it. Games share the
+speaker with a conversation, so they start at once and the call carries on.
+
+**Waiting for an answer (live voice).** The voice waits in silence while LittleBot works on what
+it was handed. If the answer isn't ready within **5 seconds**, the voice is told straight away to
+say it's thinking, and the answer follows when it comes (25 s at most; after that the voice says
+it didn't work out). Faces, the volume and status answers usually come back in a second or two.
+
+### YouTube videos
+
+* **Search** needs no API key: LittleBot runs **yt-dlp** (`python -m yt_dlp --flat-playlist -J
+  "ytsearch5:QUERY"`, a child process with a 20 s timeout), which reads YouTube's search results
+  (ids, titles, channels, lengths). yt-dlp is installed with LittleBot (a pure-Python package,
+  fine on the Pi). On a robot installed before this, run `cd ~/LittleBot && .venv/bin/python -m pip
+  install -e .` (or re-run `scripts/install_pi.sh --yes`). YouTube changes often: if search stops
+  working, update it with `.venv/bin/python -m pip install -U yt-dlp`.
+* **Playing** uses the same on-screen player as your approved list (the official YouTube player in
+  the Chromium kiosk) with the same rules: the session and daily **time limits**, the **age gate**
+  (videos are off under 18 months unless you allow them on the Videos page), **Videos** on/off,
+  offline mode, and the player's check that the video in the player is the one that was asked for.
+  If YouTube won't play a video in an embedded player (removed, private, or "playback on other
+  sites" disabled: errors 100/101/150), the next search result plays instead. **Skip** moves
+  through the other results. A found video is **not** added to your approved list; **Now playing**
+  shows its title. A video that is on your approved list plays as that item.
+* **Any video can play (for now).** `media.allow_search: true` (the default) lets ChatGPT play any
+  video it finds. With `false`, only your approved list plays: "play twinkle twinkle" then plays an
+  approved video whose title matches.
+* **Words it avoids.** LittleBot's safety check of what it says stops replies with words like
+  YouTube, search, online, internet, website, app or link (and a live call that says one of them
+  ends, as a safety stop "links"). ChatGPT is told to say "Here comes Baby Shark!" instead, and
+  video titles are shortened before it gets them, but if the live voice slips, the call ends.
+
+### What goes where
+
+The tool names, their results (status numbers, activity, game and video names) and your words go
+to OpenAI, as with any ChatGPT answer. A search sends only the search words to YouTube, from the
+robot. The robot's Wi-Fi network name is included in the status if `iwgetid` is installed.
+
+### Settings
+
+```yaml
+chatgpt:
+  tools_enabled: true          # ChatGPT may control LittleBot when asked (false: it only answers)
+  max_tool_rounds: 6           # tool calls per answer ("play baby shark" = search + play)
+media:
+  allow_search: true           # play any video found on YouTube, not only the approved list
+  search_results: 5            # results per search (the others are what Skip plays)
+  search_timeout_seconds: 20
+  ytdlp_command: null          # null = this Python's yt_dlp module, else yt-dlp on PATH
+```
+
+## 6. Settings you may want to change
 
 In `config/local.yaml` (or with `LITTLEBOT__CHATGPT__<KEY>=value` environment variables).
 Restart LittleBot afterwards.
@@ -270,8 +400,9 @@ chatgpt:
 All keys and defaults are listed in the [technical section](#configuration).
 
 <a id="5-troubleshooting"></a>
+<a id="6-troubleshooting"></a>
 
-## 6. Troubleshooting
+## 7. Troubleshooting
 
 | What you see | What it means | What to do |
 |---|---|---|
@@ -293,13 +424,17 @@ All keys and defaults are listed in the [technical section](#configuration).
 | It doesn't react when you talk | It was still talking (the microphone is shut then), or your voice is too quiet | Wait until it stops, speak closer. Raise `audio.microphone.input_gain` (for example 1.5) |
 | Too quiet or too loud | The speaker volume | **Audio & devices** → volume (capped at `audio.speaker.max_volume`). Or set `chatgpt.live_volume` for live voice only |
 | "hung up after 90 s of quiet" | Nobody talked | Normal. Change `chatgpt.live_idle_hangup_seconds` if it's too short |
+| Wake word: **The wake-word model is missing** / **isn't available** | The vosk library or its model is not installed | `.venv/bin/python -m pip install --prefer-binary -e '.[local-stt]'` and `.venv/bin/python scripts/download_models.py vosk-en`, then `systemctl --user restart littlebot` |
+| Wake word: "uh-oh" after the listening sound | Live voice couldn't start; the status line under the switch says why (often: not signed in, or cloud communication off) | Fix that reason, then say it again |
+| Wake word: nothing happens | Paused (the status line says why), too far away, or the microphone is too quiet | Speak within about a metre; raise `audio.microphone.input_gain`; check **Audio & devices** → test the microphone |
+| Live voice starts by itself | A false start on "Hey Bot" | Set `wake.phrases: ["hey little bot"]`, or raise `wake.min_confidence` (for example 0.8) |
 
 The app log (`data/logs/littlebot.log`) has the HTTP status and end reason of each call. It never
 contains what was said.
 
 ---
 
-## 7. Technical details
+## 8. Technical details
 
 ### How it works
 
@@ -326,6 +461,24 @@ server-sent events. Headers: `Authorization: Bearer …`, `ChatGPT-Account-ID`, 
 `temperature`, `max_output_tokens` and `previous_response_id`, so the length cap is applied
 afterwards by `validate_reply` (as for every provider), and the short history is resent each
 turn. If a model is unavailable (HTTP 400), the next one in `chatgpt.models` is tried.
+
+**Function calling** (`responses.py` + `tools.py`, ported from WatchGPT's `ChatGptBrain` /
+`Toolbox`): `reply(..., tools=[{name, description, parameters}], run_tool=fn)` adds
+`tools: [{"type": "function", name, description, "strict": false, parameters}]`,
+`tool_choice: "auto"` and `parallel_tool_calls: false`. Every `response.output_item.done` item is
+kept. For each `function_call` item (`name`, `arguments` as JSON text, `call_id`) LittleBot runs the
+tool, then, because the endpoint keeps nothing (`store: false`), sends the history again plus the
+model's items (reasoning with its `encrypted_content`, the call; without their `id`, as Codex does)
+and `{"type": "function_call_output", "call_id": …, "output": …}`. Up to `chatgpt.max_tool_rounds`
+rounds, then the text of the last answer is used (validated as always). A tool never raises: a
+crash becomes `error: the action failed` for the model. In typed chat the whole answer may take
+30 s longer than `ai.timeout_seconds`; a video / activity / sleep a tool asked for is queued and
+runs after the reply is spoken (`ConversationEngine._after_turn`). In live voice, hand-offs that ask
+for something ("start the peekaboo activity", "show me a video", "go to sleep"; `CONTROL_WORDS`)
+go to the tool-enabled text model instead of the face / camera paths, and the queued take-over runs
+after the call ends with "handed over" (`LiveCall._handover_due`: the voice spoke and went quiet, or
+`HANDOVER_MAX_S`). Hand-off timing: `HANDOFF_INTERIM_S` (5 s) then `STILL_WORKING`, the answer later
+as a `session.context.append` note, `HANDOFF_TIMEOUT_S` (25 s) in all.
 
 | HTTP / stream error | Provider error `kind` |
 |---|---|
@@ -382,6 +535,16 @@ plan, the one-time code and the live status, never tokens.
 | `live_echo_tail_ms` | `450` | how long the microphone stays shut after the voice stops |
 | `live_voice_level` | `0.012` | speaker RMS (0..1) above which the voice counts as speaking |
 | `live_volume` | `null` | `null` = the speaker volume setting. Always capped at `audio.speaker.max_volume` |
+| `tools_enabled` | `true` | ChatGPT may control LittleBot when asked: typed chat, push to talk and live-voice hand-offs ([section 5](#5-asking-littlebot-to-do-things)) |
+| `max_tool_rounds` | `6` | tool calls per answer |
+
+Wake word (`wake:` section, `WakeConfig`): `enabled` (`true`, the switch's default), `phrases`,
+`model_path` (`models/vosk-model-small-en-us-0.15`), `min_confidence` (`0.5`), `distractors`
+(`true`), `cooldown_seconds` (`4`), `sound` (`listen`). See [Wake word](#wake-word-hey-littlebot).
+
+YouTube search (`media:` section, `MediaConfig`): `allow_search` (`true`: any video found may play;
+`false`: only the approved list), `search_results` (`5`), `search_timeout_seconds` (`20`),
+`ytdlp_command` (`null` = `python -m yt_dlp`, else `yt-dlp` on PATH).
 
 ### Files
 
@@ -392,7 +555,10 @@ plan, the one-time code and the live status, never tokens.
 | `littlebot/chatgpt/wire.py` | GPT-Live data-channel events |
 | `littlebot/chatgpt/live.py` | `LiveVoiceService` (`ctx.live`): gates, safety checks, limits, delegations, clean-up |
 | `littlebot/chatgpt/live_audio.py` | microphone / speaker bridge with the half-duplex gate |
+| `littlebot/chatgpt/tools.py` | `RobotToolbox`: the tools ChatGPT may use (status, volume, faces, videos, activities, games, sleep, camera) |
+| `littlebot/media/search.py` | YouTube search through yt-dlp (no API key); `MediaController.search` / `play_video` play the results |
 | `littlebot/chatgpt/look.py` | `CameraLook`: one photo + question to ChatGPT, with the privacy gates (section 4) |
+| `littlebot/audio/wakeword.py` | `WakeWordService` (`ctx.wake`): "Hey LittleBot" heard offline with Vosk, then `ctx.live.start_session`; shares the microphone with `AudioService` (`attach_background_listener`) |
 | `littlebot/dashboard/routes/chatgpt_routes.py`, `static/js/pages/ai.js` | the "ChatGPT account", "Live voice (GPT-Live)" and "Ask what LittleBot sees" cards (`POST /api/chatgpt/look` returns the answer text only, never the photo) |
 | `data/chatgpt_auth.json` | the sign-in (secret; not in the backups listed in PI_SETUP.md: just sign in again) |
 
@@ -413,5 +579,21 @@ plan, the one-time code and the live status, never tokens.
 * **Letting the AI see:** the dashboard route and card are tested with a stand-in for the camera
   look (answer text only reaches the browser, blocked → a plain reason, "say it out loud", the
   Privacy switch off by default) and in a phone-sized browser.
+* **Asking LittleBot to do things** (`tests/chatgpt/test_tools.py`, `test_responses.py`,
+  `test_live_tools.py`, `tests/brain/test_brain_tools.py`, `tests/media/test_media_search.py`): every
+  tool against fakes; the function-call loop against mocked event streams (the replayed items, the
+  round cap, a crashing tool); chat turns that queue a video / sleep until the reply is spoken; live
+  hand-offs answered with tools, the 5 s interim answer and late note, the hand-over after the call
+  and STOP ALL cancelling it; search results playing in the real media controller (limits, age gate,
+  next result on errors 101/150, skip); the yt-dlp child process with a stand-in script. One real
+  search through yt-dlp worked from a development machine (2 s); not from the Pi, and the found
+  videos have not been played in the Pi's kiosk.
+* **Wake word** (`tests/audio/test_wakeword.py`, `tests/dashboard/test_dashboard_wake.py`): a stand-in
+  recogniser on a mock microphone that, like the Pi's USB microphone, can't be opened twice, with
+  the real `AudioService`: earcon + exactly one start, "uh-oh" when live voice is blocked or doesn't
+  connect, the cool-down, the hand-over to push to talk / the microphone test / live voice and back,
+  the pauses (live voice, video, Privacy, switch off, LittleBot making sound), a missing model or
+  library. The real Vosk recogniser was run once on a development PC with espeak-ng voices (it heard
+  all "Hey LittleBot" / "Hey Bot" and none of the look-alikes); not on the Pi, and not with real voices.
 * **Not yet tested:** OpenAI's real service (sign-in, text, live voice or photos), the Pi's real
   microphone, speaker and camera, echo in a real room, latency, and real plan limits.

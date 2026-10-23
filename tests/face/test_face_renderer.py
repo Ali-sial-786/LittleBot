@@ -1,4 +1,4 @@
-"""Renderer: every expression / state / animation draws onto a 480x320 surface with visible eyes."""
+"""Renderer: every expression / state / animation draws onto a 480x320 surface with visible eyes and mouth."""
 
 from __future__ import annotations
 
@@ -9,7 +9,9 @@ from face_stubs import make_animator, step
 
 from littlebot.core.interfaces import EXPRESSIONS, FACE_ANIMATIONS, FACE_STATES
 from littlebot.face.effects import ANIMATION_DURATIONS
-from littlebot.face.frame import EyeFrame, FaceFrame, MouthFrame, Sprite, catchlights, open_span_at, rotate
+from littlebot.face.frame import (
+    MOUTH_W, EyeFrame, FaceFrame, MouthFrame, Sprite, catchlights, is_light_background, open_span_at, rotate,
+)
 
 pygame = pytest.importorskip("pygame")
 
@@ -35,16 +37,20 @@ def _settled(expression=None, state=None, seconds=1.0, **cfg):
     return a
 
 
-def _bright_pixels(surf, rect, bg, threshold=60):
-    """Count pixels in rect noticeably brighter than the background."""
+def _visible_pixels(surf, rect, bg, threshold=60):
+    """Count pixels in rect that clearly stand out from the background colour (lighter or darker)."""
     rect = rect.clip(surf.get_rect())
     n = 0
     for x in range(rect.left, rect.right, 2):
         for y in range(rect.top, rect.bottom, 2):
             c = surf.get_at((x, y))
-            if (c.r + c.g + c.b) - sum(bg) > threshold:
+            if abs(c.r - bg[0]) + abs(c.g - bg[1]) + abs(c.b - bg[2]) > threshold:
                 n += 1
     return n
+
+
+def _close_to(c, ref, tol):
+    return abs(c[0] - ref[0]) + abs(c[1] - ref[1]) + abs(c[2] - ref[2]) <= tol
 
 
 def _eye_rect(e: EyeFrame):
@@ -60,11 +66,10 @@ def test_every_expression_renders_visible_eyes(renderer, name):
     for e in f.eyes:
         r = _eye_rect(e)
         area = max(1, (r.w // 2) * (r.h // 2))
-        assert _bright_pixels(surf, r, f.background) > area * 0.25, f"{name}: eye not visible"
-    # background stays dark in the corners (no runaway glow)
+        assert _visible_pixels(surf, r, f.background) > area * 0.25, f"{name}: eye not visible"
+    # the corners keep the background colour (no runaway glow / shadow)
     for corner in ((2, 2), (477, 317)):
-        c = surf.get_at(corner)
-        assert c.r + c.g + c.b < 90
+        assert _close_to(surf.get_at(corner), f.background, 45)
 
 
 @pytest.mark.parametrize("state", FACE_STATES)
@@ -74,13 +79,17 @@ def test_every_state_renders(renderer, state):
     surf = pygame.Surface((480, 320))
     renderer.render(f, surf)
     if state == "hidden":
-        assert f.hidden == 1.0
-        # calm dark screen, only the small glyph near the bottom-right corner
-        assert _bright_pixels(surf, pygame.Rect(40, 40, 360, 220), f.background, 40) == 0
-        assert _bright_pixels(surf, pygame.Rect(430, 280, 50, 40), f.background, 25) > 0
+        assert f.hidden == 1.0 and f.mouth is None
+        # calm, dim screen: nothing but the small glyph near the bottom-right corner
+        veil = tuple(surf.get_at((240, 160)))[:3]
+        assert sum(veil) < sum(f.background) * 0.5
+        assert _visible_pixels(surf, pygame.Rect(40, 40, 360, 220), veil, 20) == 0
+        assert _visible_pixels(surf, pygame.Rect(430, 280, 50, 40), veil, 25) > 0
     else:
         for e in f.eyes:
-            assert _bright_pixels(surf, _eye_rect(e).inflate(8, 8), f.background) > 3
+            assert _visible_pixels(surf, _eye_rect(e).inflate(8, 8), f.background) > 3
+        m = f.mouth
+        assert _visible_pixels(surf, pygame.Rect(int(m.cx) - 30, int(m.cy) - 20, 60, 40), f.background) > 5
 
 
 def test_closed_eyes_draw_a_line(renderer):
@@ -91,10 +100,13 @@ def test_closed_eyes_draw_a_line(renderer):
     surf = pygame.Surface((480, 320))
     renderer.render(f, surf)
     for e in f.eyes:
-        assert _bright_pixels(surf, _eye_rect(e).inflate(4, 24), f.background) > 10
-        # nothing bright far above the closed line
+        assert _visible_pixels(surf, _eye_rect(e).inflate(4, 24), f.background) > 10
+        # nothing drawn far above the closed line
         above = pygame.Rect(int(e.cx - e.w / 2), int(e.cy - 60), int(e.w), 40)
-        assert _bright_pixels(surf, above, f.background, 90) == 0
+        assert _visible_pixels(surf, above, f.background, 90) == 0
+        # on the pink screen a closed eye is a dark ink line
+        line = [surf.get_at((int(e.cx) + dx, int(e.cy) + dy)) for dx in range(-20, 21, 5) for dy in range(-6, 7)]
+        assert min(c.r + c.g + c.b for c in line) < 260
 
 
 @pytest.mark.parametrize("name", FACE_ANIMATIONS)
@@ -104,8 +116,10 @@ def test_every_animation_renders(renderer, name):
     surf = pygame.Surface((480, 320))
     for _ in range(6):
         step(a, ANIMATION_DURATIONS[name] / 6, 1 / 30)
-        renderer.render(a.frame(), surf)
-    assert surf.get_at((240, 160)) is not None
+        f = a.frame()
+        renderer.render(f, surf)
+        m = f.mouth  # the mouth is drawn in every frame of every animation
+        assert _visible_pixels(surf, pygame.Rect(int(m.cx) - 30, int(m.cy) - 20, 60, 40), f.background) > 5, name
 
 
 def test_mouth_and_all_sprite_kinds_render(renderer):
@@ -119,11 +133,11 @@ def test_mouth_and_all_sprite_kinds_render(renderer):
     surf = pygame.Surface((480, 320))
     renderer.render(f, surf)
     for s in sprites:
-        assert _bright_pixels(surf, pygame.Rect(int(s.x) - 14, int(s.y) - 14, 28, 28), f.background, 40) > 0, s.kind
-    # mouth area lit
-    assert _bright_pixels(surf, pygame.Rect(215, 235, 50, 40), f.background) > 0
-    # listening ring lights up the screen edge
-    assert _bright_pixels(surf, pygame.Rect(0, 100, 14, 100), f.background, 30) > 0
+        assert _visible_pixels(surf, pygame.Rect(int(s.x) - 14, int(s.y) - 14, 28, 28), f.background, 40) > 0, s.kind
+    # mouth drawn
+    assert _visible_pixels(surf, pygame.Rect(215, 235, 50, 40), f.background) > 0
+    # listening ring shows along the screen edge
+    assert _visible_pixels(surf, pygame.Rect(0, 100, 14, 100), f.background, 30) > 0
 
 
 def test_render_into_scaled_rect_and_cache(renderer):
@@ -232,3 +246,92 @@ def test_pupil_and_catchlights_never_draw_outside_the_eye(renderer, name):
                 top, bottom = open_span_at(e, lx)
                 assert abs(lx) <= e.w / 2 + 1.5 and top - 1.5 <= ly <= bottom + 1.5, (name, x, y)
     assert changed > 50  # the overlays really were drawn
+
+
+# ------------------------------------------------------------------ pink screen + mouth shapes
+def test_default_look_is_light_pink_with_inked_eyes(renderer):
+    a = _settled()
+    f = a.frame()
+    assert is_light_background(f.background)
+    r, g, b = f.background
+    assert r > 240 and r > b > g > 180  # a soft light pink
+    surf = pygame.Surface((480, 320))
+    renderer.render(f, surf)
+    for x, y in ((2, 2), (240, 12), (470, 300)):
+        c = surf.get_at((x, y))
+        assert c.r > 230 and c.r > c.b > c.g  # pink everywhere around the face
+    e = f.eyes[0]
+    left_edge = [surf.get_at((int(e.cx - e.w / 2) + dx, int(e.cy) + 10)) for dx in range(0, 7)]
+    assert min(c.r + c.g + c.b for c in left_edge) < 200  # a dark ink rim: crisp against the pink
+
+
+def test_dark_background_still_glows(renderer):
+    a = _settled(background_color=(6, 8, 14))
+    f = a.frame()
+    assert not is_light_background(f.background)
+    surf = pygame.Surface((480, 320))
+    renderer.render(f, surf)
+    c = surf.get_at((2, 2))
+    assert c.r + c.g + c.b < 60
+    e = f.eyes[0]
+    halo = surf.get_at((int(e.cx), int(e.cy - e.h / 2 - 6)))  # just above the eye: glow
+    assert halo.b > 25
+
+
+def _mouth_box(renderer, m, bg=(255, 214, 228), color=(90, 210, 255)):
+    """Bounding box of the drawn mouth and the number of near-white (teeth) pixels in it."""
+    surf = pygame.Surface((200, 160))
+    surf.fill(bg)
+    renderer._draw_mouth(surf, m, color, is_light_background(bg))
+    xs, ys, white = [], [], 0
+    for x in range(200):
+        for y in range(160):
+            c = surf.get_at((x, y))
+            if _close_to(c, bg, 40):
+                continue
+            xs.append(x)
+            ys.append(y)
+            white += c.r > 235 and c.g > 235 and c.b > 235
+    assert xs, "mouth not drawn"
+    return max(xs) - min(xs) + 1, max(ys) - min(ys) + 1, white
+
+
+def test_mouth_shapes_render_distinctly(renderer):
+    base = dict(cx=100, cy=70, alpha=1.0)
+    closed = _mouth_box(renderer, MouthFrame(open=0.0, width=MOUTH_W * 0.92, smile=0.4, **base))
+    ah = _mouth_box(renderer, MouthFrame(open=0.9, width=MOUTH_W * 1.06, smile=0.4, **base))
+    ee = _mouth_box(renderer, MouthFrame(open=0.35, width=MOUTH_W * 1.3, smile=0.4, teeth=1.0, **base))
+    oo = _mouth_box(renderer, MouthFrame(open=0.5, width=MOUTH_W * 0.6, round=1.0, **base))
+    assert closed[1] < 16 < ah[1]  # a line vs. a wide-open mouth
+    assert ah[1] > ee[1] and ee[0] > ah[0] > oo[0]  # ee is wide and flat, oo narrow
+    assert oo[1] >= oo[0] * 0.85  # round
+    assert ee[2] > 10 and ah[2] == 0  # teeth only for "ee"
+    frown = _mouth_box(renderer, MouthFrame(open=0.0, width=MOUTH_W, smile=-0.8, **base))
+    assert frown[1] < 20
+    tongue = _mouth_box(renderer, MouthFrame(open=0.0, width=MOUTH_W, smile=0.8, tongue=1.0, **base))
+    assert tongue[1] > closed[1] + 8  # the cheeky tongue hangs below the lip
+
+
+def test_mouth_cache_reuses_shapes(renderer):
+    renderer.clear_cache()
+    before = renderer.cache_info()
+    surf = pygame.Surface((480, 320))
+    for i in range(3):  # tiny differences quantise to the same cached image
+        m = MouthFrame(cx=240 + i, cy=246, open=0.42 + i * 0.002, alpha=1.0, smile=0.6)
+        renderer._draw_mouth(surf, m, (90, 210, 255), True)
+    info = renderer.cache_info()
+    assert info["mouth_misses"] - before["mouth_misses"] == 1
+    assert info["mouth_hits"] - before["mouth_hits"] == 2
+
+
+@pytest.mark.parametrize("expression", ["neutral", "happy", "sad", "surprised", "playful", "celebrating"])
+def test_mouth_is_dark_ink_on_the_pink_screen(renderer, expression):
+    a = _settled(expression=expression)
+    f = a.frame()
+    surf = pygame.Surface((480, 320))
+    renderer.render(f, surf)
+    m = f.mouth
+    box = pygame.Rect(int(m.cx) - 40, int(m.cy) - 25, 80, 60)
+    darkest = min(surf.get_at((x, y)).r + surf.get_at((x, y)).g + surf.get_at((x, y)).b
+                  for x in range(box.left, box.right) for y in range(box.top, box.bottom))
+    assert darkest < 250, expression

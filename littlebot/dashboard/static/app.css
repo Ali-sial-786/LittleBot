@@ -621,3 +621,19 @@ details.disclosure > summary { cursor: pointer; font-weight: 650; padding: 4px 0
 .captions .caption-note { color: var(--text-3); font-style: italic; }
 .look-answer { display: grid; gap: 4px; padding: 10px 12px; border-radius: 10px; background: var(--surface-2, rgba(127,127,127,.08)); overflow-wrap: anywhere; }
 .look-answer p { margin: 0; font-size: 1.05rem; }
+
+/* games (pages/games.js) */
+.game-group-title { font-size: 1.12rem; margin-top: 6px; }
+.game-card .game-title { display: flex; gap: 12px; align-items: center; }
+.game-card .game-title h3 { font-size: 1.08rem; margin-bottom: 4px; }
+.game-card .meta { display: flex; gap: 6px; flex-wrap: wrap; }
+.game-card.playing { border-color: color-mix(in srgb, var(--ok) 55%, transparent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 18%, transparent), var(--shadow); }
+.game-emoji { flex: none; display: grid; place-items: center; width: 52px; height: 52px; border-radius: 16px; font-size: 28px; line-height: 1; background: #ffe3ef; }
+.game-emoji.aud-big { background: #e6f1ff; }
+.game-emoji.big { width: 60px; height: 60px; font-size: 34px; background: #ffe3ef; }
+@media (prefers-color-scheme: dark) {
+  .game-emoji, .game-emoji.big { background: #3a2230; }
+  .game-emoji.aud-big { background: #1c2b40; }
+}
+.game-running h2 { font-size: 1.2rem; }
+.game-clock { font-weight: 700; }

@@ -1,9 +1,11 @@
 # Module: face (animated eyes, display loop, simulator window)
 
-`littlebot/face/` is LittleBot's visual identity: two big, round, softly glowing cartoon
-eyes on a dark screen (iris-coloured eyes with a darker "ink" rim, big dark pupils that look
-around inside them and two white catchlights) that blink, look around, follow faces, change
-expression and react to speech. It also owns the main-thread pygame window and the desktop simulator panel.
+`littlebot/face/` is LittleBot's visual identity: two big, round cartoon eyes on a soft
+light-pink screen (iris-coloured eyes with a deep "ink" rim and a soft rosy shadow, big dark
+pupils that look around inside them and two white catchlights) and a little mouth that is
+always there: a resting smile / frown / "o" per expression that lip-syncs to the voice while
+LittleBot talks. The face blinks, looks around, follows faces, changes expression and reacts
+to speech. It also owns the main-thread pygame window and the desktop simulator panel.
 
 ```
 littlebot/face/
@@ -11,7 +13,9 @@ littlebot/face/
   expressions.py  expression parameter sets (pure data), state -> default expression
   effects.py      one-shot animation curves + particle overlays as pure functions of time
   animator.py     FaceAnimator: all time-based logic, deterministic with a seeded RNG (no pygame)
-  frame.py        FaceFrame / EyeFrame / MouthFrame / Sprite: animator -> renderer contract, layout
+  frame.py        FaceFrame / EyeFrame / MouthFrame / Sprite: animator -> renderer contract, layout,
+                  eye + mouth geometry (pure functions)
+  mouth.py        mouth poses: viseme shapes, level-only fallback, talking pose in the expression's mood
   renderer.py     FaceRenderer: pygame drawing with LRU caches (imports pygame)
   controller.py   FaceController(Service): FaceAPI + track_gaze, command queue, headless ticker
   display.py      run_display(robot, demo=False): window, input, overlays, fps policy
@@ -19,7 +23,7 @@ littlebot/face/
   demo.py         DemoSequence: scripted tour of every expression / state / animation / gaze
 scripts/face_preview.py   standalone preview + --screenshot-dir PNG export
 scripts/benchmark_face.py update + render cost per frame (table or --json)
-tests/face/               196 tests (pure logic, eye geometry, controller, renderer, display with SDL dummy driver)
+tests/face/               253 tests (pure logic, eye geometry, mouth, controller, renderer, display with SDL dummy driver)
 ```
 
 Pipeline: **API call -> command queue -> FaceAnimator.update(dt) -> FaceFrame -> FaceRenderer**.
@@ -53,7 +57,8 @@ Controller extras for the display / tools: `update(dt)`, `frame()`, `render(surf
 Bus: publishes `face.expression {expression}` when the expression name changes (including
 hold reverts), `face.visible {visible}` when entering/leaving `hidden`, `face.blink {double}`
 on every blink (source `"face"`). Subscribes to `audio.speech_started`,
-`audio.speech_finished`, `audio.level {level}`, `audio.listening_started/stopped`.
+`audio.speech_finished`, `audio.level {level, shape}` (see *Mouth and lip-sync*; a bare
+`{level}` still works), `audio.listening_started/stopped`.
 
 Lifecycle: `start()` runs a ~10 Hz daemon ticker that calls `update()` so blinks, holds and
 status work headless (tests, `--headless`, dashboard-only). `run_display` calls
@@ -63,41 +68,79 @@ which would shadow `status()`; like audio/media the controller keeps it in `serv
 
 ## Expressions, states, animations
 
-| Expression | Look |
+| Expression | Look (eyes; mouth) |
 |---|---|
-| neutral | big round eyes, dark pupils, two white catchlights |
-| happy | "^ ^" crescents (lower edge curved up): closed smiling eyes, so the pupils shrink away |
-| excited | bigger eyes and pupils with a slight crescent, bouncy hop, twinkling sparkles |
-| curious | left eye bigger + raised, right eye smaller with a tilted lid, gentle sway, glance to the side |
-| surprised | wide round eyes with small pupils, brighter glow, eyes slightly apart |
-| sleepy | heavy arched lids (pupils peek out below), dimmer, looking down, slow heavy blinks, zzz |
-| sad | outer-drooping arched lids, big soft "puppy" pupils, bluer tint, looking down |
-| thinking | eyes up and to the side, one lid lowered, "..." dots bouncing below |
-| listening | slightly bigger attentive eyes (bigger pupils) with a head-tilt, soft pulsing frame around the screen |
-| speaking | friendly eyes + small mouth (closed smile / "D" mouth with tongue) moving with speech |
-| confused | asymmetric eyes, sway, floating "?" |
-| playful | wink-ish (one crescent, one big eye), bounce and sway |
-| affectionate | soft pink crescents, rosy cheeks, floating hearts |
-| celebrating | big golden-tinted crescents, cheeks, sparkles + confetti rain, bouncing |
+| neutral | big round eyes, dark pupils, two white catchlights; small gentle smile |
+| happy | "^ ^" crescents (lower edge curved up): closed smiling eyes, so the pupils shrink away; open "D" smile with a tongue |
+| excited | bigger eyes and pupils with a slight crescent, bouncy hop, twinkling sparkles; big open smile |
+| curious | left eye bigger + raised, right eye smaller with a tilted lid, gentle sway, glance to the side; small "o" |
+| surprised | wide round eyes with small pupils, eyes slightly apart; round "O" |
+| sleepy | heavy arched lids (pupils peek out below), dimmer, looking down, slow heavy blinks, zzz; small soft line |
+| sad | outer-drooping arched lids, big soft "puppy" pupils, bluer tint, looking down; frown |
+| thinking | eyes up and to the side, one lid lowered; lopsided "hmm" line with "..." dots trailing beside it |
+| listening | slightly bigger attentive eyes (bigger pupils) with a head-tilt, soft pulsing frame around the screen; small attentive smile |
+| speaking | friendly eyes; smile, lip-synced while the voice plays |
+| confused | asymmetric eyes, sway, floating "?"; small tilted frown |
+| playful | wink-ish (one crescent, one big eye), bounce and sway; smile with a cheeky tongue poking out |
+| affectionate | soft pink crescents, rosy cheeks, floating hearts; sweet smile |
+| celebrating | big golden-tinted crescents, cheeks, sparkles + confetti rain, bouncing; biggest open smile |
 
 Face states (default expression): idle (neutral), listening (listening), thinking (thinking),
-speaking (speaking), sleeping (sleepy, eyes closed as gentle "‿" arcs, slow deep breathing,
-zzz), error (confused with a soft lavender tint: never red or scary), hidden (fades to a
-calm dark screen with a small dim "play" glyph in the corner while a video owns the screen).
+speaking (speaking), sleeping (sleepy, eyes closed as gentle dark "‿" arcs, slow deep breathing,
+zzz, a tiny breathing "o" mouth), error (confused with a soft lavender tint: never red or scary),
+hidden (fades to a calm, dim screen with a small "play" glyph in the corner while a video owns
+the screen; the only time the mouth is not drawn).
 
-One-shot animations: bounce (squash, hop, stretch, land), wiggle, nod, shake, spin_eyes
-(dizzy roll), sparkle, hearts, zzz, confetti, peek (duck down with eyes shut, rise with a
-bounce and pop open wide: "peek-a-boo!").
+One-shot animations: bounce (squash, hop, stretch, land; "wheee" mouth), wiggle, nod, shake,
+spin_eyes (dizzy roll; a little "ooh"), sparkle, hearts, zzz, confetti, peek (duck down with
+eyes shut, rise with a bounce and pop open wide with an open-mouthed "boo!"). The mouth moves
+and turns with the face in all of them and is kept on screen (peek ducks 70 px).
 
 Always-on life: randomised blinks (`face.blink_interval`, per-expression rate),
 double blinks (`face.double_blink_chance`), blinks with some big saccades, idle gaze
 wandering with micro-saccades (`face.idle_gaze`), critically-damped gaze springs (snappy
 saccades, smooth tracking; the eyes move and the pupils look inside them, while the
 catchlights stay put like a real reflection), perspective (the eye nearer the gaze
-direction grows a little), breathing (`face.breathing`), a speech pulse on the eyes and mouth. While speaking
-the mouth follows `audio.level` events; if none arrive for 0.25 s it synthesises a
-plausible syllable rhythm. A missing `speech_finished` is covered by a safety timeout
+direction grows a little), breathing (`face.breathing`), a speech pulse on the eyes and the
+lip-synced mouth (next section). A missing `speech_finished` is covered by a safety timeout
 (max(8 s, 1.5 x estimate + 4 s), extended by level events).
+
+## Mouth and lip-sync
+
+The mouth is part of every frame (`FaceFrame.mouth`, `None` only once the face is fully
+hidden). `MouthFrame` describes it as a few numbers that morph smoothly: `open` (0 = a curved
+line), `width`, `smile` (-1 frown .. 1 big smile), `round` ("o"), `teeth` (a row of upper
+teeth), `tongue` (a cheeky tongue poking out), `angle`, plus the spoken `shape` for
+debugging. `frame.mouth_edges()` turns them into the upper / lower lip curves (pure geometry);
+the renderer draws an ink lip line along them, a raspberry inside, teeth or a little tongue,
+cached by the quantised shape.
+
+* **At rest** each expression has its own mouth (`ExpressionParams.mouth`, a `MouthParams`
+  that interpolates with the rest of the expression); sleeping turns it into a tiny breathing
+  "o", and one-shot animations add to it (`Motion.mouth_open/smile/round`).
+* **While talking** a spoken pose takes over (`talk_mix`, 0.12 s fade). Its shape comes from
+  what is being heard: `audio.level` events carry `{"level": 0..1, "shape": viseme}` with the
+  visemes `closed` (silence, m/b/p), `small` (most consonants, "uh"), `ah` (open vowels),
+  `ee` (front vowels and s/z/sh/f: wide, teeth showing) and `oo` (rounded vowels and w). The
+  pose (`face/mouth.py`: open / width / round / teeth per viseme, opening scaled by the level,
+  the smile taken from the expression so a sad LittleBot talks a little sadly) is followed with
+  a ~30 ms time constant: on the next frame the mouth is visibly moving, within ~100 ms it is
+  there, without flicker. A bare `{level}` event (older senders) or a shape older than 0.25 s
+  falls back to a shape guessed from loudness; no events at all -> a synthesised syllable rhythm.
+* **Where the shapes come from** (`littlebot/audio/dsp.py`): each 20 ms block of the sound is
+  classified from its loudness, its first three formants (LPC at 8 kHz; tilt-independent, so
+  espeak-ng, neural TTS and the live ChatGPT voice behave alike), its energy above 3.8 kHz /
+  zero-crossing rate (hissing) and a few band ratios (nasal hums). `dsp.viseme_track()`
+  precomputes a whole TTS utterance (~3 ms per second of audio); `dsp.VisemeEstimator`
+  does one block at a time (~0.1-0.3 ms) for live audio. Tested on synthetic adult / child
+  vowels (several pitches, bright and natural spectra, 8-48 kHz) and on espeak-ng words.
+* **In sync with the sound**: the audio service sends the frame for the position the speaker
+  is playing (`PlaybackControl.progress`, already net of the output latency) plus
+  `VISEME_LEAD_S` (40 ms, the face's own drawing delay), on change and at least every 0.15 s.
+  The live voice (`chatgpt/live_audio.py`) estimates the block handed to PortAudio, stamps it
+  with when PortAudio says it will be heard (DAC time, else the stream latency) and
+  `LiveAudio.mouth` returns the one being heard now (60 ms early, to cover its 20 Hz polling and
+  drawing); `chatgpt/live.py` publishes it.
 
 ## Display loop (`run_display(robot, demo=False)`)
 
@@ -188,9 +231,17 @@ simulator window (`window.png`, `window_help.png`, `window_debug.png`).
   frame in a reused scratch surface (the pupil clipped with `BLEND_RGBA_MIN` against the
   body), so gaze movement never re-renders an eye. Surfaces are converted to the display
   format when a display exists.
-* Colours: `face.eye_color` / `face.background_color`; expressions mix in a tint
-  (sad blue, affectionate pink, celebrating gold), the error state a soft lavender.
-  `face.glow: false` disables the glow (cheaper).
+* Colours: `face.eye_color` / `face.background_color` (default soft light pink
+  `[255, 214, 228]`, also set in `config/default.yaml`); expressions mix in a tint (sad blue,
+  affectionate pink, celebrating gold), the error state a soft lavender. The renderer picks
+  its look from the background's brightness: on a light screen the eye rims are deep ink,
+  blinks and closed eyes are dark lines, the eyes cast a soft rosy shadow instead of a glow,
+  Z's / "?" / thinking dots are a deep shade of the eye colour, sparkles are amber with an
+  outline, confetti and hearts are more saturated, the listening frame is darker and the hidden
+  screen is a dim mauve; a dark background (e.g. the old `[6, 8, 14]`) gives the glowing look.
+  `face.glow: false` disables the glow / shadow (cheaper). The dashboard's mini face
+  (`miniFace` in `dashboard/static/js/ui.js`) and the simulator panel's robot drawing use the
+  same pink screen, inked eyes and per-expression mouths.
 * Everything is deterministic for a seed: particles are pure functions of
   `(elapsed, seed)`; the animator owns one `random.Random`.
 
@@ -213,6 +264,12 @@ For the same eye shapes the cartoon renderer costs about the same as the previou
 one: pupil + catchlights add ~0.02-0.04 ms per eye per frame, and an eye-body cache miss
 is ~0.4-0.9 ms, about the same as or less than before. The eyes themselves are a little
 bigger now.
+
+Pink screen + always-on mouth (2026-10-23, same container, busier at the time, so compared
+with the previous version run interleaved): overall mean 1.6-1.9 ms/frame vs 1.56 ms before,
+worst scenario (expression changed every 0.4 s) 4.2-4.5 ms vs 3.5-3.6 ms. The light and dark
+looks cost the same; the resting mouth is one cached blit, a mouth cache miss costs
+0.13-0.38 ms, and lip-synced talking renders at ~1.2 ms/frame.
 
 `--scale 2` (desktop window 960x640) adds ~2 ms/frame of smooth-scaling (desktop only;
 the Pi runs at scale 1 / fullscreen 480x320).

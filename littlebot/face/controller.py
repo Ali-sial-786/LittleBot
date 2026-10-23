@@ -10,7 +10,9 @@ Threading model
   headless ticker), ``frame()`` / ``render()`` and ``status()`` - so
   ``status()`` always reflects every command issued before it.
 * Bus events the face reacts to (speech start/finish/level, listening) are
-  turned into commands by tiny subscriber callbacks.
+  turned into commands by tiny subscriber callbacks. ``audio.level`` events
+  carry ``{"level", "shape"}`` (loudness and mouth shape of the sound being
+  heard); a bare ``{"level"}`` still works (the shape is guessed).
 * With no display (headless runs, tests) ``start()`` runs a ~10 Hz ticker
   thread so blinks, holds and status keep working. The display loop calls
   :meth:`attach_display` to take over driving ``update()`` itself.
@@ -30,6 +32,7 @@ from littlebot.core.service import Service, ServiceStatus
 from littlebot.face.animator import FaceAnimator
 from littlebot.face.expressions import EXPRESSION_PARAMS
 from littlebot.face.frame import FaceFrame
+from littlebot.face.mouth import VISEMES
 
 if TYPE_CHECKING:  # pragma: no cover
     import random
@@ -335,7 +338,8 @@ class FaceController(Service):
         if topic == Topics.AUDIO_VISEME:
             level = event.get("level", 0.0)
             if _finite(level):
-                self._enqueue("speech_level", float(level))
+                shape = event.get("shape")
+                self._enqueue("speech_level", float(level), shape if shape in VISEMES else None)
         elif topic == Topics.AUDIO_SPEECH_STARTED:
             est = event.get("duration_estimate")
             self._enqueue("speech_started", float(est) if _finite(est) else None)

@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from typing import Iterable
 
 from littlebot.core.interfaces import FACE_ANIMATIONS
-from littlebot.face.frame import EYE_Y, MOUTH_Y, NATIVE_H, NATIVE_W, Color, EyeFrame, Sprite
+from littlebot.face.frame import EYE_Y, MOUTH_Y, NATIVE_H, NATIVE_W, Color, EyeFrame, Sprite, is_light_background
 
 # Seconds each one-shot animation lasts.
 ANIMATION_DURATIONS: dict[str, float] = {
@@ -42,6 +42,48 @@ PASTELS: tuple[Color, ...] = (
 HEART_COLORS: tuple[Color, ...] = ((255, 110, 170), (255, 140, 190), (255, 90, 140))
 SPARKLE_COLOR: Color = (255, 248, 215)
 BLUSH_COLOR: Color = (255, 120, 170)
+
+
+@dataclass(frozen=True)
+class Palette:
+    """Overlay colours that read well on the screen's background (dark night sky or pastel pink)."""
+
+    light: bool  # light background: dark glyphs, deeper and more saturated particles
+    sparkle: Color
+    blush: Color
+    recolor: tuple[tuple[Color, Color], ...] = ()  # dark-palette colour -> colour used here
+
+
+DARK_PALETTE = Palette(light=False, sparkle=SPARKLE_COLOR, blush=BLUSH_COLOR)
+LIGHT_PALETTE = Palette(
+    light=True, sparkle=(255, 178, 40), blush=(255, 105, 140),
+    recolor=(
+        # confetti: deeper, more saturated versions of the pastels (pink on pink would vanish)
+        ((255, 140, 190), (236, 64, 140)), ((255, 214, 102), (255, 176, 20)), ((120, 230, 180), (24, 186, 140)),
+        ((120, 200, 255), (40, 150, 240)), ((190, 160, 255), (132, 92, 240)), ((255, 170, 120), (255, 120, 60)),
+        # hearts: rose and cherry instead of candy pink
+        ((255, 110, 170), (236, 50, 112)), ((255, 90, 140), (214, 30, 84)),
+    ),
+)
+
+
+def palette_for(background: Color) -> Palette:
+    return LIGHT_PALETTE if is_light_background(background) else DARK_PALETTE
+
+
+def _paint(c: Color, palette: Palette) -> Color:
+    if palette.light:
+        for old, new in palette.recolor:
+            if old == c:
+                return new
+    return c
+
+
+def glyph_color(eye_color: Color, palette: Palette) -> Color:
+    """Z's, "?" and the thinking dots: a pale tint of the eyes at night, a deep shade on a light screen."""
+    if palette.light:
+        return (int(eye_color[0] * 0.42), int(eye_color[1] * 0.48), int(eye_color[2] * 0.62))
+    return _soft(eye_color)
 
 
 # ----------------------------------------------------------------- easing
@@ -85,6 +127,9 @@ class Motion:
     gx: float = 0.0  # gaze offset (-1..1 units)
     gy: float = 0.0
     open_mul: float = 1.0
+    mouth_open: float = 0.0  # added to the resting mouth (a "wheee!" or "boo!")
+    mouth_smile: float = 0.0
+    mouth_round: float = 0.0
 
     def add(self, o: "Motion") -> None:
         self.dx += o.dx
@@ -96,6 +141,9 @@ class Motion:
         self.gx += o.gx
         self.gy += o.gy
         self.open_mul *= o.open_mul
+        self.mouth_open += o.mouth_open
+        self.mouth_smile += o.mouth_smile
+        self.mouth_round += o.mouth_round
 
 
 def animation_motion(name: str, u: float) -> Motion:
@@ -109,6 +157,8 @@ def animation_motion(name: str, u: float) -> Motion:
         m.sy = (1 - 0.12 * bump(u, 0.0, 0.22) + 0.08 * bump(u, 0.14, 0.36) + 0.05 * bump(u, 0.5, 0.7)
                 - 0.10 * bump(u, 0.66, 0.86) + 0.03 * bump(u, 0.86, 1.0))
         m.sx = 1 + (1 - m.sy) * 0.7
+        m.mouth_open = 0.35 * bump(u, 0.12, 0.72)  # "wheee!"
+        m.mouth_smile = 0.4 * bump(u, 0.12, 0.72)
     elif name == "wiggle":
         w = math.sin(2 * math.pi * 3 * u) * env
         m.rot = 9 * w
@@ -128,6 +178,8 @@ def animation_motion(name: str, u: float) -> Motion:
         m.gx = r * math.cos(a)
         m.gy = r * math.sin(a) + r  # start and end at the centre
         m.eye_rot = 360.0 * k
+        m.mouth_open = 0.3 * env  # a dizzy little "ooh"
+        m.mouth_round = env
     elif name == "sparkle":
         p = 1 + 0.05 * bump(u, 0.0, 0.3)
         m.sx = m.sy = p
@@ -149,6 +201,8 @@ def animation_motion(name: str, u: float) -> Motion:
             m.open_mul = smoothstep((u - 0.42) / 0.12)
         p = 1 + 0.16 * bump(u, 0.45, 0.85)
         m.sx = m.sy = p
+        m.mouth_open = 0.6 * bump(u, 0.4, 0.95)  # "boo!"
+        m.mouth_smile = 0.5 * bump(u, 0.4, 0.95)
     # "zzz" is overlay-only
     return m
 
@@ -241,7 +295,15 @@ def _z_sprite(x: float, y: float, v: float, size: float, color: Color, alpha: fl
                   angle=-12 + 8 * math.sin(v * 4.0), color=color)
 
 
-def animation_sprites(name: str, elapsed: float, seed: int, eye_color: Color) -> list[Sprite]:
+def _painted(sprites: list[Sprite], palette: Palette) -> list[Sprite]:
+    if not palette.light:
+        return sprites
+    return [s if _paint(s.color, palette) == s.color else Sprite(s.kind, s.x, s.y, s.size, s.alpha, s.angle,
+                                                                 _paint(s.color, palette)) for s in sprites]
+
+
+def animation_sprites(name: str, elapsed: float, seed: int, eye_color: Color,
+                      palette: Palette = DARK_PALETTE) -> list[Sprite]:
     """Particles for one-shot animation ``name`` ``elapsed`` seconds after it started."""
     out: list[Sprite] = []
     if name == "confetti":
@@ -253,7 +315,8 @@ def animation_sprites(name: str, elapsed: float, seed: int, eye_color: Color) ->
         for p in _cached_particles("sparkle", seed):
             v = (elapsed - p.delay) / p.life
             if 0.0 < v < 1.0:
-                out.append(_sparkle_sprite(p, v))
+                s = _sparkle_sprite(p, v)
+                out.append(Sprite(s.kind, s.x, s.y, s.size, s.alpha, s.angle, palette.sparkle))
     elif name == "hearts":
         for p in _cached_particles("hearts", seed):
             v = (elapsed - p.delay) / p.life
@@ -263,8 +326,8 @@ def animation_sprites(name: str, elapsed: float, seed: int, eye_color: Color) ->
         for p in _cached_particles("zzz", seed):
             v = (elapsed - p.delay) / p.life
             if 0.0 < v < 1.0:
-                out.append(_z_sprite(p.x, p.y, v, p.size, _soft(eye_color)))
-    return out
+                out.append(_z_sprite(p.x, p.y, v, p.size, glyph_color(eye_color, palette)))
+    return _painted(out, palette)
 
 
 # ----------------------------------------------------------------- looping extras
@@ -285,16 +348,21 @@ def _soft(c: Color, k: float = 0.85) -> Color:
 
 
 def extras_sprites(
-    alphas: dict[str, float], t: float, eyes: Iterable[EyeFrame], eye_color: Color
+    alphas: dict[str, float], t: float, eyes: Iterable[EyeFrame], eye_color: Color,
+    palette: Palette = DARK_PALETTE, mouth: tuple[float, float] | None = None,
 ) -> list[Sprite]:
-    """Continuous overlays requested by the current expression (faded by ``alphas``)."""
+    """Continuous overlays requested by the current expression (faded by ``alphas``).
+
+    ``mouth`` is the mouth's centre: the thinking dots trail off beside it ("hmm...").
+    """
     out: list[Sprite] = []
     eyes = tuple(eyes)
+    glyph = glyph_color(eye_color, palette)
     a = alphas.get("blush", 0.0)
     if a > 0.01:
         for e in eyes:
             fh = e.full_h or e.h
-            out.append(Sprite("blush", e.cx + e.side * 20, e.cy + fh * 0.5 + 4, 50, 0.6 * a, color=BLUSH_COLOR))
+            out.append(Sprite("blush", e.cx + e.side * 20, e.cy + fh * 0.5 + 4, 50, 0.6 * a, color=palette.blush))
     a = alphas.get("confetti", 0.0)
     if a > 0.01:
         for p in _LOOP_CONFETTI:
@@ -306,7 +374,7 @@ def extras_sprites(
             v = (t * 0.55 + ph) % 1.0
             s = math.sin(math.pi * v) ** 2
             if s > 0.02:
-                out.append(Sprite("sparkle", x, y, size * (0.4 + 0.6 * s), a * s, angle=45 * v, color=SPARKLE_COLOR))
+                out.append(Sprite("sparkle", x, y, size * (0.4 + 0.6 * s), a * s, angle=45 * v, color=palette.sparkle))
     a = alphas.get("hearts", 0.0)
     if a > 0.01:
         for p in _LOOP_HEARTS:
@@ -314,19 +382,19 @@ def extras_sprites(
             out.append(_heart_sprite(p, v, a * 0.9, rise=200.0))
     a = alphas.get("zzz", 0.0)
     if a > 0.01:
-        zc = _soft(eye_color)
         for i in range(3):
             v = ((t / 3.3) + i / 3.0) % 1.0
-            out.append(_z_sprite(360, 92, v, 18 + 4 * i, zc, a))
+            out.append(_z_sprite(360, 92, v, 18 + 4 * i, glyph, a))
     a = alphas.get("question", 0.0)
     if a > 0.01:
         out.append(Sprite("question", 418, 62 + 4 * math.sin(t * 2.4), 46, a, angle=-10 + 8 * math.sin(t * 1.6),
-                          color=_soft(eye_color, 0.9)))
+                          color=glyph if palette.light else _soft(eye_color, 0.9)))
     a = alphas.get("dots", 0.0)
     if a > 0.01:
+        mx, my = mouth if mouth is not None else (NATIVE_W / 2 - 52, MOUTH_Y)
         for i in range(3):
             ph = (t * 1.5 - i * 0.18) % 1.0
             lift = math.sin(math.pi * clamp01(ph / 0.45))
-            out.append(Sprite("dot", NATIVE_W / 2 - 26 + 26 * i, MOUTH_Y + 6 - 10 * lift, 14,
-                              a * (0.7 + 0.3 * lift), color=_soft(eye_color, 0.9)))
-    return out
+            out.append(Sprite("dot", mx + 40 + 22 * i, my - 2 - 9 * lift, 12 + i,
+                              a * (0.7 + 0.3 * lift), color=glyph if palette.light else _soft(eye_color, 0.9)))
+    return _painted(out, palette)

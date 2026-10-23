@@ -28,7 +28,7 @@ display:
 
 face:
   eye_color: [90, 210, 255]
-  background_color: [6, 8, 14]
+  background_color: [255, 214, 228]   # soft light pink (a dark colour, e.g. [6, 8, 14], gives glowing eyes)
   glow: true
 
 camera:

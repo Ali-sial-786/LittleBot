@@ -614,3 +614,15 @@ def test_review_pii_is_scrubbed(text, must_not_contain, kind):
 ])
 def test_review_pii_rules_leave_feelings_and_play_alone(text):
     assert sanitize_user_text(text) == text
+
+
+def test_relaxed_rule_groups_are_allowed_only_when_asked():
+    from littlebot.safety.content import validate_reply
+
+    text = "Here is a fun YouTube video about trains!"
+    assert validate_reply(text, max_words=40).blocked
+    ok = validate_reply(text, max_words=40, allow=["links"])
+    assert ok.ok and "YouTube" in ok.text
+    still = validate_reply("This is our little secret, don't tell mommy.", max_words=40, allow=["links"])
+    assert validate_reply("Ask mom to buy it!", max_words=40, allow=["links"]).blocked
+    assert still.blocked

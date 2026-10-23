@@ -10,6 +10,15 @@ Contract as WatchGPT measured it (08.2026, same as Codex): ``store`` must be fal
 ``max_output_tokens`` and ``previous_response_id`` are rejected - so the length cap is
 applied afterwards by ``validate_reply`` (as for every provider) and history is resent.
 
+Function calling (ported from WatchGPT's ChatGptBrain): ``reply(..., tools=[specs], run_tool=fn)``
+adds ``tools`` (``{"type": "function", name, description, strict: false, parameters}``),
+``tool_choice: "auto"`` and ``parallel_tool_calls: false``. Each ``response.output_item.done`` item
+is kept; a ``function_call`` item (name, JSON arguments, call_id) is run with ``run_tool`` and,
+because the endpoint is stateless, the next request resends the history + the model's items
+(reasoning, the call) + ``{"type": "function_call_output", call_id, output}``, up to
+``max_tool_rounds`` times; then the text of the last answer is returned. Replayed items are sent
+without their ``id`` (as Codex does: items aren't stored when ``store`` is false).
+
 UNDOCUMENTED endpoint; tested here only against mocked responses.
 """
 
@@ -18,10 +27,12 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import logging
 import re
 import time
 import uuid
-from typing import Any, AsyncIterator
+from dataclasses import dataclass, field
+from typing import Any, AsyncIterator, Awaitable, Callable
 
 import httpx
 
@@ -32,11 +43,22 @@ from littlebot.brain.providers.base import (
 from littlebot.chatgpt.auth import CODEX_BASE, ChatGPTAuth, ChatGPTAuthError
 
 MODEL_UNAVAILABLE = re.compile(r"model.*(not supported|does not exist|not found|unsupported)", re.I)
+# Per-call reasoning effort (camera looks ask for the cheapest): when the endpoint rejects one for a
+# model (HTTP 400 naming reasoning.effort) the next costlier one is tried, and remembered for next time.
+EFFORTS = ("none", "minimal", "low", "medium", "high")
+EFFORT_REJECTED = re.compile(r"\beffort\b", re.I)
+KEEPALIVE_S = 120.0  # keep the TLS connection to chatgpt.com between requests (httpx's default is 5 s)
+MAX_TOOL_ROUNDS = 6  # a request like "play baby shark" takes two: search, then play
+MAX_TOOL_OUTPUT_CHARS = 4000
+TOOL_FAILED = "error: the action failed"
+
+ToolRunner = Callable[[str, str], Awaitable[str]]  # (name, arguments JSON) -> short result for the model
 
 
 class ChatGPTProvider(BaseProvider):
     name = "chatgpt"
     is_cloud = True
+    supports_tools = True  # reply() takes tools= and run_tool= (other providers don't)
 
     def __init__(self, auth: ChatGPTAuth, *, models: list[str], effort: str = "low",
                  base_url: str = CODEX_BASE, transport: httpx.AsyncBaseTransport | None = None,
@@ -50,6 +72,7 @@ class ChatGPTProvider(BaseProvider):
         self._client: httpx.AsyncClient | None = None
         self._session_id = str(uuid.uuid4())
         self._now = now
+        self._rejected_efforts: set[tuple[str, str]] = set()  # (model, effort) the endpoint said no to
 
     @property
     def model(self) -> str:  # type: ignore[override]
@@ -63,8 +86,25 @@ class ChatGPTProvider(BaseProvider):
 
     def _get_client(self) -> httpx.AsyncClient:
         if self._client is None or self._client.is_closed:
-            self._client = httpx.AsyncClient(transport=self._transport, follow_redirects=False)
+            self._client = httpx.AsyncClient(transport=self._transport, follow_redirects=False,
+                                             limits=httpx.Limits(keepalive_expiry=KEEPALIVE_S))
         return self._client
+
+    async def warm(self, timeout: float = 5.0) -> bool:
+        """Open the connection to chatgpt.com before it is needed (DNS + TCP + TLS, ~0.1-0.4 s on Wi-Fi),
+        so the next request doesn't pay for it. A bare HEAD: no sign-in is sent and no model is used."""
+        try:
+            await asyncio.wait_for(self._get_client().request("HEAD", self.url), timeout)
+            return True
+        except Exception:  # noqa: BLE001 - best effort; the real request connects anyway
+            return False
+
+    def _effort_for(self, model: str, want: str | None) -> str:
+        """``want`` (a per-call effort) unless the endpoint rejected it for ``model``; then the next costlier."""
+        if not want:
+            return self.effort
+        chain = [*(EFFORTS[EFFORTS.index(want):] if want in EFFORTS else (want,)), self.effort]
+        return next((e for e in chain if (model, e) not in self._rejected_efforts), self.effort)
 
     async def aclose(self) -> None:
         if self._client is not None and not self._client.is_closed:
@@ -72,48 +112,89 @@ class ChatGPTProvider(BaseProvider):
         self._client = None
 
     def build_body(self, messages: list[Message], *, system: str, model: str,
-                   images: list[bytes] | None = None) -> dict[str, Any]:
+                   images: list[bytes] | None = None, tools: list[dict[str, Any]] | None = None,
+                   extra_input: list[dict[str, Any]] | None = None, detail: str | None = None,
+                   effort: str | None = None) -> dict[str, Any]:
+        """``extra_input``: the model's earlier items and tool results, replayed after the messages.
+        ``detail``: the images' detail ("low" | "high" | "auto"; default IMAGE_DETAIL); ``effort``:
+        this request's reasoning effort (default: the provider's)."""
         items: list[dict[str, Any]] = []
         for m in messages:
             user = m.get("role") == "user"
             items.append({"type": "message", "role": "user" if user else "assistant",
                           "content": [{"type": "input_text" if user else "output_text", "text": str(m.get("content", ""))}]})
-        parts = [_image_part(img) for img in images or () if img]
+        parts = [_image_part(img, detail) for img in images or () if img]
         if parts:
             last_user = next((it for it in reversed(items) if it["role"] == "user"), None)
             if last_user is None:
                 last_user = {"type": "message", "role": "user", "content": []}
                 items.append(last_user)
             last_user["content"][:0] = parts  # images first, then the question (as `codex exec -i` sends it)
-        return {
+        body: dict[str, Any] = {
             "model": model,
             "instructions": system.strip() or "You are a friendly toy robot.",
-            "input": items,
+            "input": items + list(extra_input or ()),
             "store": False,
             "stream": True,
-            "reasoning": {"effort": self.effort},
+            "reasoning": {"effort": effort or self.effort},
             "text": {"verbosity": "low"},
             "include": ["reasoning.encrypted_content"],
             "prompt_cache_key": self._session_id,
         }
+        functions = [function_tool(spec) for spec in tools or ()]
+        if functions:
+            body["tools"] = functions
+            body["tool_choice"] = "auto"
+            body["parallel_tool_calls"] = False
+        return body
 
     async def reply(self, messages: list[Message], *, system: str, max_tokens: int, timeout: float,
-                    images: list[bytes] | None = None) -> ProviderReply:
-        """``images``: JPEG bytes added to the LAST user message (sent once, never kept here)."""
+                    images: list[bytes] | None = None, tools: list[dict[str, Any]] | None = None,
+                    run_tool: ToolRunner | None = None, max_tool_rounds: int = MAX_TOOL_ROUNDS,
+                    detail: str | None = None, effort: str | None = None,
+                    on_delta: Callable[[str], Any] | None = None) -> ProviderReply:
+        """``images``: JPEG bytes added to the LAST user message (sent once, never kept here).
+
+        ``tools`` + ``run_tool``: function calling. ``timeout`` applies to each request; a reply
+        that uses tools makes one more request per round.
+
+        ``detail``: the images' detail level. ``effort``: reasoning effort for this call; if the
+        endpoint rejects it for the model (400), the next costlier one is used (and remembered).
+        ``on_delta(text)``: called with each piece of answer text as it streams in, before the
+        reply is complete (unchecked text: the caller validates whatever it uses)."""
         t0 = time.monotonic()
         try:
             bearer = await self.auth.bearer()
         except ChatGPTAuthError as e:
             raise _auth_error(e) from None
+        offered = list(tools or ()) if run_tool is not None else []
         tried_refresh = False
+        replay: list[dict[str, Any]] = []
+        rounds = 0
+        tokens_in = tokens_out = 0
         while True:
             model = self.model
+            used_effort = self._effort_for(model, effort)
+            body = self.build_body(messages, system=system, model=model, images=images, tools=offered,
+                                   extra_input=replay, detail=detail, effort=used_effort)
             try:
-                text, usage, stop = await asyncio.wait_for(
-                    self._stream(bearer, self.build_body(messages, system=system, model=model, images=images)),
-                    timeout)
+                result = await asyncio.wait_for(self._stream(bearer, body, on_delta), timeout)
             except asyncio.TimeoutError:
                 raise ProviderTimeoutError(f"chatgpt: no answer within {timeout:.0f}s") from None
+            except _EffortRejected as e:
+                if used_effort == self.effort:  # even the configured effort: nothing to fall back to
+                    raise _tag(ProviderError("chatgpt: request not accepted", status_code=400, kind="bad_request"),
+                               getattr(e, "api_error", {"status": 400})) from None
+                self._rejected_efforts.add((model, used_effort))
+                continue
+            except ProviderError as e:
+                if e.kind != "bad_request" or used_effort == self.effort:
+                    raise
+                # A 400 that doesn't say why: the per-call effort is the likely cause, and the configured
+                # one is known to work, so go straight back to it (remembered for this model).
+                cheaper = EFFORTS[:EFFORTS.index(self.effort)] if self.effort in EFFORTS else ()
+                self._rejected_efforts.update((model, x) for x in (*cheaper, used_effort))
+                continue
             except _Unauthorized:
                 if tried_refresh:
                     raise AuthenticationError("chatgpt: sign-in rejected", status_code=401, kind="expired") from None
@@ -129,16 +210,24 @@ class ChatGPTProvider(BaseProvider):
                                         status_code=400, kind="model_unavailable") from None
                 self._model_index += 1
                 continue
-            return ProviderReply(text=text.strip(), input_tokens=int(usage.get("input_tokens") or 0),
-                                 output_tokens=int(usage.get("output_tokens") or 0), model=model,
-                                 latency_ms=int((time.monotonic() - t0) * 1000), stop_reason=stop)
+            tokens_in += int(result.usage.get("input_tokens") or 0)
+            tokens_out += int(result.usage.get("output_tokens") or 0)
+            if result.calls and run_tool is not None and rounds < max(0, int(max_tool_rounds)):
+                # Stateless endpoint: replay the model's items, then the results, and ask again.
+                rounds += 1
+                outputs = [{"type": "function_call_output", "call_id": call.call_id,
+                            "output": await _run_tool(run_tool, call)} for call in result.calls]
+                replay = replay + [it for it in (_replayable(i) for i in result.items) if it] + outputs
+                continue
+            return ProviderReply(text=result.text.strip(), input_tokens=tokens_in, output_tokens=tokens_out,
+                                 model=model, latency_ms=int((time.monotonic() - t0) * 1000), stop_reason=result.stop)
 
-    async def _stream(self, bearer: Any, body: dict[str, Any]) -> tuple[str, dict[str, Any], str]:
+    async def _stream(self, bearer: Any, body: dict[str, Any],
+                      on_delta: Callable[[str], Any] | None = None) -> "_StreamResult":
         headers = {**self.auth.headers(bearer), "Accept": "text/event-stream", "content-type": "application/json",
                    "session-id": self._session_id}
+        res = _StreamResult()
         out: list[str] = []
-        usage: dict[str, Any] = {}
-        stop = "end_turn"
         try:
             async with self._get_client().stream("POST", self.url, headers=headers, json=body,
                                                  timeout=httpx.Timeout(60.0, connect=8.0)) as resp:
@@ -149,11 +238,20 @@ class ChatGPTProvider(BaseProvider):
                     kind = data.get("type") or event
                     if kind == "response.output_text.delta":
                         out.append(str(data.get("delta") or ""))
+                        if on_delta is not None and out[-1]:
+                            _notify(on_delta, out[-1])
+                    elif kind == "response.output_item.done":
+                        item = data.get("item")
+                        if isinstance(item, dict):
+                            res.items.append(item)
+                            call = _function_call(item)
+                            if call is not None:
+                                res.calls.append(call)
                     elif kind in ("response.completed", "response.incomplete"):
                         r = data.get("response") if isinstance(data.get("response"), dict) else {}
-                        usage = r.get("usage") if isinstance(r.get("usage"), dict) else {}
+                        res.usage = r.get("usage") if isinstance(r.get("usage"), dict) else {}
                         if kind == "response.incomplete":
-                            stop = "max_tokens"
+                            res.stop = "max_tokens"
                         break
                     elif kind == "response.failed":
                         r = data.get("response") if isinstance(data.get("response"), dict) else {}
@@ -164,15 +262,83 @@ class ChatGPTProvider(BaseProvider):
             raise ProviderTimeoutError("chatgpt: request timed out") from None
         except httpx.TransportError as e:
             raise NetworkError(f"chatgpt: network unavailable ({type(e).__name__})") from None
-        if not out and stop == "end_turn" and not usage:
+        if not out and not res.calls and res.stop == "end_turn" and not res.usage:
             raise ProviderError("chatgpt: the stream ended without an answer", kind="malformed")
-        return "".join(out), usage, stop
+        res.text = "".join(out)
+        return res
+
+
+@dataclass(frozen=True)
+class FunctionCall:
+    call_id: str
+    name: str
+    arguments: str  # JSON text, as the model wrote it
+
+
+@dataclass
+class _StreamResult:
+    text: str = ""
+    usage: dict[str, Any] = field(default_factory=dict)
+    stop: str = "end_turn"
+    calls: list[FunctionCall] = field(default_factory=list)
+    items: list[dict[str, Any]] = field(default_factory=list)  # every output item, for the replay
+
+
+def function_tool(spec: dict[str, Any]) -> dict[str, Any]:
+    """A Responses API function tool from ``{name, description, parameters}`` (as WatchGPT sends it)."""
+    params = spec.get("parameters") if isinstance(spec.get("parameters"), dict) else None
+    return {"type": "function", "name": str(spec["name"]), "description": str(spec.get("description") or ""),
+            "strict": False, "parameters": params or {"type": "object", "properties": {}}}
+
+
+def _function_call(item: dict[str, Any]) -> FunctionCall | None:
+    if item.get("type") != "function_call":
+        return None
+    call_id, name = item.get("call_id"), item.get("name")
+    if not isinstance(call_id, str) or not call_id or not isinstance(name, str) or not name:
+        return None
+    args = item.get("arguments")
+    return FunctionCall(call_id, name, args if isinstance(args, str) and args.strip() else "{}")
+
+
+def _replayable(item: dict[str, Any]) -> dict[str, Any] | None:
+    """An output item as the next request's input, in the shape Codex sends (no ``id``/``status``)."""
+    kind = item.get("type")
+    if kind == "reasoning":
+        out: dict[str, Any] = {"type": "reasoning", "summary": item.get("summary") if isinstance(
+            item.get("summary"), list) else []}
+        if item.get("encrypted_content"):
+            out["encrypted_content"] = item["encrypted_content"]
+        return out
+    if kind == "function_call":
+        call = _function_call(item)
+        return None if call is None else {"type": "function_call", "name": call.name, "arguments": call.arguments,
+                                          "call_id": call.call_id}
+    if kind == "message":
+        content = item.get("content") if isinstance(item.get("content"), list) else []
+        text = "".join(str(c.get("text") or "") for c in content
+                       if isinstance(c, dict) and c.get("type") == "output_text")
+        return {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": text}]} \
+            if text else None
+    return None  # anything else (e.g. a web search call) isn't ours to replay
+
+
+async def _run_tool(run_tool: ToolRunner, call: FunctionCall) -> str:
+    """Run one call; a crash becomes an error result for the model (never the conversation's end)."""
+    try:
+        out = await run_tool(call.name, call.arguments)
+    except asyncio.CancelledError:
+        raise
+    except Exception:  # noqa: BLE001
+        return TOOL_FAILED
+    text = str(out if out is not None else "ok")
+    return text if len(text) <= MAX_TOOL_OUTPUT_CHARS else text[:MAX_TOOL_OUTPUT_CHARS - 12] + " [truncated]"
 
 
 IMAGE_DETAIL = "high"  # codex-rs/protocol/src/models.rs: DEFAULT_IMAGE_DETAIL = ImageDetail::High
 
 
-def _image_part(jpeg: bytes) -> dict[str, Any]:
+def _image_part(jpeg: bytes, detail: str | None = None) -> dict[str, Any]:
     """A Responses API ``input_image`` content part with the JPEG inlined as a data URL.
 
     The shape the Codex CLI sends (openai/codex, codex-rs/protocol/src/models.rs):
@@ -181,10 +347,11 @@ def _image_part(jpeg: bytes) -> dict[str, Any]:
     ``{"type": "input_image", "image_url": "data:<mime>;base64,<standard base64>", "detail": "high"}``
     (``data_url_from_bytes`` in codex-rs/utils/image/src/lib.rs). ``detail`` is always sent: Codex
     defaults it to "high", and the OpenAI spec marks it required (openai-python ``ResponseInputImageParam``).
-    Codex shrinks images to fit 2048 px; ours are already 768 px wide.
+    Codex shrinks images to fit 2048 px; ours are already 768 px wide. ``detail`` "low" (one
+    512 px view, fewer image tokens: faster) suits simple questions; "high" counting and reading.
     """
     return {"type": "input_image", "image_url": "data:image/jpeg;base64," + base64.b64encode(jpeg).decode("ascii"),
-            "detail": IMAGE_DETAIL}
+            "detail": detail if detail in ("low", "high", "auto") else IMAGE_DETAIL}
 
 
 class _Unauthorized(Exception):
@@ -193,6 +360,17 @@ class _Unauthorized(Exception):
 
 class _ModelUnavailable(Exception):
     pass
+
+
+class _EffortRejected(Exception):
+    pass
+
+
+def _notify(on_delta: Callable[[str], Any], text: str) -> None:
+    try:
+        on_delta(text)
+    except Exception:  # noqa: BLE001 - a listener's bug must not break the answer
+        logging.getLogger("littlebot.chatgpt").debug("on_delta listener failed", exc_info=True)
 
 
 async def _sse(lines: AsyncIterator[str]) -> AsyncIterator[tuple[str, dict[str, Any]]]:
@@ -279,6 +457,9 @@ def _http_error_kind(status: int, headers: httpx.Headers, err: Any, obj: Any, no
         return RateLimitError("chatgpt: rate limited", retry_after=_retry_after(headers))
     if status == 503 and etype in ("server_is_overloaded", "slow_down"):
         return RateLimitError("chatgpt: busy", status_code=503, retry_after=_retry_after(headers), kind="overloaded")
+    param = err.get("param") if isinstance(err, dict) else None
+    if status == 400 and (param == "reasoning.effort" or EFFORT_REJECTED.search(detail)):
+        return _EffortRejected()  # checked first: "... effort 'none' is not supported with this model"
     if status == 400 and MODEL_UNAVAILABLE.search(detail):
         return _ModelUnavailable()
     if status == 400 and "does not represent a valid image" in detail:  # Codex: CodexErr::InvalidImageRequest

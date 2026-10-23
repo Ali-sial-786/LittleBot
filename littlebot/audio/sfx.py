@@ -313,11 +313,24 @@ def _success(sr: int) -> np.ndarray:
     return _mix(1.15, sr, parts)
 
 
+def _listen(sr: int) -> np.ndarray:
+    """"I'm listening" earcon (wake word heard), like a smart speaker: two quick, soft, rising
+    tones a fifth apart (E5 -> B5), nearly pure sines, 0.27 s in all."""
+    def tone(note: str, dur: float, tau: float) -> np.ndarray:
+        n = _n(dur, sr)
+        t = np.arange(n) / sr
+        f = _hz(note)
+        x = np.sin(TWO_PI * f * t) + 0.06 * np.sin(TWO_PI * 2 * f * t) * np.exp(-t / 0.04)
+        return x * _attack(n, sr, 0.008) * np.exp(-t / tau)
+    return _mix(0.27, sr, [(0.0, tone("E5", 0.12, 0.07) * 0.8), (0.09, tone("B5", 0.18, 0.08))])
+
+
 _GENERATORS: dict[str, Callable[[int], np.ndarray]] = {
     "chime": _chime, "pop": _pop, "boop": _boop, "boing": _boing, "peekaboo": _peekaboo,
     "tada": _tada, "clap": _clap, "whoosh": _whoosh, "sparkle": _sparkle, "drum": _drum,
     "bell": _bell_sound, "giggle": _giggle, "uhoh": _uhoh, "yay": _yay, "blip": _blip,
     "notes": _notes, "sleep": _sleep, "wake": _wake, "click": _click, "success": _success,
+    "listen": _listen,
 }
 
 # Sounds made mostly of noise get an extra low-pass pass.

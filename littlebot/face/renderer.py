@@ -1,10 +1,16 @@
 """Pygame renderer: turns a :class:`FaceFrame` into pixels.
 
-Look: dark vignette background and two big, round, softly glowing cartoon
-eyes: an iris-coloured body with a darker "ink" rim inside the outline (and
-along the lids), a soft vertical gradient, a big dark pupil that looks around
-inside the eye, and two bright white catchlights that stay put (they belong to
-the light, not the pupil). Plus optional cute extras.
+Look: a soft vignette background and two big, round cartoon eyes: an
+iris-coloured body with a darker "ink" rim inside the outline (and along the
+lids), a soft vertical gradient, a big dark pupil that looks around inside the
+eye, and two bright white catchlights that stay put (they belong to the light,
+not the pupil). Below them a little mouth, always there: a resting smile /
+frown / "o" per expression, lip-synced to the voice while LittleBot talks.
+Plus optional cute extras.
+
+Two looks, picked from the background colour: on a light (pastel pink) screen
+the features are inked: deep rims, dark closed-eye lines and mouth, and the
+eyes cast a soft rosy shadow; on a dark screen the eyes glow instead.
 
 Performance notes (the Pi 5 must hold 30 fps at low CPU):
 
@@ -17,7 +23,11 @@ Performance notes (the Pi 5 must hold 30 fps at low CPU):
   body (``BLEND_RGBA_MIN`` against the body itself), the catchlights are kept
   inside the open eye by geometry. Gaze changes never re-render the eye, and
   nothing can poke outside the eye outline.
-* Glow = core shape downscaled 4x, gaussian-blurred, scaled back up.
+* Glow (or the shadow on a light screen) = core shape downscaled 4x,
+  gaussian-blurred, scaled back up.
+* The mouth is drawn from :func:`~littlebot.face.frame.mouth_edges` and cached
+  by its quantised shape, so a resting mouth is one blit and talking reuses a
+  few dozen cached shapes.
 * Sprites (hearts, sparkles, Z's, confetti ...) are rendered once per
   (kind, size, colour, angle-bucket) and cached.
 * Everything is drawn at the native 480x320 and scaled once at the end if the
@@ -26,6 +36,7 @@ Performance notes (the Pi 5 must hold 30 fps at low CPU):
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 import math
 import time
@@ -35,8 +46,8 @@ from typing import Any
 import pygame
 
 from littlebot.face.frame import (
-    LID_BOW, MIN_LINE, NATIVE_H, NATIVE_W, RIM, SMILE_DEPTH, SMILE_RADIUS, Color, EyeFrame, FaceFrame, MouthFrame,
-    Sprite, catchlights, eye_span, pupil_geometry,
+    LID_BOW, MIN_LINE, MOUTH_LINE, NATIVE_H, NATIVE_W, RIM, SMILE_DEPTH, SMILE_RADIUS, Color, EyeFrame, FaceFrame,
+    MouthFrame, Sprite, catchlights, eye_span, is_light_background, mouth_edges, pupil_geometry,
 )
 
 log = logging.getLogger("littlebot.face.renderer")
@@ -49,6 +60,15 @@ GLOW_BLUR = 4
 GLOW_ALPHA = 0.9  # base glow opacity at glow=1
 SHADE_ROWS = 96  # resolution of the eye's vertical colour gradient
 RIM_GRAY = 118  # rim brightness relative to the eye colour (255 = no rim)
+RIM_GRAY_LIGHT = 60  # on a light screen the rim is a deep ink line: crisp edges against the pastel
+SHADOW_OFFSET = 7  # px, the eyes' soft shadow on a light screen falls a little below them
+SHADOW_ALPHA = 0.55
+MOUTH_CACHE_SIZE = 160
+# Mouth colours on a light screen (fixed, so a tinted eye colour never turns the mouth odd)
+MOUTH_INK: Color = (66, 32, 62)  # deep plum line
+MOUTH_INSIDE: Color = (146, 40, 82)  # raspberry
+TONGUE: Color = (255, 120, 146)
+TEETH: Color = (255, 255, 255)
 CLOSED_THICKNESS = 11.0  # px, sleeping / peekaboo closed-eye arcs (grows from MIN_LINE as they curve)
 CLOSED_SAG = 12.0  # px the closed-eye arc dips in the middle (content '‿')
 
@@ -71,6 +91,16 @@ def _closed_thickness(e: EyeFrame) -> float:
 
 def _mix(a: Color, b: Color, k: float) -> Color:
     return (int(a[0] + (b[0] - a[0]) * k), int(a[1] + (b[1] - a[1]) * k), int(a[2] + (b[2] - a[2]) * k))
+
+
+def _ink(c: Color) -> Color:
+    """Deep shade of the eye colour for lines drawn on a light screen (closed eyes)."""
+    return _mix(_scale(c, 0.42), (40, 30, 70), 0.3)
+
+
+def _veil_color(bg: Color) -> Color:
+    """The calm "video playing" screen: dimmed, and quite dark even when the face is pastel."""
+    return _scale(bg, 0.32 if is_light_background(bg) else 0.6)
 
 
 def _pupil_color(c: Color) -> Color:
@@ -136,6 +166,7 @@ class FaceRenderer:
         self._eyes = _LRU(EYE_CACHE_SIZE)
         self._glows = _LRU(EYE_CACHE_SIZE)
         self._sprites = _LRU(SPRITE_CACHE_SIZE)
+        self._mouths = _LRU(MOUTH_CACHE_SIZE)
         self._static: dict[Any, pygame.Surface] = {}
         self._comp: dict[tuple[int, int], pygame.Surface] = {}  # per-size eye compositing scratch
         self._tmp: pygame.Surface | None = None  # super-sampled scratch for rim bands (cache misses only)
@@ -167,12 +198,14 @@ class FaceRenderer:
         return {"eye_hits": self._eyes.hits, "eye_misses": self._eyes.misses, "eye_entries": len(self._eyes),
                 "glow_hits": self._glows.hits, "glow_misses": self._glows.misses,
                 "sprite_hits": self._sprites.hits, "sprite_misses": self._sprites.misses,
-                "sprite_entries": len(self._sprites)}
+                "sprite_entries": len(self._sprites), "mouth_hits": self._mouths.hits,
+                "mouth_misses": self._mouths.misses}
 
     def clear_cache(self) -> None:
         self._eyes.clear()
         self._glows.clear()
         self._sprites.clear()
+        self._mouths.clear()
         self._static.clear()
         self._comp.clear()
         self._tmp = None
@@ -183,27 +216,28 @@ class FaceRenderer:
         if f.hidden >= 0.999:
             self._draw_hidden(f, surf)
             return
+        light = is_light_background(f.background)
         if f.ring > 0.01:
-            ring = self._ring(f.color)
+            ring = self._ring(f.color, light)
             ring.set_alpha(int(255 * min(1.0, f.ring)))
             surf.blit(ring, (0, 0))
         sprites_front: list[Sprite] = []
         for s in f.sprites:
             if s.kind == "blush":
-                self._draw_sprite(surf, s)
+                self._draw_sprite(surf, s, light)
             elif s.kind != "play":
                 sprites_front.append(s)
         for eye in f.eyes:
-            self._draw_eye(surf, eye, f.color, f.glow)
+            self._draw_eye(surf, eye, f.color, f.glow, light)
         if f.mouth is not None:
-            self._draw_mouth(surf, f.mouth, f.color, f.glow)
+            self._draw_mouth(surf, f.mouth, f.color, light)
         for s in sprites_front:
-            self._draw_sprite(surf, s)
+            self._draw_sprite(surf, s, light)
         if f.hidden > 0.001:
             veil = self._static.get(("veil", f.background))
             if veil is None:
                 veil = pygame.Surface(self.size)
-                veil.fill(_scale(f.background, 0.6))
+                veil.fill(_veil_color(f.background))
                 self._static[("veil", f.background)] = veil
             veil.set_alpha(int(255 * min(1.0, f.hidden)))
             surf.blit(veil, (0, 0))
@@ -212,7 +246,7 @@ class FaceRenderer:
                     self._draw_sprite(surf, s)
 
     def _draw_hidden(self, f: FaceFrame, surf: pygame.Surface) -> None:
-        surf.fill(_scale(f.background, 0.6))
+        surf.fill(_veil_color(f.background))
         for s in f.sprites:
             if s.kind == "play":
                 self._draw_sprite(surf, s)
@@ -235,8 +269,13 @@ class FaceRenderer:
             ys, xs = np.mgrid[0:h, 0:w].astype(np.float32)
             d = np.sqrt(((xs - w / 2) / (w * 0.62)) ** 2 + ((ys - h * 0.46) / (h * 0.7)) ** 2)
             k = np.clip(1.0 - d, 0.0, 1.0) ** 1.6  # 1 at centre .. 0 at edges
-            centre = np.array(_lighten(bg, 0.045), dtype=np.float32) + np.array((2, 4, 10), dtype=np.float32)
-            edge = np.array(_scale(bg, 0.7), dtype=np.float32)
+            if is_light_background(bg):
+                # pastel: a creamy glow behind the face, a slightly deeper, rosier rim
+                centre = np.array(_lighten(bg, 0.5), dtype=np.float32)
+                edge = np.array(_scale(bg, 0.95), dtype=np.float32)
+            else:
+                centre = np.array(_lighten(bg, 0.045), dtype=np.float32) + np.array((2, 4, 10), dtype=np.float32)
+                edge = np.array(_scale(bg, 0.7), dtype=np.float32)
             rgb = edge[None, None, :] + (centre - edge)[None, None, :] * k[..., None]
             # tiny ordered dither so the gradient never bands on 16-bit panels
             dither = ((xs.astype(np.int32) ^ ys.astype(np.int32)) & 1).astype(np.float32)[..., None] * 0.5
@@ -246,8 +285,8 @@ class FaceRenderer:
             surf.fill(bg)
         return surf
 
-    def _ring(self, color: Color) -> pygame.Surface:
-        key = ("ring", color, self.size)
+    def _ring(self, color: Color, light: bool = False) -> pygame.Surface:
+        key = ("ring", color, self.size, light)
         s = self._static.get(key)
         if s is not None:
             return s
@@ -255,7 +294,7 @@ class FaceRenderer:
         ss = 2
         big = pygame.Surface((w * ss, h * ss), pygame.SRCALPHA)
         inset, th = 7 * ss, 3 * ss
-        rc = _lighten(color, 0.25)
+        rc = _mix(color, _ink(color), 0.3) if light else _lighten(color, 0.25)
         pygame.draw.rect(big, (*rc, 255), pygame.Rect(inset, inset, w * ss - 2 * inset, h * ss - 2 * inset),
                          width=th, border_radius=26 * ss)
         line = pygame.transform.smoothscale(big, (w, h))
@@ -264,14 +303,15 @@ class FaceRenderer:
         glow = pygame.transform.smoothscale(small, (w, h))
         out = pygame.Surface((w, h), pygame.SRCALPHA)
         out.blit(glow, (0, 0))
-        out.blit(glow, (0, 0))
-        line.set_alpha(150)
+        if not light:
+            out.blit(glow, (0, 0))
+        line.set_alpha(210 if light else 150)
         out.blit(line, (0, 0))
         self._static[key] = out
         return out
 
     # ------------------------------------------------------------------ eyes
-    def _draw_eye(self, surf: pygame.Surface, e: EyeFrame, color: Color, glow: float) -> None:
+    def _draw_eye(self, surf: pygame.Surface, e: EyeFrame, color: Color, glow: float, light: bool = False) -> None:
         # The eye body (outline, rim, gradient, lids) is cached by its quantised shape. The pupil and
         # the catchlights move every frame, so they are composited on top per frame (a few small blits).
         # The pupil is clipped to the body with BLEND_RGBA_MIN against the body itself: alpha becomes
@@ -280,19 +320,25 @@ class FaceRenderer:
         key = (
             _q(e.w, 0.5), _q(e.h, 0.5), _q(e.radius, 0.5), _q(e.lid_top, 0.01), _q(e.lid_angle, 0.5),
             _q(e.lid_bottom, 0.01), _q(e.smile, 0.01), _q(e.tilt % 360.0, 0.5), _q(e.closed_curve, 0.05),
-            e.side, color, glow > 0.01,
+            e.side, color, glow > 0.01, light,
         )
-        body = self._eyes.get_or(key, lambda: self._make_eye(e, color))
+        body = self._eyes.get_or(key, lambda: self._make_eye(e, color, light))
         cw, ch = body.get_size()
         x, y = int(round(e.cx - cw / 2)), int(round(e.cy - ch / 2))
         if glow > 0.01:
             # the glow is blurry, so a much coarser key is visually identical and saves most recomputes
             gkey = (_q(e.w, 3), _q(e.h, 3), _q(e.lid_top, 0.05), _q(e.lid_angle, 3), _q(e.lid_bottom, 0.05),
-                    _q(e.smile, 0.05), _q(e.tilt % 360.0, 3), _q(e.closed_curve, 0.25), e.side, color)
-            glow_s = self._glows.get_or(gkey, lambda: self._make_glow(body))
-            glow_s.set_alpha(int(255 * min(1.0, GLOW_ALPHA * glow)))
+                    _q(e.smile, 0.05), _q(e.tilt % 360.0, 3), _q(e.closed_curve, 0.25), e.side, color, light)
+            if light:  # a soft rosy shadow just below the eye gives depth on the pastel screen
+                glow_s = self._glows.get_or(gkey, lambda: self._make_shadow(body))
+                glow_s.set_alpha(int(255 * SHADOW_ALPHA * min(1.0, glow)))
+                dy = SHADOW_OFFSET
+            else:
+                glow_s = self._glows.get_or(gkey, lambda: self._make_glow(body))
+                glow_s.set_alpha(int(255 * min(1.0, GLOW_ALPHA * glow)))
+                dy = 0
             gw, gh = glow_s.get_size()
-            surf.blit(glow_s, (x - (gw - cw) // 2, y - (gh - ch) // 2))
+            surf.blit(glow_s, (x - (gw - cw) // 2, y - (gh - ch) // 2 + dy))
         closed = e.closed_curve > 0.0 and e.h <= MIN_LINE + 1.0
         pupil = None if closed else self._pupil_overlay(e, color, cw, ch)
         lights = [] if closed else self._catchlight_overlays(e, cw, ch)
@@ -342,7 +388,7 @@ class FaceRenderer:
             s = self._comp[(w, h)] = _fast(pygame.Surface((w, h), pygame.SRCALPHA))
         return s
 
-    def _make_eye(self, e: EyeFrame, color: Color) -> pygame.Surface:
+    def _make_eye(self, e: EyeFrame, color: Color, light: bool = False) -> pygame.Surface:
         """Eye body (silhouette, rim, colour gradient, lids) or a closed eye's curved line."""
         ss = self.ss
         pad = 3
@@ -358,9 +404,9 @@ class FaceRenderer:
         # a nearly shut eye (blink) is a clean bright line: the rim and gradient fade out as it thins
         thin = max(0.0, min(1.0, (h - MIN_LINE) / 24.0))
         if closed:
-            self._draw_closed(big, rect, e, color)
+            self._draw_closed(big, rect, e, color, light)
         else:
-            self._draw_open(big, rect, e, thin)
+            self._draw_open(big, rect, e, thin, light)
         body = pygame.transform.smoothscale(big, (cw, ch))
         if not closed:
             # the gradient runs over the open part of the eye, so crescents and lidded eyes get all of it
@@ -371,22 +417,30 @@ class FaceRenderer:
             body = pygame.transform.rotozoom(body, e.tilt, 1.0)
         return _fast(body)
 
-    def _draw_open(self, big: pygame.Surface, rect: pygame.Rect, e: EyeFrame, thin: float) -> None:
+    def _draw_open(self, big: pygame.Surface, rect: pygame.Rect, e: EyeFrame, thin: float,
+                   light: bool = False) -> None:
         """Eye silhouette in white with a grey "ink" rim inside the outline and along the lids.
 
         The colour comes later (:meth:`_shade` multiplies it in at native size), so the rim
-        ends up a darker shade of the eye colour.
+        ends up a darker shade of the eye colour. A nearly shut eye (blink) becomes a clean
+        line: bright on a dark screen, deep ink on a light one.
         """
         ss = self.ss
         W, H = big.get_size()
         radius = int(min(e.radius * ss, rect.h / 2, rect.w / 2))
         rim = int(round(min(RIM * ss, rect.h * 0.18, rect.w * 0.18))) if thin > 0.0 else 0
-        g = int(255 - (255 - RIM_GRAY) * thin)
+        if light:
+            g = RIM_GRAY_LIGHT
+            inner = int(255 - (255 - g) * (1.0 - thin))
+        else:
+            g = int(255 - (255 - RIM_GRAY) * thin)
+            inner = 255
+        fill = (inner, inner, inner, 255)
         if rim >= 1:
             _rrect(big, (g, g, g, 255), rect, radius)
-            _rrect(big, (255, 255, 255, 255), rect.inflate(-2 * rim, -2 * rim), radius - rim)
+            _rrect(big, fill, rect.inflate(-2 * rim, -2 * rim), radius - rim)
         else:
-            _rrect(big, (255, 255, 255, 255), rect, radius)
+            _rrect(big, fill, rect, radius)
         # upper lid: gently arched edge (higher in the middle), droops towards the outer corner for
         # lid_angle > 0. Lids and the happy crescent get the same rim along their cut edge.
         lid: list[tuple[float, float]] | None = None
@@ -463,11 +517,12 @@ class FaceRenderer:
             s = self._tmp = pygame.Surface((max(w, ow), max(h, oh)))
         return s
 
-    def _draw_closed(self, big: pygame.Surface, rect: pygame.Rect, e: EyeFrame, color: Color) -> None:
+    def _draw_closed(self, big: pygame.Surface, rect: pygame.Rect, e: EyeFrame, color: Color,
+                     light: bool = False) -> None:
         ss = self.ss
         th = max(2.0, _closed_thickness(e) * ss)
         sag = e.closed_curve * CLOSED_SAG * ss
-        col = (*_lighten(color, 0.1), 255)
+        col = (*(_ink(color) if light else _lighten(color, 0.1)), 255)
         half = rect.w / 2 - th / 2
         cy = rect.centery - sag / 2
         n = max(8, int(rect.w / (th / 3)))
@@ -505,6 +560,13 @@ class FaceRenderer:
         pygame.draw.circle(big, (*col, 255), (d * ss / 2, d * ss / 2), r * ss)
         return _fast(pygame.transform.smoothscale(big, (d, d)))
 
+    def _make_shadow(self, core: pygame.Surface) -> pygame.Surface:
+        """The eye's silhouette in a deep rose, blurred like the glow (light screens)."""
+        sil = core.copy()
+        sil.fill((255, 255, 255, 0), special_flags=pygame.BLEND_RGBA_MAX)  # white, alpha kept
+        sil.fill((196, 92, 136, 255), special_flags=pygame.BLEND_RGBA_MULT)
+        return self._make_glow(sil)
+
     def _make_glow(self, core: pygame.Surface) -> pygame.Surface:
         cw, ch = core.get_size()
         m = GLOW_MARGIN
@@ -516,78 +578,107 @@ class FaceRenderer:
         return _fast(pygame.transform.smoothscale(small, (gw, gh)))
 
     # ------------------------------------------------------------------ mouth
-    def _draw_mouth(self, surf: pygame.Surface, m: MouthFrame, color: Color, glow: float) -> None:
-        key = ("mouth", _q(m.open, 0.05), _q(m.width, 1), color)
-        img = self._sprites.get_or(key, lambda: self._make_mouth(m.open, m.width, color))
+    def _draw_mouth(self, surf: pygame.Surface, m: MouthFrame, color: Color, light: bool = False) -> None:
+        if m.alpha <= 0.01:
+            return
+        # quantise the shape: the cached image for a key is always drawn from the same values
+        q = dataclasses.replace(
+            m, cx=0.0, cy=0.0, alpha=1.0, shape="",
+            open=_q(m.open, 0.025) * 0.025, width=float(_q(m.width, 1.0)), smile=_q(m.smile, 0.05) * 0.05,
+            round=_q(m.round, 0.05) * 0.05, teeth=_q(m.teeth, 0.1) * 0.1, tongue=_q(m.tongue, 0.05) * 0.05,
+            angle=float(_q(m.angle, 1.0)),
+        )
+        key = (q.open, q.width, q.smile, q.round, q.teeth, q.tongue, q.angle, light, None if light else color)
+        img = self._mouths.get_or(key, lambda: self._make_mouth(q, color, light))
         img.set_alpha(int(255 * min(1.0, m.alpha)))
-        surf.blit(img, (int(m.cx - img.get_width() / 2), int(m.cy - img.get_height() / 2)))
+        surf.blit(img, (int(round(m.cx - img.get_width() / 2)), int(round(m.cy - img.get_height() / 2))))
 
-    def _make_mouth(self, open_: float, width: float, color: Color) -> pygame.Surface:
+    def _make_mouth(self, m: MouthFrame, color: Color, light: bool) -> pygame.Surface:
+        """Lips as an ink line along both edges; when open, a dark inside with teeth / tongue."""
         ss = self.ss
-        W, H = int(width + 16), int(width + 10)
-        big = pygame.Surface((W * ss, H * ss), pygame.SRCALPHA)
-        cx, cy = W * ss / 2, H * ss / 2 - 4 * ss
-        col = (*_lighten(color, 0.15), 255)
-        if open_ < 0.12:
-            # closed: a small content smile
-            th = 4.5 * ss
-            half = width * ss * 0.4
-            n = 22
-            for i in range(n + 1):
-                x = -half + 2 * half * i / n
-                u = x / half
-                pygame.draw.circle(big, col, (cx + x, cy + 5 * ss * (1 - u * u)), th / 2)
+        if light:
+            ink, inside, tongue_c, teeth_c = MOUTH_INK, MOUTH_INSIDE, TONGUE, TEETH
         else:
-            # open: a "D" shaped mouth (flat top, round bottom) with a dark inside and a little tongue
-            k = (open_ - 0.12) / 0.88
-            mw = int(width * (0.95 - 0.12 * k) * ss)
-            mh = int((9 + 17 * k) * ss)
-            r = pygame.Rect(0, 0, mw, mh)
-            r.midtop = (int(cx), int(cy - 3 * ss))
-            top_r, bot_r = int(min(mh * 0.3, 5 * ss)), int(min(mw / 2, mh))
-            pygame.draw.rect(big, col, r, border_top_left_radius=top_r, border_top_right_radius=top_r,
-                             border_bottom_left_radius=bot_r, border_bottom_right_radius=bot_r)
-            b = int(3 * ss)
-            inner = r.inflate(-2 * b, -2 * b)
-            if inner.w > 4 and inner.h > 4:
-                ir, ib = max(0, top_r - b), max(0, min(inner.w // 2, inner.h, bot_r - b))
-                pygame.draw.rect(big, (*_scale(color, 0.22), 255), inner, border_top_left_radius=ir,
-                                 border_top_right_radius=ir, border_bottom_left_radius=ib,
-                                 border_bottom_right_radius=ib)
-                if inner.h > 6 * ss:
-                    tongue = pygame.Rect(0, 0, int(inner.w * 0.62), int(inner.h * 0.55))
-                    tongue.midbottom = (inner.centerx, inner.bottom + int(inner.h * 0.12))
-                    tsurf = pygame.Surface(big.get_size(), pygame.SRCALPHA)
-                    pygame.draw.ellipse(tsurf, (255, 128, 160, 255), tongue)
-                    # keep the tongue inside the mouth
-                    mask = pygame.Surface(big.get_size(), pygame.SRCALPHA)
-                    pygame.draw.rect(mask, (255, 255, 255, 255), inner, border_bottom_left_radius=ib,
-                                     border_bottom_right_radius=ib)
-                    tsurf.blit(mask, (0, 0), special_flags=pygame.BLEND_RGBA_MIN)
-                    big.blit(tsurf, (0, 0))
-        return pygame.transform.smoothscale(big, (W, H))
+            ink, inside, tongue_c, teeth_c = _lighten(color, 0.15), _scale(color, 0.22), (255, 128, 160), (240, 248, 255)
+        top, bot = mouth_edges(m, 56)
+        lw = MOUTH_LINE
+        out_h = 15.0 * m.tongue  # cheeky tongue below the lower lip
+        ext_x = max(abs(x) for x, _ in top) + lw
+        ext_y = max(max(abs(y) for _, y in top), max(abs(y) for _, y in bot) + out_h) + lw
+        W, H = int(math.ceil(2 * ext_x + 6)), int(math.ceil(2 * ext_y + 6))
+        big = pygame.Surface((W * ss, H * ss), pygame.SRCALPHA)
+        ox, oy = W * ss / 2, H * ss / 2
+
+        def pt(p: tuple[float, float]) -> tuple[float, float]:
+            return ox + p[0] * ss, oy + p[1] * ss
+
+        r = lw * ss / 2
+        if m.tongue > 0.02:
+            # poking out under the lip, a little off-centre; the lip line is drawn over its root
+            hw = m.width / 2
+            tx, ty = hw * 0.22, bot[len(bot) // 2 + 3][1]
+            tw, th = max(6.0, hw * 0.62), out_h + 6.0
+            rect = pygame.Rect(0, 0, int(tw * ss), int(th * ss))
+            rect.midtop = (int(ox + tx * ss), int(oy + (ty - 5.0) * ss))
+            pygame.draw.ellipse(big, (*ink, 255), rect.inflate(int(lw * 0.9 * ss), int(lw * 0.9 * ss)))
+            pygame.draw.ellipse(big, (*tongue_c, 255), rect)
+            pygame.draw.line(big, (*_scale(tongue_c, 0.8), 255), (rect.centerx, rect.top + rect.h * 0.35),
+                             (rect.centerx, rect.bottom - rect.h * 0.25), max(1, int(ss * 1.2)))
+        gap = max(b[1] - t[1] for t, b in zip(top, bot))
+        if gap * ss >= 1.5:
+            pygame.draw.polygon(big, (*inside, 255), [pt(p) for p in top] + [pt(p) for p in reversed(bot)])
+            # teeth and tongue are bounded by the lip curves themselves, so they never spill outside
+            n = len(top) - 1
+            if m.teeth > 0.05:  # a row of upper teeth just under the top lip
+                t_h = min(gap * 0.55, 8.0) * m.teeth + lw / 2
+                edge = [(x, min(y + t_h * (1.0 - (2.0 * i / n - 1.0) ** 2) ** 0.35, b[1]))
+                        for i, ((x, y), b) in enumerate(zip(top, bot))]
+                pygame.draw.polygon(big, (*teeth_c, 255), [pt(p) for p in top] + [pt(p) for p in reversed(edge)])
+            elif m.open > 0.38 and m.round < 0.5:  # a little tongue resting on the bottom lip
+                k = min(1.0, (m.open - 0.38) / 0.4)
+                th = gap * (0.3 + 0.2 * k)
+                hw = max(abs(x) for x, _ in top)
+                span = 0.6 * hw
+                low = [(x, y) for (x, y) in bot if abs(x) < span]
+                if len(low) >= 3:
+                    floor = max(y for _, y in low)  # a round-topped tongue, cut off by the bottom lip
+                    upper = [(x, min(y, max(t[1], floor - th * math.sqrt(max(0.0, 1.0 - (x / span) ** 2)))))
+                             for (x, y), t in zip(bot, top) if abs(x) < span]
+                    pygame.draw.polygon(big, (*tongue_c, 255), [pt(p) for p in upper] + [pt(p) for p in reversed(low)])
+            curves = (top, bot)
+        else:
+            curves = (top,)
+        for curve in curves:  # the lip line: overlapping round dots give an even, round-capped stroke
+            for p in curve:
+                pygame.draw.circle(big, (*ink, 255), pt(p), r)
+        img = pygame.transform.smoothscale(big, (W, H))
+        if abs(m.angle) > 0.5:
+            img = pygame.transform.rotozoom(img, m.angle, 1.0)
+        return _fast(img)
 
     # ------------------------------------------------------------------ sprites
-    def _draw_sprite(self, surf: pygame.Surface, s: Sprite) -> None:
+    def _draw_sprite(self, surf: pygame.Surface, s: Sprite, light: bool = False) -> None:
         if s.alpha <= 0.01 or s.size < 1.0:
             return
         size_q = max(2, int(round(s.size)))
         ang_step = 10 if s.kind == "confetti" else 5
         ang = (_q(s.angle, ang_step) * ang_step) % 360 if s.kind not in ("dot", "blush", "play") else 0
-        key = (s.kind, size_q, s.color, ang)
-        img = self._sprites.get_or(key, lambda: self._make_sprite(s.kind, size_q, s.color, ang))
+        light = light and s.kind == "sparkle"  # only sparkles are drawn differently on a light screen
+        key = (s.kind, size_q, s.color, ang, light)
+        img = self._sprites.get_or(key, lambda: self._make_sprite(s.kind, size_q, s.color, ang, light))
         if img is None:
             return
         img.set_alpha(int(255 * min(1.0, s.alpha)))
         surf.blit(img, (int(s.x - img.get_width() / 2), int(s.y - img.get_height() / 2)))
 
-    def _make_sprite(self, kind: str, size: int, color: Color, angle: float) -> pygame.Surface | None:
+    def _make_sprite(self, kind: str, size: int, color: Color, angle: float,
+                     light: bool = False) -> pygame.Surface | None:
         ss = self.ss
         base: pygame.Surface | None
         if kind == "heart":
             base = self._heart(size, color)
         elif kind == "sparkle":
-            base = self._sparkle(size, color)
+            base = self._sparkle_inked(size, color) if light else self._sparkle(size, color)
         elif kind == "z":
             base = self._z(size, color)
         elif kind == "question":
@@ -623,6 +714,26 @@ class FaceRenderer:
         pygame.draw.polygon(big, col, tip)
         pygame.draw.circle(big, (255, 255, 255, 150), (o + S * 0.30, o + S * 0.28), S * 0.08)
         return pygame.transform.smoothscale(big, (size + 4, size + 4))
+
+    def _sparkle_inked(self, size: int, color: Color) -> pygame.Surface:
+        """A four-point star with a crisp darker outline (a soft halo looks muddy on a light screen)."""
+        ss = self.ss
+        S = size * ss
+        big = pygame.Surface((S + 2, S + 2), pygame.SRCALPHA)
+        c = S / 2
+
+        def star(k: float) -> list[tuple[float, float]]:
+            pts = []
+            for i in range(8):
+                r = (c if i % 2 == 0 else c * 0.3) * k
+                a = math.pi / 4 * i - math.pi / 2
+                pts.append((c + r * math.cos(a), c + r * math.sin(a)))
+            return pts
+
+        pygame.draw.polygon(big, (*_scale(color, 0.72), 255), star(1.0))
+        pygame.draw.polygon(big, (*color, 255), star(0.74))
+        pygame.draw.circle(big, (255, 255, 255, 255), (c, c), c * 0.16)
+        return pygame.transform.smoothscale(big, (size + 1, size + 1))
 
     def _sparkle(self, size: int, color: Color) -> pygame.Surface:
         ss = self.ss

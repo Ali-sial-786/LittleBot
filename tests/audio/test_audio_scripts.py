@@ -35,4 +35,6 @@ def test_check_audio_save_requires_record():
 def test_generated_sounds_are_up_to_date():
     res = _run(str(SCRIPTS / "generate_sounds.py"), "--check")
     assert res.returncode == 0, res.stdout[-2000:]
-    assert "20 sound(s)" in res.stdout
+    from littlebot.core.interfaces import SOUND_NAMES
+
+    assert f"{len(SOUND_NAMES)} sound(s)" in res.stdout

@@ -18,6 +18,10 @@ dependencies = [
     "uvicorn>=0.27",
     "httpx>=0.27",
     "psutil>=5.9",
+    # YouTube search without an API key (littlebot/media/search.py runs `python -m yt_dlp`). A pure-Python
+    # wheel with no required dependencies (fine on the Pi's aarch64). YouTube changes often: if search
+    # stops working, update it with .venv/bin/python -m pip install -U yt-dlp
+    "yt-dlp>=2025.1",
 ]
 
 [project.optional-dependencies]
@@ -27,7 +31,9 @@ vision = ["opencv-python-headless>=4.8,<5"]  # 5.x dropped the bundled Haar dete
 audio = ["sounddevice>=0.4.6"]
 # PCA9685 servo controller over I2C (Raspberry Pi only; physical motion is disabled by default).
 pi = ["smbus2>=0.4"]
-# Optional local speech recognition (small offline model, ~50 MB).
+# Optional offline speech recognition: the wake word ("Hey LittleBot" starts live voice) and local STT.
+# vosk ships one prebuilt aarch64 wheel for every Python 3 (py3-none-manylinux2014_aarch64, ~2.4 MB);
+# the model comes separately: scripts/download_models.py vosk-en (40 MB download, ~130 MB RAM).
 local-stt = ["vosk>=0.3.45"]
 # GPT-Live voice over WebRTC (Sign in with ChatGPT, docs/CHATGPT.md). aiortc is a pure-Python
 # wheel; its dependencies (PyAV, pylibsrtp, cryptography, ...) have prebuilt aarch64 wheels

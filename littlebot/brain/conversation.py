@@ -14,6 +14,11 @@ Per turn::
                requested face action (wink, spin_eyes, peekaboo, ...) if any
     -> release state back to IDLE
 
+Tools (chatgpt provider, ``chatgpt.tools_enabled``): the model may also act on the robot when asked
+("turn the volume up", "play baby shark", "start peekaboo", "how hot are you?"; littlebot/chatgpt/tools.py).
+Whatever needs the screen or speaker (a video, an activity, sleep) is queued and starts only after
+the reply has been spoken and this turn's lease is released (games share the speaker: they start at once).
+
 Privacy: nothing is persisted by default - only the last few (scrubbed) turns are kept in
 memory and cleared on stop / sleep / STOP ALL / after ``ai.context_ttl_seconds``. Usage
 counters (no text) are stored per day for the budget. Camera data is never used here.
@@ -60,6 +65,7 @@ ERROR_FALLBACKS: tuple[str, ...] = (
     "Beep boop, I got muddled. Let's sing a song instead!",
 )
 DIDNT_HEAR = ("I didn't hear that. Can you say it again?", "Hmm? Say it again?")
+TOOLS_EXTRA_S = 30.0  # extra time for an answer that uses tools (a video search, a few more requests)
 
 
 @dataclass(frozen=True)
@@ -129,6 +135,7 @@ class ConversationEngine(Service):
         self._last_heard: tuple[str, float] = ("", 0.0)
         self._turns = 0
         self._errors = 0
+        self._turn_tools: Any = None  # this turn's RobotToolbox (chatgpt tools), if any
         self._ensure_transcript_table()
 
     # ------------------------------------------------------------------ build
@@ -262,7 +269,8 @@ class ConversationEngine(Service):
         text = str(text or "").strip()
         if not text:
             return self._result(error="empty")
-        return await self._exclusive(lambda: self._utterance_turn(text, source, speak), speak=speak)
+        result = await self._exclusive(lambda: self._utterance_turn(text, source, speak), speak=speak)
+        return await self._after_turn(result)
 
     async def converse_once(self) -> dict[str, Any]:
         if self.ctx.audio is None:
@@ -270,8 +278,18 @@ class ConversationEngine(Service):
         if not self.ctx.privacy.microphone_enabled:
             return {**self._result(error="microphone_disabled", detail="The microphone is turned off in Privacy."),
                     "heard": None}
-        result = await self._exclusive(self._converse_turn, speak=True)
+        result = await self._after_turn(await self._exclusive(self._converse_turn, speak=True))
         result.setdefault("heard", None)
+        return result
+
+    async def _after_turn(self, result: dict[str, Any]) -> dict[str, Any]:
+        """Start what the AI was asked to start (a video, an activity, sleep) now the reply is spoken."""
+        tools = result.pop("_tools", None)
+        if tools is None or not getattr(tools, "pending", None) or self._stop_requested:
+            return result
+        done = await tools.run_pending()
+        if done:
+            result["actions"] = done
         return result
 
     def providers(self) -> list[dict[str, Any]]:
@@ -520,6 +538,7 @@ class ConversationEngine(Service):
             ctx.state.transition(RobotState.IDLE, "woken for conversation")
         if not self._enter(RobotState.THINKING, f"thinking ({source})"):
             return self._result(error="busy", detail="LittleBot can't talk right now.")
+        self._turn_tools = None
         self._phase = "thinking"
         self._face("thinking")
         self._turns += 1
@@ -566,7 +585,7 @@ class ConversationEngine(Service):
             else:
                 # Hidden face tags go first: only the clean words are checked, spoken, remembered or stored.
                 text_only, face_actions = extract_tags(raw.text)
-                result = validate_reply(text_only, policy, max_words)
+                result = validate_reply(text_only, policy, max_words, allow=self.cfg.relaxed_rules)
                 reply, reasons = result.text, list(result.reasons)
                 filtered = not result.ok
                 if raw.stop_reason == "refusal" and result.concern is None:
@@ -611,14 +630,20 @@ class ConversationEngine(Service):
             # After the words, so the requested face is the last one shown (peekaboo takes ~1.5 s).
             await perform(ctx, face_action)
         latency = int((time.monotonic() - t0) * 1000)
-        log.info("turn done provider=%s words=%d filtered=%s error=%s latency_ms=%d",
-                 provider_name, len(reply.split()), filtered, error, latency)
+        tools, self._turn_tools = self._turn_tools, None
+        log.info("turn done provider=%s words=%d filtered=%s error=%s latency_ms=%d tools=%s",
+                 provider_name, len(reply.split()), filtered, error, latency,
+                 ",".join(tools.calls) if tools is not None and tools.calls else "-")
         return {
             **self._result(reply=reply, provider=provider_name, filtered=filtered, error=error),
             "reason": reason, "expression": expression, "latency_ms": latency, "spoken": spoken,
             "checks": [r for r in reasons if r != "empty"][:8],
             **({"attention": attention} if attention is not None else {}),
             **({"face_action": face_action.name} if face_action is not None else {}),
+            **({"tools_used": list(tools.calls)} if tools is not None and tools.calls else {}),
+            # What the tools queued runs after the turn (handle_utterance / converse_once), only for
+            # a real answer: not after a provider error or a reply that needs a grown-up.
+            **({"_tools": tools} if tools is not None and error is None and attention is None else {}),
         }
 
     async def _ask(self, sel: Selection, text: str, sent: str, policy: Any,
@@ -630,12 +655,13 @@ class ConversationEngine(Service):
         share_interests = bool(self._setting("ai.share_interests", cfg.share_interests))
         nickname = str(profile.get("nickname") or "").strip()
         if sel.provider.is_cloud:
+            toolbox = self._toolbox_for(sel)
             system = build_system_prompt(
                 robot_name=self.ctx.config.robot_name, age_months=policy.age_months, max_words=limit,
                 child_name=nickname if share_name else None,
                 interests=profile.get("interests") if share_interests else None,
                 favourite_animals=profile.get("favourite_animals") if share_interests else None,
-                face_tags=True,
+                face_tags=True, tools=toolbox is not None,
             )
             messages = self._context_messages() + [{"role": "user", "content": sent}]
             projected = self.usage.estimate_cost(
@@ -647,11 +673,18 @@ class ConversationEngine(Service):
             if not again.cloud_allowed:  # e.g. this request would exceed the budget
                 return await self._ask(again, text, sent, policy, limit)
             self.usage.record_request(sel.name)
+            extra: dict[str, Any] = {}
+            budget = cfg.timeout_seconds + 0.5
+            if toolbox is not None:
+                extra = {"tools": toolbox.specs(), "run_tool": toolbox.run,
+                         "max_tool_rounds": self.ctx.config.chatgpt.max_tool_rounds}
+                budget += TOOLS_EXTRA_S
+                self._turn_tools = toolbox
             try:
                 reply = await asyncio.wait_for(
                     sel.provider.reply(messages, system=system, max_tokens=cfg.max_output_tokens,
-                                       timeout=cfg.timeout_seconds),
-                    timeout=cfg.timeout_seconds + 0.5,
+                                       timeout=cfg.timeout_seconds, **extra),
+                    timeout=budget,
                 )
             except ProviderError:
                 self.usage.record_failure()
@@ -672,6 +705,16 @@ class ConversationEngine(Service):
         reply = await sel.provider.reply([{"role": "user", "content": text}], system="",
                                          max_tokens=cfg.max_output_tokens, timeout=cfg.timeout_seconds)
         return reply, sel
+
+    def _toolbox_for(self, sel: Selection) -> Any:
+        """LittleBot's tools for this turn: the chatgpt provider only (it supports function calling)."""
+        if sel.name != "chatgpt" or not getattr(sel.provider, "supports_tools", False):
+            return None
+        if not self.ctx.config.chatgpt.tools_enabled:
+            return None
+        from littlebot.chatgpt.tools import RobotToolbox  # noqa: PLC0415
+
+        return RobotToolbox(self.ctx, mode="chat", defer=True)
 
     async def _speak(self, text: str, expression: str) -> bool | None:
         ctx = self.ctx

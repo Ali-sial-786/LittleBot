@@ -67,10 +67,47 @@ async def test_say_event_sequence_with_mock_devices(actx, make_service):
     assert all(started.seq < e.seq < finished.seq for e in levels)
     values = [e.data["level"] for e in levels]
     assert all(0.0 <= v <= 1.0 for v in values) and max(values) > 0.5 and values[-1] == 0.0
-    # ~16 Hz over the utterance
-    assert len(levels) == pytest.approx(started.data["duration_estimate"] * 16, rel=0.25)
+    # every event carries the mouth shape too; they follow the speaker (the mock plays 40 ms chunks:
+    # at most 25 a second) and repeat nothing, ending on a closed mouth
+    assert {e.data["shape"] for e in levels} <= {"closed", "small", "ah", "ee", "oo"}
+    assert len({e.data["shape"] for e in levels}) >= 2
+    assert levels[-1].data == {"level": 0.0, "shape": "closed"}
+    assert started.data["duration_estimate"] * 4 < len(levels) <= started.data["duration_estimate"] * 25 + 2
+    # an unchanged frame is only repeated as a keep-alive (at most every VISEME_REPEAT_S of audio)
+    from littlebot.audio.service import VISEME_REPEAT_S
+
+    pairs = [(e.data["level"], e.data["shape"]) for e in levels[:-1]]  # (the last one always closes the mouth)
+    repeats = sum(a == b for a, b in zip(pairs, pairs[1:]))
+    assert repeats <= started.data["duration_estimate"] / VISEME_REPEAT_S + 1
     assert out.played[-1].label == f"speech:{TEXT}" and out.played[-1].completed
     assert svc.status()["speaking"] is False
+
+
+async def test_mouth_frames_follow_the_playback_position(actx, make_service, monkeypatch):
+    """Each audio.level event is the precomputed mouth frame for what the speaker plays (a bit early)."""
+    from littlebot.audio import dsp
+    from littlebot.audio import service as service_mod
+
+    shapes = ("closed", "small", "ah", "ee", "oo")
+    track_len = 100  # 2 s of 20 ms frames: frame i has shape i % 5 and level i / 100
+
+    def fake_track(samples, sample_rate, hz=50.0):
+        return (np.arange(track_len, dtype=np.float32) / track_len, tuple(shapes[i % 5] for i in range(track_len)))
+
+    monkeypatch.setattr(dsp, "viseme_track", fake_track)
+    out = MockOutput(time_scale=0.0, chunk_seconds=0.02)
+    svc = make_service(actx, output=out)
+    await svc.start()
+    events = collect(actx.bus, ["audio.level"])
+    assert await svc.say(TEXT)
+    frames = [(e.data["level"], e.data["shape"]) for e in events][:-1]
+    # the mock reports 20 ms steps: frame index = played seconds + lead, in 20 ms frames
+    lead = int(round(service_mod.VISEME_LEAD_S * service_mod.LEVEL_HZ))
+    first = frames[0]
+    assert first == (round((1 + lead) / track_len, 3), shapes[(1 + lead) % 5])
+    for k, (level, shape) in enumerate(frames[:40]):
+        i = round(level * track_len)
+        assert shape == shapes[i % 5] and i == k + 1 + lead
 
 
 async def test_say_uses_rate_setting_and_override(actx, make_service):

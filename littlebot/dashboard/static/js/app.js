@@ -7,6 +7,7 @@ import home from './pages/home.js';
 import activities from './pages/activities.js';
 import media from './pages/media.js';
 import face from './pages/face.js';
+import games from './pages/games.js';
 import profile from './pages/profile.js';
 import ai from './pages/ai.js';
 import privacy from './pages/privacy.js';
@@ -21,6 +22,7 @@ export const NAV = [
   { id: 'activities', label: 'Activities', icon: 'shapes', tab: true, page: activities },
   { id: 'media', label: 'Videos', icon: 'film', tab: true, page: media },
   { id: 'face', label: 'Face', icon: 'face', tab: true, page: face },
+  { id: 'games', label: 'Games', icon: 'star', page: games, blurb: 'Fun games on the robot\'s screen' },
   { id: 'profile', label: 'Child profile', icon: 'user', page: profile, blurb: 'Age, name and favourites' },
   { id: 'ai', label: 'AI', icon: 'sparkles', page: ai, blurb: 'Optional cloud conversation' },
   { id: 'privacy', label: 'Privacy', icon: 'shield', page: privacy, blurb: 'Camera, microphone, cloud' },

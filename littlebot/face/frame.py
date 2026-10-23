@@ -6,9 +6,10 @@ whole animation system be unit-tested without a window.
 
 All coordinates are pixels in the native 480x320 design space.
 
-The cartoon eye anatomy (where the pupil sits, where the catchlights go) is
-plain geometry too and lives here as pure functions (:func:`pupil_geometry`,
-:func:`catchlights`), so it can be tested without pygame.
+The cartoon eye anatomy (where the pupil sits, where the catchlights go) and
+the mouth's outline are plain geometry too and live here as pure functions
+(:func:`pupil_geometry`, :func:`catchlights`, :func:`mouth_edges`), so they can
+be tested without pygame.
 """
 
 from __future__ import annotations
@@ -23,7 +24,10 @@ EYE_W = 120.0  # base eye width
 EYE_H = 138.0  # base eye height
 EYE_SPACING = 206.0  # distance between eye centres
 EYE_Y = 142.0  # eye centre line
-MOUTH_Y = 250.0
+MOUTH_Y = 246.0  # mouth centre line
+MOUTH_W = 54.0  # resting mouth width (expressions and mouth shapes scale it)
+MOUTH_OPEN_H = 40.0  # px between the lips when the mouth is wide open (open = 1)
+MOUTH_LINE = 5.5  # px, thickness of the lip line
 GAZE_DX = 48.0  # max horizontal eye travel for gaze -1..1 (the pupils add their own travel)
 GAZE_DY = 30.0  # max vertical eye travel
 MIN_LINE = 7.0  # thickness of a closed eye
@@ -65,11 +69,19 @@ class EyeFrame:
 
 @dataclass(frozen=True)
 class MouthFrame:
+    """The mouth: always drawn (except on the hidden "video" screen); shaped by mood and speech."""
+
     cx: float
     cy: float
-    open: float  # 0 closed smile .. 1 wide open
+    open: float  # 0 closed (a curved line) .. 1 wide open
     alpha: float  # 0..1
-    width: float = 46.0
+    width: float = MOUTH_W  # px, corner to corner
+    smile: float = 0.4  # -1 frown .. 0 flat .. 1 big smile (how much the corners curve up)
+    round: float = 0.0  # 0..1 rounded "o" (oval opening, no smile curve)
+    teeth: float = 0.0  # 0..1 a row of upper teeth ("ee", "s")
+    tongue: float = 0.0  # 0..1 a cheeky tongue poking out below the lip (playful)
+    angle: float = 0.0  # degrees, pygame convention (counter-clockwise positive)
+    shape: str = ""  # the viseme being spoken ("" = resting mouth); informational
 
 
 @dataclass(frozen=True)
@@ -83,6 +95,11 @@ class Sprite:
     alpha: float = 1.0
     angle: float = 0.0
     color: Color = (255, 255, 255)
+
+
+def is_light_background(c: Color) -> bool:
+    """True for a light screen colour (pastel pink...): features are drawn in dark "ink" on it."""
+    return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2] > 0.5 * 255
 
 
 @dataclass(frozen=True)
@@ -253,3 +270,31 @@ def catchlights(e: EyeFrame) -> list[tuple[float, float, float]]:
         ox, oy = rotate(lx, ly, e.tilt)
         out.append((ox, oy, r))
     return out
+
+
+# ----------------------------------------------------------------- mouth (pure geometry)
+def mouth_edges(m: MouthFrame, n: int = 24) -> tuple[list[tuple[float, float]], list[tuple[float, float]]]:
+    """Upper and lower lip edges, left to right, as px offsets from the mouth centre (before ``angle``).
+
+    Both edges follow the smile curve (corners up for ``smile > 0``, down for a frown) and part
+    by up to ``MOUTH_OPEN_H * open`` in the middle, meeting in the corners. A smiling mouth opens
+    downwards like a "D"; a round one opens evenly into an oval. When ``open`` is 0 the two edges
+    coincide: the mouth is a single curved line.
+    """
+    rnd = min(1.0, max(0.0, m.round))
+    o = min(1.0, max(0.0, m.open))
+    smile = max(-1.0, min(1.0, m.smile)) * (1.0 - rnd)
+    hw = max(2.0, m.width / 2.0)
+    sag = smile * (6.5 + 6.0 * o) * min(1.0, hw / 24.0)  # how far the middle sits below the corners
+    gap = MOUTH_OPEN_H * o * (1.0 + 0.45 * rnd)  # a round mouth opens as tall as it is wide
+    up = 0.18 + 0.32 * rnd + 0.3 * max(0.0, -smile)  # share of the opening above the smile curve
+    p = 0.5 + 0.25 * (1.0 - rnd)  # corner shape: pointed smile corners .. elliptical "o"
+    top: list[tuple[float, float]] = []
+    bottom: list[tuple[float, float]] = []
+    for i in range(n + 1):
+        u = -math.cos(math.pi * i / n)  # denser towards the corners, where the outline turns fastest
+        c = sag * (1.0 - u * u)
+        k = (1.0 - u * u) ** p
+        top.append((u * hw, c - gap * up * k))
+        bottom.append((u * hw, c + gap * (1.0 - up) * k))
+    return top, bottom

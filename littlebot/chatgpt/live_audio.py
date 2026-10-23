@@ -5,6 +5,10 @@ playing the model's voice (and for ``echo_tail`` after), the microphone sends si
 model would hear itself and answer itself. "Speaking" is measured on the audio actually handed
 to the speaker, so the gate follows what is audible, not what arrived over the network.
 
+The face's mouth follows the voice too: every block handed to the speaker gets a level and a
+mouth shape (:class:`~littlebot.audio.dsp.VisemeEstimator`), stamped with the moment PortAudio
+says it will be heard, and :attr:`LiveAudio.mouth` reads the one being heard now.
+
 Nothing is recorded: samples only pass through small in-memory buffers.
 """
 
@@ -19,6 +23,7 @@ from typing import Any, Callable
 import numpy as np
 
 from littlebot.audio import devices as dev
+from littlebot.audio import dsp
 from littlebot.audio.errors import AudioDeviceError
 
 log = logging.getLogger("littlebot.chatgpt.live")
@@ -26,6 +31,8 @@ log = logging.getLogger("littlebot.chatgpt.live")
 RATE = 48000  # WebRTC / Opus
 FRAME = RATE // 50  # 20 ms
 MAX_QUEUED_S = 1.0  # more than this waiting for the speaker = we fell behind: drop the oldest
+MOUTH_LEAD_S = 0.06  # report the mouth this early: polling (~20 Hz) and drawing the face take about that
+MAX_OUTPUT_DELAY_S = 0.5  # a reported speaker delay above this is nonsense: ignore it
 
 
 class LiveAudio:
@@ -58,7 +65,10 @@ class LiveAudio:
         self._muted = False
         self._vol, self._vol_at = 0.0, float("-inf")
         self._last_loud = float("-inf")
-        self.level = 0.0  # last speaker block RMS (0..1), for the face's mouth
+        self.level = 0.0  # last speaker block RMS (0..1)
+        self._visemes: dsp.VisemeEstimator | None = None
+        self._mouths: collections.deque[tuple[float, float, str]] = collections.deque(maxlen=64)  # (heard at, level, shape)
+        self._mouth: tuple[float, str] = (0.0, "closed")
         self.mic_level = 0.0
         self.device_names = ("", "")
 
@@ -143,6 +153,8 @@ class LiveAudio:
             self._in.clear()
         self._pcm = np.zeros(0, dtype=np.int16)
         self.level = self.mic_level = 0.0
+        self._mouths.clear()
+        self._mouth = (0.0, "closed")
 
     # ------------------------------------------------------------ state
     @property
@@ -154,12 +166,28 @@ class LiveAudio:
     def mic_open(self) -> bool:
         return not (self.half_duplex and self.speaking)
 
+    @property
+    def mouth(self) -> tuple[float, str]:
+        """``(level 0..1, viseme)`` of the voice heard right now, for the face's lip-sync.
+
+        Blocks are stamped with when the speaker will play them, so this follows the sound, not
+        the network; it runs :data:`MOUTH_LEAD_S` early to make up for the face's own delay.
+        """
+        now = self._now() + MOUTH_LEAD_S
+        q = self._mouths
+        while q and q[0][0] <= now:  # only this reader pops; the audio thread only appends
+            _, level, shape = q.popleft()
+            self._mouth = (level, shape)
+        return self._mouth
+
     def mute(self) -> None:
         """Silence the speaker at once and drop whatever is queued (safety cut, hang-up)."""
         self._muted = True
         with self._lock:
             self._out.clear()
             self._out_queued = 0
+        self._mouths.clear()
+        self._mouth = (0.0, "closed")
 
     # ------------------------------------------------------------ microphone
     def _record_cb(self, indata: Any, frames: int, time_info: Any, status: Any) -> None:  # PortAudio thread
@@ -233,13 +261,35 @@ class LiveAudio:
                 self._out_queued -= k
         return out
 
+    def _output_delay(self, time_info: Any) -> float:
+        """Seconds until the block being filled is heard: PortAudio's DAC time, else the stream latency."""
+        try:
+            delay = float(time_info.outputBufferDacTime) - float(time_info.currentTime)
+            if 0.0 < delay <= MAX_OUTPUT_DELAY_S:
+                return delay
+        except Exception:  # noqa: BLE001 - no timing info (some hosts / fakes): use the latency
+            pass
+        try:
+            latency = float(getattr(self._out_stream, "latency", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            return 0.0
+        return latency if 0.0 <= latency <= MAX_OUTPUT_DELAY_S else 0.0
+
     def _play_cb(self, outdata: Any, frames: int, time_info: Any, status: Any) -> None:  # PortAudio thread
         y = self._take(frames) if not self._muted else np.zeros(frames, dtype=np.float32)
         rms = float(np.sqrt(np.mean(y * y))) if frames else 0.0
         self.level = rms
-        if rms >= self.voice_level:
-            self._last_loud = self._now()
         now = self._now()
+        if rms >= self.voice_level:
+            self._last_loud = now
+        try:  # lip-sync for the face: must never break the voice (an exception here stops the stream)
+            est = self._visemes
+            if est is None or est.sample_rate != self.out_rate:
+                est = self._visemes = dsp.VisemeEstimator(self.out_rate)
+            level, shape = est.process(y) if frames else (0.0, "closed")
+            self._mouths.append((now + self._output_delay(time_info), level, shape))
+        except Exception:  # noqa: BLE001
+            log.debug("lip-sync estimate failed", exc_info=True)
         if now - self._vol_at > 0.25:  # re-read the volume a few times a second, not every block
             self._vol_at, self._vol = now, max(0.0, min(1.0, float(self._volume())))
         y = y * self._vol

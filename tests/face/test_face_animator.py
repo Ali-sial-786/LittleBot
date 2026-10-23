@@ -14,6 +14,7 @@ from littlebot.face import animator as A
 from littlebot.face.effects import ANIMATION_DURATIONS, animation_motion
 from littlebot.face.expressions import DEFAULT_EXPRESSION_FOR_STATE, EXPRESSION_PARAMS
 from littlebot.face.frame import MIN_LINE, NATIVE_H, NATIVE_W
+from littlebot.face.mouth import VISEMES
 
 
 def calm(**kw):
@@ -413,12 +414,13 @@ def test_speaking_synthesizes_pulse_without_level_events():
         a.update(1 / 60)
         levels.append(a.level)
     assert max(levels) - min(levels[30:]) > 0.3
-    assert a.mouth_alpha == 1.0
+    assert a.talk_mix == 1.0
     assert a.frame().mouth is not None
     a.speech_finished()
     step(a, 0.6)
-    assert not a.talking and a.level < 0.02 and a.mouth_alpha == 0.0
-    assert a.frame().mouth is None
+    assert not a.talking and a.level < 0.02 and a.talk_mix == 0.0
+    m = a.frame().mouth
+    assert m is not None and m.shape == "" and m.open < 0.05  # back to the resting smile, still visible
 
 
 def test_speaking_follows_level_events():
@@ -553,3 +555,158 @@ def test_frames_stay_sane_under_random_commands():
         assert all(0 <= c <= 255 for c in f.color)
         for s in f.sprites:
             assert math.isfinite(s.x) and math.isfinite(s.y) and 0 <= s.alpha <= 1.0 + 1e-6
+
+
+# ------------------------------------------------------------------ mouth: always there, lip-synced
+@pytest.mark.parametrize("name", EXPRESSIONS)
+def test_mouth_is_shown_for_every_expression(name):
+    a = calm()
+    a.set_expression(name)
+    step(a, 0.5)
+    m = a.frame().mouth
+    assert m is not None and m.alpha == 1.0 and m.width > 15
+    assert 0 < m.cx < NATIVE_W and 0 < m.cy < NATIVE_H
+
+
+@pytest.mark.parametrize("state", [s for s in FACE_STATES if s != "hidden"])
+def test_mouth_is_shown_in_every_visible_state(state):
+    a = calm()
+    a.set_state(state)
+    step(a, 1.5)
+    assert a.frame().mouth is not None
+
+
+def test_mouth_is_only_hidden_with_the_whole_face():
+    a = calm()
+    a.set_state("hidden")
+    step(a, 0.2)
+    assert a.frame().mouth is not None  # still fading out with the face
+    step(a, 1.0)
+    assert a.frame().mouth is None
+    a.set_state("idle")
+    a.update(0.05)
+    assert a.frame().mouth is not None
+
+
+@pytest.mark.parametrize("name", FACE_ANIMATIONS)
+def test_mouth_stays_on_screen_during_every_animation(name):
+    a = calm()
+    step(a, 0.3)
+    a.play_animation(name)
+    duration = ANIMATION_DURATIONS[name]
+    for _ in range(12):
+        step(a, duration / 12, 1 / 60)
+        m = a.frame().mouth
+        assert m is not None and m.alpha == 1.0
+        assert 0 < m.cx < NATIVE_W
+        assert m.cy < NATIVE_H - 8  # never pushed off the bottom (peek-a-boo ducks down 70 px)
+
+
+def test_resting_mouths_match_the_mood():
+    def mouth(name):
+        a = calm()
+        a.set_expression(name)
+        step(a, 0.5)
+        return a.frame().mouth
+
+    assert mouth("neutral").smile > 0.2 and mouth("neutral").open < 0.05  # a little smile
+    assert mouth("happy").smile > 0.8 and mouth("happy").open > 0.2  # big open smile
+    assert mouth("celebrating").open > mouth("happy").open
+    assert mouth("sad").smile < -0.4  # frown
+    assert mouth("surprised").round > 0.9 and mouth("surprised").open > 0.4  # "O"
+    assert mouth("playful").tongue > 0.5  # cheeky tongue
+    assert mouth("thinking").angle != 0.0  # lopsided "hmm"
+
+
+def test_sleeping_mouth_is_a_small_breathing_o():
+    a = calm()
+    a.set_state("sleeping")
+    step(a, 2.0)
+    opens = []
+    for _ in range(90):
+        a.update(1 / 15)
+        opens.append(a.frame().mouth.open)
+    m = a.frame().mouth
+    assert m.round > 0.9 and m.width < 30
+    assert 0.0 < min(opens) < max(opens) < 0.3  # breathes
+
+
+def test_peek_says_boo_with_an_open_mouth():
+    a = calm()
+    step(a, 0.3)
+    rest = a.frame().mouth.open
+    a.play_animation("peek")
+    step(a, ANIMATION_DURATIONS["peek"] * 0.65, 1 / 60)
+    assert a.frame().mouth.open > rest + 0.3
+
+
+def _talk(a, shape, level=0.8, frames=6, dt=1 / 30):
+    for _ in range(frames):
+        a.speech_level(level, shape)
+        a.update(dt)
+    return a.frame().mouth
+
+
+@pytest.mark.parametrize("shape", VISEMES)
+def test_speech_shape_events_shape_the_mouth(shape):
+    a = calm()
+    a.speech_started(3.0)
+    m = _talk(a, shape)
+    assert a.mouth_shape == shape and m.shape == shape
+    if shape == "closed":
+        assert m.open < 0.05
+    elif shape == "small":
+        assert 0.1 < m.open < 0.4 and m.teeth < 0.1 and m.round < 0.4
+    elif shape == "ah":
+        assert m.open > 0.6 and m.round < 0.1
+    elif shape == "ee":
+        assert m.teeth > 0.8 and m.width > 60 and m.open < 0.45
+    elif shape == "oo":
+        assert m.round > 0.8 and m.width < 40 and m.open > 0.3
+
+
+def test_mouth_follows_the_sound_quickly_and_morphs_smoothly():
+    a = calm()
+    a.speech_started(3.0)
+    _talk(a, "closed", 0.0, frames=10)
+    opens = []
+    for _ in range(4):  # 4 frames at 30 fps
+        a.speech_level(0.9, "ah")
+        a.update(1 / 30)
+        opens.append(a.frame().mouth.open)
+    assert opens[0] > 0.2  # visibly opening on the very next frame
+    assert opens[2] > 0.8 * opens[-1] > 0.5  # nearly there within ~100 ms
+    assert all(b >= x for x, b in zip(opens, opens[1:]))  # no flicker: a smooth morph
+    rounds = []
+    for _ in range(6):
+        a.speech_level(0.9, "oo")
+        a.update(1 / 30)
+        rounds.append(a.frame().mouth.round)
+    assert 0 < rounds[0] < rounds[-1] and rounds[-1] > 0.9
+
+
+def test_level_only_events_still_work():
+    a = calm()
+    a.speech_started(3.0)
+    assert _talk(a, None, 0.95).open > 0.6  # loud: wide open
+    assert _talk(a, None, 0.0, frames=12).open < 0.05  # silence: closed
+    m = _talk(a, "bogus", 0.3)  # unknown shape: guessed from the loudness
+    assert a.mouth_shape == "small" and 0.05 < m.open < 0.4
+
+
+def test_stale_shape_falls_back_to_the_talking_pulse():
+    a = calm()
+    a.speech_started(3.0)
+    _talk(a, "oo", 0.8)
+    step(a, A.LEVEL_TIMEOUT + 0.3, 1 / 30)  # the audio went quiet on the bus
+    assert a.mouth_shape in ("closed", "small", "ah")
+
+
+def test_talking_keeps_the_mood_of_the_expression():
+    happy, sad = calm(), calm()
+    happy.set_expression("happy")
+    sad.set_expression("sad")
+    for a in (happy, sad):
+        step(a, 0.5)
+        a.speech_started(3.0)
+    assert _talk(happy, "small").smile > _talk(sad, "small").smile

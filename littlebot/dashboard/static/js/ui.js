@@ -111,10 +111,14 @@ export function icon(name, cls) {
 }
 
 // ---------------------------------------------------------------- face drawing
-// Mirrors the robot's cartoon eyes (littlebot/face/renderer.py): iris-coloured eyes with a darker
-// rim, big dark pupils that look around inside them and two white catchlights that stay put.
-const EYE_L = 40, EYE_R = 80, EYE_Y = 45;
-const INK = { stroke: 'rgba(8, 14, 24, .38)', 'stroke-width': 1.8 };
+// Mirrors the robot's face (littlebot/face/renderer.py): a soft pink screen, iris-coloured eyes with
+// a dark ink rim, big dark pupils that look around inside them, two white catchlights that stay
+// put, and a little mouth that is always there (smile, frown, "o"... per expression).
+const EYE_L = 40, EYE_R = 80, EYE_Y = 45, MOUTH_X = 60, MOUTH_Y = 70;
+const FACE_BG = '#ffd6e4'; // face.background_color (255, 214, 228)
+const INK = { stroke: '#26465f', 'stroke-width': 1.9 };
+const PUPIL = '#0b1324';
+const MOUTH_INK = '#42203e', MOUTH_IN = '#922852', TONGUE = '#ff7892', SPARKLE = '#ffb228';
 
 function eye(cx, cy, w, hgt, { pupil = 1, look = [0, 0], lid = 0, droop = null } = {}) {
   const parts = [s('rect', { class: 'mf-eye', x: cx - w / 2, y: cy - hgt / 2, width: w, height: hgt, rx: Math.min(w, hgt) / 2, ...INK })];
@@ -125,7 +129,7 @@ function eye(cx, cy, w, hgt, { pupil = 1, look = [0, 0], lid = 0, droop = null }
   const tx = Math.max(0, w / 2 - rx - 2.5), ty = Math.max(0, hgt / 2 - ry - 2.5);
   const py = Math.max(cy - ty, Math.min(cy + ty, vc));
   parts.push(s('ellipse', {
-    class: 'mf-bg mf-pupil', cx, cy: py, rx, ry,
+    class: 'mf-pupil', cx, cy: py, rx, ry, fill: PUPIL,
     dataset: { tx, ty, lx: look[0], ly: look[1], miny: cy - ty - py, maxy: cy + ty - py },
     style: { transition: 'transform .35s ease-out' },
   }));
@@ -151,22 +155,64 @@ function sideLid(cx, cy, w, hgt, side) {
   return s('polygon', { class: 'mf-bg', points: pts });
 }
 function arcEye(cx, cy, up = true) {
+  // happy "^" eyes: iris-coloured with an ink rim; closed (sleeping) eyes: a dark ink line, like the robot
   const d = up ? `M${cx - 11} ${cy + 5} Q${cx} ${cy - 15} ${cx + 11} ${cy + 5}` : `M${cx - 11} ${cy - 2} Q${cx} ${cy + 10} ${cx + 11} ${cy - 2}`;
-  return s('path', { class: 'mf-line', d, 'stroke-width': 8, 'stroke-linecap': 'round', fill: 'none' });
+  const line = { d, 'stroke-linecap': 'round', fill: 'none' };
+  if (!up) return s('path', { ...line, stroke: INK.stroke, 'stroke-width': 4.5 });
+  return [s('path', { ...line, stroke: INK.stroke, 'stroke-width': 11 }), s('path', { class: 'mf-line', ...line, 'stroke-width': 7.2 })];
 }
 function heartEye(cx, cy) {
   const k = 1.15;
   const d = `M${cx} ${cy + 12 * k} C${cx - 18 * k} ${cy} ${cx - 12 * k} ${cy - 14 * k} ${cx} ${cy - 5 * k} C${cx + 12 * k} ${cy - 14 * k} ${cx + 18 * k} ${cy} ${cx} ${cy + 12 * k}z`;
-  return s('path', { class: 'mf-heart', d });
+  return s('path', { class: 'mf-heart', d, style: { fill: '#ef3f7c' }, stroke: MOUTH_INK, 'stroke-width': 1.6 });
 }
 function sparkle(x, y, r) {
-  return s('path', { class: 'mf-eye', d: `M${x} ${y - r} L${x + r * .3} ${y - r * .3} L${x + r} ${y} L${x + r * .3} ${y + r * .3} L${x} ${y + r} L${x - r * .3} ${y + r * .3} L${x - r} ${y} L${x - r * .3} ${y - r * .3}z` });
+  return s('path', { fill: SPARKLE, d: `M${x} ${y - r} L${x + r * .3} ${y - r * .3} L${x + r} ${y} L${x + r * .3} ${y + r * .3} L${x} ${y + r} L${x - r * .3} ${y + r * .3} L${x - r} ${y} L${x - r * .3} ${y - r * .3}z` });
 }
-function smile() {
-  return s('path', { class: 'mf-line', d: 'M53 70 Q60 76 67 70', 'stroke-width': 3.5, 'stroke-linecap': 'round', fill: 'none' });
+
+// The mouth, always drawn: a curved line (smile > 0, frown < 0), an open "D" smile, or a round "o".
+function mouthLine(w, curve, { dx = 0, tilt = 0, tongue = false } = {}) {
+  const x0 = MOUTH_X + dx - w / 2, x1 = MOUTH_X + dx + w / 2, y = MOUTH_Y - curve / 2;
+  const parts = [];
+  if (tongue) parts.push(s('path', { d: `M${MOUTH_X + dx + 1} ${y + curve * 0.6} v3 a3.2 3.2 0 0 0 6.4 0 v-3z`, fill: TONGUE, stroke: MOUTH_INK, 'stroke-width': 1.4 }));
+  parts.push(s('path', { d: `M${x0} ${y} Q${MOUTH_X + dx} ${y + curve * 2} ${x1} ${y}`, stroke: MOUTH_INK, 'stroke-width': 2.6, 'stroke-linecap': 'round', fill: 'none' }));
+  return tilt ? s('g', { transform: `rotate(${tilt} ${MOUTH_X + dx} ${MOUTH_Y})` }, parts) : parts;
+}
+function mouthOpen(w, h) {
+  // "D": a gently curved top lip and a round bottom, raspberry inside with a little tongue
+  const x0 = MOUTH_X - w / 2, x1 = MOUTH_X + w / 2, y = MOUTH_Y - h / 2;
+  return [
+    s('path', { d: `M${x0} ${y} Q${MOUTH_X} ${y + 2.5} ${x1} ${y} Q${x1 - 1} ${y + h * 1.25} ${MOUTH_X} ${y + h * 1.25} Q${x0 + 1} ${y + h * 1.25} ${x0} ${y}z`, fill: MOUTH_IN, stroke: MOUTH_INK, 'stroke-width': 2.2, 'stroke-linejoin': 'round' }),
+    s('ellipse', { cx: MOUTH_X, cy: y + h * 0.95, rx: w * 0.2, ry: h * 0.22, fill: TONGUE }),
+  ];
+}
+function mouthO(rx, ry, dy = 0) {
+  return s('ellipse', { cx: MOUTH_X, cy: MOUTH_Y + dy, rx, ry, fill: MOUTH_IN, stroke: MOUTH_INK, 'stroke-width': 2.2 });
+}
+function mouthFor(expr, closed) {
+  if (closed || expr === 'sleeping') return mouthO(2.2, 1.8, 2);
+  switch (expr) {
+    case 'happy': return mouthOpen(13, 6);
+    case 'excited': case 'celebrating': return mouthOpen(15, 8);
+    case 'speaking': return mouthOpen(10, 6);
+    case 'surprised': return mouthO(4.2, 4.6, 1);
+    case 'curious': return mouthO(2.6, 2.4);
+    case 'sad': return mouthLine(10, -2.6);
+    case 'sleepy': return mouthLine(7, 1);
+    case 'thinking': return mouthLine(7, -0.6, { dx: -3, tilt: -10 });
+    case 'confused': return mouthLine(8, -1.4, { dx: 2, tilt: 12 });
+    case 'listening': return mouthLine(9, 2.4);
+    case 'playful': return mouthLine(12, 2.6, { tongue: true });
+    case 'affectionate': return mouthLine(10, 2.8);
+    default: return mouthLine(10, 2);
+  }
 }
 
 function eyesFor(expr, closed) {
+  return [eyesOnly(expr, closed), mouthFor(expr, closed)];
+}
+
+function eyesOnly(expr, closed) {
   if (closed || expr === 'sleeping') {
     return [arcEye(EYE_L, EYE_Y + 4, false), arcEye(EYE_R, EYE_Y + 4, false)];
   }
@@ -181,7 +227,7 @@ function eyesFor(expr, closed) {
     case 'sad': return [eye(EYE_L, EYE_Y + 3, 22, 28, { pupil: 1.15, droop: 'left', look: [0, 0.5] }), eye(EYE_R, EYE_Y + 3, 22, 28, { pupil: 1.15, droop: 'right', look: [0, 0.5] })];
     case 'thinking': return [eye(EYE_L, EYE_Y - 2, 22, 27, { lid: 0.2, look: [0.7, -0.7] }), eye(EYE_R, EYE_Y - 3, 23, 29, { look: [0.7, -0.7] })];
     case 'listening': return [eye(EYE_L, EYE_Y - 1, 24, 31, { pupil: 1.1 }), eye(EYE_R, EYE_Y + 1, 24, 31, { pupil: 1.1 })];
-    case 'speaking': return [eye(EYE_L, EYE_Y - 4, 23, 27), eye(EYE_R, EYE_Y - 4, 23, 27), smile()];
+    case 'speaking': return [eye(EYE_L, EYE_Y - 4, 23, 27), eye(EYE_R, EYE_Y - 4, 23, 27)];
     case 'playful': return [arcEye(EYE_L, EYE_Y), eye(EYE_R, EYE_Y - 2, 24, 30, { pupil: 1.08, look: [0.25, 0] })];
     case 'affectionate': return [heartEye(EYE_L, EYE_Y), heartEye(EYE_R, EYE_Y)];
     default: return [eye(EYE_L, EYE_Y, 23, 28), eye(EYE_R, EYE_Y, 23, 28)];
@@ -204,6 +250,7 @@ function lookPupils(g, gz) {
 /** Draws LittleBot's eyes for an expression. Returns an <svg>; call .update() to redraw. */
 export function miniFace({ expression = 'neutral', size = 64, gaze = null, closed = false, label } = {}) {
   const root = s('svg', { class: 'mini-face', viewBox: '0 0 120 90', width: size, height: Math.round(size * 0.75), role: label ? 'img' : null, 'aria-hidden': label ? null : 'true' });
+  root.style.setProperty('--face-bg', FACE_BG); // the robot's pink screen (lids are painted in it too)
   const title = label ? s('title', { text: label }) : null;
   if (title) root.append(title);
   root.append(s('rect', { class: 'mf-screen', x: 0, y: 0, width: 120, height: 90, rx: 26 }));

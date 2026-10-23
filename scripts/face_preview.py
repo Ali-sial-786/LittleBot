@@ -265,11 +265,11 @@ def screenshots(out_dir: Path, seed: int) -> list[Path]:
     face = fresh()
     face.set_state("speaking")
     _settle(face, 0.5)
-    for i, lv in enumerate((0.0, 0.5, 1.0)):
-        face.animator.level = lv
-        face.animator._level_target = lv  # noqa: SLF001 - preview only
-        face.animator._last_level_t = face.animator.t  # noqa: SLF001
-        tiles.append((f"talking level {lv}", shot(face, f"gaze/talking_{i}")))
+    for i, (lv, shape) in enumerate(((0.0, "closed"), (0.5, "ee"), (1.0, "ah"), (0.7, "oo"))):
+        for _ in range(6):  # the mouth morphs to the spoken shape within ~100 ms
+            face.animator.speech_level(lv, shape)
+            face.update(1 / 30)
+        tiles.append((f"talking {shape} {lv}", shot(face, f"gaze/talking_{i}")))
     sheet(tiles, "gaze_and_talking")
 
     # the simulator window itself (panel + help / debug overlays)

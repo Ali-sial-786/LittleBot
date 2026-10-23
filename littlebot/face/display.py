@@ -57,6 +57,7 @@ HELP_LINES: tuple[tuple[str, str], ...] = (
     ("SPACE", "push-to-talk"),
     ("W", "wave gesture"),
     ("X / E", "STOP everything / motion emergency stop"),
+    ("Esc (game)", "stop the on-screen game (taps, 1-9, space play it)"),
     ("click", "simulated camera face there (right-click: no face)"),
     ("Shift+click", "tap reaction (giggle)"),
     ("G / H", "debug overlay / this help"),
@@ -219,6 +220,7 @@ class DisplayLoop:
         # First-run dashboard setup code, shown on the robot's own screen until a parent claims it.
         self.setup_banner: dict[str, Any] | None = None
         self._setup_sub: Any = None
+        self._game_t: float | None = None  # last frame time while an on-screen game runs
 
     # ------------------------------------------------------------------ setup
     def open(self) -> None:
@@ -366,6 +368,8 @@ class DisplayLoop:
             fps = max(fps, int(self.cfg.idle_fps))
         if self.show_panel and self._motion and self._motion.get("moving"):
             fps = max(fps, int(self.cfg.fps))
+        if self._games() is not None:
+            fps = max(fps, int(self.cfg.fps))
         return max(1, fps)
 
     @property
@@ -399,7 +403,8 @@ class DisplayLoop:
         win = self.window
         if self.face_rect.size != win.get_size():
             win.fill((0, 0, 0))
-        self.face.render(win, self.face_rect)
+        if not self._draw_game(win, now):
+            self.face.render(win, self.face_rect)
         if self.show_panel and self.panel is not None and self.panel_rect is not None:
             self._poll(now)
             caption = f"demo: {self.demo.caption}" if self.demo is not None and self.demo.caption else ""
@@ -523,6 +528,49 @@ class DisplayLoop:
             win.blit(img, (r.x + 14 + key_w, y))
             y += size + 1
 
+    # ------------------------------------------------------------------ on-screen games
+    # While ``ctx.games`` (littlebot.games) runs a game it is drawn instead of the face and gets
+    # taps and keys first (Esc stops it). Everything else - overlays, panel, STOP keys - is unchanged.
+    def _games(self) -> Any:
+        games = getattr(self.ctx, "games", None)
+        try:
+            return games if games is not None and games.active else None
+        except Exception:  # noqa: BLE001
+            return None
+
+    def _draw_game(self, win: Any, now: float) -> bool:
+        games = self._games()
+        if games is None:
+            self._game_t = None
+            return False
+        dt = 0.0 if self._game_t is None else now - self._game_t
+        self._game_t = now
+        try:
+            return bool(games.render(win, self.face_rect, dt))
+        except Exception:  # noqa: BLE001 - fall back to the face
+            log.exception("game frame failed")
+            return False
+
+    def _game_tap(self, nx: float, ny: float) -> bool:
+        games = self._games()
+        if games is None:
+            return False
+        try:
+            return bool(games.handle_tap(nx, ny))
+        except Exception:  # noqa: BLE001
+            log.exception("game tap failed")
+            return False
+
+    def _game_key(self, key: int) -> bool:
+        games = self._games()
+        if games is None:
+            return False
+        try:
+            return bool(games.handle_key(self._pg.key.name(key)))
+        except Exception:  # noqa: BLE001
+            log.exception("game key failed")
+            return False
+
     # ------------------------------------------------------------------ input
     def _handle_events(self) -> bool:
         pg = self._pg
@@ -540,6 +588,8 @@ class DisplayLoop:
     def handle_key(self, key: int, mod: int = 0) -> bool:
         """Apply one key press. Returns False when the user asked to quit."""
         pg = self._pg
+        if self._game_key(key):
+            return True
         face = self.face
         ctx = self.ctx
         shift = bool(mod & pg.KMOD_SHIFT)
@@ -630,6 +680,8 @@ class DisplayLoop:
             return
         nx = (pos[0] - self.face_rect.x) / max(1, self.face_rect.w)
         ny = (pos[1] - self.face_rect.y) / max(1, self.face_rect.h)
+        if button == 1 and self._game_tap(nx, ny):
+            return
         if mod is None:
             mod = pg.key.get_mods()
         shift = bool(mod & pg.KMOD_SHIFT)

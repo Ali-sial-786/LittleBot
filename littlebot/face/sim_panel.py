@@ -18,6 +18,9 @@ PANEL_LINE = (40, 46, 62)
 TEXT = (210, 220, 235)
 DIM = (130, 140, 160)
 ACCENT = (90, 210, 255)
+SCREEN_PINK = (255, 214, 228)  # the face's screen colour (face.background_color default)
+INK = (38, 70, 95)  # eye rims on the pink screen
+MOUTH_INK = (66, 32, 62)
 GOOD = (90, 220, 150)
 WARN = (255, 196, 90)
 BAD = (255, 90, 90)
@@ -258,11 +261,14 @@ class SimPanel:
         pygame.draw.rect(surf, BODY, hrect, border_radius=16)
         pygame.draw.rect(surf, BODY_EDGE, hrect, width=2, border_radius=16)
         screen = hrect.inflate(-16, -16)
-        pygame.draw.rect(surf, (6, 8, 14), screen, border_radius=10)
+        pygame.draw.rect(surf, SCREEN_PINK, screen, border_radius=10)  # same pastel screen as the face
         ex = screen.centerx + int(k * 10)
         for s in (-1, 1):
             er = pygame.Rect(0, 0, 13, 17)
-            er.center = (ex + s * 17, screen.centery)
+            er.center = (ex + s * 17, screen.centery - 3)
+            pygame.draw.rect(surf, INK, er.inflate(4, 4), border_radius=8)
             pygame.draw.rect(surf, ACCENT, er, border_radius=6)
+        pygame.draw.arc(surf, MOUTH_INK, pygame.Rect(ex - 6, screen.centery + 4, 12, 9), math.pi * 1.1,
+                        math.pi * 1.9, 2)
         lbl = self.text(f"head {_num(head.get('angle'), 90):.0f}°", 15, DIM)
         surf.blit(lbl, (rect.centerx - lbl.get_width() // 2, rect.y + 4))

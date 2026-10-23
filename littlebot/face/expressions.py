@@ -1,9 +1,10 @@
 """Expression parameter sets for LittleBot's eyes.
 
-Every expression is a plain data description of two eyes plus a few global
-modifiers (colour tint, glow, gaze bias, idle bounce, overlay extras). The
-animator interpolates between them; the renderer never needs to know an
-expression's name.
+Every expression is a plain data description of two eyes, a resting mouth and
+a few global modifiers (colour tint, glow, gaze bias, idle bounce, overlay
+extras). The animator interpolates between them; the renderer never needs to
+know an expression's name. The mouth is always shown: while LittleBot talks
+the spoken mouth shapes take over from the resting one (see ``face.mouth``).
 
 Design units are pixels at the native 480x320 screen. Conventions:
 
@@ -34,7 +35,7 @@ EXTRAS: tuple[str, ...] = (
     "confetti",  # celebrating confetti rain
     "zzz",  # sleepy Z's
     "blush",  # rosy cheeks
-    "mouth",  # small cute mouth (also shown automatically while speaking)
+    "mouth",  # legacy (the mouth is always drawn now; kept so old expression data stays valid)
 )
 
 # Expression adopted by default for each face state (and after a ``hold`` expires).
@@ -85,12 +86,40 @@ class EyeParams:
     dy: float = 0.0
 
 
+# Valid ranges of the resting mouth's fields (used for tests).
+MOUTH_RANGES: dict[str, tuple[float, float]] = {
+    "smile": (-1.0, 1.0),
+    "open": (0.0, 1.0),
+    "width": (0.4, 1.6),
+    "round": (0.0, 1.0),
+    "tongue": (0.0, 1.0),
+    "dx": (-40.0, 40.0),
+    "dy": (-30.0, 30.0),
+    "tilt": (-30.0, 30.0),
+}
+
+
+@dataclass(frozen=True)
+class MouthParams:
+    """The resting mouth of an expression (all values interpolate linearly)."""
+
+    smile: float = 0.45  # -1 frown .. 1 big smile
+    open: float = 0.0  # 0 closed line .. 1 wide open
+    width: float = 1.0  # multiplier of the base mouth width
+    round: float = 0.0  # 0..1 rounded "o"
+    tongue: float = 0.0  # 0..1 cheeky tongue poking out
+    dx: float = 0.0  # screen offset px
+    dy: float = 0.0
+    tilt: float = 0.0  # degrees, + turns the mouth counter-clockwise (a lopsided "hmm")
+
+
 @dataclass(frozen=True)
 class ExpressionParams:
-    """Both eyes plus global look modifiers."""
+    """Both eyes, the resting mouth and global look modifiers."""
 
     left: EyeParams = field(default_factory=EyeParams)
     right: EyeParams = field(default_factory=EyeParams)
+    mouth: MouthParams = field(default_factory=MouthParams)
     tint: tuple[float, float, float] = (90.0, 210.0, 255.0)  # colour mixed into the eye colour
     tint_mix: float = 0.0  # 0 = configured eye colour, 1 = tint colour
     brightness: float = 1.0
@@ -109,8 +138,9 @@ class ExpressionParams:
 
 
 _EYE_FIELDS = tuple(f.name for f in fields(EyeParams))
+_MOUTH_FIELDS = tuple(f.name for f in fields(MouthParams))
 _EXPR_FLOAT_FIELDS = tuple(
-    f.name for f in fields(ExpressionParams) if f.name not in ("left", "right", "tint", "extras")
+    f.name for f in fields(ExpressionParams) if f.name not in ("left", "right", "mouth", "tint", "extras")
 )
 
 
@@ -120,9 +150,12 @@ def _sym(**kw: Any) -> tuple[EyeParams, EyeParams]:
     return e, e
 
 
-def _expr(eyes: tuple[EyeParams, EyeParams], **kw: Any) -> ExpressionParams:
+def _expr(eyes: tuple[EyeParams, EyeParams], mouth: MouthParams | None = None, **kw: Any) -> ExpressionParams:
     extras = kw.pop("extras", ())
-    return ExpressionParams(left=eyes[0], right=eyes[1], extras=frozenset(extras), **kw)
+    return ExpressionParams(left=eyes[0], right=eyes[1], mouth=mouth or MouthParams(), extras=frozenset(extras), **kw)
+
+
+M = MouthParams
 
 
 SAD_BLUE = (70.0, 135.0, 255.0)
@@ -131,13 +164,15 @@ WARM_GOLD = (255.0, 214.0, 120.0)
 SOFT_LAVENDER = (175.0, 165.0, 255.0)
 
 EXPRESSION_PARAMS: dict[str, ExpressionParams] = {
-    "neutral": _expr(_sym()),
+    "neutral": _expr(_sym(), M(smile=0.5)),
     "happy": _expr(
         _sym(width=1.1, height=0.92, smile=0.68, roundness=0.5, dy=-2),
+        M(smile=0.95, open=0.42, width=1.22),
         glow=1.15, shine=0.6, wander=0.8,
     ),
     "excited": _expr(
         _sym(width=1.08, height=1.10, scale=1.08, smile=0.34, pupil=1.08, dy=-4),
+        M(smile=1.0, open=0.62, width=1.28, dy=2),
         glow=1.3, shine=1.3, bob=5.0, bob_hz=1.9, blink_rate=1.3, extras=("sparkles",),
     ),
     "curious": _expr(
@@ -145,19 +180,23 @@ EXPRESSION_PARAMS: dict[str, ExpressionParams] = {
             EyeParams(scale=1.14, pupil=1.08, tilt=-4, dy=-6),
             EyeParams(scale=0.88, lid_top=0.16, lid_angle=-5, pupil=0.95, tilt=4, dy=2),
         ),
+        M(smile=0.1, open=0.24, width=0.5, round=1.0, dx=6),
         gaze_x=0.22, gaze_y=-0.12, wander=0.5, sway=2.5, shine=1.2,
     ),
     "surprised": _expr(
         _sym(width=1.05, height=1.16, scale=1.12, pupil=0.78, dy=-6),
+        M(smile=0.0, open=0.66, width=0.74, round=1.0, dy=4),
         glow=1.35, shine=1.4, spacing=10, wander=0.15, blink_rate=1.8,
     ),
     "sleepy": _expr(
         _sym(height=0.92, lid_top=0.5, lid_angle=4, pupil=0.86, dy=6),
+        M(smile=0.3, width=0.7, dy=4),
         brightness=0.78, glow=0.65, shine=0.3, gaze_y=0.35, wander=0.25,
         blink_rate=0.7, blink_speed=2.2, extras=("zzz",),
     ),
     "sad": _expr(
         _sym(height=0.9, width=0.96, lid_top=0.28, lid_angle=16, pupil=1.15, dy=8),
+        M(smile=-0.75, width=0.86, dy=6),
         tint=SAD_BLUE, tint_mix=0.55, brightness=0.9, glow=0.8, shine=1.1,
         gaze_y=0.4, wander=0.3, blink_speed=1.4,
     ),
@@ -166,6 +205,7 @@ EXPRESSION_PARAMS: dict[str, ExpressionParams] = {
             EyeParams(lid_top=0.2, lid_angle=-6, pupil=0.95),
             EyeParams(scale=1.04, pupil=0.95),
         ),
+        M(smile=-0.2, width=0.58, dx=-10, tilt=-9),
         gaze_x=0.5, gaze_y=-0.6, wander=0.0, sway=0.0, extras=("dots",),
     ),
     "listening": _expr(
@@ -173,10 +213,12 @@ EXPRESSION_PARAMS: dict[str, ExpressionParams] = {
             EyeParams(scale=1.06, height=1.05, pupil=1.1, dy=-3, tilt=3),
             EyeParams(scale=1.06, height=1.05, pupil=1.1, dy=3, tilt=-3),
         ),
+        M(smile=0.55, open=0.14, width=0.8),
         glow=1.15, shine=1.2, wander=0.25, blink_rate=1.2, extras=("ring",),
     ),
     "speaking": _expr(
         _sym(height=0.98, dy=-8),
+        M(smile=0.55, width=1.0),
         glow=1.05, wander=0.5, extras=("mouth",),
     ),
     "confused": _expr(
@@ -184,6 +226,7 @@ EXPRESSION_PARAMS: dict[str, ExpressionParams] = {
             EyeParams(scale=0.88, lid_top=0.24, lid_angle=-8, pupil=0.9, dy=4),
             EyeParams(scale=1.1, dy=-8, tilt=5),
         ),
+        M(smile=-0.35, width=0.66, dx=6, tilt=12),
         gaze_x=-0.2, gaze_y=-0.15, wander=0.4, sway=3.0, extras=("question",),
     ),
     "playful": _expr(
@@ -191,15 +234,18 @@ EXPRESSION_PARAMS: dict[str, ExpressionParams] = {
             EyeParams(width=1.1, height=0.92, smile=0.68, roundness=0.5, dy=-2, tilt=-4),
             EyeParams(scale=1.08, pupil=1.08, dy=-6, tilt=4),
         ),
+        M(smile=0.8, width=1.08, tongue=1.0),
         gaze_x=0.15, glow=1.15, shine=1.2, bob=3.0, bob_hz=1.4, sway=4.0, wander=0.6,
     ),
     "affectionate": _expr(
         _sym(width=1.06, height=0.9, smile=0.6, openness=0.94, roundness=0.5, dy=-2),
+        M(smile=0.85, width=0.9),
         tint=LOVE_PINK, tint_mix=0.72, glow=1.25, shine=0.7, wander=0.4, blink_speed=1.3,
         extras=("hearts", "blush"),
     ),
     "celebrating": _expr(
         _sym(width=1.1, height=0.98, scale=1.1, smile=0.66, roundness=0.5, dy=-6),
+        M(smile=1.0, open=0.72, width=1.36, dy=2),
         tint=WARM_GOLD, tint_mix=0.12, glow=1.4, shine=1.0, bob=6.0, bob_hz=2.2, sway=3.0,
         blink_rate=1.5, extras=("sparkles", "confetti", "blush"),
     ),
@@ -227,6 +273,10 @@ def lerp_eye(a: EyeParams, b: EyeParams, t: float) -> EyeParams:
     return EyeParams(**{n: _lerp(getattr(a, n), getattr(b, n), t) for n in _EYE_FIELDS})
 
 
+def lerp_mouth(a: MouthParams, b: MouthParams, t: float) -> MouthParams:
+    return MouthParams(**{n: _lerp(getattr(a, n), getattr(b, n), t) for n in _MOUTH_FIELDS})
+
+
 def lerp_expression(a: ExpressionParams, b: ExpressionParams, t: float) -> ExpressionParams:
     """Linear interpolation. ``extras`` switch to the target (the animator fades them).
 
@@ -243,6 +293,7 @@ def lerp_expression(a: ExpressionParams, b: ExpressionParams, t: float) -> Expre
     return ExpressionParams(
         left=lerp_eye(a.left, b.left, t),
         right=lerp_eye(a.right, b.right, t),
+        mouth=lerp_mouth(a.mouth, b.mouth, t),
         tint=(_lerp(ta[0], tb[0], t), _lerp(ta[1], tb[1], t), _lerp(ta[2], tb[2], t)),
         extras=b.extras,
         **vals,

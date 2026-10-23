@@ -289,6 +289,7 @@ async def test_engine_tag_never_reaches_context_or_transcript(make_brain):
 
 async def test_engine_ignores_tag_on_a_filtered_reply(make_brain):
     ctx = cloud_context(age_months=40)
+    ctx.config.ai.relaxed_rules = []  # every rule group on: the link reply is filtered
     brain = await make_brain(ctx, FakeAPI(lambda req: anthropic_response(
         "Visit www.example.com for fun! [face: hearts]")))
     r = await brain.handle_utterance("what can we do")

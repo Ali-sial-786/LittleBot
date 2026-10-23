@@ -2,8 +2,9 @@
 
 ``FaceAnimator`` owns everything that moves: expression transitions, blinking,
 gaze (explicit look / soft tracking / idle wandering with micro-saccades),
-breathing, speech pulses, listening indicator, one-shot animations, eyelid
-closing and the hidden (video) fade. Call :meth:`update` with a time step and
+breathing, the mouth (resting per expression, lip-synced while talking),
+listening indicator, one-shot animations, eyelid closing and the hidden
+(video) fade. Call :meth:`update` with a time step and
 :meth:`frame` to get a renderer-agnostic :class:`FaceFrame`.
 
 It is deterministic for a given RNG seed and sequence of ``update(dt)`` calls,
@@ -28,8 +29,11 @@ from littlebot.face.expressions import (
     DEFAULT_EXPRESSION_FOR_STATE, EXPRESSION_PARAMS, EXTRAS, STATE_TINTS, ExpressionParams, lerp_expression,
 )
 from littlebot.face.frame import (
-    EYE_H, EYE_SPACING, EYE_W, EYE_Y, GAZE_DX, GAZE_DY, MIN_LINE, MOUTH_Y, NATIVE_H, NATIVE_W, EyeFrame,
-    FaceFrame, MouthFrame, Sprite,
+    EYE_H, EYE_SPACING, EYE_W, EYE_Y, GAZE_DX, GAZE_DY, MIN_LINE, MOUTH_OPEN_H, MOUTH_W, MOUTH_Y, NATIVE_H,
+    NATIVE_W, EyeFrame, FaceFrame, MouthFrame, Sprite,
+)
+from littlebot.face.mouth import (
+    SLEEP_POSE, VISEME_POSES, VISEMES, MouthPose, lerp_pose, level_viseme, spoken_pose,
 )
 
 log = logging.getLogger("littlebot.face")
@@ -44,6 +48,10 @@ OPEN_SECONDS = 0.16  # open_eyes() / waking
 POP_SECONDS = 0.45  # little "boing" when the eyes reopen after being closed
 TRACK_TIMEOUT = 1.2  # a tracking target older than this is ignored
 LEVEL_TIMEOUT = 0.25  # no audio.level for this long while speaking -> synthesize
+TALK_FADE_SECONDS = 0.12  # resting mouth <-> talking mouth
+MOUTH_RATE_OPEN = 32.0  # 1/s, how fast the talking mouth follows the sound (time constant ~30 ms)
+MOUTH_RATE_CLOSE = 24.0
+MOUTH_BOTTOM_MARGIN = 8.0  # px: the mouth never slides off the bottom of the screen (peek-a-boo)
 SPEECH_MIN_TIMEOUT = 8.0  # safety: stop the talking animation if speech_finished never arrives
 HIDE_SECONDS = 0.45
 EXTRAS_FADE_SECONDS = 0.3
@@ -180,7 +188,12 @@ class FaceAnimator:
         self._level_target = 0.0
         self._last_level_t = -1e9
         self._next_syllable = 0.0
-        self.mouth_alpha = 0.0
+        # mouth: always shown; the spoken pose takes over from the expression's resting mouth while talking
+        self.talk_mix = 0.0
+        self._shape: str | None = None  # last viseme heard (None: loudness only)
+        self._shape_t = -1e9
+        self.mouth_shape = "closed"
+        self._spoken = VISEME_POSES["closed"]  # the talking mouth, smoothed towards the sound's shape
         # listening / hidden
         self.listening_active = False
         self._listen_alpha = 0.0
@@ -276,7 +289,8 @@ class FaceAnimator:
     def speech_finished(self) -> None:
         self.speech_active = False
 
-    def speech_level(self, level: float) -> None:
+    def speech_level(self, level: float, shape: str | None = None) -> None:
+        """Loudness 0..1 of the speech being heard and, optionally, its mouth shape (viseme)."""
         try:
             level = float(level)
         except (TypeError, ValueError):
@@ -285,6 +299,10 @@ class FaceAnimator:
             return
         self._level_target = clamp01(level)
         self._last_level_t = self.t
+        if shape in VISEMES:
+            self._shape, self._shape_t = shape, self.t
+        else:
+            self._shape = None  # a bare level: the shape is guessed from the loudness
         if self.speech_active:
             self._speech_deadline = max(self._speech_deadline, self.t + 3.0)
 
@@ -518,7 +536,27 @@ class FaceAnimator:
             self._level_target = 0.0
         rate = 30.0 if self._level_target > self.level else 14.0
         self.level = _ease_exp(self.level, self._level_target, rate, dt)
-        self.mouth_alpha = _approach(self.mouth_alpha, 1.0 if talking else 0.0, 1 / 0.2, dt)
+        self.talk_mix = _approach(self.talk_mix, 1.0 if talking else 0.0, 1 / TALK_FADE_SECONDS, dt)
+        # the talking mouth: the shape of the sound heard right now (or one guessed from loudness)
+        if not talking:
+            shape = "closed"
+        elif self._shape is not None and t - self._shape_t <= LEVEL_TIMEOUT:
+            shape = self._shape
+        else:
+            shape = level_viseme(self._level_target)
+        self.mouth_shape = shape
+        target = spoken_pose(shape, self._level_target if talking else 0.0, self._rest_pose())
+        cur = self._spoken
+        k_open = 1.0 - math.exp(-(MOUTH_RATE_OPEN if target.open > cur.open else MOUTH_RATE_CLOSE) * dt)
+        k = 1.0 - math.exp(-MOUTH_RATE_CLOSE * dt)
+        self._spoken = MouthPose(
+            open=cur.open + (target.open - cur.open) * k_open,
+            width=cur.width + (target.width - cur.width) * k,
+            smile=cur.smile + (target.smile - cur.smile) * k,
+            round=cur.round + (target.round - cur.round) * k,
+            teeth=cur.teeth + (target.teeth - cur.teeth) * k,
+            tongue=0.0,
+        )
 
     def _go(self, name: str) -> None:
         if name == self.expression and self._to is EXPRESSION_PARAMS[name]:
@@ -537,6 +575,27 @@ class FaceAnimator:
     def _emit(self, topic: str, data: dict[str, Any]) -> None:
         if len(self._events) < 64:
             self._events.append((topic, data))
+
+    # ================================================================ mouth
+    def _rest_pose(self) -> MouthPose:
+        """The expression's resting mouth (a tiny breathing "o" while asleep)."""
+        mp = self.params.mouth
+        rest = MouthPose(open=mp.open, width=mp.width, smile=mp.smile, round=mp.round, tongue=mp.tongue)
+        if self.state == "sleeping" and self.closure > 0.0:
+            breath = 0.5 + 0.5 * math.sin(self._breath_phase) if self.cfg.breathing else 0.5
+            asleep = MouthPose(open=SLEEP_POSE.open * (0.75 + 0.5 * breath), width=SLEEP_POSE.width,
+                               smile=SLEEP_POSE.smile, round=SLEEP_POSE.round)
+            rest = lerp_pose(rest, asleep, smoothstep(self.closure))
+        return rest
+
+    def mouth_pose(self, m: Motion | None = None) -> MouthPose:
+        """The mouth right now: resting mouth, plus one-shot animations, blended with the talking mouth."""
+        rest = self._rest_pose()
+        if m is not None and (m.mouth_open or m.mouth_smile or m.mouth_round):
+            rest = MouthPose(open=clamp01(rest.open + m.mouth_open), width=rest.width,
+                             smile=_clamp(rest.smile + m.mouth_smile), round=clamp01(rest.round + m.mouth_round),
+                             tongue=rest.tongue * (1.0 - clamp01(m.mouth_open * 3)))
+        return lerp_pose(rest, self._spoken, smoothstep(self.talk_mix))
 
     # ================================================================ frame
     def motion(self) -> Motion:
@@ -605,16 +664,28 @@ class FaceAnimator:
             ))
 
         color = self.eye_color()
+        palette = effects.palette_for(tuple(self.cfg.background_color))  # type: ignore[arg-type]
         mouth = None
-        if self.mouth_alpha > 0.01:
+        if self.hidden_amount < 1.0:  # the mouth is always there, except on the hidden "video" screen
+            pose = self.mouth_pose(m)
+            mp = p.mouth
+            # like the eyes: follows the gaze a little, breathes, hops, and turns with the whole face
+            ox = mp.dx * (1.0 - self.talk_mix * 0.5)
+            oy = MOUTH_Y - EYE_Y + (p.left.dy + p.right.dy) * 0.25 + mp.dy
+            mcx = cx0 + ox * cos_r + oy * sin_r + gx * GAZE_DX * 0.6 + m.dx
+            mcy = EYE_Y - ox * sin_r + oy * cos_r + gy * GAZE_DY * 0.5 + breath_dy - hop + m.dy
+            low = 0.82 * MOUTH_OPEN_H * 1.45 * pose.open + 6.0 + 14.0 * pose.tongue  # reach below the centre
+            mcy = min(mcy, NATIVE_H - MOUTH_BOTTOM_MARGIN - low)
             mouth = MouthFrame(
-                cx=cx0 + gx * GAZE_DX * 0.6 + m.dx,
-                cy=MOUTH_Y + p.left.dy * 0.5 + gy * GAZE_DY * 0.5 + breath_dy - hop + m.dy,
-                open=clamp01(level), alpha=self.mouth_alpha, width=46.0,
+                cx=mcx, cy=mcy, open=clamp01(pose.open), alpha=1.0, width=MOUTH_W * max(0.2, pose.width) * m.sx,
+                smile=_clamp(pose.smile), round=clamp01(pose.round), teeth=clamp01(pose.teeth),
+                tongue=clamp01(pose.tongue), angle=mp.tilt * (1.0 - self.talk_mix) + rot,
+                shape=self.mouth_shape if self.talk_mix > 0.5 else "",
             )
-        sprites: list[Sprite] = effects.extras_sprites(self.extras_alpha, t, eyes, color)
+        anchor = (mouth.cx, mouth.cy) if mouth is not None else None
+        sprites: list[Sprite] = effects.extras_sprites(self.extras_alpha, t, eyes, color, palette, anchor)
         for a in self.animations:
-            sprites.extend(effects.animation_sprites(a.name, t - a.start, a.seed, color))
+            sprites.extend(effects.animation_sprites(a.name, t - a.start, a.seed, color, palette))
         if self.hidden_amount > 0.0:
             pulse = 0.85 + 0.15 * math.sin(t * 1.3)
             sprites.append(Sprite("play", NATIVE_W - 34, NATIVE_H - 30, 22,
@@ -627,5 +698,6 @@ class FaceAnimator:
             color=color, glow=glow, eyes=(eyes[0], eyes[1]), mouth=mouth, sprites=tuple(sprites),
             ring=ring, hidden=self.hidden_amount, expression=self.expression, state=self.state,
             debug={"gaze_x": round(gx, 3), "gaze_y": round(gy, 3), "level": round(level, 3),
-                   "blink": round(blink, 3), "closure": round(self.closure, 3)},
+                   "blink": round(blink, 3), "closure": round(self.closure, 3),
+                   "mouth_open": round(mouth.open, 3) if mouth is not None else 0.0},
         )

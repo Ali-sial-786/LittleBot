@@ -2,7 +2,10 @@
 
 Safety rules enforced here (not just in the UI):
 
-* Only items on the parent's allowlist can play; ``skip`` only moves within enabled items.
+* Items on the parent's allowlist play with ``play``; ``skip`` only moves within enabled items.
+  With ``media.allow_search`` (on by default for now), ``search`` finds YouTube videos (yt-dlp, no API
+  key) and ``play_video`` plays any video id it is given - e.g. one the AI found when asked to "play
+  baby shark"; ``skip`` then moves through the other results. All the rules below still apply.
 * Video is off by default under ``media.min_age_months_for_video`` (18 months) and for an
   unknown age; a parent may authorise it (``parent_override`` / ``media.allow_under_min_age``).
 * Session and daily time limits (daily usage persisted per calendar day) with a gentle stop.
@@ -38,12 +41,13 @@ from littlebot.core.runtime import cancel_and_wait
 from littlebot.core.service import Service, ServiceStatus
 from littlebot.core.state import RobotState
 from littlebot.media.allowlist import (
-    MediaURLError, is_valid_video_id, parse_youtube_url, validate_list_id, validate_video_id,
+    MediaURLError, is_valid_video_id, parse_youtube_url, sanitize_title, validate_list_id, validate_video_id,
 )
 from littlebot.media.bridge import PlayerBridge
 from littlebot.media.display import DisplayBackend, PlayerBackendError, select_backend
 from littlebot.media.oembed import OEmbedResult, lookup_oembed
 from littlebot.media.repository import AllowlistRepository, UsageRepository
+from littlebot.media.search import Searcher, YtDlpSearcher, clean_query
 
 log = logging.getLogger("littlebot.media")
 
@@ -88,6 +92,12 @@ PLAYER_ERRORS: dict[Any, tuple[str, str]] = {
 # The dashboard's switch for ``media.allow_under_min_age`` (Videos page, with a confirmation).
 UNDER_AGE_SETTING_LABEL = "Allow videos before 18 months"
 
+SEARCH_ID_PREFIX = "search:"  # status()["item"]["id"] of a video found by search (not on the approved list)
+# Player errors after which the next search result is tried instead of stopping (the video is gone,
+# private, or its owner doesn't allow embedded playback).
+TRY_NEXT_RESULT_ERRORS = frozenset({2, 5, 100, 101, 150})
+MAX_QUEUE = 10
+
 UNEXPECTED_VIDEO_MESSAGE = PLAYER_ERRORS["unexpected_video"][1]
 UNVERIFIED_VIDEO_MESSAGE = ("The player didn't confirm which video it was showing, so it was stopped "
                             "(only approved videos may play).")
@@ -126,6 +136,7 @@ class _Session:
     playlist_ids: set[str] = field(default_factory=set)  # ids of the approved playlist (from the player)
     verified: bool = False  # the current video's id was reported and is approved
     unverified_since: float | None = None  # "playing" reported without a confirmed id
+    queue: list[dict[str, Any]] = field(default_factory=list)  # other search results: skip / fallback
 
 
 class MediaController(Service):
@@ -143,6 +154,7 @@ class MediaController(Service):
         tick_seconds: float | None = None,
         title_lookup: TitleLookup | None = None,
         token: str | None = None,
+        searcher: Searcher | None = None,
     ) -> None:
         super().__init__()  # lifecycle state lives in ``service_status``; ``status()`` is MediaAPI's
         self.ctx = ctx
@@ -154,6 +166,8 @@ class MediaController(Service):
         self.repo = AllowlistRepository(ctx.db, max_items=self.cfg.max_items)
         self.usage = UsageRepository(ctx.db)
         self.backend = backend or select_backend(ctx.config)
+        self.searcher: Searcher = searcher or YtDlpSearcher(self.cfg.ytdlp_command,
+                                                            timeout=self.cfg.search_timeout_seconds)
         self.bridge = PlayerBridge(token=token, clock=self._clock.now, youtube_host=self.cfg.youtube_host)
         self._lock = threading.RLock()  # guards session/usage fields read by status() from other threads
         self._op_lock = asyncio.Lock()  # serialises play/stop/skip/pause/resume/player events
@@ -276,46 +290,113 @@ class MediaController(Service):
             item = self.repo.get(item_id)
             if item is None:
                 raise KeyError(f"unknown media item {item_id}")
-            sess = self._session
-            override = bool(parent_override or (sess is not None and sess.override))
-            self._check_allowed(item, override, sess)
-            if sess is None:
-                holder = self.ctx.arbiter.holder(Resource.SCREEN)
-                lease = self.ctx.arbiter.acquire(OWNER, RESOURCES, Priority.MEDIA, on_preempt=self._on_preempt)
-                if lease is None:
-                    who = holder.owner if holder is not None else "something more important"
-                    raise PermissionError(f"LittleBot is busy right now ({who}). Try again in a moment.")
-                if not self.ctx.state.transition(RobotState.PLAYING_MEDIA, f"media: {item['title']}"):
-                    lease.release()
-                    raise PermissionError(
-                        f"LittleBot can't start a video right now (state {self.ctx.state.state.value}).")
-                now = self._clock.now()
-                sess = _Session(id=next(self._session_ids), item=item, lease=lease, load_id="", started=now,
-                                load_started=now, last_accrual=now, override=bool(parent_override))
-                with self._lock:
-                    self._session = sess
-                # The face hides itself for PLAYING_MEDIA (it owns face.visible).
-            else:
-                with self._lock:
-                    self._accrue()
-            self._cancel_close_task()
-            self._load(sess, item)
-            if not self._player_alive():  # kiosk not running / desktop tab not polling
-                try:
-                    await self.backend.open(self.player_url())
-                except PlayerBackendError as e:
-                    msg = f"Couldn't open the video player on LittleBot's screen: {e}"
-                    self._record_error(item, "backend", msg)
-                    await self._end_session("error", detail=msg)
-                    raise PermissionError(msg) from e
-            if self.backend.is_running():
-                sess.backend_opened = True  # from now on, the window disappearing is an error
-            self.ctx.bus.publish(Topics.MEDIA_STARTED, {
-                "item_id": item["id"], "title": item["title"], "kind": item["kind"], "session_id": sess.id,
-                "skipped": False}, source="media")
-            self._ensure_watchdog()
-            log.info("media: playing item %s (session %s)", item["id"], sess.id)
+            await self._begin(item, parent_override)
         return self.status()
+
+    async def play_video(self, video_id: str, *, title: str | None = None, channel: str | None = None,
+                         duration_seconds: int | None = None, alternatives: list[dict[str, Any]] | None = None,
+                         parent_override: bool = False) -> dict[str, Any]:
+        """Play any YouTube video by id (e.g. a search result), with ``media.allow_search`` on.
+
+        A video that is on the approved list plays as that item. ``alternatives`` (more search
+        results: ``{video_id, title, channel?}``) are what ``skip`` moves to, and what is tried next
+        if YouTube refuses this one (removed, private, embedding not allowed). Raises ValueError for
+        a malformed id, PermissionError when search playback is off or video isn't allowed now."""
+        self._bind_loop()
+        vid = validate_video_id(video_id)
+        if not self.search_allowed():
+            raise PermissionError("Only videos on the approved list can play (searching YouTube is turned off).")
+        item = self._approved_video(vid) or _search_item(vid, title, channel, duration_seconds)
+        queue: list[dict[str, Any]] = []
+        for alt in alternatives or ():
+            alt_id = alt.get("video_id") if isinstance(alt, dict) else None
+            if is_valid_video_id(alt_id) and alt_id != vid and all(q["youtube_id"] != alt_id for q in queue):
+                queue.append(self._approved_video(alt_id) or _search_item(alt_id, alt.get("title"), alt.get("channel"),
+                                                                           alt.get("duration_seconds")))
+            if len(queue) >= MAX_QUEUE:
+                break
+        async with self._op_lock:
+            await self._begin(item, parent_override, queue=queue)
+        return self.status()
+
+    async def search(self, query: str, *, limit: int | None = None) -> list[dict[str, Any]]:
+        """YouTube search results ``[{video_id, title, channel, duration_seconds}]`` (yt-dlp, no API key).
+
+        Raises PermissionError when search is off / videos are off / offline, and
+        ``littlebot.media.search.SearchError`` (kind unavailable | timeout | failed | bad_query)."""
+        if not self.search_allowed():
+            raise PermissionError("Searching YouTube is turned off (media.allow_search).")
+        if self.ctx.config.is_offline:
+            raise PermissionError("Videos need the internet, and LittleBot is in offline mode.")
+        if not self.ctx.settings.get("media.enabled", True):
+            raise PermissionError("Videos are turned off in LittleBot's settings.")
+        text = clean_query(query)
+        n = max(1, min(10, int(limit if limit is not None else self.cfg.search_results)))
+        results = await self.searcher.search(text, n)
+        log.info("media: youtube search -> %d result(s)", len(results))
+        return [r.as_dict() for r in results]
+
+    def search_allowed(self) -> bool:
+        return bool(self.ctx.settings.get("media.allow_search", self.cfg.allow_search))
+
+    def video_blocked_reason(self) -> str | None:
+        """Why no video could start right now (enabled, offline, age gate, time limits), else None."""
+        probe = {"id": 0, "kind": "video", "youtube_id": "aaaaaaaaaaa", "title": "video", "enabled": True}
+        try:
+            self._check_allowed(probe, bool(self._session is not None and self._session.override), self._session)
+        except PermissionError as e:
+            return str(e)
+        return None
+
+    def _approved_video(self, video_id: str) -> dict[str, Any] | None:
+        for item in self.repo.list(enabled_only=True):
+            if item.get("kind") == "video" and item.get("youtube_id") == video_id:
+                return item
+        return None
+
+    async def _begin(self, item: dict[str, Any], parent_override: bool, *,
+                     queue: list[dict[str, Any]] | None = None) -> None:
+        """Start ``item`` (or switch the running session to it). Caller holds ``_op_lock``."""
+        sess = self._session
+        override = bool(parent_override or (sess is not None and sess.override))
+        self._check_allowed(item, override, sess)
+        if sess is None:
+            holder = self.ctx.arbiter.holder(Resource.SCREEN)
+            lease = self.ctx.arbiter.acquire(OWNER, RESOURCES, Priority.MEDIA, on_preempt=self._on_preempt)
+            if lease is None:
+                who = holder.owner if holder is not None else "something more important"
+                raise PermissionError(f"LittleBot is busy right now ({who}). Try again in a moment.")
+            if not self.ctx.state.transition(RobotState.PLAYING_MEDIA, f"media: {item['title']}"):
+                lease.release()
+                raise PermissionError(
+                    f"LittleBot can't start a video right now (state {self.ctx.state.state.value}).")
+            now = self._clock.now()
+            sess = _Session(id=next(self._session_ids), item=item, lease=lease, load_id="", started=now,
+                            load_started=now, last_accrual=now, override=bool(parent_override))
+            with self._lock:
+                self._session = sess
+            # The face hides itself for PLAYING_MEDIA (it owns face.visible).
+        else:
+            with self._lock:
+                self._accrue()
+        sess.queue = list(queue or [])
+        self._cancel_close_task()
+        self._load(sess, item)
+        if not self._player_alive():  # kiosk not running / desktop tab not polling
+            try:
+                await self.backend.open(self.player_url())
+            except PlayerBackendError as e:
+                msg = f"Couldn't open the video player on LittleBot's screen: {e}"
+                self._record_error(item, "backend", msg)
+                await self._end_session("error", detail=msg)
+                raise PermissionError(msg) from e
+        if self.backend.is_running():
+            sess.backend_opened = True  # from now on, the window disappearing is an error
+        self.ctx.bus.publish(Topics.MEDIA_STARTED, {
+            "item_id": item["id"], "title": item["title"], "kind": item["kind"], "session_id": sess.id,
+            "skipped": False}, source="media")
+        self._ensure_watchdog()
+        log.info("media: playing item %s (session %s)", item["id"], sess.id)
 
     async def pause(self) -> bool:
         self._bind_loop()
@@ -352,7 +433,8 @@ class MediaController(Service):
             return True
 
     async def skip(self) -> dict[str, Any]:
-        """Next enabled approved item (wrapping). Never anything that is not on the allowlist."""
+        """The next search result of a video found by search, else the next enabled approved item
+        (wrapping). Never anything else."""
         self._bind_loop()
         async with self._op_lock:
             sess = self._session
@@ -364,7 +446,7 @@ class MediaController(Service):
             if limit:
                 await self._end_session("limit", detail=limit)
                 return self.status()
-            nxt = self._next_playable(sess.item["id"])
+            nxt = sess.queue.pop(0) if sess.queue else self._next_playable(sess.item["id"])
             if nxt is None:
                 await self._end_session("stopped", detail="no approved videos left")
                 return self.status()
@@ -478,6 +560,8 @@ class MediaController(Service):
             },
             "last_error": dict(self.last_error) if self.last_error else None,
             "items": self.repo.count(enabled_only=True),
+            "search": {"allowed": self.search_allowed(), "available": bool(getattr(self.searcher, "available", False))},
+            "queued": len(sess.queue) if sess is not None else 0,
         }
 
     # ================================================================ internals: gating
@@ -578,7 +662,8 @@ class MediaController(Service):
             sess.unverified_since = None
         self.bridge.set_volume(self._volume())
         sess.load_id = self.bridge.load(item)
-        self.repo.record_play(item["id"])
+        if _is_approved(item):
+            self.repo.record_play(item["id"])
 
     async def _end_session(self, reason: str, *, detail: str | None = None, session_id: int | None = None) -> bool:
         """Stop playback and give the screen back to the face. Caller holds ``_op_lock``."""
@@ -695,7 +780,8 @@ class MediaController(Service):
         self.last_error = {"item_id": item["id"], "title": item.get("title"), "code": code, "message": message,
                            "at": _dt.datetime.now(_dt.timezone.utc).replace(microsecond=0).isoformat()}
         try:
-            self.repo.set_error(item["id"], message)
+            if _is_approved(item):
+                self.repo.set_error(item["id"], message)
         except Exception:  # noqa: BLE001
             log.exception("could not store media error")
         self.ctx.bus.publish(Topics.MEDIA_ERROR, {"item_id": item["id"], "error": message, "code": code},
@@ -773,12 +859,29 @@ class MediaController(Service):
                 code = event.get("code")
                 short, message = describe_player_error(code)
                 self._record_error(sess.item, code if code is not None else short, message)
-                await self._end_session("error", detail=message)
+                if not await self._try_next_result(sess, code):
+                    await self._end_session("error", detail=message)
             elif etype in ("hidden", "navigated_away"):
                 # Something covered or replaced the player page (e.g. a YouTube link opened a new
                 # tab/window in the kiosk): stop, and closing the kiosk closes any popup with it.
                 await self._fail(sess, f"player_{etype}", PLAYER_HIDDEN_MESSAGE)
         return {"ok": True, "current": True}
+
+    async def _try_next_result(self, sess: _Session, code: Any) -> bool:
+        """A search result YouTube won't play: load the next one instead (True if one was loaded)."""
+        if isinstance(code, str) and code.isdigit():
+            code = int(code)
+        if code not in TRY_NEXT_RESULT_ERRORS or not sess.queue or self._limit_reason(sess):
+            return False
+        nxt = sess.queue.pop(0)
+        log.info("media: video %s can't play here (error %s); trying the next result", sess.item["id"], code)
+        with self._lock:
+            self._accrue()
+        self._load(sess, nxt)
+        self.ctx.bus.publish(Topics.MEDIA_STARTED, {
+            "item_id": nxt["id"], "title": nxt["title"], "kind": nxt["kind"], "session_id": sess.id,
+            "skipped": True}, source="media")
+        return True
 
     # ================================================================ internals: usage
     def _accrue(self) -> None:
@@ -921,6 +1024,25 @@ class MediaController(Service):
             return await coro
         fut = asyncio.run_coroutine_threadsafe(coro, loop)
         return await asyncio.wait_for(asyncio.wrap_future(fut), 10)
+
+
+def _is_approved(item: dict[str, Any]) -> bool:
+    """An item from the approved list (search results are not stored anywhere)."""
+    return isinstance(item.get("id"), int) and not isinstance(item.get("id"), bool)
+
+
+def _search_item(video_id: str, title: Any, channel: Any, duration_seconds: Any = None) -> dict[str, Any]:
+    """A video found by search, shaped like an approved item (``id`` is ``search:<video id>``)."""
+    clean = sanitize_title(title) if isinstance(title, str) else ""
+    who = sanitize_title(channel) if isinstance(channel, str) else ""
+    return {
+        "id": f"{SEARCH_ID_PREFIX}{video_id}", "kind": "video", "youtube_id": video_id, "list_id": None,
+        "title": clean or "YouTube video", "channel": who or None, "source": "search",
+        "url": f"https://www.youtube.com/watch?v={video_id}", "start_seconds": 0, "enabled": True,
+        "duration_seconds": int(duration_seconds) if isinstance(duration_seconds, (int, float))
+        and duration_seconds > 0 else None,
+        "thumbnail_url": f"https://i.ytimg.com/vi/{video_id}/mqdefault.jpg", "last_error": None,
+    }
 
 
 def _int_range(lo: int, hi: int, key: str) -> Callable[[Any], int]:

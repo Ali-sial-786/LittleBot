@@ -14,10 +14,17 @@ never blocked. Per cycle the thread:
    publishes ``vision.*`` events.
 
 Frames live only in local variables for one cycle: nothing is buffered,
-stored, sent anywhere, or used for identification. The one exception is
-``capture_photo``: on request (one at a time, e.g. a parent asks ChatGPT "how many
-fingers?") the thread JPEG-encodes a downscaled copy of the NEXT frame and hands
-the bytes to that one caller; nothing is kept here or written anywhere.
+stored, sent anywhere, or used for identification. The exceptions:
+
+* ``capture_photo``: on request (one at a time, e.g. a parent asks ChatGPT "how many
+  fingers?") the thread JPEG-encodes a downscaled copy of the NEXT frame and hands
+  the bytes to that one caller; nothing is kept here or written anywhere.
+* ``keep_photo_warm``: while a live conversation runs AND its ``allowed`` check passes
+  (the parent's AI-camera consent), the thread keeps ONE small JPEG of a recent frame in
+  memory, replaced every ``every`` seconds, so a look answers without waiting for the
+  camera (``latest_photo``). It is never written anywhere, logged or sent by this
+  service, and it is dropped the moment keeping it warm stops, the check fails, the
+  camera closes or video playback pauses vision.
 """
 
 from __future__ import annotations
@@ -45,6 +52,9 @@ CameraFactory = Callable[[str], CameraDevice]
 MAX_FACES_EVENT_HZ = 15.0  # hard cap for vision.faces events
 IDLE_WAIT = 1.0  # longest sleep when nothing is going on (events wake the thread earlier)
 PHOTO_RETRY = 0.05  # retry interval while a photo request waits for a frame
+WARM_EVERY = 0.5  # keep_photo_warm: seconds between refreshes (~5 ms of encoding each on a Pi 5)
+WARM_WIDTH = 640
+WARM_QUALITY = 75
 
 
 class PhotoUnavailable(Exception):
@@ -133,6 +143,11 @@ class VisionService(Service):
         self._snapshot: dict[str, Any] = {}
         # one-shot photo requests, fulfilled by the vision thread from the next frame (guarded by _lock)
         self._photo_requests: list[PhotoRequest] = []
+        # keep_photo_warm (guarded by _lock): owner -> consent check; the one warm JPEG and when it was taken
+        self._warm_owners: dict[str, Callable[[], bool] | None] = {}
+        self._warm_spec = (WARM_WIDTH, WARM_QUALITY, WARM_EVERY)
+        self._warm_photo: tuple[bytes, float] | None = None
+        self._warm_next = 0.0
         self._refresh_snapshot(self._clock())
 
     # ------------------------------------------------------------------ setup
@@ -219,6 +234,9 @@ class VisionService(Service):
         self._thread = None
         self._close_camera()  # no-op if the thread already released it
         self._fail_photos("no_camera", "vision stopped")
+        with self._lock:
+            self._warm_owners.clear()
+            self._warm_photo = None
         self.set_status(ServiceStatus.STOPPED)
 
     @property
@@ -326,6 +344,72 @@ class VisionService(Service):
                     self._photo_requests.remove(req)
             fut.cancel()  # no-op when done; a late frame is then simply dropped
 
+    def keep_photo_warm(self, owner: str, on: bool = True, *, allowed: Callable[[], bool] | None = None,
+                        every: float = WARM_EVERY, width: int = WARM_WIDTH, quality: int = WARM_QUALITY) -> None:
+        """While on (any owner): keep the newest frame JPEG-encoded in memory, refreshed every ``every``
+        seconds, so ``latest_photo`` answers at once. ``allowed`` (cheap, called from the vision thread
+        before each refresh) is the owner's consent check: when it fails the photo is dropped. Turning
+        the last owner off drops the photo right away. Nothing is ever written or sent from here."""
+        with self._lock:
+            if on:
+                self._warm_owners[str(owner)] = allowed
+                self._warm_spec = (max(64, int(width)), min(95, max(20, int(quality))), max(0.05, float(every)))
+                self._warm_next = 0.0  # refresh on the next frame
+            else:
+                self._warm_owners.pop(str(owner), None)
+                if not self._warm_owners:
+                    self._warm_photo = None
+        self._wake.set()
+
+    def latest_photo(self, max_age: float = 1.0) -> tuple[bytes, float] | None:
+        """(JPEG, age in seconds) of the warm photo when one is at most ``max_age`` old, else None.
+
+        Only while ``keep_photo_warm`` is on and the camera is allowed; the caller must not keep it."""
+        if not self.ctx.privacy.camera_enabled or not self._camera_allowed:
+            return None
+        with self._lock:
+            warm = self._warm_photo if self._warm_owners else None
+        if warm is None or not self._warm_allowed():  # consent withdrawn since the last refresh
+            return None
+        age = max(0.0, self._clock() - warm[1])
+        return (warm[0], age) if age <= max_age else None
+
+    def _warm_allowed(self) -> bool:
+        with self._lock:
+            checks = list(self._warm_owners.values())
+        for check in checks:
+            try:
+                if check is None or check():
+                    return True
+            except Exception:  # noqa: BLE001 - a broken check means "no"
+                continue
+        return False
+
+    def _refresh_warm(self, frame: Any, now: float) -> None:
+        """Vision thread: replace the warm photo with ``frame`` when one is due (or drop it when not allowed)."""
+        if not self._warm_owners or now < self._warm_next:
+            return
+        width, quality, every = self._warm_spec
+        self._warm_next = now + every
+        if not self._warm_allowed():
+            self._drop_warm()
+            return
+        cv2 = get_cv2()
+        try:
+            img = brighten_if_dark(resize_to_width(frame, width))
+            ok, buf = cv2.imencode(".jpg", img, [int(cv2.IMWRITE_JPEG_QUALITY), quality])
+            del img
+        except Exception:  # noqa: BLE001 - a warm photo must never break vision
+            ok, buf = False, None
+        with self._lock:
+            self._warm_photo = (buf.tobytes(), now) if ok and self._warm_owners else None
+        del buf
+
+    def _drop_warm(self) -> None:
+        if self._warm_photo is not None:
+            with self._lock:
+                self._warm_photo = None
+
     def _photo_pending(self) -> bool:
         return bool(self._photo_requests)
 
@@ -386,6 +470,7 @@ class VisionService(Service):
         if self._mode == "paused":
             # No reads (so no MJPG decoding), no detection, no events; presence is frozen so a video
             # does not cause a fake "left" + "arrived" pair. Still notice an unplugged camera.
+            self._drop_warm()  # no fresh frames: a warm photo would only get stale
             cam = self._camera
             if cam is not None and (cam.failed or not cam.is_open):
                 self._camera_lost(now, "camera stopped delivering frames")
@@ -460,6 +545,8 @@ class VisionService(Service):
         self._frame_size = (int(frame.shape[1]), int(frame.shape[0]))
         if self._photo_pending():
             self._serve_photos(frame)
+        if self._warm_owners:
+            self._refresh_warm(frame, now)
         small = resize_to_width(frame, int(self.cam_cfg.process_width))
         del frame  # never keep full frames around
         detected = False
@@ -512,6 +599,7 @@ class VisionService(Service):
     # ----------------------------------------------------------------- camera
     def _manage_camera(self, now: float) -> None:
         if self._kind == "none" or not self._camera_allowed:
+            self._drop_warm()
             if self._camera is not None:
                 self._close_camera()
             detail = ("disabled in config (camera.backend: none)" if self._kind == "none"
@@ -599,6 +687,7 @@ class VisionService(Service):
                 self.log.warning("camera release failed", exc_info=True)
         self._camera_dets, self._camera_dets_at = [], None
         self._read_fail_since = None
+        self._drop_warm()
         self._gestures.reset()  # drop the previous (tiny) frame used for differencing
 
     def _set_cam_status(self, status: str, detail: str) -> None:
@@ -669,6 +758,7 @@ class VisionService(Service):
             "simulated": self._sim_face is not None,
             "detect_mode": self._mode,  # active | reduced (robot sleeping) | paused (video playing)
             "robot_state": self._robot_state,
+            "photo_warm": bool(self._warm_owners),  # a live conversation keeps one recent photo in memory
         }
         with self._lock:
             self._snapshot = snap

@@ -6,8 +6,9 @@ Output
     One output thread plays a bounded queue of items (speech / sound / melody)
     one at a time. ``stop_output()`` drops the queue and interrupts the current
     item within one audio chunk (~50 ms). Speech publishes
-    ``audio.speech_started`` -> ``audio.level`` (~16 Hz, from the audio
-    envelope, drives the face's mouth/eyes) -> ``audio.speech_finished``.
+    ``audio.speech_started`` -> ``audio.level`` (``{level, shape}``: loudness and
+    mouth shape of the 20 ms being heard, sent in step with the speaker; drives the
+    face's mouth/eyes) -> ``audio.speech_finished``.
     Digital gain = volume (clamped to ``audio.speaker.max_volume``) and is
     re-read every chunk, so volume changes apply immediately.
 
@@ -19,6 +20,14 @@ Input (half-duplex echo prevention)
     only and is dropped after transcription (``audio.store_recordings`` must be
     true to keep WAVs). ``inject_utterance()`` satisfies a pending or the next
     ``listen()`` (simulator / tests).
+
+Sharing the microphone with a background listener (the wake word)
+    The USB microphone is usually an exclusive ALSA device: it can't be opened twice.
+    A background listener (``attach_background_listener``) reads this service's own input
+    backend (``background_input()``) while nothing else needs it, so the stream is then also
+    open between listens. Before ``listen()``, ``test_microphone()``, ``suspend()`` (live
+    voice) and ``stop()`` the service takes the microphone back: ``listener.release_mic()``
+    returns once the listener has closed the stream; ``listener.mic_free()`` hands it back.
 
 Privacy
     Microphone disabled -> ``listen()`` returns None immediately and the input
@@ -63,7 +72,9 @@ from littlebot.core.service import Service, ServiceStatus
 
 log = logging.getLogger("littlebot.audio")
 
-LEVEL_HZ = 16.0  # audio.level events per second while speaking
+LEVEL_HZ = 50.0  # mouth frames per second while speaking (audio.level {level, shape}, sent as the speaker plays)
+VISEME_LEAD_S = 0.04  # send each mouth frame this early: the face needs about a frame to show it
+VISEME_REPEAT_S = 0.15  # an unchanged mouth frame is re-sent this often (the face treats silence as no data)
 MAX_QUEUE = 16  # pending output items
 OUTPUT_WAIT_LIMIT = 30.0  # listen() waits at most this long for output to finish
 IDLE_RELEASE_SECONDS = 3.0  # close the speaker stream after this much silence
@@ -189,6 +200,11 @@ class AudioService(Service):
         self.mic_level = 0.0
         # Who has borrowed the speaker + microphone (live voice); None = this service owns them.
         self._suspended: str | None = None
+        # Background listener (wake word) sharing the microphone, and why it can't have it now
+        # (reason -> count). Listener calls happen under _claim_lock, so they arrive in order.
+        self._bg_listener: Any = None
+        self._mic_claims: collections.Counter[str] = collections.Counter()
+        self._claim_lock = threading.Lock()
 
         self._subs: list[Subscription] = []
         self._subscribe()
@@ -204,6 +220,7 @@ class AudioService(Service):
     # ================================================================ lifecycle
     async def start(self) -> None:
         self._shutdown = False
+        self._unclaim_mic("stopping")  # restarted after a stop()
         self._subscribe()
         self.set_status(ServiceStatus.STARTING)
         await asyncio.to_thread(self._ensure_devices)
@@ -213,6 +230,7 @@ class AudioService(Service):
     async def stop(self) -> None:
         self.stop_output()
         self._cancel_listen("stopping")
+        await asyncio.to_thread(self._claim_mic, "stopping")  # never released: the service is going away
         with self._cv:
             self._shutdown = True
             self._cv.notify_all()
@@ -436,11 +454,15 @@ class AudioService(Service):
 
         Stops playback, cancels a listen and closes both device streams, so another stream can
         open the same (often exclusive, hw:) ALSA device. Meanwhile sounds and speech are dropped
-        (they return False) and listen() returns None.
+        (they return False) and listen() returns None. A background listener (wake word) gives
+        the microphone back first.
         """
+        was_lent = self._suspended is not None
         self._suspended = owner
         self.stop_output()
         self._cancel_listen(f"suspended for {owner}")
+        if not was_lent:
+            await self._claim_mic_async("lent")
         await asyncio.to_thread(self._release_devices, wait)
         log.info("audio: speaker and microphone lent to %s", owner)
 
@@ -462,6 +484,85 @@ class AudioService(Service):
         if self._suspended == owner:
             self._suspended = None
             log.info("audio: speaker and microphone back from %s", owner)
+            self._unclaim_mic("lent")
+
+    # ======================================================= background listener
+    def attach_background_listener(self, listener: Any) -> None:
+        """Share the microphone with ``listener`` (the wake word) while nothing else needs it.
+
+        ``listener.release_mic(reason)`` must stop reading and close the stream before it returns
+        (it is called from a worker thread; bounded wait); ``listener.mic_free()`` says the
+        microphone may be read again (``background_input()``)."""
+        with self._claim_lock:
+            self._bg_listener = listener
+            if self._mic_claims:
+                listener.release_mic(", ".join(sorted(self._mic_claims)))
+
+    def detach_background_listener(self, listener: Any) -> None:
+        with self._claim_lock:
+            if self._bg_listener is listener:
+                self._bg_listener = None
+
+    def background_input(self) -> InputBackend | None:
+        """The input backend for the background listener, or None while the microphone is needed
+        elsewhere (listening, a test, lent to live voice, stopping) or turned off. Lock-free: the
+        listener calls it under its own lock."""
+        if self._mic_claims or self._suspended or self._listening or self._shutdown:
+            return None
+        inp = self._inp
+        if not self._devices_ready or inp is None or isinstance(inp, NullInput) or not self._mic_allowed():
+            return None
+        return inp
+
+    def mic_muted(self) -> bool:
+        """True while (and just after) LittleBot makes sound: the microphone hears itself (half-duplex)."""
+        return self._mic_muted()
+
+    @property
+    def input_gain(self) -> float:
+        return self._input_gain
+
+    @property
+    def mic_claims(self) -> list[str]:
+        """Why the microphone isn't free for the background listener right now ([] = it is)."""
+        return sorted(self._mic_claims)
+
+    def _claim_mic(self, reason: str) -> None:
+        """Take the microphone from the background listener until ``_unclaim_mic(reason)``.
+
+        Blocks until the listener has closed its stream: call it from a worker thread."""
+        with self._claim_lock:
+            self._mic_claims[reason] += 1
+            listener = self._bg_listener
+            if listener is not None:
+                try:
+                    listener.release_mic(reason)
+                except Exception:  # noqa: BLE001 - never block listening on the wake word
+                    log.exception("background listener failed to release the microphone")
+
+    async def _claim_mic_async(self, reason: str) -> None:
+        """``_claim_mic`` in a worker thread. If the caller is cancelled meanwhile, the claim still
+        completes in its thread and is then undone (the caller never saw it succeed)."""
+        fut = asyncio.ensure_future(asyncio.to_thread(self._claim_mic, reason))
+        try:
+            await asyncio.shield(fut)
+        except asyncio.CancelledError:
+            fut.add_done_callback(lambda _f: self._unclaim_mic(reason))
+            raise
+
+    def _unclaim_mic(self, reason: str) -> None:
+        with self._claim_lock:
+            if self._mic_claims.get(reason, 0) <= 0:
+                return
+            self._mic_claims[reason] -= 1
+            if self._mic_claims[reason] <= 0:
+                del self._mic_claims[reason]
+            listener = self._bg_listener
+            if listener is not None and not self._mic_claims:
+                try:
+                    listener.mic_free()
+                except Exception:  # noqa: BLE001
+                    log.exception("background listener failed to resume")
 
     def stop_output(self) -> None:
         with self._cv:
@@ -551,17 +652,24 @@ class AudioService(Service):
             # pacing) on a simulated speaker, but report False because nothing was heard.
             out = self._sim_out
         speech = item.kind == "speech"
-        levels = dsp.level_envelope(item.samples, item.sample_rate, LEVEL_HZ) if speech else None
+        # mouth level + shape for every 20 ms of the speech, sent in step with what the speaker plays
+        levels, shapes = dsp.viseme_track(item.samples, item.sample_rate, LEVEL_HZ) if speech else ([], ())
         last_idx = -1
+        last_mouth: tuple[float, str] | None = None
+        last_sent = 0.0
 
         def progress(seconds: float) -> None:
-            nonlocal last_idx
-            if levels is None or not len(levels):
+            nonlocal last_idx, last_mouth, last_sent
+            if not len(levels):
                 return
-            idx = min(len(levels) - 1, int(seconds * LEVEL_HZ))
-            if idx != last_idx:
-                last_idx = idx
-                self._publish(Topics.AUDIO_VISEME, {"level": round(float(levels[idx]), 3)})
+            idx = min(len(levels) - 1, int((seconds + VISEME_LEAD_S) * LEVEL_HZ + 1e-6))
+            if idx == last_idx:
+                return
+            last_idx = idx
+            mouth = (round(float(levels[idx]), 3), shapes[idx])
+            if mouth != last_mouth or seconds - last_sent >= VISEME_REPEAT_S:
+                last_mouth, last_sent = mouth, seconds
+                self._publish(Topics.AUDIO_VISEME, {"level": mouth[0], "shape": mouth[1]})
 
         ctrl = PlaybackControl(item.stop, gain=lambda: self._gain_for(item), progress=progress,
                                label=f"{item.kind}:{item.label}")
@@ -579,7 +687,7 @@ class AudioService(Service):
             log.exception("speaker backend %s crashed", out.name)
         finally:
             if speech:
-                self._publish(Topics.AUDIO_VISEME, {"level": 0.0})
+                self._publish(Topics.AUDIO_VISEME, {"level": 0.0, "shape": "closed"})
                 self._speaking = False
                 self._publish(Topics.AUDIO_SPEECH_FINISHED, {"text": item.label, "interrupted": not completed})
             else:
@@ -778,7 +886,7 @@ class AudioService(Service):
                 return None
             session = _ListenSession(loop)
             self._listen_session = session
-        started = False
+        started = claimed = False
         result: tuple[str, float, str] | None = None
         try:
             self._ensure_ready()
@@ -793,6 +901,8 @@ class AudioService(Service):
                 return None
             self._listening = True
             started = True
+            await self._claim_mic_async("listening")  # the wake word closes its stream first
+            claimed = True
             self._publish(Topics.AUDIO_LISTENING_STARTED, {})
             result = await self._listen_once(session, wait_s)
         finally:
@@ -803,6 +913,8 @@ class AudioService(Service):
             if started:
                 self._listening = False
                 self._publish(Topics.AUDIO_LISTENING_STOPPED, {})
+            if claimed:
+                self._unclaim_mic("listening")
         if result is None:
             return None
         text, confidence, source = result
@@ -1033,6 +1145,13 @@ class AudioService(Service):
             secs = max(0.2, min(10.0, float(seconds)))
         except (TypeError, ValueError):
             secs = 2.0
+        await self._claim_mic_async("microphone test")  # the wake word closes its stream first
+        try:
+            return await self._test_microphone(secs)
+        finally:
+            self._unclaim_mic("microphone test")
+
+    async def _test_microphone(self, secs: float) -> dict[str, Any]:
         try:
             await asyncio.to_thread(self._ensure_devices)
             if self._inp is None or not self._inp.real or self._inp.status != dev.STATUS_OK:

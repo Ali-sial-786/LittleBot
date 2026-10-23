@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-"""Download the optional face-DETECTION models into models/ (git-ignored).
+"""Download the optional face-DETECTION models and the wake-word speech model into models/ (git-ignored).
 
     .venv/bin/python scripts/download_models.py            # YuNet (recommended, ~230 KB)
     .venv/bin/python scripts/download_models.py haar       # Haar cascade XML (OpenCV 4.x builds without it)
+    .venv/bin/python scripts/download_models.py hands      # optional: count fingers on the robot (~8 MB)
+    .venv/bin/python scripts/download_models.py vosk-en    # wake word "Hey LittleBot" (Vosk small English, 40 MB)
     .venv/bin/python scripts/download_models.py all
     .venv/bin/python scripts/download_models.py --list     # what is installed / verified
     .venv/bin/python scripts/download_models.py --dest /some/dir --force
@@ -10,6 +12,10 @@
 These models only find WHERE faces are. LittleBot never does face recognition,
 identification or any other biometric analysis. Every file is checked against a
 pinned SHA-256 hash; a mismatch is deleted and reported. Standard library only.
+
+The speech model (vosk-en, a zip) is unpacked into models/vosk-model-small-en-us-0.15/
+and the zip deleted; it lets LittleBot hear its wake word on the robot, offline
+(littlebot/audio/wakeword.py; also usable as audio.stt.vosk_model_path).
 
 Exit status: 0 = all requested models present and verified, 1 = a download or check failed.
 """
@@ -19,9 +25,11 @@ from __future__ import annotations
 import argparse
 import hashlib
 import os
+import shutil
 import sys
 import tempfile
 import urllib.request
+import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -61,7 +69,139 @@ MODELS: dict[str, Model] = {
         license="Intel License Agreement (BSD-style, distributed with OpenCV)",
         note="frontal-face Haar cascade; only usable with OpenCV 4.x (cv2.CascadeClassifier)",
     ),
+    # Optional: "how many fingers?" counted on the robot (littlebot/vision/hands.py) instead of by ChatGPT.
+    # Hand joints only - no identity, nothing kept. Get both with: download_models.py hands
+    "hand_palm": Model(
+        filename="palm_detection_mediapipe_2023feb.onnx",
+        sha256="78ff51c38496b7fc8b8ebdb6cc8c1abb02fa6c38427c6848254cdaba57fcce7c",
+        size=3_905_734,
+        urls=[
+            "https://media.githubusercontent.com/media/opencv/opencv_zoo/main/models/palm_detection_mediapipe/"
+            "palm_detection_mediapipe_2023feb.onnx",
+            "https://huggingface.co/opencv/palm_detection_mediapipe/resolve/main/palm_detection_mediapipe_2023feb.onnx",
+        ],
+        license="Apache-2.0 (OpenCV Model Zoo, from Google MediaPipe Hands)",
+        note="palm detector for local finger counting (cv2.dnn); with hand_pose",
+    ),
+    "hand_pose": Model(
+        filename="handpose_estimation_mediapipe_2023feb.onnx",
+        sha256="db0898ae717b76b075d9bf563af315b29562e11f8df5027a1ef07b02bef6d81c",
+        size=4_099_621,
+        urls=[
+            "https://media.githubusercontent.com/media/opencv/opencv_zoo/main/models/handpose_estimation_mediapipe/"
+            "handpose_estimation_mediapipe_2023feb.onnx",
+            "https://huggingface.co/opencv/handpose_estimation_mediapipe/resolve/main/"
+            "handpose_estimation_mediapipe_2023feb.onnx",
+        ],
+        license="Apache-2.0 (OpenCV Model Zoo, from Google MediaPipe Hands)",
+        note="hand landmarks for local finger counting (cv2.dnn); with hand_palm",
+    ),
 }
+GROUPS: dict[str, list[str]] = {"hands": ["hand_palm", "hand_pose"]}  # names that fetch several models
+
+
+@dataclass(frozen=True)
+class Archive:
+    """A zipped model directory: verified like a Model, then unpacked into ``dest/<dirname>``."""
+
+    dirname: str  # the directory inside the zip, and under dest
+    filename: str  # the zip
+    sha256: str
+    size: int
+    urls: list[str] = field(default_factory=list)
+    license: str = ""
+    note: str = ""
+    marker: str = ""  # a file that must exist in the unpacked directory
+    max_unpacked: int = 200_000_000  # refuse zip bombs
+
+
+STAMP = ".sha256"  # written into an unpacked directory: which verified archive it came from
+
+ARCHIVES: dict[str, Archive] = {
+    "vosk-en": Archive(
+        dirname="vosk-model-small-en-us-0.15",
+        filename="vosk-model-small-en-us-0.15.zip",
+        sha256="30f26242c4eb449f948e42cb302dd7a686cb29a3423a8367f99ff41780942498",
+        size=41_205_931,
+        urls=[
+            "https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip",
+            "https://huggingface.co/rhasspy/vosk-models/resolve/main/en/vosk-model-small-en-us-0.15.zip",
+        ],
+        license="Apache-2.0 (Alpha Cephei Vosk models)",
+        note="small English speech model for the wake word (wake.model_path); ~130 MB RAM while loaded",
+        marker="conf/model.conf",
+    ),
+}
+
+
+def archive_ready(archive: Archive, dest: Path) -> bool:
+    """Unpacked from the verified zip (the stamp matches) and complete (the marker exists)."""
+    folder = dest / archive.dirname
+    stamp = folder / STAMP
+    if not (folder.is_dir() and stamp.is_file()) or (archive.marker and not (folder / archive.marker).is_file()):
+        return False
+    return stamp.read_text(encoding="utf-8").strip() == archive.sha256
+
+
+def _unpack(zip_path: Path, archive: Archive, staging: Path) -> Path:
+    """Extract only files under ``<dirname>/`` (no absolute paths, no ``..``); returns the folder."""
+    root = staging.resolve()
+    with zipfile.ZipFile(zip_path) as zf:
+        members = zf.infolist()
+        if sum(m.file_size for m in members) > archive.max_unpacked:
+            raise ValueError("archive unpacks to more than expected")
+        for m in members:
+            name = m.filename
+            if not name.startswith(archive.dirname + "/") or ".." in Path(name).parts or Path(name).is_absolute():
+                raise ValueError(f"unexpected file in archive: {name!r}")
+            target = (root / name).resolve()
+            target.relative_to(root)
+            if m.is_dir():
+                target.mkdir(parents=True, exist_ok=True)
+                continue
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with zf.open(m) as src, target.open("wb") as out:
+                shutil.copyfileobj(src, out, 1 << 16)
+            os.chmod(target, 0o644)
+    folder = root / archive.dirname
+    if archive.marker and not (folder / archive.marker).is_file():
+        raise ValueError(f"{archive.marker} missing from the archive")
+    return folder
+
+
+def download_archive(archive: Archive, dest: Path, *, force: bool = False, timeout: float = 30.0,
+                     quiet: bool = False) -> bool:
+    """Fetch + verify the zip (like ``download``), unpack it next to the old copy, then swap it in."""
+    def say(msg: str) -> None:
+        if not quiet:
+            print(msg, flush=True)
+
+    if not force and archive_ready(archive, dest):
+        say(f"  {archive.dirname}: already present (sha256 ok)")
+        return True
+    dest.mkdir(parents=True, exist_ok=True)
+    staging = Path(tempfile.mkdtemp(prefix=f".{archive.dirname}.", dir=dest))
+    try:
+        zipped = Model(filename=archive.filename, sha256=archive.sha256, size=archive.size, urls=archive.urls)
+        if not download(zipped, staging, force=True, timeout=timeout, quiet=quiet):
+            return False
+        try:
+            folder = _unpack(staging / archive.filename, archive, staging)
+        except (OSError, ValueError, zipfile.BadZipFile) as e:
+            say(f"  {archive.dirname}: could not unpack {archive.filename}: {e}")
+            return False
+        (folder / STAMP).write_text(archive.sha256 + "\n", encoding="utf-8")
+        os.chmod(folder, 0o755)
+        target = dest / archive.dirname
+        old = None
+        if target.exists():
+            old = staging / "old"
+            os.replace(target, old)
+        os.replace(folder, target)
+        say(f"  {archive.dirname}: ok (unpacked, sha256 verified) -> {target}")
+        return True
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)  # the zip, and any replaced copy
 
 
 def sha256_of(path: Path) -> str:
@@ -124,8 +264,10 @@ def download(model: Model, dest: Path, *, force: bool = False, timeout: float = 
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(description="Download optional face-detection models (detection only, no recognition).")
-    ap.add_argument("names", nargs="*", default=["yunet"], help=f"models: {', '.join(MODELS)} or all (default: yunet)")
+    ap = argparse.ArgumentParser(description="Download optional face-detection models (detection only, no recognition) "
+                                             "and the wake-word speech model.")
+    choices = [*MODELS, *GROUPS, *ARCHIVES]
+    ap.add_argument("names", nargs="*", default=["yunet"], help=f"models: {', '.join(choices)} or all (default: yunet)")
     ap.add_argument("--dest", default=str(DEFAULT_DEST), help="target directory (default: models/)")
     ap.add_argument("--force", action="store_true", help="download even if a verified copy exists")
     ap.add_argument("--list", action="store_true", help="show available models and their status")
@@ -139,15 +281,25 @@ def main(argv: list[str] | None = None) -> int:
                                                              else "not downloaded")
             print(f"{name:6} {m.filename:40} {status:22} {m.license}")
             print(f"{'':6} {m.note}")
+        for name, a in ARCHIVES.items():
+            status = "verified" if archive_ready(a, dest) else ("present, not verified" if (dest / a.dirname).exists()
+                                                                else "not downloaded")
+            print(f"{name:6} {a.dirname + '/':40} {status:22} {a.license}")
+            print(f"{'':6} {a.note}")
         return 0
 
-    names = list(MODELS) if "all" in args.names else args.names
-    unknown = [n for n in names if n not in MODELS]
+    names = [*MODELS, *ARCHIVES] if "all" in args.names else [m for n in args.names for m in GROUPS.get(n, [n])]
+    unknown = [n for n in names if n not in MODELS and n not in ARCHIVES]
     if unknown:
-        ap.error(f"unknown model(s): {', '.join(unknown)} (choose from {', '.join(MODELS)}, all)")
+        ap.error(f"unknown model(s): {', '.join(unknown)} (choose from {', '.join(choices)}, all)")
     ok = True
     for name in names:
-        ok &= download(MODELS[name], dest, force=args.force, timeout=args.timeout)
+        if name in ARCHIVES:
+            ok &= download_archive(ARCHIVES[name], dest, force=args.force, timeout=args.timeout)
+        else:
+            ok &= download(MODELS[name], dest, force=args.force, timeout=args.timeout)
+    if ok and "vosk-en" in names:
+        print("Done. The wake word (\"Hey LittleBot\") uses it within a few seconds; see docs/CHATGPT.md.")
     if ok and "yunet" in names:
         print("Done. vision.detector: yunet (the default) will now use YuNet; check with scripts/check_camera.py.")
     return 0 if ok else 1

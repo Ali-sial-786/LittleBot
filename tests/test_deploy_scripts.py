@@ -192,6 +192,45 @@ def test_live_extra_matches_the_installer() -> None:
     assert "live" in extras["all"][0]
 
 
+@pytest.mark.skipif(BASH is None, reason="bash not installed")
+@pytest.mark.parametrize("args,pip,model", [
+    ([], True, True), (["--no-models"], True, False), (["--no-wake-word"], False, False),
+], ids=["default", "no-models", "no-wake-word"])
+def test_install_wake_word_step(stub_path, tmp_path: Path, args: list[str], pip: bool, model: bool) -> None:
+    """The wake word (Vosk "local-stt" extra + its English model) is a late, non-fatal step of its own."""
+    env, log = stub_path
+    env["HOME"] = str(tmp_path / "home")
+    base = ["--dry-run", "--allow-non-pi", "--skip-apt", "--no-chromium", "--no-live", "--no-audio-default"]
+    res = subprocess.run([BASH, str(SCRIPTS / "install_pi.sh"), *base, *args], capture_output=True, text=True,
+                         env=env, cwd=ROOT, timeout=120)
+    if "This installer is for Raspberry Pi OS / Debian" in res.stderr:
+        pytest.skip("not a Debian-family system")
+    assert res.returncode == 0, res.stdout + res.stderr
+    dry = [line for line in res.stdout.splitlines() if "[dry-run]" in line]
+    stt = [line for line in dry if "pip install" in line and line.rstrip().endswith("[local-stt]")]
+    fetch = [line for line in dry if "download_models.py vosk-en" in line]
+    assert len([line for line in dry if "pip install" in line and "[vision,audio,pi]" in line]) == 1  # core unchanged
+    assert len(stt) == int(pip) and len(fetch) == int(model), dry
+    if pip:
+        assert "--only-binary=vosk,cffi" in stt[0]
+        assert res.stdout.index("[vision,audio,pi]") < res.stdout.index("Wake word (offline speech recogniser)")
+        assert 'wake word: pip install -e ".[local-stt]"' in res.stdout
+    else:
+        assert "wake word: skipped (--no-wake-word)" in res.stdout
+    assert not [c for c in _calls(log) if c.split()[0] in ("sudo", "apt-get", "apt")]
+
+
+def test_local_stt_extra_matches_the_installer() -> None:
+    """The installer's `[local-stt]` step installs vosk (prebuilt aarch64 wheel, any Python 3)."""
+    import tomllib
+
+    extras = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]["optional-dependencies"]
+    assert extras["local-stt"] == ["vosk>=0.3.45"]
+    help_text = subprocess.run([BASH or "bash", str(SCRIPTS / "install_pi.sh"), "--help"], capture_output=True,
+                               text=True).stdout
+    assert "--no-wake-word" in help_text
+
+
 def test_templates_use_only_known_placeholders() -> None:
     import re
 

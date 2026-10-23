@@ -159,3 +159,88 @@ async def test_backlog_is_capped(setup):
         assert audio._out_queued <= RATE * 1.0 + 960
     finally:
         audio.close()
+
+
+# ------------------------------------------------------------------ lip-sync for the face
+class TimeInfo:
+    """PortAudio's callback timing: this block reaches the speaker ``delay`` s after now."""
+
+    def __init__(self, delay: float) -> None:
+        self.currentTime = 50.0
+        self.outputBufferDacTime = 50.0 + delay
+
+
+async def test_mouth_follows_what_is_heard_not_what_arrived(setup):
+    from littlebot.chatgpt.live_audio import MOUTH_LEAD_S
+    from littlebot.face.mouth import VISEMES
+
+    audio, sd, clock = setup
+    audio.open(asyncio.get_running_loop())
+    try:
+        assert audio.mouth == (0.0, "closed")
+        audio.play_frame(voice_frame())  # 20 ms of the model's voice
+        out = np.zeros((960, 2), dtype=np.float32)
+        audio._play_cb(out, 960, TimeInfo(0.2), None)  # the speaker plays this 200 ms from now
+        assert audio.mouth == (0.0, "closed")  # not heard yet: the mouth waits for the sound
+        clock.t += 0.2 - MOUTH_LEAD_S - 0.01
+        assert audio.mouth == (0.0, "closed")
+        clock.t += 0.02
+        level, shape = audio.mouth  # heard now (a little early, for the face's own delay)
+        assert level > 0.5 and shape in VISEMES and shape != "closed"
+        audio._play_cb(out, 960, TimeInfo(0.2), None)  # the queue ran dry: silence
+        clock.t += 0.3
+        assert audio.mouth == (0.0, "closed")
+    finally:
+        audio.close()
+
+
+async def test_mouth_without_timing_info_uses_the_stream_latency(setup):
+    audio, sd, clock = setup
+    audio.open(asyncio.get_running_loop())
+    try:
+        audio._out_stream.latency = 0.1
+        audio.play_frame(voice_frame())
+        out = np.zeros((960, 2), dtype=np.float32)
+        audio._play_cb(out, 960, None, None)
+        assert audio.mouth == (0.0, "closed")
+        clock.t += 0.1
+        assert audio.mouth[0] > 0.5
+        audio._out_stream.latency = 7.0  # nonsense: ignored
+        assert audio._output_delay(None) == 0.0
+        assert audio._output_delay(TimeInfo(-1.0)) == 0.0
+    finally:
+        audio.close()
+
+
+async def test_mute_closes_the_mouth(setup):
+    audio, sd, clock = setup
+    audio.open(asyncio.get_running_loop())
+    try:
+        audio.play_frame(voice_frame())
+        audio._play_cb(np.zeros((960, 2), dtype=np.float32), 960, None, None)
+        assert audio.mouth[0] > 0.5
+        audio.mute()
+        assert audio.mouth == (0.0, "closed")
+    finally:
+        audio.close()
+    assert audio.mouth == (0.0, "closed")
+
+
+async def test_lip_sync_trouble_never_breaks_the_voice(setup):
+    audio, sd, clock = setup
+    audio.open(asyncio.get_running_loop())
+    try:
+        class Broken:
+            sample_rate = audio.out_rate
+
+            def process(self, block):
+                raise RuntimeError("boom")
+
+        audio._visemes = Broken()
+        audio.play_frame(voice_frame())
+        out = np.zeros((960, 2), dtype=np.float32)
+        audio._play_cb(out, 960, None, None)
+        assert np.abs(out).max() > 0.05  # the voice still played
+        assert audio.speaking
+    finally:
+        audio.close()
