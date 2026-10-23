@@ -38,6 +38,14 @@ TAP_COOLDOWN_SECONDS = 1.5
 
 PANEL_WIDTH = 300
 PANEL_MIN_HEIGHT = 460
+# While a parent watches the camera live on the dashboard, a small camera sign sits in the face's top-right
+# corner so viewing is never hidden. Drawn in the face's own palette (renderer.MOUTH_INK / MOUTH_INSIDE on
+# the pastel screen, the eye colour on a dark one), soft and still so it doesn't pull a child's attention.
+LIVE_BADGE_WIDTH = 30  # px at the native 480x320
+LIVE_BADGE_MARGIN = 12
+LIVE_BADGE_INK = (66, 32, 62, 150)  # deep plum, ~60 % opaque
+LIVE_BADGE_DOT = (146, 40, 82, 210)  # raspberry "on" dot
+LIVE_BADGE_DOT_DARK = (255, 120, 146, 220)
 STATUS_POLL_SECONDS = 0.5
 MOTION_POLL_SECONDS = 1 / 15
 MAX_CONSECUTIVE_ERRORS = 30
@@ -220,6 +228,10 @@ class DisplayLoop:
         # First-run dashboard setup code, shown on the robot's own screen until a parent claims it.
         self.setup_banner: dict[str, Any] | None = None
         self._setup_sub: Any = None
+        # How many dashboard viewers are watching the camera live (vision.live_view): > 0 shows the camera sign.
+        self.live_viewers = 0
+        self._live_sub: Any = None
+        self._badges: dict[int, Any] = {}
         self._game_t: float | None = None  # last frame time while an on-screen game runs
 
     # ------------------------------------------------------------------ setup
@@ -244,6 +256,7 @@ class DisplayLoop:
         if callable(attach):
             attach()
         self._watch_setup_code()
+        self._watch_live_view()
         self._opened = True
         log.info("face display open: %dx%d%s (driver %s)", *self.window.get_size(),
                  " fullscreen" if self.fullscreen else "", pygame.display.get_driver())
@@ -252,6 +265,9 @@ class DisplayLoop:
         if self._setup_sub is not None:
             self._setup_sub.cancel()
             self._setup_sub = None
+        if self._live_sub is not None:
+            self._live_sub.cancel()
+            self._live_sub = None
         detach = getattr(self.face, "detach_display", None)
         if callable(detach):
             try:
@@ -278,6 +294,23 @@ class DisplayLoop:
     def _on_setup_code(self, event: Any) -> None:
         data = dict(event.data)
         self.setup_banner = data if data.get("active") and data.get("code") else None
+
+    def _watch_live_view(self) -> None:
+        from littlebot.core.events import Topics
+
+        vision = self.ctx.vision
+        try:  # someone may already be watching when the window opens
+            live = (vision.status().get("live_view") or {}) if vision is not None else {}
+            self.live_viewers = int(live.get("viewers") or 0)
+        except Exception:  # noqa: BLE001
+            self.live_viewers = 0
+        self._live_sub = self.ctx.bus.subscribe(Topics.VISION_LIVE_VIEW, self._on_live_view)
+
+    def _on_live_view(self, event: Any) -> None:
+        try:
+            self.live_viewers = int(event.get("viewers") or 0) if event.get("active") else 0
+        except (TypeError, ValueError):
+            self.live_viewers = 1 if event.get("active") else 0
 
     def _set_mode(self) -> None:
         pg = self._pg
@@ -413,6 +446,8 @@ class DisplayLoop:
             self._text(win, f"demo: {self.demo.caption}", (self.face_rect.x + 8, self.face_rect.bottom - 24), 20)
         if self.setup_banner is not None and not self.face_hidden():
             self._draw_setup_banner(win)
+        if self.live_viewers > 0:
+            self._draw_live_view_badge(win)
         if self.show_debug:
             self._draw_debug(win)
         if self.show_help:
@@ -442,6 +477,57 @@ class DisplayLoop:
         win.blit(box, (x, y))
         win.blit(label, (x + 2 * pad, y + (h - label.get_height()) // 2))
         win.blit(value, (x + 3 * pad + label.get_width(), y + (h - value.get_height()) // 2))
+
+    def _draw_live_view_badge(self, win: Any) -> None:
+        """While a parent watches the camera live on the dashboard: a small camera sign, top right."""
+        badge, pos = self._live_badge()
+        win.blit(badge, pos)
+
+    def live_badge_rect(self) -> Any:
+        """Where the camera sign is drawn (tests / screenshots)."""
+        badge, pos = self._live_badge()
+        return self._pg.Rect(pos, badge.get_size())
+
+    def _live_badge(self) -> tuple[Any, tuple[int, int]]:
+        r = self.face_rect
+        s = r.h / self.native_size[1]  # scaled with the face
+        width = max(12, int(round(LIVE_BADGE_WIDTH * s)))
+        badge = self._badges.get(width)
+        if badge is None:
+            badge = self._badges[width] = self._make_live_badge(width)
+        m = int(round(LIVE_BADGE_MARGIN * s))
+        return badge, (r.right - badge.get_width() - m, r.y + m)
+
+    def _make_live_badge(self, width: int) -> Any:
+        """A rounded little camera with a dot beside it, drawn 4x and smooth-scaled (soft edges like the eyes)."""
+        from littlebot.face.frame import is_light_background
+
+        pg = self._pg
+        face_cfg = getattr(self.ctx.config, "face", None)
+        bg = tuple(getattr(face_cfg, "background_color", (255, 214, 228)))[:3]
+        if is_light_background(bg):  # inked, like the mouth and the closed eyes on the pastel screen
+            ink, dot = LIVE_BADGE_INK, LIVE_BADGE_DOT
+        else:  # glowing, like the eyes on a dark screen
+            eye = tuple(getattr(face_cfg, "eye_color", (90, 210, 255)))[:3]
+            ink, dot = (*eye, 140), LIVE_BADGE_DOT_DARK
+        k = 4
+        w = width * k
+        h = int(w * 0.72)
+        dot_r, gap = int(w * 0.1), int(w * 0.12)
+        x0 = 2 * dot_r + gap
+        clear = (*ink[:3], 0)  # transparent, but ink-coloured, so smoothscale leaves no dark fringe
+        surf = pg.Surface((x0 + w, h), pg.SRCALPHA)
+        surf.fill(clear)
+        top = int(h * 0.2)
+        body = pg.Rect(x0, top, w, h - top)
+        bump = pg.Rect(x0 + int(w * 0.3), 0, int(w * 0.32), int(h * 0.36))  # the viewfinder on top
+        pg.draw.rect(surf, ink, bump, border_radius=int(w * 0.08))
+        pg.draw.rect(surf, ink, body, border_radius=int(w * 0.2))
+        lens = (x0 + w // 2, body.centery)
+        pg.draw.circle(surf, clear, lens, int(w * 0.25))  # a ring cut out of the body...
+        pg.draw.circle(surf, ink, lens, int(w * 0.15))  # ...around the lens
+        pg.draw.circle(surf, dot, (dot_r, body.centery), dot_r)
+        return pg.transform.smoothscale(surf, (max(1, surf.get_width() // k), max(1, h // k)))
 
     def _poll(self, now: float) -> None:
         if now - self._status_t >= STATUS_POLL_SECONDS:

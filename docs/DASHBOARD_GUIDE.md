@@ -84,9 +84,10 @@ on your home network through your own browser.)
 | **Activities** | **Suggested for <your child's nickname>** at the top: up to six allowed games that fit the profile's age, favourites first. Browse games by age group ("For your child" uses the profile's age) and category. Each card shows the age range, what your child does, tips **for grown-ups** and **safety notes**. Start / pause / stop, star favourites, and untick "Allowed" to keep an activity out of LittleBot's suggestions. |
 | **Videos** | Add YouTube links to the approved list (only approved videos can ever play; for a video inside a playlist you choose "just this video" or "whole playlist"), rename, pause ("Allowed" off), reorder or remove them, play / pause / skip / stop, set the volume and the minutes per session and per day. Videos are off for children under 18 months unless you explicitly authorise them (with a clear warning). "Open player on this device" shows the video player on the phone/computer you are using. |
 | **Face** | Pick an expression, blink, choose where LittleBot looks by tapping/dragging in the box, play little animations or a 15-second demo. |
+| **Camera** | See what LittleBot sees, live (phone: **More → Camera**). Press **Start live view**; the picture shows how many frames a second arrive (5-6). **Take snapshot** saves one photo on the phone or computer you are using, never on LittleBot. While anyone watches, LittleBot shows a small camera sign in the corner of its screen. It tells you plainly when the camera is off in Privacy, unplugged, or paused while a video plays (it comes back by itself after the video). See [section 4](#4-watching-the-camera). |
 | **Child profile** | Optional nickname, birth month (month and year only) or age in months, language, favourite animals, songs and interests. LittleBot uses the age to choose suitable games; without an age it uses its gentlest settings. "Forget profile" clears it. |
 | **AI** | Cloud conversation is **off by default** and LittleBot works fully offline with friendly scripted replies. Cloud AI needs either a separate, paid API key (Anthropic or OpenAI) in the robot's `.env` file, or **Sign in with ChatGPT** in the **ChatGPT account** card: LittleBot shows a code that you enter at auth.openai.com/codex/device to use your own ChatGPT plan, with no API key (unofficial, may stop working; see [CHATGPT.md](CHATGPT.md)). The page only shows whether a key is configured or which account is signed in, never a key or token. Once switched on it works at any age: it plays with your child and answers your own questions (the weather, the news, facts, parenting questions) like a home assistant. Choose the provider, reply length (default 60 words, up to 150), request and budget limits, whether the nickname / interests may be shared, test the connection, see today's usage, and try **Push to talk**. **Live voice (GPT-Live)** is a real-time spoken conversation with ChatGPT's voice that only you can start, after ticking "I am with my child…". It works at any age because you stay for the whole call. It shows live captions, the time left, the voice in use and photos taken, ends by itself after 10 minutes or 90 s of quiet, and you can't talk over it (the Pi has no echo cancellation). Your voices go to OpenAI; nothing is recorded. **Ask what LittleBot sees**: type a question such as "How many fingers am I holding up?" and press **Look and answer**; LittleBot takes one photo, sends it with the question to ChatGPT and shows the answer (tick **Say the answer out loud** to hear it). Only the answer reaches this page, never the photo, and the card shows **Photos sent today** and, when it can't look, why. Needs the Privacy switch below (see [CHATGPT.md](CHATGPT.md#4-letting-the-ai-see-camera)). |
-| **Privacy** | Switch the camera, microphone and cloud communication on or off, and optional activity history. **Let the AI look through the camera when asked** (off by default; needs camera + cloud on and a ChatGPT sign-in) lets ChatGPT get one photo each time someone asks what LittleBot sees, from the AI page or during live voice; the photo is never stored, but OpenAI receives it. "Cloud communication" covers services that receive information about your child (cloud AI conversation, ChatGPT sign-in and live voice, cloud speech); turning it or the microphone off ends a live voice call at once; YouTube videos are controlled separately on the Videos page and only stream the videos you approved. LittleBot never stores audio or video; camera images are analysed on the robot and discarded, and leave it only through that switch. Clear stored history, or stop all interactions. |
+| **Privacy** | Switch the camera, microphone and cloud communication on or off, and optional activity history. **Let the AI look through the camera when asked** (off by default; needs camera + cloud on and a ChatGPT sign-in) lets ChatGPT get one photo each time someone asks what LittleBot sees, from the AI page or during live voice; the photo is never stored, but OpenAI receives it. "Cloud communication" covers services that receive information about your child (cloud AI conversation, ChatGPT sign-in and live voice, cloud speech); turning it or the microphone off ends a live voice call at once; YouTube videos are controlled separately on the Videos page and only stream the videos you approved. LittleBot never stores audio or video; camera images are analysed on the robot and discarded, and leave it only through that switch or to your own dashboard while you watch the **Camera** page. Turning the camera off also stops the Camera page at once. Clear stored history, or stop all interactions. |
 | **Motion** | A live drawing of LittleBot's head and arms, gestures, joint sliders, the **EMERGENCY STOP** (and its reset). Real servos stay in **simulation only** until they are enabled in the configuration *and* you arm them here by typing `ARM MOTORS` - see [MOTION_SAFETY.md](MOTION_SAFETY.md). |
 | **Audio & devices** | Speaker, microphone and camera status; volume (capped for little ears) and speaking speed; test the speaker and microphone; make LittleBot say a sentence or play a sound effect; follow faces on/off; list audio devices. |
 | **Simulator** | Try LittleBot without a child or devices: type what a child might say, tap the camera box to place a pretend face, "person left", and answer caregiver questions. |
@@ -101,7 +102,33 @@ ChatGPT voice says something against LittleBot's safety rules (which only stop w
 a small child), LittleBot cuts it off, ends the call and shows **"Live voice stopped"** (again,
 only a category).
 
-## 4. Security notes
+## 4. Watching the camera
+
+**From your phone:** turn on LAN access once (section 2), open the dashboard on the same Wi-Fi
+(for example `http://littlebot.local:8765/`), log in, then tap **More → Camera → Start live view**.
+On a computer, **Camera** is in the left-hand menu. Tip: add the dashboard to your home screen.
+The **Audio & devices** page also has a **Watch live** button.
+
+* **Only you.** The picture needs your parent login, like every other page. Nobody else on the
+  network can open it without your password.
+* **Never hidden.** While anyone watches, LittleBot shows a small camera sign in the top-right
+  corner of its screen, and its log notes when watching starts and stops (never the picture).
+* **Nothing recorded.** Each picture goes only to your page and is thrown away; the robot keeps
+  nothing and your browser is told not to keep it either. **Take snapshot** saves one photo on
+  *your* device, only when you tap it, and only while you are watching.
+* **Stops by itself.** Press **Stop live view**, leave the page, switch apps or lock your phone,
+  and LittleBot stops sending within a few seconds (at once when it can tell).
+* **Light on the robot.** The picture is small (480 px wide, about 15 KB per frame, 5-6 frames a
+  second, at most 8) and is made from the frames LittleBot already looks at, so watching does not
+  slow down its face tracking. It costs LittleBot a few percent of one processor core.
+* **When there's no picture** the page says why: *Camera is off (Privacy)*, *No camera connected*
+  (check the USB cable; LittleBot keeps trying), *Paused while a video plays on LittleBot* (it
+  comes back when the video ends), or *Too many devices are watching* (up to 4 at once).
+* **On your home Wi-Fi the picture is not encrypted** (plain `http`, like the rest of the
+  dashboard in LAN mode; see section 2): use LAN access only on your own, password-protected
+  Wi-Fi, and never open the dashboard to the internet.
+
+## 5. Security notes
 
 * Your password is stored only as a salted scrypt hash on the robot (`data/littlebot.db`).
 * Sessions last 12 hours (`dashboard.session_hours`); log out everywhere from Settings,
@@ -116,4 +143,6 @@ only a category).
   ignores oversized requests.
 * The page loads nothing from the internet except small thumbnails of the videos you
   approved (they simply don't show when offline).
+* Camera pictures on the Camera page are sent only to a logged-in browser on your network,
+  marked "don't store", and never saved or logged on the robot.
 * API keys stay in `.env` on the robot and are never sent to the browser.

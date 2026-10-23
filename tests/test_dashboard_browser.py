@@ -283,3 +283,78 @@ def test_settings_show_where_the_weather_is_for_and_let_the_parent_change_it(pho
     card.get_by_role("button", name="Use my internet connection").click()
     expect(card.get_by_role("button", name="Change")).to_be_visible()
     assert phone.bot.ctx.settings.get("info.location") == {} and phone.bot.ctx.settings.get("info.units") == "auto"
+
+
+def _wait(pred: Any, timeout: float = 5.0) -> bool:
+    import time
+
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        if pred():
+            return True
+        time.sleep(0.05)
+    return pred()
+
+
+def test_camera_live_view_on_a_phone(phone):
+    page = phone.open("more")
+    page.get_by_role("link", name="Camera Live view from LittleBot").click()  # on a phone: More -> Camera
+    expect(page.get_by_role("heading", name="Live view")).to_be_visible()
+    stage = page.locator(".cam-stage")
+    expect(stage.get_by_text("Press “Start live view” to see what LittleBot sees.")).to_be_visible()
+    vision = phone.bot.ctx.vision
+    assert vision.status()["live_view"]["viewers"] == 0  # nothing until the parent presses Start
+    page.get_by_role("button", name="Start live view").click()
+    expect(page.locator(".cam-live")).to_be_visible()
+    expect(page.locator(".cam-fps")).to_have_text(re.compile(r"^\d+\.\d fps$"))
+    assert vision.status()["live_view"]["viewers"] == 1
+    painted = page.evaluate("""() => {
+        const c = document.querySelector('.cam-canvas');
+        const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+        let sum = 0; for (let i = 0; i < d.length; i += 397) sum += d[i];
+        return [c.width, c.height, sum]; }""")
+    assert 0 < painted[0] <= 480 and painted[0] * 3 == painted[1] * 4 and painted[2] > 0  # the mock camera's picture
+    expect(page.get_by_text(re.compile(r"^1 device \(this one\)$"))).to_be_visible()
+    with page.expect_download() as download:
+        page.get_by_role("button", name="Take snapshot").click()
+    assert re.fullmatch(r"littlebot-\d{8}-\d{6}\.jpg", download.value.suggested_filename)
+    page.get_by_role("button", name="Stop live view").click()
+    expect(page.get_by_role("button", name="Start live view")).to_be_visible()
+    assert _wait(lambda: vision.status()["live_view"]["viewers"] == 0)
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")  # no sideways scroll
+
+
+def test_camera_view_stops_when_the_parent_leaves_the_page(phone):
+    page = phone.open("camera")
+    page.get_by_role("button", name="Start live view").click()
+    expect(page.locator(".cam-live")).to_be_visible()
+    vision = phone.bot.ctx.vision
+    assert vision.status()["live_view"]["viewers"] == 1
+    page.goto(f"{phone.base}/#/home")
+    expect(page.get_by_role("heading", name="Devices & privacy")).to_be_visible()
+    assert _wait(lambda: vision.status()["live_view"]["viewers"] == 0, timeout=2.0)  # told at once, not after the idle time
+
+
+def test_camera_view_explains_privacy_off_and_video_pause(desktop):
+    from littlebot.core.state import RobotState
+
+    page = desktop.open("camera")
+    stage = page.locator(".cam-stage")
+    bot = desktop.bot
+    try:
+        page.get_by_role("button", name="Start live view").click()
+        expect(page.locator(".cam-live")).to_be_visible()
+        assert bot.ctx.state.transition(RobotState.PLAYING_MEDIA, "test video")
+        expect(stage.get_by_text("Paused while a video plays on LittleBot")).to_be_visible(timeout=5000)
+        bot.ctx.state.release(RobotState.PLAYING_MEDIA)
+        expect(page.locator(".cam-live")).to_be_visible(timeout=8000)  # comes back by itself
+        desktop.api("PUT", "/privacy", {"camera_enabled": False})
+        expect(stage.get_by_text("Camera is off (Privacy)")).to_be_visible(timeout=5000)
+        expect(page.locator(".cam-live")).to_be_hidden()
+        expect(page.get_by_role("button", name="Start live view")).to_be_disabled()
+        assert bot.ctx.vision.status()["live_view"]["viewers"] == 0
+    finally:
+        desktop.api("PUT", "/privacy", {"camera_enabled": True})
+        if bot.ctx.state.state == RobotState.PLAYING_MEDIA:
+            bot.ctx.state.release(RobotState.PLAYING_MEDIA)
+    expect(page.get_by_role("button", name="Start live view")).to_be_enabled(timeout=5000)

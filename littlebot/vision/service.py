@@ -25,6 +25,16 @@ stored, sent anywhere, or used for identification. The exceptions:
   camera (``latest_photo``). It is never written anywhere, logged or sent by this
   service, and it is dropped the moment keeping it warm stops, the check fails, the
   camera closes or video playback pauses vision.
+* ``live_view_frame``: while a logged-in parent watches the dashboard's Camera page, the
+  thread also JPEG-encodes a small copy (``LIVE_VIEW_WIDTH`` px) of the frames it reads
+  anyway, at most ``LIVE_VIEW_MAX_FPS``, AFTER detection, and keeps only the newest one in
+  memory for that page. It is a separate slot from the warm photo (other size, no AI
+  consent involved), never written anywhere or logged, and dropped as soon as the last
+  viewer stops asking (``LIVE_VIEW_IDLE`` s), privacy turns the camera off, the camera is
+  lost or a video pauses vision. Viewers hold no lease and never change detection: they
+  only raise the read rate to ``LIVE_VIEW_MIN_FPS`` when vision itself reads less (robot
+  asleep). Start and stop are logged and published (``vision.live_view``) so the robot's
+  screen shows a camera sign while anyone watches.
 """
 
 from __future__ import annotations
@@ -33,6 +43,7 @@ import asyncio
 import concurrent.futures
 import threading
 import time
+from dataclasses import dataclass
 from typing import Any, Callable
 
 from littlebot.core.config import Mode
@@ -55,10 +66,19 @@ PHOTO_RETRY = 0.05  # retry interval while a photo request waits for a frame
 WARM_EVERY = 0.5  # keep_photo_warm: seconds between refreshes (~5 ms of encoding each on a Pi 5)
 WARM_WIDTH = 640
 WARM_QUALITY = 75
+# Dashboard live view (live_view_frame): small, modest-quality frames, only while someone watches.
+LIVE_VIEW_MAX_FPS = 8.0  # frames encoded per second at most (vision reads 6/s, 10/s with gestures on)
+LIVE_VIEW_MIN_FPS = 5.0  # while watched, frames are read at least this often (the sleeping robot reads 1.5/s)
+LIVE_VIEW_WIDTH = 480  # 480x360: sharp on a phone, ~15-25 KB per frame
+LIVE_VIEW_QUALITY = 60
+LIVE_VIEW_IDLE = 3.0  # a viewer that has not asked for a frame for this long has gone
+LIVE_VIEW_MAX_AGE = 1.0  # an older frame is never handed out
+LIVE_VIEW_MAX_VIEWERS = 4
 
 
 class PhotoUnavailable(Exception):
-    """``capture_photo`` could not take a photo. ``reason``: camera_off | no_camera | timeout | unavailable."""
+    """``capture_photo`` / ``live_view_frame`` could not deliver. ``reason``: camera_off | no_camera |
+    timeout | unavailable, and for the live view also paused (a video plays) | busy | stopped."""
 
     def __init__(self, reason: str, detail: str = "") -> None:
         super().__init__(f"{reason}: {detail}" if detail else reason)
@@ -67,6 +87,16 @@ class PhotoUnavailable(Exception):
 
 
 PhotoRequest = tuple["concurrent.futures.Future[bytes]", int, int]  # (future, max_width, jpeg quality)
+
+
+@dataclass
+class _Viewer:
+    """One device watching the live view (no image data: who, since when, how many frames)."""
+
+    label: str
+    started: float
+    last_seen: float
+    frames: int = 0
 
 
 def _clamp01(v: float) -> float:
@@ -148,6 +178,18 @@ class VisionService(Service):
         self._warm_spec = (WARM_WIDTH, WARM_QUALITY, WARM_EVERY)
         self._warm_photo: tuple[bytes, float] | None = None
         self._warm_next = 0.0
+        # live view (guarded by _lock): who watches, the newest small JPEG (bytes, seq, taken at), who waits
+        self._viewers: dict[str, _Viewer] = {}
+        self._view_frame: tuple[bytes, int, float] | None = None
+        self._view_seq = 0
+        self._view_waiters: list[tuple[str, concurrent.futures.Future[Any]]] = []
+        self._view_next = 0.0
+        self._view_new = False  # a viewer arrived: read the next frame soon
+        self._view_stopped: dict[str, float] = {}  # stopped viewer ids: a request still on its way can't restart one
+        self._view_pub_lock = threading.RLock()  # re-entrant: a bus subscriber may call back in
+        self._view_rate = RateMeter(window=3.0)
+        self._view_ms: float | None = None
+        self._view_bytes = 0
         self._refresh_snapshot(self._clock())
 
     # ------------------------------------------------------------------ setup
@@ -191,6 +233,8 @@ class VisionService(Service):
         rate = self.effective_detect_fps
         if self.gestures_active:
             rate = max(rate, float(self.vis_cfg.gesture_fps))
+        if self._viewers:  # someone watches the live view: a smooth enough picture (detection keeps its own rate)
+            rate = max(rate, LIVE_VIEW_MIN_FPS)
         return 1.0 / rate
 
     @property
@@ -234,6 +278,7 @@ class VisionService(Service):
         self._thread = None
         self._close_camera()  # no-op if the thread already released it
         self._fail_photos("no_camera", "vision stopped")
+        self._end_live_view("vision stopped", "no_camera")
         with self._lock:
             self._warm_owners.clear()
             self._warm_photo = None
@@ -280,6 +325,8 @@ class VisionService(Service):
         cam = self._camera
         if not allowed and cam is not None:
             cam.cancel_read()  # the vision thread releases the device right away
+        if not allowed:
+            self._end_live_view("camera turned off in Privacy", "camera_off")  # at once, not one cycle later
         self._wake.set()
 
     def _on_state(self, event: Event) -> None:
@@ -454,10 +501,189 @@ class VisionService(Service):
             self._serve_photos(frame)
             del frame
 
+    # ------------------------------------------------------------ live view
+    async def live_view_frame(self, viewer: str, *, after: int = 0, label: str = "",
+                              timeout: float = 2.0) -> tuple[bytes, int]:
+        """Live view (the parent dashboard's Camera page): ``(jpeg, seq)`` of a frame newer than ``after``.
+
+        Each call registers or refreshes ``viewer`` (``label`` names it in the log, e.g. the dashboard
+        and its address). While anyone is registered the vision thread encodes the frames it reads
+        anyway (see the module docstring); the newest is returned at once when it is newer than
+        ``after`` and fresh, else this waits up to ``timeout`` for the next one. Nothing is kept for
+        the caller. Raises ``PhotoUnavailable``: camera_off | no_camera | paused (a video plays) |
+        busy (too many viewers) | timeout | unavailable | stopped (``stop_live_view`` meanwhile)."""
+        self._check_live_view()
+        viewer = str(viewer)
+        now = self._clock()
+        fut: concurrent.futures.Future[Any] | None = None
+        with self._lock:
+            v = self._viewers.get(viewer)
+            started = v is None
+            if v is None:
+                if viewer in self._view_stopped:
+                    raise PhotoUnavailable("stopped", "this live view was stopped")
+                if len(self._viewers) >= LIVE_VIEW_MAX_VIEWERS:
+                    raise PhotoUnavailable("busy", f"{LIVE_VIEW_MAX_VIEWERS} devices are already watching")
+                v = self._viewers[viewer] = _Viewer(label or "a viewer", now, now)
+                self._view_new = True
+            v.last_seen = now
+            frame = self._view_frame
+            if frame is not None and frame[1] > after and now - frame[2] <= LIVE_VIEW_MAX_AGE:
+                v.frames += 1
+            else:
+                frame = None
+                fut = concurrent.futures.Future()
+                self._view_waiters.append((viewer, fut))
+        if started:
+            self._live_view_changed(v, started=True)
+        if fut is None:
+            assert frame is not None
+            return frame[0], frame[1]
+        self._wake.set()
+        try:
+            data, seq = await asyncio.wait_for(asyncio.wrap_future(fut), timeout)
+        except asyncio.TimeoutError:
+            raise PhotoUnavailable("timeout", f"no camera frame within {timeout:g}s") from None
+        finally:
+            with self._lock:
+                if (viewer, fut) in self._view_waiters:
+                    self._view_waiters.remove((viewer, fut))
+            fut.cancel()  # no-op when done
+        with self._lock:
+            v = self._viewers.get(viewer)
+            if v is not None:
+                v.last_seen = self._clock()
+                v.frames += 1
+        return data, seq
+
+    def stop_live_view(self, viewer: str) -> bool:
+        """``viewer`` stopped watching (the page's Stop button / leaving the page). True if it was watching.
+        The id cannot start again (a page uses a new one for its next Start)."""
+        now = self._clock()
+        with self._lock:
+            self._view_stopped = {vid: t for vid, t in self._view_stopped.items() if now - t < 60.0}
+            if len(self._view_stopped) < 256:
+                self._view_stopped[str(viewer)] = now
+            v = self._viewers.pop(str(viewer), None)
+            waiting = [f for vid, f in self._view_waiters if vid == str(viewer)]
+            self._view_waiters = [(vid, f) for vid, f in self._view_waiters if vid != str(viewer)]
+            if not self._viewers:
+                self._view_frame = None
+        for fut in waiting:
+            _reject(fut, PhotoUnavailable("stopped", "the live view was stopped"))
+        if v is not None:
+            self._live_view_changed(v, reason="stopped on the dashboard")
+        self._wake.set()
+        return v is not None
+
+    def watching(self, viewer: str) -> bool:
+        """True while ``viewer`` is registered for the live view (so the robot's screen shows it)."""
+        with self._lock:
+            return str(viewer) in self._viewers
+
+    def _check_live_view(self) -> None:
+        if not self.ctx.privacy.camera_enabled or not self._camera_allowed:
+            raise PhotoUnavailable("camera_off", "camera turned off in privacy settings")
+        if self._kind == "none":
+            raise PhotoUnavailable("no_camera", "disabled in config (camera.backend: none)")
+        if self._mode_for(self._robot_state) == "paused":
+            raise PhotoUnavailable("paused", "a video is playing (the camera view comes back when it ends)")
+        status, detail = self._cam_status
+        if self._camera is None and status in ("unavailable", "disconnected"):
+            raise PhotoUnavailable("no_camera", detail)
+        if get_cv2() is None:
+            raise PhotoUnavailable("unavailable", "OpenCV is required to show the camera")
+
+    def _live_view_changed(self, v: _Viewer, *, started: bool = False, reason: str = "") -> None:
+        """Log + publish one viewer arriving or leaving (never any image data). Call without ``_lock``.
+        Serialised, so the last ``vision.live_view`` event always carries the current count."""
+        with self._view_pub_lock:
+            with self._lock:
+                n = len(self._viewers)
+            if started:
+                self.log.info("camera live view started: %s is watching (%d watching now)", v.label, n)
+            else:
+                self.log.info("camera live view stopped: %s (%s) after %.0f s, %d frames (%d watching now)",
+                              v.label, reason, max(0.0, self._clock() - v.started), v.frames, n)
+            if n == 0:
+                self._view_rate.reset()
+            self.ctx.bus.publish(Topics.VISION_LIVE_VIEW, {"active": n > 0, "viewers": n}, source="vision")
+
+    def _end_live_view(self, reason: str, code: str) -> None:
+        """Everyone stops watching now (privacy off, camera lost, video, vision stopped): drop the frame,
+        answer waiting callers with ``PhotoUnavailable(code)``. No-op when nobody watches."""
+        if not self._viewers and not self._view_waiters and self._view_frame is None:
+            return
+        with self._lock:
+            gone, self._viewers = list(self._viewers.values()), {}
+            waiters, self._view_waiters = self._view_waiters, []
+            self._view_frame = None
+        for _vid, fut in waiters:
+            _reject(fut, PhotoUnavailable(code, reason))
+        for v in gone:
+            self._live_view_changed(v, reason=reason)
+
+    def _expire_viewers(self, now: float) -> None:
+        """Vision thread: forget viewers that stopped asking (page closed, phone locked, Wi-Fi gone)."""
+        if not self._viewers:
+            return
+        with self._lock:
+            waiting = {vid for vid, f in self._view_waiters if not f.done()}
+            gone = [vid for vid, v in self._viewers.items()
+                    if vid not in waiting and now - v.last_seen > LIVE_VIEW_IDLE]
+            left = [self._viewers.pop(vid) for vid in gone]
+            if not self._viewers:
+                self._view_frame = None
+        for v in left:
+            self._live_view_changed(v, reason="stopped asking for frames")
+
+    def _live_view_status(self, now: float) -> dict[str, Any]:
+        n = len(self._viewers)
+        return {"viewers": n, "fps": round(self._view_rate.rate(now), 1) if n else 0.0,
+                "encode_ms": round(self._view_ms, 1) if n and self._view_ms is not None else None,
+                "frame_kb": round(self._view_bytes / 1024, 1) if n and self._view_bytes else None,
+                "max_fps": LIVE_VIEW_MAX_FPS, "width": LIVE_VIEW_WIDTH}
+
+    def _refresh_live_view(self, frame: Any, now: float) -> None:
+        """Vision thread, after detection: encode ``frame`` for the live view when one is due."""
+        if not self._viewers or now < self._view_next:
+            return
+        self._view_next = self._advance(self._view_next, 1.0 / LIVE_VIEW_MAX_FPS, now)
+        t0 = time.perf_counter()
+        cv2 = get_cv2()
+        try:
+            h, w = frame.shape[:2]
+            # 640 -> 480 px: bilinear looks the same at 0.75x and costs ~1/5 of INTER_AREA (which uses 2 threads)
+            img = frame if w <= LIVE_VIEW_WIDTH else cv2.resize(
+                frame, (LIVE_VIEW_WIDTH, max(1, round(h * LIVE_VIEW_WIDTH / w))), interpolation=cv2.INTER_LINEAR)
+            if _looks_dim(img):  # cheap check on a few pixels first; brighten_if_dark decides exactly
+                img = brighten_if_dark(img)
+            ok, buf = cv2.imencode(".jpg", img, [int(cv2.IMWRITE_JPEG_QUALITY), LIVE_VIEW_QUALITY])
+            del img
+        except Exception:  # noqa: BLE001 - the live view must never break vision
+            ok, buf = False, None
+        if not ok:
+            return
+        data = buf.tobytes()
+        del buf
+        with self._lock:
+            if not self._viewers or not self._camera_allowed:  # everyone left / privacy flipped meanwhile
+                return
+            self._view_seq += 1
+            seq = self._view_seq
+            self._view_frame = (data, seq, now)
+            waiters, self._view_waiters = self._view_waiters, []
+        self._view_rate.tick(now)
+        self._view_ms = (time.perf_counter() - t0) * 1000.0
+        self._view_bytes = len(data)
+        for _vid, fut in waiters:
+            _resolve(fut, (data, seq))
+
     def status(self) -> dict[str, Any]:
         with self._lock:
             out = dict(self._snapshot)
         out["gaze"] = dict(out["gaze"]) if out.get("gaze") else None
+        out["live_view"] = self._live_view_status(self._clock())  # current, not as of the last cycle
         return out
 
     # ------------------------------------------------------------------ cycle
@@ -465,12 +691,18 @@ class VisionService(Service):
         if self._gestures_reset:
             self._gestures_reset = False
             self._gestures.reset()
+        self._expire_viewers(now)
+        if self._view_new:
+            self._view_new = False
+            self._view_next = 0.0  # the first frame for a new viewer is encoded right away
+            self._next_frame_at = min(self._next_frame_at, now + self.frame_interval)
         self._apply_mode(now)
         self._manage_camera(now)
         if self._mode == "paused":
             # No reads (so no MJPG decoding), no detection, no events; presence is frozen so a video
             # does not cause a fake "left" + "arrived" pair. Still notice an unplugged camera.
             self._drop_warm()  # no fresh frames: a warm photo would only get stale
+            self._end_live_view("a video is playing", "paused")
             cam = self._camera
             if cam is not None and (cam.failed or not cam.is_open):
                 self._camera_lost(now, "camera stopped delivering frames")
@@ -548,6 +780,7 @@ class VisionService(Service):
         if self._warm_owners:
             self._refresh_warm(frame, now)
         small = resize_to_width(frame, int(self.cam_cfg.process_width))
+        view = frame if self._viewers else None  # encoded for the live view after detection, never before
         del frame  # never keep full frames around
         detected = False
         if now >= self._next_detect_at:
@@ -571,6 +804,9 @@ class VisionService(Service):
             except Exception:  # noqa: BLE001 - experimental code must never break vision
                 self.log.exception("gesture analysis failed; disabling gestures until re-enabled")
                 self._gestures_on = False
+        if view is not None:
+            self._refresh_live_view(view, now)
+            del view
         return detected
 
     def _active_sim(self, now: float) -> Detection | None:
@@ -607,6 +843,7 @@ class VisionService(Service):
             self._set_cam_status("disabled", detail)
             self._next_open_at = now  # reopen right away when re-enabled
             self._fail_photos("no_camera" if self._kind == "none" else "camera_off", detail)
+            self._end_live_view(detail, "no_camera" if self._kind == "none" else "camera_off")
             return
         if self._camera is None and now >= self._next_open_at and not self._stop_evt.is_set():
             self._open_camera(now)
@@ -627,6 +864,7 @@ class VisionService(Service):
             self._set_cam_status(status, f"{e} (retrying every {reconnect:g}s)")
             self._next_open_at = now + reconnect
             self._fail_photos("no_camera", status)
+            self._end_live_view(f"camera {status}", "no_camera")
             return
         if not self._camera_allowed or self._stop_evt.is_set():  # privacy flipped while opening
             cam.release()
@@ -677,6 +915,7 @@ class VisionService(Service):
         self.log.warning("camera lost: %s; retrying every %gs", reason, reconnect)
         self._set_cam_status("disconnected", f"{reason} (retrying every {reconnect:g}s)")
         self._next_open_at = now + reconnect
+        self._end_live_view(f"camera lost: {reason}", "no_camera")
 
     def _close_camera(self) -> None:
         cam, self._camera = self._camera, None
@@ -759,19 +998,30 @@ class VisionService(Service):
             "detect_mode": self._mode,  # active | reduced (robot sleeping) | paused (video playing)
             "robot_state": self._robot_state,
             "photo_warm": bool(self._warm_owners),  # a live conversation keeps one recent photo in memory
+            "live_view": self._live_view_status(now),  # the dashboard's Camera page (who watches, no images)
         }
         with self._lock:
             self._snapshot = snap
 
 
-def _resolve(fut: "concurrent.futures.Future[bytes]", data: bytes) -> None:
+def _looks_dim(img: Any, below: float = 80.0) -> bool:
+    """Grey level of every 8th pixel under ``below`` (a little above brighten_if_dark's 70, so it never misses)."""
+    try:
+        sub = img[::8, ::8].reshape(-1, img.shape[2] if img.ndim == 3 else 1).mean(axis=0)
+        grey = 0.114 * sub[0] + 0.587 * sub[1] + 0.299 * sub[2] if len(sub) >= 3 else sub[0]
+        return float(grey) < below
+    except Exception:  # noqa: BLE001
+        return True
+
+
+def _resolve(fut: "concurrent.futures.Future[Any]", data: Any) -> None:
     try:
         fut.set_result(data)
     except concurrent.futures.InvalidStateError:  # the caller gave up (timeout / cancelled)
         pass
 
 
-def _reject(fut: "concurrent.futures.Future[bytes]", exc: BaseException) -> None:
+def _reject(fut: "concurrent.futures.Future[Any]", exc: BaseException) -> None:
     try:
         fut.set_exception(exc)
     except concurrent.futures.InvalidStateError:
