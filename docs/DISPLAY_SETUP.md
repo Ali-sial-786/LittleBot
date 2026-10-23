@@ -56,6 +56,13 @@ Three possible outcomes:
 - **Black screen / "no signal"**: the board might not send usable EDID. Force a mode with
   the kernel command line (section 3, options B-D).
 
+> **Measured on the real MPI3508 (2026-10-22, Pi 5, Trixie):** the EDID is named `MPI3508` and
+> offers 1280x720 (preferred), 1920x1080, 1920x1080i, 1280x1024, 1440x900 and 1024x768, with no
+> 480x320 and no 720x480. At the preferred 1280x720 the face looked squashed. A custom
+> **720x480@60** mode (`wlr-randr --output HDMI-A-1 --custom-mode 720x480@60`) is accepted and
+> the face looks right. LittleBot now requests it itself at start-up (`display.output_mode` in
+> `config/pi.yaml`; set it to `null` to keep the desktop's mode).
+
 ## 3. Choosing the HDMI mode
 
 On the Pi 5 the display is driven by the KMS driver (`dtoverlay=vc4-kms-v3d`, the default).

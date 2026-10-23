@@ -68,6 +68,10 @@ class DisplayConfig(_Section):
     show_sim_panel: bool = True  # side panel with simulated servos/status (desktop only)
     hide_cursor: bool = False
     tap_reaction: bool = True  # tapping the face makes LittleBot giggle (cause-and-effect play)
+    # Screen mode to request from the Wayland compositor before going fullscreen, e.g.
+    # "720x480@60" (None = leave the desktop's mode alone). See docs/DISPLAY_SETUP.md.
+    output_mode: str | None = None
+    output_name: str = "HDMI-A-1"  # the Pi 5's HDMI0 port
 
 
 class FaceConfig(_Section):

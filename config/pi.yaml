@@ -3,6 +3,10 @@
 display:
   scale: 1.0
   fullscreen: true
+  # The MPI3508's EDID prefers 1280x720, which its scaler squashes into the 3:2 panel.
+  # 720x480 is the panel's own shape (checked on the real screen 2026-10-22).
+  # null = keep whatever mode the desktop uses.
+  output_mode: "720x480@60"
   show_sim_panel: false
   hide_cursor: true
   fps: 30

@@ -21,6 +21,9 @@ from __future__ import annotations
 import collections
 import logging
 import os
+import re
+import shutil
+import subprocess
 import time
 from pathlib import Path
 from typing import Any, Callable, Coroutine
@@ -91,6 +94,59 @@ def run_display(robot: Any, demo: bool = False) -> None:
         _wait_for_shutdown(robot)
 
 
+def apply_output_mode(output: str, mode: str, *, run: Callable[..., Any] = subprocess.run,
+                      which: Callable[[str], str | None] = shutil.which,
+                      env: Any = None, settle_s: float = 0.5) -> bool:
+    """Ask the Wayland compositor to drive ``output`` at ``mode`` (e.g. ``"720x480@60"``).
+
+    The MPI3508's EDID offers only 16:9 / 4:3 modes (preferred 1280x720), which its scaler
+    squashes into the 3:2 panel; 720x480 has the panel's own shape. Uses ``wlr-randr`` and
+    only acts in a Wayland session; never fatal. Returns True when the mode was changed.
+    """
+    env = os.environ if env is None else env
+    if not env.get("WAYLAND_DISPLAY") or which("wlr-randr") is None:
+        log.info("screen mode %s for %s skipped: needs a Wayland session with wlr-randr", mode, output)
+        return False
+    size = mode.split("@", 1)[0].strip()
+    try:
+        cur = run(["wlr-randr", "--output", output], capture_output=True, text=True, timeout=5)
+        if cur.returncode == 0 and _current_size(cur.stdout, output) == size:
+            log.info("screen %s already at %s", output, size)
+            return False
+    except (OSError, subprocess.SubprocessError):
+        log.debug("could not read the current screen mode", exc_info=True)
+    try:
+        res = run(["wlr-randr", "--output", output, "--custom-mode", mode], capture_output=True, text=True,
+                  timeout=5)
+    except (OSError, subprocess.SubprocessError) as e:
+        log.warning("could not set screen %s to %s: %s", output, mode, e)
+        return False
+    if res.returncode != 0:
+        log.warning("could not set screen %s to %s: %s", output, mode, (res.stderr or res.stdout or "").strip())
+        return False
+    log.info("screen %s set to %s", output, mode)
+    if settle_s > 0:
+        time.sleep(settle_s)  # let the compositor (and Xwayland) settle before SDL reads the screen size
+    return True
+
+
+def _current_size(wlr_randr_text: str, output: str) -> str | None:
+    """The ``WxH`` marked ``current`` for ``output`` in plain ``wlr-randr`` output, if any."""
+    block: list[str] = []
+    inside = False
+    for line in wlr_randr_text.splitlines():
+        if line and not line[0].isspace():
+            inside = line.split()[0] == output
+            continue
+        if inside:
+            block.append(line)
+    for line in block:
+        m = re.match(r"\s*(\d+x\d+) px\b.*\bcurrent\b", line)
+        if m:
+            return m.group(1)
+    return None
+
+
 def _wait_for_shutdown(robot: Any) -> None:
     ev = robot.shutdown_event
     while not ev.wait(0.5):  # short waits keep signal handlers responsive on the main thread
@@ -144,6 +200,8 @@ class DisplayLoop:
         import pygame
 
         self._pg = pygame
+        if self.fullscreen and self.cfg.output_mode:
+            apply_output_mode(self.cfg.output_name, self.cfg.output_mode)
         pygame.display.init()
         pygame.font.init()
         pygame.display.set_caption(f"{self.ctx.config.robot_name}")

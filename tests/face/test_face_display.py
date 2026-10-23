@@ -376,3 +376,86 @@ def test_fps_drops_when_calm(loop_env):
 
 def test_fake_face_has_no_render():
     assert not hasattr(FakeFace(), "render")
+
+
+# ------------------------------------------------------------------ screen mode (wlr-randr)
+WLR_1280 = """HDMI-A-1 "MPI3508 (HDMI-A-1)"
+  Enabled: yes
+  Modes:
+    1280x720 px, 60.000000 Hz (preferred, current)
+    1920x1080 px, 60.000000 Hz
+  Position: 0,0
+"""
+
+
+class _Run:
+    def __init__(self, current=WLR_1280, rc=0, stderr=""):
+        self.calls = []
+        self.current, self.rc, self.stderr = current, rc, stderr
+
+    def __call__(self, argv, **kw):
+        import subprocess
+
+        self.calls.append(argv)
+        if "--custom-mode" in argv:
+            return subprocess.CompletedProcess(argv, self.rc, "", self.stderr)
+        return subprocess.CompletedProcess(argv, 0, self.current, "")
+
+
+WAYLAND = {"WAYLAND_DISPLAY": "wayland-0"}
+
+
+def test_output_mode_sets_custom_mode_when_different():
+    run = _Run()
+    assert D.apply_output_mode("HDMI-A-1", "720x480@60", run=run, which=lambda _: "/usr/bin/wlr-randr",
+                               env=WAYLAND, settle_s=0) is True
+    assert run.calls[-1] == ["wlr-randr", "--output", "HDMI-A-1", "--custom-mode", "720x480@60"]
+
+
+def test_output_mode_skips_when_already_current():
+    run = _Run(current=WLR_1280.replace("1280x720 px, 60.000000 Hz (preferred, current)",
+                                        "720x480 px, 60.000000 Hz (current)"))
+    assert D.apply_output_mode("HDMI-A-1", "720x480@60", run=run, which=lambda _: "/usr/bin/wlr-randr",
+                               env=WAYLAND, settle_s=0) is False
+    assert all("--custom-mode" not in c for c in run.calls)
+
+
+def test_output_mode_needs_wayland_and_wlr_randr():
+    run = _Run()
+    assert D.apply_output_mode("HDMI-A-1", "720x480@60", run=run, which=lambda _: "/usr/bin/wlr-randr",
+                               env={}, settle_s=0) is False
+    assert D.apply_output_mode("HDMI-A-1", "720x480@60", run=run, which=lambda _: None,
+                               env=WAYLAND, settle_s=0) is False
+    assert run.calls == []
+
+
+def test_output_mode_failure_is_not_fatal(caplog):
+    run = _Run(rc=1, stderr="failed to apply")
+    with caplog.at_level("WARNING", logger="littlebot.face.display"):
+        assert D.apply_output_mode("HDMI-A-1", "720x480@60", run=run, which=lambda _: "/usr/bin/wlr-randr",
+                                   env=WAYLAND, settle_s=0) is False
+    assert "failed to apply" in caplog.text
+
+
+def test_current_size_reads_only_the_named_output():
+    text = 'HDMI-A-2 "other"\n  Modes:\n    1920x1080 px, 60.0 Hz (current)\n' + WLR_1280
+    assert D._current_size(text, "HDMI-A-1") == "1280x720"
+    assert D._current_size(text, "HDMI-A-2") == "1920x1080"
+    assert D._current_size(text, "DSI-1") is None
+
+
+def test_display_open_applies_output_mode_only_in_fullscreen(monkeypatch):
+    seen = []
+    monkeypatch.setattr(D, "apply_output_mode", lambda out, mode, **kw: seen.append((out, mode)) or False)
+    robot = _robot(output_mode="720x480@60")
+    loop = D.DisplayLoop(robot, max_frames=1)
+    loop.open()
+    loop.close()
+    _close(robot)
+    assert seen == []  # windowed (desktop simulator): never touches the desktop's mode
+    robot = _robot(output_mode="720x480@60", fullscreen=True)
+    loop = D.DisplayLoop(robot, max_frames=1)
+    loop.open()
+    loop.close()
+    _close(robot)
+    assert seen == [("HDMI-A-1", "720x480@60")]
