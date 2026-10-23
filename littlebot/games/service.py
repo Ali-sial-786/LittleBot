@@ -166,6 +166,19 @@ class _Host:
     def child_gaze(self) -> tuple[float, float] | None:
         return self.svc.child_gaze()
 
+    def hands_ready(self) -> bool:
+        from littlebot.games import hand_sign  # noqa: PLC0415
+
+        return hand_sign.blocked_reason(self.svc.ctx) is None
+
+    def see_hand(self) -> Any:
+        from littlebot.games import hand_sign  # noqa: PLC0415
+
+        look = hand_sign.HandLook()
+        if not self.svc._run(hand_sign.look_for_sign(self.svc.ctx, look), "hand look"):
+            look.finish(None, "unavailable")
+        return look
+
     def now(self) -> float:
         return self.svc._clock()
 
@@ -570,19 +583,25 @@ class GamesService(Service):
         except Exception:  # noqa: BLE001
             log.debug("%s failed", what, exc_info=True)
             return
+        self._run(coro, what)
+
+    def _run(self, coro: Coroutine[Any, Any, Any], what: str) -> bool:
+        """Run ``coro`` on the robot's loop (from the display thread); False if there is none."""
         runtime = self.ctx.runtime
         try:
             if runtime is not None and runtime.running:
                 runtime.submit(coro).add_done_callback(lambda f: _log_failure(f, what))
-                return
+                return True
             loop = asyncio.get_running_loop()  # tests / tools running on a loop in this thread
             task = loop.create_task(coro)
             s = self._session
             if s is not None:
                 s.tasks.add(task)
                 task.add_done_callback(s.tasks.discard)
+            return True
         except RuntimeError:
             coro.close()  # no loop to play it on (headless, no runtime)
+            return False
 
     def _publish(self, topic: str, data: dict[str, Any]) -> None:
         try:

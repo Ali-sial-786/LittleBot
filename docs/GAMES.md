@@ -12,7 +12,7 @@ rounded, candy-coloured style; LittleBot's own eyes host every game.
 | Memory Lights | `memory` | 3 years+ | Simon-style: four pads (circle, heart, star, diamond) light up with tones; copy the pattern, one step longer each round. A mistake shows the right pad and starts again; best round is kept. |
 | Tic-Tac-Toe | `tictactoe` | 4 years+ | You are X. LittleBot always takes a win in front of it, otherwise plays perfectly only some of the time: it gets cleverer when you win and gentler when you lose. Who starts alternates. |
 | Reaction Race | `reaction` | 4 years+ | LittleBot's round face goes red ("Wait..."), then green - tap! Shows milliseconds; five tries per round with best and average. Tapping early says "Too soon!" and doesn't count. |
-| Rock Paper Scissors | `rps` | 4 years+ | Pick rock, paper or scissors; after "Rock... Paper... Scissors... Shoot!" LittleBot reveals a random pick. |
+| Rock Paper Scissors | `rps` | 4 years+ | With the camera on: tap Go (or say "go"), show rock, paper or scissors to the camera on "Shoot!" and LittleBot reads your hand on the robot (nothing is sent or kept; it asks you to tap what you showed when it can't tell). Without the camera or the hand models: tap a choice. LittleBot's own pick is random, made at the reveal. |
 
 The little-ones games need no reading and reward every tap (nothing is ever "wrong"). They also
 play by themselves, so a baby who only watches still sees bubbles pop and animals peek. They are
@@ -29,6 +29,12 @@ pop bubbles side by side. Sounds are LittleBot's gentle built-in effects at the 
   the time left, and the game length (game default, 2, 3, 5 or 10 minutes; remembered in that
   browser). The big STOP button stops a game too.
 * **Voice**: the AI tools call `ctx.games.list()`, `await ctx.games.start(id)` and `ctx.games.stop()`.
+* **Rock Paper Scissors with your hand**: needs the camera switched on (Privacy) and the hand models
+  (`scripts/download_models.py hands`; the installer gets them). A few frames just after "Shoot!" are
+  read on the robot (`littlebot/games/hand_sign.py`, ~30 ms each here), and the sign counts once two
+  frames in a row agree. On TensorFlow's rock-paper-scissors test pictures (372 rendered hands) all were
+  read right; made smaller, turned 25 degrees, mirrored or darker, 96-100% right, the rest "not sure",
+  none wrong. Not yet tried with the real camera and real hands.
 
 Each game ends by itself (babies' games after 3 minutes, the others after 5 unless a length is
 chosen; always between 30 s and 15 min): a short finale (confetti, LittleBot's happy eyes, a

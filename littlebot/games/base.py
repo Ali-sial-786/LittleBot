@@ -45,6 +45,12 @@ class GameHost(Protocol):
     def child_gaze(self) -> tuple[float, float] | None:
         """Where LittleBot should look to look at the child (normalised screen coords), if a face is seen."""
 
+    def hands_ready(self) -> bool:
+        """True when the camera can read a hand sign now (camera switched on, hand models installed)."""
+
+    def see_hand(self) -> Any:
+        """Start reading the hand sign the player shows (``hand_sign.HandLook``: poll ``done``)."""
+
     def now(self) -> float:
         """Monotonic seconds (reaction timing)."""
 
@@ -58,6 +64,9 @@ class RecordingHost:
         self.melodies: list[list[tuple[str, float]]] = []
         self.spoken: list[str] = []
         self.gaze: tuple[float, float] | None = None
+        self.can_see = False  # hands_ready()
+        self.hand_signs: list[str | None] = []  # what see_hand() "sees", one per look (then None)
+        self.looks: list[Any] = []
         self._clock = clock or time.monotonic
 
     def sound(self, name: str, *, volume: float | None = None, max_wait: float | None = None) -> None:
@@ -71,6 +80,18 @@ class RecordingHost:
 
     def child_gaze(self) -> tuple[float, float] | None:
         return self.gaze
+
+    def hands_ready(self) -> bool:
+        return self.can_see
+
+    def see_hand(self) -> Any:
+        from littlebot.games.hand_sign import HandLook  # noqa: PLC0415
+
+        look = HandLook()
+        sign = self.hand_signs.pop(0) if self.hand_signs else None
+        look.finish(sign, "" if sign else "no_hand")
+        self.looks.append(look)
+        return look
 
     def now(self) -> float:
         return float(self._clock())

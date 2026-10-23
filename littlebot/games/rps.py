@@ -1,7 +1,11 @@
 """Rock Paper Scissors against LittleBot. Tap rock, paper or scissors (or say it, if something is
 listening and turns speech into ``audio.utterance`` events); after "Rock... Paper... Scissors...
 Shoot!" LittleBot shows its pick and the round's winner. LittleBot picks at random at the reveal,
-so it never peeks at yours."""
+so it never peeks at yours.
+
+With the camera on and the hand models installed (``littlebot.games.hand_sign``) you play with your
+hand instead: tap Go (or say "go"), show rock, paper or scissors to the camera on "Shoot!", and
+LittleBot reads it on the robot. When it can't tell, it asks you to tap what you showed."""
 
 from __future__ import annotations
 
@@ -22,6 +26,9 @@ LABELS = {"rock": "Rock", "paper": "Paper", "scissors": "Scissors"}
 COUNT_BEATS = ("Rock...", "Paper...", "Scissors...", "Shoot!")
 BEAT_S = 0.42
 REVEAL_S = 2.3
+LOOK_GIVE_UP_S = 4.0  # the camera never answered: ask instead
+GO_WORDS = {"go", "ready", "shoot", "play", "again", "start"}
+GO_W, GO_H = 440, 120
 BTN_W, BTN_H = 196, 140
 BTN_Y = 322
 BUBBLE_R = 76
@@ -111,8 +118,11 @@ class RockPaperScissors(Game):
 
     def __init__(self, host: Any = None, *, size: tuple[int, int] = (art.W, art.H), seed: int | None = None) -> None:
         super().__init__(host, size=size, seed=seed)
-        self.phase = "pick"  # pick | count | reveal
+        self.phase = "pick"  # pick | count | look (camera) | ask (camera unsure) | reveal
         self.phase_t = 0.0
+        self.camera = False  # play by showing a hand to the camera (decided at begin)
+        self.look: Any = None
+        self.seen = False  # this round's pick came from the camera
         self.you: str | None = None
         self.bot: str | None = None
         self.result: str | None = None
@@ -122,7 +132,15 @@ class RockPaperScissors(Game):
 
     def begin(self) -> None:
         super().begin()
+        self.camera = self._camera_ready()
         self.host.sound("boop", volume=0.6)
+
+    def _camera_ready(self) -> bool:
+        ready = getattr(self.host, "hands_ready", None)
+        try:
+            return bool(ready()) if ready is not None else False
+        except Exception:  # noqa: BLE001 - no camera: tapping still works
+            return False
 
     # ------------------------------------------------------------ logic
     def set_phase(self, phase: str) -> None:
@@ -130,11 +148,41 @@ class RockPaperScissors(Game):
         self.beat = -1
 
     def choose(self, choice: str) -> bool:
-        if self.phase != "pick" or choice not in CHOICES:
+        if choice not in CHOICES:
             return False
-        self.you, self.bot, self.result = choice, None, None
+        if self.phase == "ask":  # the camera wasn't sure: the player says what they showed
+            self.you = choice
+            self.reveal()
+            return True
+        if self.phase != "pick":
+            return False
+        self.you, self.bot, self.result, self.seen = choice, None, None, False
         self.set_phase("count")
         return True
+
+    def go(self) -> bool:
+        """A camera round: count down, then read the player's hand on "Shoot!"."""
+        if self.phase != "pick":
+            return False
+        self.camera = self._camera_ready()
+        if not self.camera:
+            return False  # the camera was switched off meanwhile: back to tapping a choice
+        self.you, self.bot, self.result, self.seen, self.look = None, None, None, False, None
+        self.set_phase("count")
+        return True
+
+    def take_look(self) -> None:
+        look = self.look
+        if look is not None and getattr(look, "done", False):
+            sign = getattr(look, "sign", None)
+            if sign in CHOICES:
+                self.you, self.seen = sign, True
+                self.reveal()
+            else:
+                self.set_phase("ask")
+                self.host.sound("boop", volume=0.6)
+        elif self.phase_t >= LOOK_GIVE_UP_S:
+            self.set_phase("ask")
 
     def reveal(self) -> None:
         assert self.you is not None
@@ -167,7 +215,13 @@ class RockPaperScissors(Game):
                 self.beat = b
                 self.host.sound("blip" if b < 3 else "click")
             if self.phase_t >= BEAT_S * 3 and not self.in_finale:
-                self.reveal()
+                if self.you is not None:
+                    self.reveal()
+                else:  # "Shoot!": now the hand shows its shape
+                    self.look = self.host.see_hand()
+                    self.set_phase("look")
+        elif self.phase == "look" and not self.in_finale:
+            self.take_look()
         elif self.phase == "reveal" and self.phase_t >= REVEAL_S and not self.in_finale:
             self.set_phase("pick")
         self.eyes.look(0.25 if self.phase == "pick" else 0.6, 0.7)
@@ -183,11 +237,25 @@ class RockPaperScissors(Game):
                 return name
         return None
 
+    def go_rect(self) -> pygame.Rect:
+        return pygame.Rect(int(self.w / 2 - GO_W / 2), BTN_Y + 10, GO_W, GO_H)
+
+    def shows_buttons(self) -> bool:
+        """The three choice buttons (always when tapping; with the camera only to say what you showed)."""
+        return not self.camera or self.phase == "ask" or (self.phase == "reveal" and not self.seen)
+
     def on_tap(self, x: float, y: float) -> bool:
+        if self.camera and self.phase == "pick":
+            return self.go()  # anywhere: big enough for small hands
+        if not self.shows_buttons():
+            return False
         choice = self.button_at(x, y)
         return self.choose(choice) if choice else False
 
     def on_key(self, name: str) -> bool:
+        if name in ("space", "return") and self.camera:
+            self.go()
+            return True
         choice = {"1": "rock", "2": "paper", "3": "scissors", "r": "rock", "p": "paper", "s": "scissors"}.get(name)
         if choice is None:
             return False
@@ -195,19 +263,26 @@ class RockPaperScissors(Game):
         return True
 
     def hear(self, text: str) -> bool:
-        for word in re.findall(r"[a-z]+", text.lower()):
+        words = re.findall(r"[a-z]+", text.lower())
+        for word in words:
             if word in WORDS:
                 return self.choose(WORDS[word])
+        if self.camera and any(w in GO_WORDS for w in words):
+            return self.go()
         return False
 
     # ------------------------------------------------------------ drawing
     def label(self) -> tuple[str, art.Color, art.Color]:
         if self.phase == "count":
             return COUNT_BEATS[min(3, max(0, int(self.phase_t // BEAT_S)))], art.INK, art.WHITE
+        if self.phase == "look":
+            return ("Shoot!" if self.phase_t < 0.5 else "Looking..."), art.INK, art.WHITE
+        if self.phase == "ask":
+            return "What did you show?", art.WHITE, art.STRAWBERRY
         if self.phase == "reveal":
             return {"win": ("You win!", art.WHITE, art.MINT), "lose": ("LittleBot wins!", art.WHITE, art.SKY),
                     "draw": ("Draw!", art.INK, art.LEMON)}[self.result or "draw"]
-        return "Pick one!", art.WHITE, art.STRAWBERRY
+        return ("Ready?" if self.camera else "Pick one!"), art.WHITE, art.STRAWBERRY
 
     def draw_bubble(self, surf: pygame.Surface, x: float, who: str, choice: str | None) -> None:
         winner = self.phase == "reveal" and ((who == "you" and self.result == "win") or
@@ -217,8 +292,8 @@ class RockPaperScissors(Game):
         color = (255, 250, 253) if not winner else art.lighten(art.LEMON, 0.55)
         art.blit_center(surf, art.circle(BUBBLE_R + 5, art.inkier((246, 196, 220), 0.25)), (x, ARENA_Y + 4))
         art.blit_center(surf, art.circle(BUBBLE_R, color), (x, ARENA_Y))
-        if self.phase == "count":
-            hop = abs(math.sin(self.phase_t / BEAT_S * math.pi)) * 22
+        if self.phase == "count" or (self.phase == "look" and who == "bot"):
+            hop = abs(math.sin(self.phase_t / BEAT_S * math.pi)) * 22 if self.phase == "count" else 0
             art.blit_center(surf, icon_sprite("rock", 104), (x, ARENA_Y + 6 - hop))
         elif self.phase == "reveal" and choice is not None:
             k = art.ease_out_back(min(1.0, self.phase_t / 0.35), 2.2)
@@ -234,20 +309,35 @@ class RockPaperScissors(Game):
         self.draw_bubble(surf, BOT_X, "bot", self.bot)
         self.draw_bubble(surf, YOU_X, "you", self.you if self.phase != "pick" else None)
         art.blit_center(surf, art.text_outlined("VS", 46, art.WHITE, art.INK, 3), (self.w / 2, ARENA_Y))
+        if self.shows_buttons():
+            self.render_buttons(surf)
+        elif self.phase == "pick":
+            r = self.go_rect()
+            surf.blit(art.rounded_rect(GO_W, GO_H, 36, art.MINT, shadow=6, border=art.inkier(art.MINT, 0.2),
+                                       border_w=4), r.topleft)
+            art.blit_text(surf, "Go!", 52, (r.centerx, r.y + 46), art.WHITE)
+            art.blit_text(surf, "Show me your hand on Shoot!", 24, (r.centerx, r.bottom - 22), art.INK)
+        else:
+            hint = (f"I saw {LABELS[self.you]}!" if self.phase == "reveal" and self.you
+                    else "Show me rock, paper or scissors!")
+            art.blit_center(surf, art.pill(hint, 30, art.INK, art.WHITE), (self.w / 2, BTN_Y + 70))
+        text, fg, bg = self.label()
+        art.blit_center(surf, art.pill(text, 32, fg, bg), (self.w / 2, 34))
+        art.blit_center(surf, art.pill(f"You {self.wins}", 26, art.INK, art.WHITE), (self.w - 92, 34))
+        art.blit_center(surf, art.pill(f"LittleBot {self.losses}", 26, art.INK, art.WHITE), (104, 34))
+
+    def render_buttons(self, surf: pygame.Surface) -> None:
+        asking = self.phase == "ask"
         for i, name in enumerate(CHOICES):
             r = self.button_rect(i)
-            chosen = self.phase != "pick" and self.you == name
-            dim = self.phase != "pick" and not chosen
+            chosen = self.phase != "pick" and not asking and self.you == name
+            dim = self.phase != "pick" and not asking and not chosen
             color = art.lighten(art.LEMON, 0.35) if chosen else ((246, 232, 240) if dim else art.WHITE)
             lift = -6 if chosen else 0
             surf.blit(art.rounded_rect(BTN_W, BTN_H, 30, color, shadow=6, border=(246, 196, 220) if not chosen else
                                        art.inkier(art.LEMON, 0.2), border_w=4), (r.x, r.y + lift))
             art.blit_center(surf, icon_sprite(name, 84), (r.centerx, r.y + 56 + lift), 140 if dim else None)
             art.blit_text(surf, LABELS[name], 30, (r.centerx, r.bottom - 20 + lift), art.INK_SOFT if dim else art.INK)
-        text, fg, bg = self.label()
-        art.blit_center(surf, art.pill(text, 32, fg, bg), (self.w / 2, 34))
-        art.blit_center(surf, art.pill(f"You {self.wins}", 26, art.INK, art.WHITE), (self.w - 92, 34))
-        art.blit_center(surf, art.pill(f"LittleBot {self.losses}", 26, art.INK, art.WHITE), (104, 34))
 
     def summary(self) -> str:
         return f"You {self.wins} - LittleBot {self.losses}" + (f" - draws {self.draws}" if self.draws else "")
@@ -257,4 +347,5 @@ class RockPaperScissors(Game):
 
     def status_extra(self) -> dict[str, Any]:
         return {"wins": self.wins, "losses": self.losses, "draws": self.draws, "phase": self.phase,
-                "you": self.you, "bot": self.bot, "result": self.result}
+                "you": self.you, "bot": self.bot, "result": self.result,
+                "mode": "camera" if self.camera else "tap", "seen": self.seen}

@@ -65,7 +65,8 @@ GAMES: tuple[GameInfo, ...] = (
              "littlebot.games.reaction", "ReactionRace"),
     GameInfo("rps", "Rock Paper Scissors", "Pick rock, paper or scissors - LittleBot shows its pick "
              "after the countdown.", "4 years+", 48, "big", 5.0, "✂️",
-             "Tap a choice (or say it if LittleBot is listening). Rock beats scissors, scissors beat paper, "
+             "With the camera on: tap Go and show rock, paper or scissors to the camera on Shoot! Otherwise tap "
+             "a choice (or say it if LittleBot is listening). Rock beats scissors, scissors beat paper, "
              "paper beats rock.",
              "littlebot.games.rps", "RockPaperScissors"),
 )
