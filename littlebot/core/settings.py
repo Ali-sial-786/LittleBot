@@ -79,6 +79,7 @@ def build_defaults(cfg: LittleBotConfig) -> dict[str, Any]:
             "favourite_animals": [],
             "favourite_songs": [],
             "interests": [],
+            "remembered": [],  # what a grown-up asked the voice chat to remember (littlebot/brain/remembered.py)
             "activity_preferences": {},  # {activity_id: {"enabled": bool, "favourite": bool}}
         },
     }

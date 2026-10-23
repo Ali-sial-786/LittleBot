@@ -12,7 +12,8 @@ from littlebot.safety.policy import age_group_label
 
 router = APIRouter(prefix="/api/profile", tags=["profile"])
 
-_FIELDS = ("nickname", "birth_month", "age_months", "language", "favourite_animals", "favourite_songs", "interests")
+_FIELDS = ("nickname", "birth_month", "age_months", "language", "favourite_animals", "favourite_songs", "interests",
+           "remembered")
 
 
 def _view(dash: DashState) -> dict[str, Any]:
@@ -49,7 +50,7 @@ async def update_profile(body: ProfileBody, dash: DashState = Depends(get_dash))
     profile = settings.get("profile") or {}
     changes = body.model_dump(exclude_unset=True)
     for key, value in changes.items():
-        if key in ("favourite_animals", "favourite_songs", "interests") and value is None:
+        if key in ("favourite_animals", "favourite_songs", "interests", "remembered") and value is None:
             value = []
         if key == "nickname" and value is None:
             value = ""

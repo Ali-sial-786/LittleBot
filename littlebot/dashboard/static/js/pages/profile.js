@@ -34,6 +34,7 @@ export default {
     const animals = tagInput({ label: 'Favourite animals', placeholder: 'e.g. duck, cat' });
     const songs = tagInput({ label: 'Favourite songs', placeholder: 'e.g. Twinkle Twinkle' });
     const interests = tagInput({ label: 'Interests', placeholder: 'e.g. balls, bubbles' });
+    const remembered = tagInput({ label: 'Things LittleBot remembers', max: 20, maxLen: 100, placeholder: "e.g. Ali is Amara's dad" });
 
     const saveBtn = h('button', { type: 'submit', class: 'btn primary big' }, icon('check'), h('span', { text: 'Save profile' }));
     const form = h('form', { class: 'stack', novalidate: true },
@@ -45,6 +46,7 @@ export default {
         h('div', { class: 'field' }, h('span', { text: 'Favourite animals' }), animals.el),
         h('div', { class: 'field' }, h('span', { text: 'Favourite songs' }), songs.el)),
       h('div', { class: 'field' }, h('span', { text: 'Interests' }), interests.el, h('span', { class: 'hint', text: 'Press Enter after each one. LittleBot uses these to personalise activities.' })),
+      h('div', { class: 'field' }, h('span', { text: 'Things LittleBot remembers' }), remembered.el, h('span', { class: 'hint', text: 'Say "remember that ..." in a voice chat, or type them here. Every voice chat starts with these notes. Remove one with its x and save.' })),
       h('div', {}, saveBtn));
 
     form.addEventListener('submit', async (e) => {
@@ -55,6 +57,7 @@ export default {
         favourite_animals: animals.get(),
         favourite_songs: songs.get(),
         interests: interests.get(),
+        remembered: remembered.get(),
       };
       if (mode === 'birth') {
         if (birth.value && !/^\d{4}-\d{2}$/.test(birth.value)) { toast('Birth month must look like 2025-03.', 'error'); birth.focus(); return; }
@@ -82,7 +85,7 @@ export default {
           h('div', { class: 'card-head' }, h('h2', {}, icon('lock'), 'Your data')),
           h('ul', { class: 'stack-sm muted', style: { paddingLeft: '18px', margin: 0 } },
             h('li', { text: 'Stored only in LittleBot\'s settings file on the robot.' }),
-            h('li', { text: 'Kept to the minimum: a nickname, a birth month (not a date) and a few favourites.' }),
+            h('li', { text: 'Kept to the minimum: a nickname, a birth month (not a date), a few favourites and the notes you ask LittleBot to remember.' }),
             h('li', { text: 'An unknown age is treated as the youngest group - the gentlest settings.' })),
           h('div', { class: 'mt-2' }, button('Forget profile', {
             kind: 'danger-outline', iconName: 'trash',
@@ -110,6 +113,7 @@ export default {
       animals.set(p.favourite_animals || []);
       songs.set(p.favourite_songs || []);
       interests.set(p.interests || []);
+      remembered.set(p.remembered || []);
       setText(ageBig, res.age_months != null ? fmtAge(res.age_months) : 'Age not set');
       setText(ageGroup, res.age_months != null ? `Age group: ${res.age_group_label}` : 'LittleBot uses its gentlest settings until you add an age.');
       clear(ageNotes).append(

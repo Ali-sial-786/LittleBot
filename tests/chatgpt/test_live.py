@@ -1190,3 +1190,54 @@ async def test_the_voice_knows_the_childs_name_unless_the_parent_says_no(live, c
     ctx.settings.set("ai.share_child_name", False)
     await connect(svc, server)
     assert "Amara" not in server.requests[-1]["body"]["session"]["instructions"]
+
+
+async def test_a_baby_cant_talk_so_whoever_speaks_is_a_grown_up(live, ctx):
+    svc, server, _audio, _provider, _alerts = live
+    ctx.settings.set("profile", {"nickname": "Amara", "age_months": 10})
+    await connect(svc, server)
+    text = server.requests[-1]["body"]["session"]["instructions"]
+    assert "whoever talks to you in words is one of Amara's grown-ups, never Amara" in text
+    assert "don't call them Amara" in text
+    await svc.stop_session()
+    ctx.settings.set("profile", {"nickname": "Amara", "age_months": 40})  # a talker: just don't assume
+    await connect(svc, server)
+    text = server.requests[-1]["body"]["session"]["instructions"]
+    assert "only call someone Amara when it's clearly the child" in text
+
+
+async def test_the_voice_remembers_what_a_grown_up_asks_in_every_chat(live, ctx):
+    svc, server, _audio, provider, _alerts = live
+    ctx.settings.set("profile", {"nickname": "Amara", "age_months": 10})
+    await connect(svc, server)
+    delegate(server, "r1", "remember: Ali is Amara's dad.")
+    await wait_for(lambda: answers(server, "r1"))
+    assert "will remember" in answers(server, "r1")[0] and "Ali is Amara's dad" in answers(server, "r1")[0]
+    assert ctx.settings.get("profile")["remembered"] == ["Ali is Amara's dad"]
+    assert not provider.calls  # kept on the robot: no text model involved
+    delegate(server, "r2", "Remember that Grandma Rose visits on Sundays")
+    delegate(server, "r3", "forget that Ali is the dad")
+    await wait_for(lambda: answers(server, "r3"))
+    assert "forgot" in answers(server, "r3")[0]
+    assert ctx.settings.get("profile")["remembered"] == ["Grandma Rose visits on Sundays"]
+    await svc.stop_session()
+    await connect(svc, server)
+    text = server.requests[-1]["body"]["session"]["instructions"]
+    assert "remember: Grandma Rose visits on Sundays." in text and "Ali is" not in text
+
+
+async def test_a_question_about_the_past_is_not_a_note(live, ctx):
+    svc, server, _audio, _provider, _alerts = live
+    await connect(svc, server)
+    delegate(server, "q1", "Remember what song we sang yesterday?")
+    await wait_for(lambda: answers(server, "q1"))
+    assert not (ctx.settings.get("profile") or {}).get("remembered")
+
+
+async def test_notes_leave_the_childs_name_out_when_it_isnt_shared(live, ctx):
+    svc, server, _audio, _provider, _alerts = live
+    ctx.settings.set("profile", {"nickname": "Amara", "remembered": ["Ali is Amara's dad"]})
+    ctx.settings.set("ai.share_child_name", False)
+    await connect(svc, server)
+    text = server.requests[-1]["body"]["session"]["instructions"]
+    assert "Amara" not in text and "Ali is the little one's dad" in text

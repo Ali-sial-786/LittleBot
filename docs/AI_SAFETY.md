@@ -271,6 +271,12 @@ the main safeguard; the code checks are a backstop.**
   the tiny context, the age band, the child's nickname (`ai.share_child_name`, **on by default**
   so the AI and the live voice can call the child by name; switch it off on the AI page) and,
   only if a parent opts in (`ai.share_interests`), short, sanitised favourite animals/interests.
+* **Things LittleBot remembers** (`profile.remembered`, `littlebot/brain/remembered.py`): when a
+  grown-up says "remember that ..." in a voice chat, the voice hands over a short note ("Ali is
+  Amara's dad") that is kept on the robot (at most 20, 100 characters each) and put into the
+  instructions of every later voice chat. The Profile page lists them; remove any there, or say
+  "forget that ...". With `ai.share_child_name` off, the child's nickname in a note becomes "the
+  little one".
 * No camera frames, images or audio are ever sent by the conversation engine. Live voice
   (§3) is separate and does stream the microphone audio to OpenAI during a parent-started
   call.

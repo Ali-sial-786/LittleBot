@@ -9,6 +9,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from littlebot.brain.remembered import MAX_LEN as MAX_NOTE_LEN
+from littlebot.brain.remembered import MAX_NOTES
 from littlebot.core.interfaces import EXPRESSIONS, FACE_ANIMATIONS, SOUND_NAMES
 
 MAX_PROFILE_AGE_MONTHS = 72  # LittleBot is designed for 6 months - 5 years
@@ -178,17 +180,17 @@ LANGUAGES = {"en": "English", "es": "Español", "fr": "Français", "de": "Deutsc
 _NAME_RE = re.compile(r"^[\w][\w .'\-]*$", re.UNICODE)
 
 
-def _clean_list(values: list[str] | None, field: str) -> list[str]:
+def _clean_list(values: list[str] | None, field: str, *, max_items: int = 12, max_len: int = 40) -> list[str]:
     if values is None:
         return []
-    if len(values) > 12:
-        raise ValueError(f"{field}: at most 12 items")
+    if len(values) > max_items:
+        raise ValueError(f"{field}: at most {max_items} items")
     out: list[str] = []
     seen: set[str] = set()
     for v in values:
         if not isinstance(v, str):
             raise ValueError(f"{field}: items must be text")
-        v = clean_text(v, max_len=40, field=f"{field} item")
+        v = clean_text(v, max_len=max_len, field=f"{field} item")
         if v and v.lower() not in seen:
             seen.add(v.lower())
             out.append(v)
@@ -203,6 +205,7 @@ class ProfileBody(Body):
     favourite_animals: list[str] | None = Field(default=None, max_length=12)
     favourite_songs: list[str] | None = Field(default=None, max_length=12)
     interests: list[str] | None = Field(default=None, max_length=12)
+    remembered: list[str] | None = Field(default=None, max_length=MAX_NOTES)  # what the voice chat remembers
 
     @field_validator("nickname")
     @classmethod
@@ -248,6 +251,11 @@ class ProfileBody(Body):
         if v is None:
             return None
         return _clean_list(v, getattr(info, "field_name", "list"))
+
+    @field_validator("remembered")
+    @classmethod
+    def _remembered(cls, v: list[str] | None) -> list[str] | None:
+        return None if v is None else _clean_list(v, "remembered", max_items=MAX_NOTES, max_len=MAX_NOTE_LEN)
 
 
 # ----------------------------------------------------------------- AI

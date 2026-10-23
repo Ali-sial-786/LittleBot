@@ -43,7 +43,7 @@ FIELD_LABELS = {
     "session_limit_minutes": "Session limit", "daily_limit_minutes": "Daily limit",
     "url": "Link", "title": "Title", "nickname": "Nickname", "birth_month": "Birth month",
     "age_months": "Age", "favourite_animals": "Favourite animals", "favourite_songs": "Favourite songs",
-    "interests": "Interests", "password": "Password", "new_password": "New password",
+    "interests": "Interests", "remembered": "Things LittleBot remembers", "password": "Password", "new_password": "New password",
     "current_password": "Current password", "setup_code": "Setup code", "volume": "Volume",
     "tts_rate": "Speaking speed", "text": "Text", "angle": "Angle", "name": "Name", "seconds": "Seconds",
 }

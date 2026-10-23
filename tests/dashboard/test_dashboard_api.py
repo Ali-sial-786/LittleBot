@@ -372,6 +372,8 @@ async def test_profile_get_and_update(authed, dctx):
     body = r.json()
     assert body["age_months"] == 12 and body["age_group"] == "young_toddler" and body["age_source"] == "birth_month"
     assert body["profile"]["favourite_animals"] == ["duck", "cat"]
+    r = await authed.put("/api/profile", json={"remembered": ["Ali is Sami's dad", "ali is sami's dad"]})
+    assert r.json()["profile"]["remembered"] == ["Ali is Sami's dad"]  # what the voice chat remembers
     r = await authed.put("/api/profile", json={"age_months": 30})
     assert r.json()["age_months"] == 30 and r.json()["profile"]["birth_month"] == ""
     assert dctx.settings.child_age_months() == 30

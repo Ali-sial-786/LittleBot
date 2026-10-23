@@ -230,6 +230,9 @@ HANDOVER_MAX_S = 15.0  # a video / activity / sleep was promised: the call ends 
 HANDOVER_REASON = "handed over to what was asked for"
 STILL_WORKING = ("LittleBot is still working on that. Say, in a few words, that you're thinking about it and will "
                  "tell them in a moment, then wait: the answer comes next.")
+# "remember: Ali is Amara's dad" / "forget: ..." from the voice (VOICE_INSTRUCTIONS); not a question about the past.
+REMEMBER_ASK = re.compile(r"^\s*(?:please\s+)?(remember|forget)\b\s*(?::|that\b)?\s*([^?]+?)[\s.!]*$", re.I)
+TALKS_FROM_MONTHS = 24  # younger: whoever talks to LittleBot in sentences is a grown-up, not the child
 LATE_ANSWER = "Here is the answer to what they asked a moment ago: {answer} Tell them now, in your own words."
 LATE_FAILED = "What they asked a moment ago didn't work out this time. Say so briefly; they can ask again."
 # Hand-offs that ask LittleBot to do something with the robot or the app, not to make a face or to look
@@ -309,6 +312,11 @@ not sure of), delegate it to the client and wait for the result: LittleBot can l
 simply in your own words. Never say you can't check the weather or the news. Whenever you delegate anything, \
 do it at once and silently: never say "let me check", "let me look", "let me see", "one moment", "hold on" or \
 "hmm" first.
+
+You start every chat fresh, but LittleBot keeps a few notes for you. When a grown-up asks you to remember \
+something (who they are, a name, something the family likes), delegate it to the client as "remember: <the fact, \
+with names, not I or me>" (for example "remember: Sam is the baby's dad"), wait, then say you'll remember it. To \
+forget one, delegate "forget: <the fact>". Never say you'll remember something without doing this.
 
 The client knows live information: the weather (now, today, tomorrow, anywhere), the time and the date, and \
 things that change, like news, sports scores or opening hours. For these, always delegate the question to the \
@@ -750,10 +758,35 @@ class LiveCall:
                                          faces=_face_menu())
         nickname = self._child_name()
         if nickname:
-            text += (f"\nThe little one's name is {nickname}. Use it warmly now and then (not in every sentence); "
-                     f"anyone else you hear is one of {nickname}'s grown-ups.")
+            text += (f"\nThe little one's name is {nickname}. Say it warmly now and then when you talk to or about "
+                     f"{nickname} (not in every sentence).")
+        who = nickname or "the little one"
+        if age is not None and age < TALKS_FROM_MONTHS:
+            text += (f"\n{who[0].upper() + who[1:]} is too young to talk in sentences: whoever talks to you in words "
+                     f"is one of {who}'s grown-ups, never {who}, so don't call them {who}. Babbling, cooing and baby "
+                     f"sounds are {who}. If a grown-up tells you who they are, use their name.")
+        else:
+            text += (f"\nGrown-ups talk to you too: only call someone {who} when it's clearly the child. If a "
+                     f"grown-up tells you who they are, use their name.")
+        notes = self._notes(nickname)
+        if notes:
+            text += "\nWhat the family asked you to remember: " + "; ".join(notes) + "."
         now = _dt.datetime.now()
         return f"{text}\nAt the start of this call it is {now:%A}, {now:%H:%M} local time."
+
+    def _notes(self, nickname: str | None) -> list[str]:
+        """The family's notes (littlebot/brain/remembered.py); the child's name left out unless it may be shared."""
+        from littlebot.brain import remembered  # noqa: PLC0415
+        from littlebot.brain.prompts import clean_child_name  # noqa: PLC0415
+
+        try:
+            kept = remembered.notes(self.ctx.settings)
+            nick = clean_child_name((self.ctx.settings.get("profile") or {}).get("nickname")) if not nickname else None
+        except Exception:  # noqa: BLE001 - no notes is fine
+            return []
+        if nick:
+            kept = [re.sub(rf"\b{re.escape(nick)}\b", "the little one", n, flags=re.I) for n in kept]
+        return kept
 
     def _child_name(self) -> str | None:
         """The child's nickname from the profile, unless the parent switched sharing it off (``ai.share_child_name``)."""
@@ -1023,6 +1056,11 @@ class LiveCall:
             if not question:
                 heard = [c["text"] for c in self._captions if c["who"] == "heard"]
                 question = heard[-1] if heard else ""
+            keep = REMEMBER_ASK.match(d.prompt)  # the voice's own words only: "remember I'm her dad" has no names
+            if keep:
+                log.info("live voice: hand-off received (kind=%s)", keep.group(1).lower())
+                self._send_result(d.id, self._remember(keep.group(1).lower(), keep.group(2)))
+                return
             info = bool(INFO_WORDS.search(question))  # "what's the weather looking like?": tools, not the camera
             seeing = bool(question) and not info and self._needs_camera(question)
             # "start the peekaboo activity", "show me a video": tools. But a look stays a look whatever it
@@ -1057,6 +1095,23 @@ class LiveCall:
         finally:
             self._delegations -= 1
             self._last_activity = self.svc._now()
+
+    def _remember(self, what: str, fact: str) -> str:
+        from littlebot.brain import remembered  # noqa: PLC0415
+
+        try:
+            if what == "forget":
+                gone = remembered.forget(self.ctx.settings, fact)
+                return (f"Done: LittleBot forgot {'; '.join(gone)}." if gone
+                        else "LittleBot had nothing like that written down.")
+            note = remembered.remember(self.ctx.settings, fact)
+        except Exception:  # noqa: BLE001
+            log.warning("live voice: couldn't keep a note", exc_info=True)
+            return wire.FAILED_RESULT
+        if note is None:
+            return "LittleBot couldn't write that down. Say so briefly."
+        log.info("live voice: remembering a note (%d kept)", len(remembered.notes(self.ctx.settings)))
+        return f"Saved: LittleBot will remember this in every chat from now on: {note}."
 
     async def _deliver(self, delegation_id: str, task: "asyncio.Task[str]", kind: str) -> None:
         """Answer a hand-off. The voice waits silently until a hand-off is answered, so: the answer if
