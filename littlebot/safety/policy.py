@@ -2,7 +2,9 @@
 
 These rules are enforced in code (not just in prompts). Age groups are flexible
 recommendations for choosing activities, never developmental assessments.
-An unknown age is treated as the youngest group (most restrictive).
+An unknown age is treated as the youngest group (most restrictive) for videos and activities.
+Cloud conversation is the parent's choice at any age (``ai.min_age_months_for_cloud`` can set
+a minimum), and reply length is the parent's ``ai.max_words``: a grown-up may be the one asking.
 """
 
 from __future__ import annotations
@@ -34,7 +36,7 @@ def age_group_label(key: str) -> str:
 class AgePolicy:
     age_months: int | None
     min_age_months_for_video: int = 18
-    min_age_months_for_cloud_ai: int = 24
+    min_age_months_for_cloud_ai: int = 0  # 0: any age (also unknown), once a parent switches cloud AI on
 
     @property
     def effective_age(self) -> int:
@@ -50,13 +52,16 @@ class AgePolicy:
         return self.effective_age >= self.min_age_months_for_video or parent_override
 
     def cloud_ai_allowed(self) -> bool:
-        """Open-ended cloud conversation only for older children (and only if a parent enables it)."""
-        return self.effective_age >= self.min_age_months_for_cloud_ai
+        """Cloud conversation for this age (a parent must still switch it on). With a minimum age
+        set, an unknown age is not allowed."""
+        if self.min_age_months_for_cloud_ai <= 0:
+            return True
+        return self.age_months is not None and self.age_months >= self.min_age_months_for_cloud_ai
 
-    def max_reply_words(self, configured: int = 30) -> int:
-        age = self.effective_age
-        cap = 8 if age < 24 else 15 if age < 36 else 30
-        return max(3, min(cap, configured))
+    def max_reply_words(self, configured: int = 60) -> int:
+        """The reply length cap: the parent's ``ai.max_words``, at any age. The prompt keeps words short
+        and simple for a young child; the code can't tell whether the child or a grown-up asked."""
+        return max(3, int(configured))
 
     def activity_suitable(self, min_age: int, max_age: int) -> bool:
         return min_age <= self.effective_age < max_age

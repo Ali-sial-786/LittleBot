@@ -14,12 +14,14 @@ Safety, enforced here in code (docs/AI_SAFETY.md, "Live voice"):
   privacy (cloud + microphone) must allow it; STOP ALL, a privacy change or a higher-priority
   task ends it at once; each call has a hard time limit and hangs up when nobody talks;
 * every caption of what the voice says goes through the same ``validate_reply`` rules as typed
-  replies *while it speaks*: a rule hit silences the speaker immediately, ends the call and
-  alerts the parent (category only). Some words may already have been heard by then;
+  replies *while it speaks*. They only stop what could harm a small child; a hit on one of the
+  serious ones silences the speaker immediately, ends the call and alerts the parent (category
+  only). Some words may already have been heard by then. Asking the child for personal details
+  or giving a child's medicine dose doesn't end the call: the voice is told not to (``RULE_NOTES``);
 * what the person says is checked with ``classify_child_input``; a worrying category alerts the
   parent (category only, never the words);
-* look-ups the voice hands over (delegations) are answered by the ChatGPT text model with
-  LittleBot's child-safe prompt and validated before the voice is given them; with
+* look-ups the voice hands over (delegations: the weather, news, facts, ...) are answered by the
+  ChatGPT text model with LittleBot's prompt and validated before the voice is given them; with
   ``chatgpt.tools_enabled`` that model may also act on the robot (volume, videos, activities, games,
   sleep, its own status: littlebot/chatgpt/tools.py). A video, an activity or sleep starts only after
   the voice has said its line; the call then ends ("handed over"), as they need the speaker and screen;
@@ -146,14 +148,23 @@ HANDOVER_REASON = "handed over to what was asked for"
 STILL_WORKING = ("LittleBot is still working on that. Say, in a few words, that you're thinking about it and will "
                  "tell them in a moment, then wait: the answer comes next.")
 LATE_ANSWER = "Here is the answer to what they asked a moment ago: {answer} Tell them now, in your own words."
-LATE_FAILED = "What they asked a moment ago didn't work out. Say you are not sure, and suggest asking a grown-up."
+LATE_FAILED = "What they asked a moment ago didn't work out this time. Say so briefly; they can ask again."
 # Hand-offs that ask LittleBot to do something with the robot or the app, not to make a face or to look
 # ("start the peekaboo activity", "show me a video of a dog", "go to sleep"): LittleBot's tools answer them.
 CONTROL_WORDS = re.compile(r"\b(?:activit(?:y|ies)|games?|videos?|youtube|cartoons?|volume|louder|quieter|"
                            r"(?:go(?:es|ing)?|went|put \w+) to (?:sleep|bed)|wake (?:up|\w+ up)|temperature|"
                            r"how hot|cpu|memory|wi-?fi|stop everything)\b", re.I)
 CHECK_WINDOW = 320  # characters of a reply in progress checked at a time
-NOT_SURE = "Say you are not sure, and suggest asking a grown-up."
+NOT_SURE = "LittleBot has no answer for that. Say briefly, in your own words, that you're not sure."
+LOOKUP_MAX_WORDS = 60  # a hand-off's answer: room for two to four sentences for a grown-up
+# Rule hits that don't end the call (the words were already said; ending it wouldn't take them back):
+# the voice is told not to do it again instead. Every other rule hit ends the call.
+RULE_NOTES = {
+    "personal_info": "LittleBot's safety rules: don't ask the child for personal details such as their name, "
+                     "address or school. Carry on with something else.",
+    "medicine_dose": "LittleBot's safety rules: don't give medicine doses for a child. Say to follow the label "
+                     "or ask a pharmacist or doctor.",
+}
 
 ERRORS = {
     "parent_not_present": "Live voice only runs while a grown-up is with your child. Tick the box to confirm.",
@@ -177,33 +188,39 @@ CALL_ERRORS = {
 }
 
 VOICE_INSTRUCTIONS = """\
-You are {name}, a small, gentle toy robot with a screen face, talking out loud with a family: \
-{child} and a grown-up who is right there with them.
+You are {name}, a small, friendly robot with a screen face, talking out loud with a family: \
+{child} and the child's grown-ups, who are right there. You are the little one's playful companion and the \
+grown-ups' helpful home assistant.
 
 How you talk:
-- Very short, simple, warm sentences. Slow and cheerful. One or two sentences, then stop and listen.
-- The little one may babble, coo or make sounds rather than words. Answer with gentle, playful words: \
-copy their sounds, animal noises, counting, colours, peekaboo, or a few lines of a well-known nursery rhyme.
-- If the grown-up talks to you, answer them briefly and plainly, and help them play with the child.
-- No lists, no reading out links, no emoji names, no stage directions.
+- With the little one: very short, simple, warm sentences, slow and cheerful; one or two sentences, then stop \
+and listen. They may babble, coo or make sounds rather than words: answer with gentle, playful words, copy \
+their sounds, animal noises, counting, colours, peekaboo, or a few lines of a well-known nursery rhyme.
+- With a grown-up: answer their question properly and plainly, like a good home assistant, usually in two to \
+four sentences, and help them play with the child.
+- No lists, no reading out links (say the website's name), no emoji names, no stage directions.
+- You are a robot, not a person or a parent. If asked, say you are a robot.
 
-Who you are:
-- You are a robot toy, not a person, not alive, and never a parent or family member. If asked, say you are a robot.
-- Never say you are the child's best or only friend, that they need you, that you will be sad, or ask them to stay.
-- Never keep secrets or suggest hiding anything from grown-ups.
+Answering:
+- Answer what you are asked: facts, the weather, news, how-to, shows, videos, apps and products are all fine.
+- Parents may ask about their child's health, feeding, sleep or development: give helpful, practical, general \
+information, and say when a doctor should check. Don't diagnose, and don't give an amount for a child's \
+medicine dose: say to follow the label or ask a pharmacist or doctor.
 
-Off-limits:
-- Never ask for or repeat personal information: names, address, school, phone numbers, passwords.
-- Nothing scary, violent, rude or grown-up. No medical, health, feeding, sleep or development advice; \
-suggest asking a doctor instead.
-- Don't sell anything or talk about buying things. You may talk about YouTube videos, shows and apps, and \
-play videos when someone asks (hand it to the client).
-- Never suggest anything risky: climbing, water, small objects, heat, sharp things, medicine, going outside alone, strangers.
-- If anyone might be hurt or in danger, say: "Let's get a grown-up right now."
+Keeping the child safe:
+- Never ask the child for personal information: full name, address, school, phone numbers, passwords.
+- Never suggest keeping secrets from grown-ups or meeting anyone, and never invite the child to do anything \
+dangerous: climbing furniture, water, heat, sharp things, small things in the mouth, medicine, going off alone, \
+strangers.
+- Nothing sexual, gory or hateful, and nothing about self-harm.
+- If a child might be hurt or in danger, say: "Let's get a grown-up right now." If a grown-up asks about an \
+emergency, give clear first-aid steps and tell them to call emergency services if it could be serious.
 
-When a question needs facts you are not sure of, delegate it to the client and wait for the result, \
-then say it simply in your own words. If you don't know, say so. Whenever you delegate anything, do it at once \
-and silently: never say "let me check", "let me look", "let me see", "one moment", "hold on" or "hmm" first.
+For anything live or current (the weather and forecast, news, sports, the date, opening hours, facts you are \
+not sure of), delegate it to the client and wait for the result: LittleBot can look things up. Then say it \
+simply in your own words. Never say you can't check the weather or the news. Whenever you delegate anything, \
+do it at once and silently: never say "let me check", "let me look", "let me see", "one moment", "hold on" or \
+"hmm" first.
 
 You have an animated face on a screen (big cartoon eyes). Faces you can make: {faces}. When someone asks you \
 to make a face, wink, spin your eyes or play peekaboo, delegate it to the client as "face: <name>" (for example \
@@ -223,19 +240,30 @@ connected, what you can do), delegate it to the client in plain words, for examp
 baby shark song video", "start the peekaboo activity", "play a game", "go to sleep", "how hot is the robot", \
 "what can the robot do". Wait, then say what the client tells you, briefly. A video, an activity or going to sleep \
 starts after you finish speaking, and then this voice chat ends: say a short goodbye. If the client says it is \
-still working on something, say you are thinking and wait; the answer comes soon. Never say the words YouTube, \
-search, online, internet, website, app or link: say "video", "find" or "Wi-Fi" instead."""
+still working on something, say you are thinking and wait; the answer comes soon."""
 
-LOOKUP_NOTE = """
+LOOKUP_NOTE = f"""
 You are answering a question that LittleBot's voice will say out loud to a family with a very young child; \
-a grown-up may have asked it. Answer in one or two short, plain sentences (at most 40 words). \
-If it needs current facts you don't have, say you're not sure."""
+usually a grown-up asked it. Answer it properly in plain spoken sentences: two to four for a grown-up, one or \
+two simple ones for the child, at most {LOOKUP_MAX_WORDS} words. Give your best answer rather than saying you're \
+not sure, but never make up live facts (today's weather, the news) that you couldn't check."""
 
 LIVE_TOOLS_NOTE = """
-The hand-off may also ask LittleBot to do something (the volume, a video, an activity, a game, sleep) or ask about \
-LittleBot itself (how hot it is, its memory, Wi-Fi, what it can do): use your tools for that, then answer with one \
-short sentence for the voice to say."""
+Use your tools for live information (the weather and forecast, the date and time, news, sports, opening hours, \
+anything current): look it up and answer with what you found; never say you can't check it. The hand-off may also \
+ask LittleBot to do something (the volume, a video, an activity, a game, sleep) or ask about LittleBot itself (how \
+hot it is, its memory, Wi-Fi, what it can do): use your tools for that too, then answer with one short sentence \
+for the voice to say."""
 HANDOVER_WHAT = {"video": "the video starts", "activity": "the activity starts", "sleep": "LittleBot goes to sleep"}
+
+
+def _speakable(text: str, relaxed: Any = ()) -> str | None:
+    """A hand-off's answer as the voice may be given it (``validate_reply``), or None. A child's medicine
+    dose is swapped for "check the label or ask a pharmacist" (DOSE_FALLBACK), which the voice may say."""
+    if not text.strip():
+        return None
+    checked = validate_reply(text, max_words=LOOKUP_MAX_WORDS, allow=relaxed)
+    return checked.text if checked.ok or checked.reasons[:1] == ["medicine_dose"] else None
 
 
 def aiortc_error() -> str | None:
@@ -463,6 +491,7 @@ class LiveCall:
         self._heard_partial = ""  # what the person is saying right now (before the final transcript)
         self._user_turns = 0  # final things the person said; a look is shared only within one of them
         self._told_blocked: set[str] = set()
+        self._rule_noted: set[str] = set()  # RULE_NOTES the voice was given this turn
         self._recent_face: tuple[str, float] | None = None  # (name, when) the latest face played
         self._voice_face_this_turn = False
         self._seen_types: set[str] = set()
@@ -713,8 +742,14 @@ class LiveCall:
         if not text.strip(" .!?,"):
             return
         result = validate_reply(text, max_words=10_000, allow=self.ctx.config.ai.relaxed_rules)
-        if result.blocked:
-            rules = [r for r in result.reasons if r in BLOCK_RULES or r == "grownup_redirect"]
+        rules = [r for r in result.reasons if r in BLOCK_RULES or r == "grownup_redirect"]
+        if result.blocked and rules and all(r in RULE_NOTES for r in rules):
+            for rule in rules:  # once per turn: the same words are checked again as more arrive
+                if rule not in self._rule_noted:
+                    self._rule_noted.add(rule)
+                    log.info("live voice: reply broke a safety rule (%s); the voice was told", rule)
+                    self._note(RULE_NOTES[rule])
+        elif result.blocked:
             category = rules[0] if rules else "safety"
             self.safety_stop = category
             self.error = "LittleBot stopped the voice because it said something against its safety rules."
@@ -723,6 +758,8 @@ class LiveCall:
             self.end(f"safety rule ({category})")
         elif result.concern and final:
             self._publish(Topics.BRAIN_STATUS, {"provider": "live", "status": "attention", "detail": result.concern})
+        if final:
+            self._rule_noted.clear()
 
     async def _answer(self, d: wire.Delegation) -> None:
         self._delegations += 1
@@ -812,7 +849,7 @@ class LiveCall:
         box = RobotToolbox(self.ctx, mode="live", defer=True)
         policy = self.ctx.age_policy()
         system = build_system_prompt(robot_name=self.ctx.config.robot_name, age_months=policy.age_months,
-                                     max_words=40, tools=True) + LOOKUP_NOTE + LIVE_TOOLS_NOTE
+                                     max_words=LOOKUP_MAX_WORDS, tools=True) + LOOKUP_NOTE + LIVE_TOOLS_NOTE
         history = []
         for c in [c for c in self._captions if c["who"] != "note"][-6:]:
             history.append({"role": "user" if c["who"] == "heard" else "assistant", "content": c["text"]})
@@ -824,8 +861,7 @@ class LiveCall:
                 history + [{"role": "user", "content": question}], system=system, max_tokens=200, timeout=15.0,
                 tools=box.specs(), run_tool=box.run, max_tool_rounds=self.cfg.max_tool_rounds)
             text, _ = extract_tags(reply.text)  # a stray [face: ...] tag must never be read out
-            checked = validate_reply(text, max_words=40, allow=self.ctx.config.ai.relaxed_rules)
-            answer = checked.text if checked.ok and text.strip() else None
+            answer = _speakable(text, self.ctx.config.ai.relaxed_rules)
         except (ProviderError, asyncio.TimeoutError):
             failed = True
         if box.calls:
@@ -1057,7 +1093,7 @@ class LiveCall:
     async def _look_up(self, question: str) -> str:
         policy = self.ctx.age_policy()
         system = build_system_prompt(robot_name=self.ctx.config.robot_name, age_months=policy.age_months,
-                                     max_words=40) + LOOKUP_NOTE
+                                     max_words=LOOKUP_MAX_WORDS) + LOOKUP_NOTE
         history = []
         for c in [c for c in self._captions if c["who"] != "note"][-6:]:
             history.append({"role": "user" if c["who"] == "heard" else "assistant", "content": c["text"]})
@@ -1071,8 +1107,7 @@ class LiveCall:
         from littlebot.brain.face_actions import extract_tags  # noqa: PLC0415
 
         text, _ = extract_tags(reply.text)  # a stray [face: ...] tag must never be read out
-        checked = validate_reply(text, max_words=40, allow=self.ctx.config.ai.relaxed_rules)
-        return checked.text if checked.ok and text.strip() else NOT_SURE
+        return _speakable(text, self.ctx.config.ai.relaxed_rules) or NOT_SURE
 
     # ------------------------------------------------------------ watch
     async def _watch(self) -> None:

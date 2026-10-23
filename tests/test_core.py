@@ -214,9 +214,14 @@ def test_age_policy():
     infant = AgePolicy(10)
     assert infant.group == "infant"
     assert not infant.video_allowed() and infant.video_allowed(parent_override=True)
-    assert not infant.cloud_ai_allowed()
+    # cloud AI: any age by default (the parent switches it on); a configured minimum still gates it
+    assert infant.cloud_ai_allowed() and AgePolicy(None).cloud_ai_allowed()
+    assert not AgePolicy(10, min_age_months_for_cloud_ai=24).cloud_ai_allowed()
+    assert not AgePolicy(None, min_age_months_for_cloud_ai=24).cloud_ai_allowed()
+    assert AgePolicy(30, min_age_months_for_cloud_ai=24).cloud_ai_allowed()
     assert AgePolicy(None).group == "unknown" and not AgePolicy(None).video_allowed()
     assert AgePolicy(40).cloud_ai_allowed() and AgePolicy(40).max_reply_words(30) == 30
+    assert infant.max_reply_words(60) == 60 and infant.max_reply_words(1) == 3  # no age cap: a grown-up may ask
     assert age_group_for(20) == "toddler" and age_group_for(3) == "under_6_months"
 
 

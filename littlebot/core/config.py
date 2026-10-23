@@ -195,11 +195,11 @@ class AIConfig(_Section):
     openai_model: str = "gpt-4o-mini"
     timeout_seconds: float = 12.0
     max_output_tokens: int = 120
-    max_words: int = 30  # validated after generation, independent of the prompt
+    max_words: int = 60  # validated after generation, independent of the prompt (two to four sentences)
     max_requests_per_hour: int = 60
     max_requests_per_day: int = 200
     daily_budget_usd: float = 0.50
-    min_age_months_for_cloud: int = 24  # below this, scripted responses only
+    min_age_months_for_cloud: int = 0  # below this, scripted responses only (0: any age, the parent decides)
     store_transcripts: bool = False
     # --- brain module extensions (see docs/modules/brain.md) ---
     # Anthropic request tuning. Current Claude models think adaptively by default and
@@ -222,9 +222,9 @@ class AIConfig(_Section):
     # Personal info is NOT sent to cloud providers unless a parent opts in.
     share_child_name: bool = False
     share_interests: bool = False
-    # Safety-rule groups switched off for AI replies (parent's choice; [] = every rule on). "links" lets it
-    # talk about YouTube, shows, apps and searching (links themselves are still stripped before speaking).
-    relaxed_rules: list[str] = Field(default_factory=lambda: ["links"])
+    # Safety-rule groups (littlebot/safety/content.py BLOCK_RULES) switched off for AI replies: the parent's
+    # choice, [] = every rule on. The rules only stop what could harm a small child (e.g. "personal_info").
+    relaxed_rules: list[str] = Field(default_factory=list)
 
 
 class ChatGPTConfig(_Section):

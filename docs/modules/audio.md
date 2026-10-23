@@ -91,9 +91,9 @@ LittleBot never listens to itself:
   `inject_utterance` is ignored, `status().microphone.status == "disabled"`.
 * Cloud TTS/STT (OpenAI) use the **same gates as the cloud AI conversation**, re-checked by the
   service before every call (also for injected providers): `ctx.privacy.cloud_enabled` (never in
-  offline mode), an `OPENAI_API_KEY`, a **known child age of at least 24 months**
-  (`ctx.age_policy().cloud_ai_allowed()`, `ai.min_age_months_for_cloud`) - so an infant's voice is
-  never uploaded, e.g. during activity listens - **and** the parent's `ai.enabled` opt-in.
+  offline mode), an `OPENAI_API_KEY`, the child's age **if** `ai.min_age_months_for_cloud` sets a
+  minimum (`ctx.age_policy().cloud_ai_allowed()`; default 0: any age, so with cloud AI on an infant's
+  voice can be uploaded, e.g. during activity listens) **and** the parent's `ai.enabled` opt-in.
   Otherwise, and on any failure (401, 429, timeout, bad audio), the local provider is used for
   that call. `provider: auto` never picks a cloud provider. Keys are never logged.
 * Cloud TTS text: unless the parent turned on `ai.share_child_name`, the child's nickname
@@ -101,7 +101,8 @@ LittleBot never listens to itself:
   replaced by "friend" before the text is sent (`tts.base.scrub_names`). Local voices and the
   `audio.speech_started` event keep the original text.
 * `status().tts_provider` / `stt_provider` say why a configured cloud provider isn't used
-  (`"mock (openai needs cloud + key)"`, `"mock (openai not allowed: child under 24 months)"`).
+  (`"mock (openai needs cloud + key)"`, or with a minimum age set
+  `"mock (openai not allowed: child under 24 months)"`).
 * No transcripts are logged. Speech text appears only in bus events (as before).
 
 ## Speech providers
@@ -115,7 +116,7 @@ LittleBot never listens to itself:
 
 STT: `mock` (returns queued text), `vosk` (`pip install vosk` + `audio.stt.vosk_model_path`, small
 English model ~40 MB, loaded lazily), `openai` (`/v1/audio/transcriptions`, multipart WAV built in
-memory, cloud + age (24 months+) + `ai.enabled` gated). `auto` = vosk if configured, else mock. With mock STT a real microphone
+memory, cloud + optional minimum age + `ai.enabled` gated). `auto` = vosk if configured, else mock. With mock STT a real microphone
 still detects speech, but `listen()` returns `None` (no transcription) - configure vosk/openai.
 
 ## Sound effects
@@ -164,7 +165,7 @@ The **Pi 5 has no 3.5 mm audio jack**: use a USB speaker (or HDMI audio) and a U
   input stall -> disconnected, stream reuse/release, re-init guard); SDL mixer backend with the
   dummy driver; `auto` degradation with no devices; espeak-ng synthesis; piper via a fake binary;
   OpenAI TTS/STT request shapes, 401/429/5xx/timeouts/garbage responses via `httpx.MockTransport`;
-  cloud gating (privacy, age < 24 months / unknown, `ai.enabled` off: no request at all; nickname
+  cloud gating (privacy, a configured minimum age / unknown age, `ai.enabled` off: no request at all; nickname
   never in a cloud TTS request body without `ai.share_child_name`); privacy; half-duplex; no disk writes; `check_audio.py --list` runs and exits 0.
 * **Mock-only:** everything audible. No sound was actually heard or recorded.
 * **Needs real hardware (UNVERIFIED):** real PortAudio/ALSA/PipeWire behaviour on the Pi 5 (USB

@@ -452,7 +452,8 @@ def test_speakable_titles():
     assert speakable_title("Baby Shark Dance | #babyshark Most Viewed Video") == "Baby Shark Dance"
     assert speakable_title("Wheels on the Bus - Nursery Rhymes") == "Wheels on the Bus"
     assert speakable_title("Peppa Pig (Official)") == "Peppa Pig"
-    assert speakable_title("Best YouTube songs") == "the video"  # words the reply checks would stop
+    assert speakable_title("Best YouTube songs") == "Best YouTube songs"  # brand words are fine now
+    assert speakable_title("Our little secret song") == "the video"  # words the reply checks would stop
     assert speakable_title("") == "the video" and speakable_title(None) == "the video"
 
 

@@ -15,7 +15,7 @@ from typing import Any, Union
 MAX_RESULT_CHARS = 1800
 MAX_FRAME_BYTES = 500
 
-FAILED_RESULT = "The lookup failed. Say you are not sure, and suggest asking a grown-up."
+FAILED_RESULT = "The lookup failed. Say briefly that it didn't work this time; they can ask again."
 NO_INPUT_RESULT = "Ask them to say it again; no words were heard."
 
 

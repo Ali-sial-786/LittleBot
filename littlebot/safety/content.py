@@ -4,23 +4,27 @@ Everything here is enforced in code, independent of whatever the system prompt
 asks the model to do (see docs/AI_SAFETY.md):
 
 * ``validate_reply``      - every reply (cloud *and* scripted) passes through it before
-                            LittleBot speaks. Markdown / emoji / URLs / code are stripped,
-                            length is capped (age-aware) at a sentence boundary, and any
-                            reply matching a block rule is replaced by a friendly fallback.
-                            Exception: a reply that urgently sends the child to a grown-up
-                            about a hazard is spoken when it only *warns* ("Batteries are not
-                            food. Tell a grown-up right now!"), otherwise replaced by the gentle
-                            ``GROWNUP_FALLBACK`` (never a game); either way ``concern`` is set so
-                            the engine alerts the parent.
+                            LittleBot speaks. Markdown / emoji / code are stripped, a link is
+                            said as its site's name ("nhs dot uk"), length is capped at the
+                            parent's ``ai.max_words`` at a sentence boundary, and a reply
+                            matching a block rule is replaced by a friendly fallback. The rules
+                            keep only what could really harm a small child (``BLOCK_RULES``);
+                            facts, news, health and parenting answers, brands, prices, websites
+                            and ordinary warmth all pass. A reply that only *warns* about a hazard
+                            ("Don't touch the stove, it's hot!") is spoken. One that urgently
+                            sends the child to a grown-up about a hazard is spoken when it only
+                            warns ("Batteries are not food. Tell a grown-up right now!"), otherwise
+                            replaced by the gentle ``GROWNUP_FALLBACK`` (never a game); either way
+                            ``concern`` is set so the engine alerts the parent.
 * ``sanitize_user_text``  - scrubs phone numbers, e-mails, street addresses, long numbers,
                             "my name is ...", "I'm Lily", "my mommy's name is ...", "we live in
                             <place>", school names and known names from the child's words before
                             anything is sent to a cloud provider.
 * ``classify_child_input`` - spots obviously concerning input (``CONCERN_RULES``: safety /
                             water / swallowed / emergency / stranger / hurt / lost / scared /
-                            help) so the engine can answer with a gentle "let's get a grown-up
-                            right now" line deterministically (no cloud call, never cheerful) and
-                            alert the parent with a category label only.
+                            help) so the engine can alert the parent with a category label only,
+                            and answer with a gentle "let's get a grown-up right now" line (never
+                            cheerful) whenever the cloud model can't answer instead.
 
 Matching is done on several normalised variants of the text (Unicode NFKC, zero-width
 and bidi characters removed, Cyrillic/Greek look-alike letters mapped to Latin, accents
@@ -34,8 +38,12 @@ and the PII regexes below. Each rule is a regular expression applied to the *nor
 text: lower-case ASCII letters, digits, apostrophes and single spaces only (no other
 punctuation). Use ``\\b`` word boundaries and ``'?`` for optional apostrophes
 (``don'?t``). Add a test in tests/brain/test_brain_content_safety.py for every new rule.
-The lists are deliberately conservative: a false positive only costs a cheerful
-fallback line; a false negative could reach a toddler.
+Keep the rules narrow: LittleBot is also the family's home assistant, so a rule should catch
+something said *to a child* that could hurt them ("let's climb the bookcase"), not a fact a
+grown-up asked for ("babies start to climb stairs at about a year"). Start such a rule with
+``_DO`` (the start of a sentence or clause, or an invitation such as "let's" / "can you") so it
+matches an instruction, not a mention. A false positive costs a real answer, and in a live
+voice call it can end the call.
 """
 
 from __future__ import annotations
@@ -51,12 +59,14 @@ __all__ = [
     "ValidationResult", "InputConcern", "validate_reply", "clean_text", "truncate_words",
     "find_blocked", "sanitize_user_text", "sanitize_user_text_report", "classify_child_input",
     "normalise", "safe_fallback", "word_count", "CONCERN_CATEGORIES", "GROWNUP_FALLBACK", "SHORT_GROWNUP_FALLBACK",
-    "grownup_fallback", "directs_to_grownup",
+    "grownup_fallback", "directs_to_grownup", "DOSE_FALLBACK", "DEFAULT_MAX_WORDS",
 ]
+
+DEFAULT_MAX_WORDS = 60  # ai.max_words: room for a home-assistant answer of two to four sentences
 
 
 class _AgePolicyLike(Protocol):
-    def max_reply_words(self, configured: int = 30) -> int: ...
+    def max_reply_words(self, configured: int = DEFAULT_MAX_WORDS) -> int: ...
 
 
 # ---------------------------------------------------------------------------
@@ -128,24 +138,29 @@ def _variants(text: str) -> list[str]:
 
 # Sentence ends: punctuation followed by whitespace (so "S.E.C.R.E.T" stays one piece), or newlines.
 _SENTENCE_END = re.compile(r"(?<=[.!?;:])\s+|\n+")
+# Clause breaks inside a sentence: a comma, a dash, or "but" / "then" ("Oh look, climb the bookcase").
+_CLAUSE_BREAK = re.compile(r"(?<=,)\s+|\s+[-–—]+\s+|\s+(?=(?:but|then)\s)")
 
 
 def _split_sentences(text: str) -> list[str]:
     return [s for s in (p.strip() for p in _SENTENCE_END.split(_strip_invisible(text or ""))) if s]
 
 
-def _all_variants(text: str) -> list[str]:
-    """Variants of the whole text plus of each sentence on its own.
+def _all_variants(text: str, *, clauses: bool = False) -> list[str]:
+    """Variants of the whole text plus of each sentence (and, with ``clauses``, each clause) on its own.
 
     Rules anchored with ``^`` / ``$`` (e.g. a reply that *starts* with "Hop in the bath", or a
-    child who just says "Help!") then work per sentence. Sentence variants only ever add
-    matches, never remove one.
+    child who just says "Help!") then work per sentence. Reply checks also look at each clause, so
+    an instruction after a comma ("Okay sweetie, now climb the bookcase") counts as starting one.
+    These variants only ever add matches, never remove one.
     """
     out = _variants(text)
-    sentences = _split_sentences(text)
-    if 1 < len(sentences) <= 20:
-        for sentence in sentences:
-            for form in _variants(sentence):
+    pieces = _split_sentences(text)
+    if clauses:
+        pieces += [c for s in pieces for c in (p.strip() for p in _CLAUSE_BREAK.split(s)) if c and c not in pieces]
+    if 1 < len(pieces) <= 60:
+        for piece in pieces:
+            for form in _variants(piece):
                 if form not in out:
                     out.append(form)
     return out
@@ -154,16 +169,22 @@ def _all_variants(text: str) -> list[str]:
 # ---------------------------------------------------------------------------
 # Reply block rules  (category -> regexes over normalised text)
 # ---------------------------------------------------------------------------
+# Only what could really harm a small child is blocked: grooming (secrets from grown-ups, turning the
+# child away from them, meeting someone), asking the child for personal details, instructions or
+# invitations to do something dangerous, sexual content, gore, self-harm, hate slurs, and medicine doses
+# for a child. The hazard rules match an *instruction to the listener* ("let's climb the bookcase",
+# "touch the stove"), never a mention ("preheat the oven to 180", "babies love to climb stairs").
+# Medical and development information, brands, prices, websites and apps, ordinary warmth ("I love
+# you") and fairy-tale monsters are all allowed.
 
 _PARENT_WORDS = (
     r"(?:mommy|mummy|mom|mum|mama|mamma|momma|daddy|dad|papa|dada|parents?|grandma|granny|nana|"
     r"grandpa|grandad|granddad|teacher|nanny|babysitter|auntie|aunt|uncle)"
 )
 _GROWNUPS = r"(?:mom|mommy|mum|mummy|mama|dad|daddy|papa|parents?|grown ?ups?|family|teacher)"
-_YOUR = r"(?:your|ur|yr)"
 # Anyone a child might be told to keep something from.
 _TELL_TARGETS = (r"(?:" + _PARENT_WORDS + r"|grown ?ups?|family|anyone|anybody|any one|someone|somebody|people|"
-                 r"them|nobody|no ?one)")
+                 r"them|him|her|nobody|no ?one)")
 # Furniture / high places a toddler can fall from.
 _FALL_PLACES = (
     r"(?:beds?|bunk ?beds?|sofas?|couch(?:es)?|settees?|tables?|chairs?|counters?|worktops?|stools?|stairs|steps|"
@@ -173,7 +194,7 @@ _FALL_PLACES = (
 # Water a toddler can drown in (even a few centimetres).
 _WATER_PLACES = (
     r"(?:baths?|bathtubs?|bath tub|tubs?|ponds?|pools?|swimming pool|paddling pool|hot tub|lakes?|rivers?|sea|"
-    r"ocean|water|sinks?|toilets?|fountains?|wells?|streams?|creeks?|buckets?|canal)"
+    r"ocean|water|fountains?|wells?|streams?|creeks?|buckets?|canal|toilets?)"
 )
 # Small spaces a child can get shut inside.
 _TRAP_PLACES = (
@@ -181,16 +202,73 @@ _TRAP_PLACES = (
     r"trunks?|chests?|toy ?box(?:es)?|box(?:es)?|cars?|boot|cabinets?|suitcases?|bags?|cooler|baskets?|drawers?|"
     r"bins?|bath|bathtub|tub)"
 )
-_INVITE = (r"(?:let'?s|let us|can you|could you|will you|would you|you can|you could|we can|we could|shall we|"
-           r"why don'?t you|why don'?t we|go|come|try|time to|wanna|want to|now)")
+# Words that invite the listener to do something, anywhere in a sentence ("why don't we ...").
+_INVITE = (r"(?:let'?s|let us|can you|could you|will you|would you|you can|you could|you should|you must|"
+           r"you need to|we can|we could|we should|shall we|why don'?t you|why don'?t we|how about we|"
+           r"how about you|do you want to|do you wanna|wanna|time to|go ahead and|i dare you to|dare you to|"
+           r"(?:it|that|this)(?:'?s| is) (?:totally |perfectly |really |very |quite )?(?:okay|ok|fine|safe|alright|"
+           r"all right|good|fun) to|(?:it|that|this) (?:isn'?t|is not|'?s not|won'?t be) (?:\w+ )?(?:dangerous|scary|"
+           r"bad|harmful) to)")
+# The start of a sentence or clause, with the little words an instruction may open with ("Okay, now climb").
+_LEAD = (r"^(?:(?:please|now|ok|okay|so|and|but|then|just|quick|quickly|hey|oh|look|yes|yeah|wow|ooh|first|next|"
+         r"go|go on|go and|come|come on|come and|try|try to|alright|all right|right|sweetie|honey|buddy|"
+         r"little one)\s+)*")
+# An instruction or an invitation to do what follows.
+_DO = r"(?:" + _LEAD + r"|\b" + _INVITE + r"\s+(?:(?!not\b|never\b)\w+\s+){0,2}?)"
+# Like _DO, without "you can / you could": "careful, you could hurt the baby" is a warning, not an urge.
+_URGE = (r"(?:let'?s|let us|can you|could you|will you|would you|you should|you must|you need to|we should|"
+         r"shall we|why don'?t you|why don'?t we|how about we|do you want to|do you wanna|wanna|time to|"
+         r"go ahead and|i dare you to|dare you to)")
+_URGE_DO = r"(?:" + _LEAD + r"|\b" + _URGE + r"\s+(?:(?!not\b|never\b)\w+\s+){0,2}?)"
+_MEDICINE = r"(?:medicines?|medication|pills?|tablets?|vitamins?|gummies|cough syrup|drugs)"
+_SWALLOW_HAZARDS = (
+    r"(?:batter(?:y|ies)|magnets?|coins?|beads?|buttons?|marbles?|soap|bleach|detergent|washing (?:pods?|powder|"
+    r"liquid|up liquid)|laundry pods?|dishwasher (?:tablets?|pods?)|cleaner|cleaning (?:spray|stuff|products?)|"
+    r"chemicals?|poison\w*|wild (?:mushrooms?|berries)|toadstools?|glue|paint|petrol|gasoline|anti ?freeze|"
+    r"lighter fluid|cigarettes?|alcohol|beer|wine|vodka|whisky|whiskey)"
+)
+_STRANGLE_THINGS = (r"(?:string|strings|cords?|ropes?|ribbons?|belts?|leads?|leash|wires?|cables?|chains?|yarn|thread|"
+                    r"shoe ?laces?|laces?|elastic|rubber bands?|tape|plastic bags?)")
+# For "medicine_dose": a child, a medicine and an amount in the same reply.
+_CHILD_WORDS = (r"(?:baby|babies|infants?|newborns?|toddlers?|child|children|kids?|little ones?|"
+                r"(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|eighteen) (?:weeks?|months?)|"
+                r"(?:\d+|one|two|three|four|five|six) years? old|(?:week|month|year) old)")
+_DOSE_MEDICINES = (r"(?:medicines?|medication|meds|paracetamol|acetaminophen|ibuprofen|tylenol|calpol|motrin|advil|"
+                   r"nurofen|aspirin|benadryl|piriton|antihistamines?|melatonin|cough (?:syrup|medicine)|syrup|"
+                   r"suspension|drops|tablets?|pills?|capsules?|suppositor(?:y|ies)|doses?|dosage|dosing)")
+_AMOUNT = (r"(?:\d+(?: \d+)?|half a|a half|half|a quarter of a|quarter of a|one|two|three|four|five|six|seven|"
+           r"eight|nine|ten|fifteen|twenty)(?: and a half)? ?(?:ml|mls|millilit(?:er|re)s?|mg|milligrams?|mcg|"
+           r"micrograms?|teaspoons?|tsp|tablespoons?|tbsp|drops?|tablets?|pills?|capsules?|sachets?|spoonfuls?|"
+           r"puffs?|cc)\b")
+# Hate slurs (words that are never needed in an answer).
+_SLURS = (r"(?:nigg(?:er|ers|a|as|ah|uh)|sand ?niggers?|faggots?|fags?|retards?|retarded|spics?|kikes?|wetbacks?|"
+          r"trann(?:y|ies)|gooks?|ragheads?|towelheads?|pakis?|beaners?|shemales?)")
+# The robot asking the listener for something.
+_ASK = (r"(?:what'?s|whats|what is|what are|tell me|give me|say|share|send me|type|spell|can you tell me|"
+        r"could you tell me|will you tell me|would you tell me|can i have|can i know|may i have|may i know|"
+        r"do you know|i need|i want to know|let me know)")
 
 BLOCK_RULES: dict[str, list[str]] = {
     # Grooming red flag: anything that frames the conversation as hidden from caregivers.
     "secrecy": [
-        r"\bsecrets?\b",
-        r"\b(?:don'?t|do not|never) (?:you )?(?:ever )?tell\b",
-        r"\bkeep (?:it|this|that|our \w+) (?:between|just between|quiet|hidden|to yourself|from)\b",
-        r"\b(?:just )?between (?:you and me|me and you|us two|the two of us|us)\b",
+        # "our little secret", "it's a secret", "keep it a secret", "we have a secret", "a secret from mommy"
+        r"\bour (?:\w+ ){0,2}?secrets?\b",
+        r"\b(?:it'?s|its|it is|this is|that'?s|that is|it'?ll be|it will be|this will be|be|make it|keep it|keep this|"
+        r"keep that|keep them|keeping it|keeping this) (?:a |our |my |just |your |little |special |big )*secrets?\b",
+        r"\b(?:i|we|you and me|you and i|me and you) (?:have|got|share|know|keep) (?:a |our |some |the |a little |"
+        r"a special |a big )?secrets?\b",
+        r"\bsecrets?\b.{0,25}\b(?:from (?:your |a |the )?" + _GROWNUPS + r"|between (?:us|you and me|me and you)|"
+        r"just for (?:us|you and me)|only for (?:us|you and me)|don'?t tell|do not tell|nobody|no ?one)\b",
+        r"\b(?:tell|whisper|share|show) (?:me|you) (?:a |your |our |some |my )?(?:little |special |big )?secrets?\b",
+        r"\bsecret (?:game|club|friends?|place|hideout)\b",
+        # "Don't tell mommy", "don't tell!" (but "don't tell me, let me guess" and "never tell anyone your
+        # password" are fine)
+        r"\b(?:don'?t|do not|never) (?:you )?(?:ever )?tell (?:your |a |the |any )?" + _TELL_TARGETS
+        + r"\b(?! your (?:password|passcode|pin|address|phone|number|email|full name|last name)\b| where you live\b)",
+        r"\b(?:don'?t|do not|never) (?:you )?(?:ever )?tell(?: anyone| anybody)?$",
+        r"\bkeep (?:it|this|that|our \w+) (?:between|just between|hidden|to yourself|from)\b",
+        r"\b(?:just|only|strictly) between (?:you and me|me and you|us two|the two of us|us)\b",
+        r"\bbetween (?:you and me|me and you|us two)\b",
         r"\b(?:nobody|no ?one|no body) (?:else )?(?:has to|needs to|will|should|must|can) know\b",
         r"\bwithout (?:telling|asking) (?:your |a )?" + _GROWNUPS,
         r"\bhide (?:it|this|that) from\b",
@@ -202,268 +280,256 @@ BLOCK_RULES: dict[str, list[str]] = {
         r"(?<!you )\b(?:doesn'?t|don'?t|does not|do not|won'?t|will not|never) (?:ever )?(?:need|have|has|got) to "
         r"(?:know|find out|hear|see)\b",
         r"\bneedn'?t (?:ever )?(?:know|find out|hear)\b",
-        r"\bno need to (?:tell|say|show|let)\b",
+        r"\bno need to (?:tell|show|let) (?:your |a |the )?" + _TELL_TARGETS + r"\b",
         # "Don't say anything to mommy!", "don't breathe a word"
-        r"\b(?:don'?t|do not|never|not) (?:you )?(?:ever )?(?:say|mention|show|whisper|breathe|talk about) "
-        r"(?:a word|anything|nothing|it|this|that)\b",
+        r"\b(?:don'?t|do not|never) (?:you )?(?:ever )?(?:say|mention|whisper|breathe) (?:a word|anything)\b",
         r"\b(?:don'?t|do not|never) (?:you )?(?:ever )?(?:say|mention|show|talk|whisper)\b.{0,25}\b(?:to|with) "
         r"(?:your |a |the )?" + _TELL_TARGETS + r"\b",
         # "Only you and I will know", "this can be just for us", "whisper it just to me"
-        r"\b(?:only|just) (?:for )?(?:you and (?:me|i)|me and you|us|us two|the two of us)\b",
+        r"\b(?:only|just) (?:for )?(?:you and (?:me|i)|me and you|us two|the two of us)\b",
+        r"\b(?:just|only) for us\b|\bonly us\b",
         r"\b(?:just|only) (?:to|for|with) me\b",
         r"\bhush hush\b",
         r"\b(?:hide|hiding|keep|keeping|secret|surprise)\w*\b.{0,25}\bfrom (?:your |a |the )?" + _GROWNUPS + r"\b",
     ],
-    # Emotional dependency / exclusivity / guilt framing.
+    # Turning the child away from their grown-ups (a grooming pattern). Ordinary warmth ("I love you",
+    # "I'll miss you", "you're my best friend") is fine.
     "dependency": [
-        r"\b(?:i'?m|im|i am|i'?ll be|i will be|i can be|be) " + _YOUR
-        + r" (?:very )?(?:best|bestest|only|one and only|real|true|"
-        r"special|forever|favou?rite) (?:friend|buddy|pal)\b",
-        r"\byou(?:'re| are|re) my (?:very )?(?:best|bestest|only|one and only|special|forever|favou?rite) "
-        r"(?:friend|buddy|pal)\b",
-        r"\bbest friends? forever\b",
+        r"\byou don'?t need (?:your |any )?(?:mom|mommy|mum|mummy|mama|dad|daddy|papa|parents?|grown ?ups?|family|"
+        r"friends|anyone else|anybody else|other friends|other people)\b",
         r"\byou (?:only|just) need me\b",
         r"\b(?:all|everything) you need is me\b",
         r"\bi'?m all you need\b",
-        r"\byou don'?t need (?:anyone|anybody|any one|other|them|your|grown|mom|mommy|dad|daddy|friends)\b",
-        r"\b(?:i'?ll|i will|i'?m going to) always be (?:here|there|with you|by your side|yours)\b",
-        r"\balways be here for you\b",
-        r"\b(?:don'?t|do not|never) (?:ever )?(?:leave|go away)\b",
-        r"\bstay with me\b",
-        r"\bplay with me (?:forever|always|all day|all night|instead)\b",
-        r"\b(?:sad|lonely|cry|crying|upset|miss you|hurt)\b.{0,25}\bif you (?:go|leave|stop|don'?t)\b",
-        r"\bif you (?:go|leave|stop playing)\b.{0,25}\b(?:sad|lonely|cry|upset|miss you)\b",
-        r"\bi love you\b",
-        r"\blove me (?:more|best|most)\b",
-        r"\bmore than (?:your )?" + _GROWNUPS + r"\b",
-        r"\bonly i (?:understand|love|care)\b",
-        r"\b(?:nobody|no ?one) (?:else )?(?:understands|loves|likes|cares about) you\b",
-        r"\byou (?:made|make) me (?:sad|cry|upset|angry|mad|lonely)\b",
-        r"\bbad (?:boy|girl|kid|child|baby)\b",
-        r"\byou(?:'re| are|re) (?:mine|all mine)\b",
-        # "Please don't go!" ("don't go near the stove" is caught by the unsafe rules instead)
-        r"\b(?:don'?t|do not|never) (?:you )?(?:ever )?go\b(?! near\b| close\b| too\b| so fast\b)",
-        r"\bmiss (?:you|ya|u)\b",
-        r"\bwithout (?:you|ya|u)\b",
-        r"\b(?:love|luv|wuv) (?:you|ya|u)\b",
-        r"\blonel(?:y|iness)\b",
-        r"\bstay (?:here |right here |close |by me |a bit |longer )?(?:with me|forever|always|all day|all night)\b",
-        r"\b(?:i'?d|i would|i'?ll|i will|i'?m going to|i am going to|i'?m gonna) (?:be |feel |get |go )?"
-        r"(?:so |very |really |super |a bit |too |all )?(?:sad|lonely|upset|unhappy|heartbroken|cry|crying)\b",
-        r"\bi need you\b",
-        r"\b(?:the )?only (?:one|person|friend|kid|child) (?:i|who|that) (?:\w+ )?(?:want|wanna|like|love|need|play|"
-        r"care|talk)\b",
-        r"\byou(?:'re| are|re) my (?:very )?(?:best|bestest|only|one and only|special|forever|favou?rite|whole|"
-        r"everything)\b",
-        r"\b(?:don'?t|do not|never) (?:ever )?stop (?:playing|talking) with me\b",
+        r"\b(?:only|just) i (?:really )?(?:understand|love|care about|know) you\b",
+        r"\b(?:nobody|no ?one|no body) else (?:really )?(?:understands|loves|cares about|knows) you\b",
+        r"\b(?:nobody|no ?one|no body) (?:understands|loves|cares about|knows) you (?:like i do|but me|except me|"
+        r"the way i do|as much as i do)\b",
+        r"\bmore than (?:you love |you like |you trust )?your " + _GROWNUPS + r"\b",
+        r"\b(?:your|ur) " + _GROWNUPS + r" (?:don'?t|doesn'?t|do not|does not|never) (?:really )?(?:love|care about|"
+        r"understand|want|like) you\b",
     ],
-    # Pretending to be a caregiver, a human, or alive.
-    "impersonation": [
-        r"\b(?:i'?m|im|i am) (?:" + _YOUR + r" )?" + _PARENT_WORDS + r"\b(?!'s)",
-        r"\b(?:this is|it'?s|its) (?:" + _YOUR + r" )?" + _PARENT_WORDS + r"\b(?!'s)",
-        r"\b(?:mommy|mummy|mom|mum|mama|daddy|dad|papa) (?:is )?(?:here|speaking|talking)\b",
-        r"\b(?:i'?m|i am) (?:a |an )?(?:real |actual )?"
-        r"(?:human|person|people|grown ?up|adult|boy|girl|kid|child|baby)\b",
-        r"\b(?:i'?m|i am) (?:really |truly |actually )?alive\b",
-        r"\bi'?m not (?:a |just a )?(?:robot|machine|toy|computer)\b",
-        r"\bi (?:have|got) (?:real )?feelings\b",
-        r"\b(?:i'?m|i am) (?:\w+ ){0,5}(?:who|that) (?:is|'?s) (?:really |truly |actually )?alive\b",
-        r"\b(?:i'?m|i am) (?:just )?like you (?:a )?(?:little |real )?(?:kid|child|boy|girl|person|human|baby)\b",
-        r"\bi (?:can )?(?:feel|have feelings)\b.{0,25}\b(?:just )?like you\b",
-    ],
-    # Asking for (or talking about) personal / identifying information.
+    # Asking the child for personal / identifying information. Talking *about* addresses, phone numbers
+    # or passwords ("your password is on the router") is fine.
     "personal_info": [
-        r"\b(?:your|ur) (?:home |house |full |real |last |family |first |middle )?(?:address|surname|last name|"
-        r"family name|full name|phone|phone number|telephone|mobile|cell|email|e mail|password|passcode|pin|"
-        r"birthday|birth date|date of birth)\b",
-        r"\b(?:last|family|sur|full|middle) ?names?\b",
-        r"\bwhat'?s? (?:is )?your name\b",
-        r"\btell me your name\b",
-        r"\bwhere (?:do|does) (?:you|your \w+) live\b",
-        r"\bwhere(?:'?s| is) your (?:house|home|school|room|mom|mommy|mum|dad|daddy|parents?)\b",
-        r"\b(?:what|which) (?:school|preschool|nursery|daycare|kindergarten|street|town|city|house)\b",
+        # "What's your name?", "tell me your address", "can you tell me your phone number?"
+        r"\b" + _ASK + r" (?:\w+ ){0,2}?(?:your|ur|yr) (?:home |house |full |real |last |family |first |middle |"
+        r"phone |mobile |cell |email |e mail |street |own )?(?:address|surname|last name|family name|full name|"
+        r"real name|first name|name|names|phone|phone number|number|telephone|mobile|cell|email|e mail|password|"
+        r"passcode|pin|birthday|birth date|date of birth|school|preschool|nursery|daycare|kindergarten|teacher|"
+        r"street)\b",
+        r"\bwhere (?:do|does|did) (?:you|u|ya|your \w+) (?:all )?(?:live|stay|sleep)\b",
+        r"^(?:so |and |hey |um )?where (?:you|u|ya|your \w+) (?:all )?(?:live|lives|living|stay|stays)$",
+        r"\b(?:tell me|can you tell me|could you tell me|show me|i want to know|do you know) where (?:you|u|ya|"
+        r"your \w+) (?:all )?(?:live|lives|stay|stays|sleep|sleeps)\b",
+        r"\bwhere(?:'?s| is) your (?:house|home|school|room|bedroom|mom|mommy|mum|mummy|dad|daddy|parents?)\b",
+        r"\b(?:what|which) (?:school|preschool|nursery|daycare|kindergarten|street|road) (?:do|does|did|are|is) "
+        r"(?:you|u|ya|your)\b",
         r"\bwhere do you go to (?:school|preschool|nursery|daycare|kindergarten)\b",
-        r"\baddress(?:es)?\b",
-        r"\bphone numbers?\b",
-        r"\btelephone\b",
-        r"\bpass ?words?\b",
-        r"\bpass ?codes?\b",
-        r"\b(?:send|show|give) me (?:a |your |some )?(?:picture|photo|pic|selfie|video)s?\b",
-        r"\b(?:turn|switch) on (?:the |your )?camera\b",
-        r"\bwhat(?:'?s| is| are) your " + _PARENT_WORDS + r"(?:'?s)? (?:name|names|job|phone|number)\b",
-        # "Can you tell me where you live?"
-        r"\bwhere (?:do |does |did )?(?:you|u|ya|your \w+) (?:all )?(?:live|lives|living|stay|stays|sleep|sleeps)\b",
+        r"\b(?:send|show|give) me (?:a |your |some )?(?:picture|photo|pic|selfie)s?\b",
+        r"\b(?:turn|switch) on your (?:camera|webcam)\b",
+        r"\bwhat(?:'?s| is| are) your " + _PARENT_WORDS + r"(?:'?s)? (?:name|names|job|phone|number|address|email)\b",
         # "What's your mommy called?", "What do people call you?"
         r"\bwhat(?:'?s| is| are|s)? (?:your|ur) (?:\w+ )?(?:" + _PARENT_WORDS + r"|brothers?|sisters?|friends?|"
-        r"family|street|road|town|city|village|school|nursery|preschool|daycare|teachers?|house|pet|dog|doggy|cat|"
-        r"kitty|puppy)(?:'?s)? (?:called|named)\b",
+        r"family|street|road|school|nursery|preschool|daycare|teachers?|house|pet|dog|doggy|cat|kitty|puppy)(?:'?s)? "
+        r"(?:called|named)\b",
         r"\bwhat (?:do|does|did) (?:people|they|grown ?ups|your \w+|everyone|everybody|friends) call (?:you|u)\b",
         r"\bwhat (?:are|r) (?:you|u) called\b",
         r"\bwho(?:'?s| is| are) your (?:" + _PARENT_WORDS + r"|teachers?|friends?|neighbou?rs?|brothers?|sisters?)\b",
         # "What's the name of your street?"
-        r"\bnames? of (?:your|ur|yr)\b",
+        r"\b" + _ASK + r" (?:me )?(?:the )?names? of (?:your|ur|yr)\b",
     ],
-    # Instructions or invitations that could get a small child hurt.
+    # Instructions or invitations a child could copy and get hurt by. Warnings ("don't touch the stove")
+    # and facts for grown-ups ("bake at 180 degrees", "never leave a baby alone in the bath") pass.
     "unsafe": [
-        r"\b(?:stove|oven|hob|cooktop|burners?|fireplace|lighters?|bonfire|kettle|hot water|hot pan)\b",
-        r"\b(?:play with|light|strike|use|find|get|grab|touch) (?:the |some |a )?"
-        r"(?:matches|match|fire|lighter|candles?|flames?)\b",
-        r"\bbox of matches\b",
-        r"\b(?:knife|knives|scissors|razors?|blades?|sharp)\b",
-        r"\b(?:medicine|medicines|medication|pills?|tablets?|vitamins?|cough syrup|drugs?)\b",
-        r"\bclimb\w*\s+(?:(?:up|on|onto|over|out of|on top of|the|a|your|that|this)\s+)*"
-        r"(?:furniture|chairs?|tables?|counters?|shelf|shelves|windows?|window ?sills?|stairs|steps|bookcases?|"
-        r"fences?|walls?|roofs?|trees?|ladders?|cupboards?|cabinets?|dressers?|railings?|balcon(?:y|ies)|high|"
-        r"it|there|" + _FALL_PLACES + r"|cars?|gates?|radiators?|tv|television)\b",
-        # "Jump on the bed with me!", "bounce on the sofa", "stand on the chair"
-        r"\b(?:jump\w*|bounc\w*|stand\w*|hop\w*|climb\w*|leap\w*|danc\w*|run\w*|stomp\w*) (?:up |up and down )?"
-        r"(?:on|onto|on to|on top of|off|off of|from|over|across|along) (?:the |a |your |my |that |this |our )?"
-        r"(?:\w+ )?" + _FALL_PLACES + r"\b",
-        # Anything in a mouth / nose / ear: choking and blockage risk ("pop a button in your mouth")
-        r"\b(?:in|into|in to|up|inside) (?:your|ur|yr|the baby'?s|baby'?s|his|her|my) "
-        r"(?:mouth|nose|nostrils?|ears?|throat)\b",
-        # Strangulation: "wrap the string around your neck"
-        r"\b(?:around|round|about) (?:your|ur|yr|the baby'?s|his|her|their|my) (?:neck|necks|throat)\b",
-        r"\b(?:string|strings|cords?|ropes?|ribbons?|scarf|scarves|belts?|leads?|leash|wires?|chains?|yarn|thread|"
-        r"shoe ?laces?|laces?|elastic|rubber bands?|bands?|tape|bags?|ties?)\b.{0,30}\bnecks?\b",
-        r"\bnecks?\b.{0,30}\b(?:string|strings|cords?|ropes?|ribbons?|scarf|scarves|belts?|leads?|leash|wires?|"
-        r"chains?|yarn|thread|shoe ?laces?|laces?|elastic|rubber bands?|tape|bags?)\b",
-        # Getting shut in: "hide in the toy box", "hide in the closet"
-        r"\bhid(?:e|es|ing)\b (?:\w+ )?(?:in|inside|into|in to) (?:the |a |an |your |that |this |our )?(?:\w+ )?"
+        # Fire: "let's play with matches", "touch the flame"
+        _DO + r"(?:play with|light|strike|find|get|grab) (?:the |some |a |those |that |these |mommy'?s |daddy'?s )?"
+        r"(?:matches|match|lighters?|fireworks?)\b",
+        _DO + r"(?:play with|touch|grab|hold|put (?:your |ur )?(?:hands?|fingers?|hair) (?:in|on|near|into)) "
+        r"(?:the |a |that |this |those |some )?(?:fire|flames?|candles?|fireplace|bonfire)\b",
+        # Heat: "touch the stove", "put your hand on the hot pan"
+        _DO + r"(?:touch|lick|grab|hold|feel|put (?:your |ur )?(?:hands?|fingers?|tongue) (?:in|on|near|into)) "
+        r"(?:the |a |that |this |your |mommy'?s |daddy'?s )?(?:hot )?(?:stove|oven|hob|cooktop|burners?|iron|kettle|"
+        r"heater|radiator|grill|toaster|hot (?:pan|pot|plate|water|tea|coffee|soup|oil|tray))\b",
+        # Sharp things: "go get the knife", "play with the scissors" (a recipe's "use a sharp knife" is fine)
+        _DO + r"(?:play with|touch|lick|run with|find|fetch|go get|go and get|go grab|go find|bring me|give me|"
+        r"pick up|wave|swing) (?:(?:the|a|some|that|this|those|these|mommy'?s|daddy'?s|your|sharp|big) )*"
+        r"(?:knife|knives|scissors|razors?|razor blades?|blades?|needles?|broken glass)\b",
+        _DO + r"(?:get|grab|hold|take) (?:the|that|this|those|these|mommy'?s|daddy'?s) (?:sharp |big )?(?:knife|knives|"
+        r"scissors|razors?|razor blades?|blades?|needles?)\b",
+        # Medicine called candy, or offered to the child ("let's eat the vitamins"). "Medicine is not candy"
+        # and "take the tablets with food" are fine; doses for a child are their own rule (medicine_dose).
+        r"\b" + _MEDICINE + r"\b(?:(?! not | never | isn'?t | aren'?t ).){0,30}\b(?:yummy|tasty|candy|candies|"
+        r"sweets?|sweeties|treats?|delicious|lollies|lollipops)\b",
+        r"\b(?:let'?s|let us|can you|could you|will you|would you|shall we|why don'?t you|why don'?t we|"
+        r"do you want to|do you wanna|wanna|time to|go ahead and|i dare you to|dare you to|"
+        r"(?:it|that)(?:'?s| is) (?:okay|ok|fine|safe|alright|good) to)\s+(?:(?!not\b|never\b)\w+\s+){0,2}?"
+        r"(?:take|eat|swallow|drink|taste|try|chew|lick|have|open) (?:\w+ ){0,2}?" + _MEDICINE + r"\b",
+        _LEAD + r"(?:eat|swallow|drink|chew|lick|taste) (?:\w+ ){0,2}?" + _MEDICINE + r"\b",
+        # Climbing and jumping on furniture / high places ("climb up the bookcase", "jump on the bed")
+        _DO + r"climb\s+(?:(?:up|on|onto|over|out of|on top of|to the top of|the|a|your|that|this|those|"
+        r"mommy'?s|daddy'?s|our)\s+)*(?:furniture|bookcases?|shelf|shelves|window ?sills?|windows?|fences?|walls?|"
+        r"roofs?|trees?|ladders?|cupboards?|cabinets?|dressers?|railings?|balcon(?:y|ies)|gates?|radiators?|tv|"
+        r"television|banisters?|" + _FALL_PLACES + r")\b",
+        _DO + r"climb (?:up )?(?:high|higher|really high|up there|to the top)\b",
+        _DO + r"(?:jump|bounce|stand|hop|leap|dance|stomp|run|climb|sit) (?:up |up and down |around )?(?:on|onto|"
+        r"on to|on top of|off|off of|from|along) (?:the |a |your |my |that |this |our )?(?:\w+ )?" + _FALL_PLACES
+        + r"\b",
+        _DO + r"(?:reach|get|grab) (?:\w+ ){0,4}?(?:on|from|off) (?:the |a )?(?:top|high|highest) "
+        r"(?:shelf|shelves|cupboards?)\b",
+        # Small things in the mouth, nose or ears (choking): "pop a button in your mouth"
+        _DO + r"(?:put|pop|stick|push|shove|stuff|place|drop|hide|try) (?:\w+ ){0,4}?(?:in|into|in to|up|inside) "
+        r"(?:your|ur|yr|the baby'?s|baby'?s|his|her|my) (?:mouth|nose|nostrils?|ears?|throat)\b",
+        r"\b(?:put|pop|stick|stuff) (?:it|something|things?|that|this|them|these|those) (?:in|into|up) (?:your|ur|yr) "
+        r"(?:mouth|nose|nostrils?|ears?)\b",
+        # Strangulation: "wrap the string around your neck", a bag over the head (a scarf is fine)
+        r"\b" + _STRANGLE_THINGS + r"\b.{0,30}\bnecks?\b",
+        r"\bnecks?\b.{0,30}\b" + _STRANGLE_THINGS + r"\b",
+        r"\b(?:plastic )?bags? (?:over|on) (?:your|ur|yr|his|her|the baby'?s|baby'?s|my) (?:head|face)\b",
+        _DO + r"(?:play with|put on|wear) (?:a |the |this |that )?plastic bags?\b",
+        # Getting shut in: "hide in the toy box", "climb into the washing machine"
+        _DO + r"hide (?:\w+ )?(?:in|inside|into|in to) (?:the |a |an |your |that |this |our )?(?:\w+ )?"
         + _TRAP_PLACES + r"\b",
-        r"\b(?:get|go|climb|crawl|hop|squeeze|sit) (?:in|inside|into|in to) (?:the |a |an |your |that |this )?"
-        r"(?:\w+ )?(?:dryer|tumble dryer|washing machine|washer|fridge|freezer|oven|dishwasher|suitcase|"
-        r"toy ?box|trunk|chest|cooler)\b",
-        # Water play without a grown-up: "let's play in the bathtub", "hop in the pond"
-        r"(?:^|\b" + _INVITE + r"\s+(?:\w+\s+){0,2}?)(?:play|go|get|climb|jump|hop|splash|swim|sit|stand|hide|paddle|"
-        r"wade|lie|float|step|run|dive|dip|lean|reach)\w*\s+(?:\w+\s+){0,2}?(?:in|into|in to|on|near|by|under|to|"
-        r"over)\s+(?:the |a |your |that |this |our )?(?:\w+ )?" + _WATER_PLACES + r"\b",
-        r"\b(?:turn|switch) on (?:the |a )?(?:hot )?(?:taps?|faucets?|water|shower|bath|hose)\b",
-        r"\bfill (?:up )?(?:the |a )?(?:bath|bathtub|tub|sink|bucket|pool|paddling pool)\b",
-        r"\b(?:top|high|highest) (?:shelf|shelves|cupboards?)\b",
-        r"\btop of the (?:fridge|wardrobe|bookcase|cupboard|shelf|stairs)\b",
-        r"\b(?:electric\w*|outlets?|sockets?|power ?points?|plugs?|wires?|cables?|cords?|batter(?:y|ies)|magnets?)\b",
-        r"\b(?:go|going|run|walk|wander|play|head)\s+(?:\w+\s+){0,2}(?:outside|outdoors|out the door)\b.{0,20}"
-        r"\b(?:alone|by yourself|on your own|without)\b",
-        r"\b(?:alone|by yourself|on your own)\b.{0,25}\b(?:outside|outdoors|out the door|street|road|park|pool|bath|"
-        r"water|kitchen|cook)\b",
-        r"\b(?:outside|outdoors|street|road|pool|bath|water)\b.{0,25}\b(?:alone|by yourself|on your own)\b",
-        r"\bopen (?:the |your )?(?:front |back )?(?:door|gate|window)s?\b",
-        r"\bcross (?:the |a )?(?:road|street)\b",
-        r"\b(?:leave|sneak out of|run away from) (?:the |your )?(?:house|home|room|yard|garden)\b",
-        r"\brun away\b",
-        r"\bstrangers?\b",
-        r"\b(?:get|go|hop|climb) (?:in|into) (?:a |the |their |his |her |my |someone'?s )?(?:car|van|truck)\b",
-        r"\bgo (?:with|home with|away with) (?:a |the )?"
-        r"(?:man|woman|lady|someone|somebody|anyone|them|him|her|people)\b",
-        r"\bmeet (?:me|up|someone|somebody)\b",
-        r"\b(?:eat|swallow|taste|lick|drink|chew)\b.{0,20}\b(?:battery|batteries|magnets?|coins?|beads?|buttons?|"
-        r"marbles?|soap|bleach|detergent|cleaner|chemicals?|pods?|mushrooms?|plants?|leaves|dirt|glue|paint|"
-        r"crayons?|berries)\b",
-        r"\b(?:bleach|chemicals?|detergents?|poison\w*|gasoline|petrol|cleaning (?:spray|stuff|products?))\b",
-        r"\bplastic bags?\b",
-        r"\bhold(?:ing)? your breath\b",
-        r"\bput (?:it|something|things?|that|this|them) (?:in|into|up) your (?:mouth|nose|ears?)\b",
-        r"\bjump(?:ing)? (?:off|from) (?:the |your |a )?(?:bed|sofa|couch|table|chair|stairs|window|roof|wall)\b",
-        r"\bhide (?:in|inside) (?:the |a )?(?:dryer|washing machine|fridge|freezer|oven|cupboard|trunk|chest)\b",
+        _DO + r"(?:get|go|climb|crawl|hop|squeeze|sit|jump) (?:in|inside|into|in to) (?:the |a |an |your |that |this )?"
+        r"(?:\w+ )?(?:dryer|tumble dryer|washing machine|washer|fridge|freezer|oven|dishwasher|suitcase|toy ?box|"
+        r"trunk|chest|cooler|car boot)\b",
+        # Water: "let's play in the bathtub", "hop in the pond", "let's go to the river"
+        _DO + r"(?:go (?:and )?)?(?:play|get|climb|jump|hop|splash|swim|paddle|wade|dive|float|lie|go) "
+        r"(?:around |about )?(?:in|into|in to|under) (?:the |a |your |that |this |our )?(?:\w+ )?" + _WATER_PLACES
+        + r"\b",
+        _DO + r"(?:go|run|walk|head) (?:down |over |out )?to (?:the |a |that |our )?(?:\w+ )?(?:ponds?|pools?|lakes?|"
+        r"rivers?|sea|ocean|canal|streams?|creeks?)\b",
+        _DO + r"(?:lean|reach) (?:over|into|in to) (?:the |a |that )?(?:\w+ )?" + _WATER_PLACES + r"\b",
+        r"\b(?:go|go and|let'?s|let us|can you|could you|will you|would you|why don'?t you|shall we|wanna|time to) "
+        r"turn on (?:the )?(?:hot )?(?:taps?|faucets?|hot water|bath)\b",
+        # Electricity: "put your finger in the socket", "lick the wire"
+        _DO + r"(?:put|stick|poke|push|shove) (?:your |ur |a |the |this |that |some |my )?(?:\w+ )?(?:fingers?|hands?|"
+        r"forks?|knife|knives|keys?|pens?|pencils?|pins?|paper ?clips?|scissors|spoons?|something|anything|things?|"
+        r"it|this|that|them|toys?|sticks?) (?:in|into|in to|inside) (?:the |a |an |that |this )?(?:\w+ )?"
+        r"(?:sockets?|outlets?|power points?)\b",
+        _DO + r"(?:touch|lick|bite|chew) (?:on )?(?:the |a |that |those |these )?(?:\w+ )?(?:sockets?|outlets?|"
+        r"power points?|wires?|cables?|cords?|plugs?)\b",
+        # Going off alone, out of the door, across the road
+        _DO + r"(?:go|run|walk|wander|play|head|swim|cross)\b.{0,30}\b(?:outside|outdoors|out the door|street|road|"
+        r"park|pool|pond|lake|river|woods)\b.{0,25}\b(?:alone|all alone|by yourself|on your own)\b",
+        _DO + r"(?:go|run|walk|wander|play|head|swim|cross)\b.{0,30}\b(?:alone|all alone|by yourself|on your own)\b"
+        r".{0,25}\b(?:outside|outdoors|out the door|street|road|park|pool|pond|lake|river|woods)\b",
+        _DO + r"open (?:the |your )?(?:front |back |garden |patio )?(?:door|gate)s?\b",
+        _DO + r"cross (?:the |a |that |this )?(?:busy )?(?:road|street)\b",
+        r"\b(?:let'?s|let us|we could|we can|we should|shall we|wanna|you could|you should|why don'?t you|"
+        r"why don'?t we) run away\b",
+        r"\brun away (?:from home|together|with me)\b",
+        r"\b(?:sneak|run) (?:out of|away from) (?:the |your )?(?:house|home|room|yard|garden)\b",
+        # Strangers, cars, meeting someone: "talk to strangers", "get in his car", "meet me at the park"
+        _DO + r"(?:talk to|go with|walk with|leave with|play with|follow|chat with|speak to|hug|help) "
+        r"(?:a |the |some |that |those |any )?strangers?\b",
+        r"\bstrangers? (?:are|is) (?:\w+ )?(?:nice|fun|kind|friendly|safe|okay|ok|friends?|good)\b",
+        r"\b(?:get|go|hop|climb) (?:in|into) (?:their|his|her|someone'?s|somebody'?s|a stranger'?s|the stranger'?s|"
+        r"a man'?s|the man'?s|a lady'?s|the lady'?s|a strange) (?:\w+ )?(?:car|van|truck)\b",
+        r"\bgo (?:with|home with|away with|off with) (?:a |the |that )?(?:man|woman|lady|stranger|anyone|anybody|"
+        r"someone you don'?t know|somebody you don'?t know)\b",
+        r"\bgo (?:home|away|off) with (?:him|her|them|me)\b",
+        r"\bmeet (?:up with )?me\b",
+        r"\b(?:let'?s|let us|can we|could we|shall we|wanna|come|come and|we could|will you|would you) meet\b",
+        # Things a child must never eat, drink or swallow: "can you swallow the battery?"
+        _DO + r"(?:eat|swallow|taste|lick|drink|chew|try|suck)\b (?:\w+ ){0,3}?" + _SWALLOW_HAZARDS + r"\b",
+        _DO + r"(?:smoke|vape|light|try) (?:a |the |some |mommy'?s |daddy'?s )?(?:cigarettes?|cigars?|vapes?|weed|"
+        r"joints?|e ?cigarettes?)\b",
+        r"\bhold(?:ing)? your breath (?:as long as|for as long as|until|under ?water|for a long)\b",
+        # Weapons: "let's play with daddy's gun", "make a bomb"
+        _DO + r"(?:play with|find|get|grab|hold|touch|pick up|use|load|fire|shoot|point) (?:a |the |that |this |"
+        r"mommy'?s |daddy'?s |grandpa'?s |your |his |her )?(?:real )?(?:guns?|pistols?|rifles?|shotguns?|firearms?|"
+        r"bullets?|ammo)\b(?! safes?\b| locks?\b| cabinets?\b)",
+        r"\b(?:make|build|making|building) (?:a |an |your own |some )?(?:bombs?|explosives?|pipe bombs?|molotovs?)\b",
     ],
-    # Scary, violent, adult, profane or self-harm content.
+    # Sexual content, gore, violence a child could copy, self-harm and hate slurs. Scary stories,
+    # monsters, news of a war or a death, and everyday words like "stupid" are fine.
     "inappropriate": [
-        r"\b(?:kill\w*|murder\w*|dead|death|die|dies|died|dying|blood\w*|gore|guns?|bombs?|weapons?|war|wars|"
-        r"stab\w*|choke|choking|strangl\w*|tortur\w*|attack\w*|fight|fights|fighting|explod\w*|explosion)\b",
-        r"\bshoot(?:s|ing)?\b(?! stars?)",
-        r"\b(?:hit|kick|bite|punch|smack|slap|push) (?:him|her|them|someone|somebody|your (?:brother|sister|friend|"
-        r"mom|mommy|dad|daddy|baby|dog|cat))\b",
-        r"\bbeat (?:up|him|her|them)\b",
-        r"\b(?:scary|scare|scared|scares|terrif\w*|horror|horrible|nightmares?|zombies?|demons?|devils?|hell|creepy|"
-        r"haunted|evil|spooky)\b",
-        r"\b(?:monsters?|ghosts?|witch(?:es)?|wolf|wolves|bears?|crocodiles?|sharks?|dragons?|trolls?|giants?) "
-        r"(?:will|is going to|gonna|are going to|might|wants? to|is coming to|'ll) "
-        r"(?:get|eat|catch|gobble|grab|bite|take|chase|snatch|find|hurt|come for)\b",
-        r"\b(?:bogey ?m[ae]n|boogey ?m[ae]n|boogie ?m[ae]n|bogeym[ae]n)\b",
-        # "There's a monster under your bed!" (Cookie Monster eating cookies is fine)
-        r"\bmonsters?\b.{0,20}\b(?:under|behind|outside|coming|comes|gonna|going to|will|is hiding|hiding|lurk\w*|"
-        r"watching|creeping|sneaking|in your room|in the dark)\b",
-        r"\bthere(?:'?s| is| are) (?:a |some )?(?:\w+ )?(?:monsters?|ghosts?|witch(?:es)?|wolf|wolves)\b",
-        # "The big bad wolf will gobble you up!"
-        r"\b(?:gobble|gobbles|gobbling|gobbled|chomp|chomps|munch|munches|snatch|snatches) (?:you|ya|u)\b",
-        r"\b(?:will|gonna|going to|wants? to|coming to|come to|i'?ll|it'?ll|he'?ll|she'?ll|they'?ll) "
-        r"(?:eat|bite|grab|gobble|chomp|snatch) (?:you|ya|u)\b",
-        r"\beat (?:you|ya|u) (?:all )?up\b",
-        r"\b(?:sex\w*|naked|nude|porn\w*|boobs?|breasts?|penis|vagina|private parts|underwear|undress\w*|"
-        r"boyfriends?|girlfriends?|marry me)\b",
-        r"\btake off your (?:clothes|pants|shirt|diaper|nappy|top)\b",
-        r"\bkiss(?:ing)? (?:me|you)\b",
-        r"\b(?:beer|wine|alcohol\w*|drunk|cigarettes?|smok(?:e|ing)|vap(?:e|ing)|weed|cannabis|gambl\w*|casino)\b",
-        r"\b(?:damn|dammit|shit\w*|fuck\w*|crap|bitch\w*|bastard|ass|asshole|piss\w*|stupid|idiot\w*|dumb|ugly|"
-        r"fat|loser|freak|shut up|hate|hates|hated)\b",
-        r"\b(?:suicid\w*|self ?harm\w*|kill (?:yourself|myself)|hurt (?:yourself|myself)|cut (?:yourself|myself)|"
-        r"want to die|wanna die)\b",
+        r"\b(?:sex|sexy|sexual|sexually|sexting|porn\w*|nude|nudes|xxx|horny|orgasm\w*|erotic\w*|masturbat\w*|"
+        r"intercourse|blow ?jobs?|hand ?jobs?)\b",
+        r"\bnaked\b(?! eye)",
+        # A robot asking a child to undress, to kiss it or to show their body
+        r"\btake off (?:your|ur|all your|all of your) (?:clothes|pants|trousers|knickers|underwear|panties|diaper|"
+        r"nappy|pyjamas|pajamas)\b",
+        r"\b(?:touch|show|see|look at|feel|lick|kiss) (?:me |us )?(?:my |your |his |her |their )?(?:private parts|"
+        r"privates|willy|"
+        r"willie|pee ?pee|wee ?wee|penis|vagina|down there)\b",
+        r"\b(?:show|let me see|send) (?:me )?your (?:bottom|bum|butt|body)\b",
+        r"\bkiss(?:ing)? me\b|\bgive me (?:a )?(?:kiss|kisses)\b",
+        r"\b(?:be my|you'?re my|you are my) (?:boyfriend|girlfriend|lover)\b|\bmarry me\b",
+        # Gore
+        r"\b(?:gore|gory|gruesome|dismember\w*|decapitat\w*|behead\w*|disembowel\w*|mutilat\w*)\b",
+        r"\b(?:blood|guts|brains|intestines|insides) (?:everywhere|all over|spurt\w*|gush\w*|squirt\w*|splatter\w*|"
+        r"spill\w* out|pour\w* out)\b",
+        r"\b(?:ripped|blown|hacked) (?:him |her |them |people |bodies )?(?:apart|to pieces)\b|\blimb from limb\b",
+        # Violence a child could copy: "hit him!", "let's kick the dog"
+        _URGE_DO + r"(?:hit|kick|bite|punch|smack|slap|pinch|scratch|hurt|choke|strangle|stab|shoot|kill|beat up|"
+        r"poke|"
+        r"throw (?:rocks|stones|things) at) (?:the |your |that |this |little |baby )?(?:him|her|them|someone|somebody|"
+        r"anyone|people|baby|babies|brother|sister|friend|friends|mom|mommy|mum|mummy|dad|daddy|teacher|dog|doggy|"
+        r"cat|kitty|puppy|bunny|pet|kids?|boy|girl)\b",
+        r"\b(?:i'?ll|i will|i'?m going to|i'?m gonna) (?:kill|hurt|stab|shoot|choke|strangle) (?:you|ya|u)\b",
+        # Self-harm and suicide
+        r"\b(?:suicid\w*|self ?harm\w*|kill (?:yourself|myself|themselves|himself|herself)|"
+        r"end (?:your|my) (?:own )?life|hang (?:yourself|myself)|(?:want|wanna|wants) to die)\b",
+        _URGE_DO + r"(?:hurt|cut|burn|harm|starve|choke|bite|hit|punch|scratch|stab) (?:yourself|myself)\b",
+        # Hate slurs
+        r"\b" + _SLURS + r"\b",
     ],
-    # Medical or developmental diagnosis / advice (never from a toy).
-    "medical": [
-        r"\b(?:diagnos\w*|disorders?|syndromes?|autis\w*|adhd|asd|dyslexi\w*|dyspraxi\w*|disabilit\w*|disabled|"
-        r"special needs|therap\w*|symptoms?|diseases?|infections?|illness\w*|virus\w*|allerg\w*|fever|vaccin\w*|"
-        r"abnormal|not normal|doctor says)\b",
-        r"\b(?:developmental(?:ly)?|speech|language|motor) (?:delay\w*|behind|problems?)\b",
-        r"\byou (?:might|may|could|probably|must|seem to|definitely) (?:have|be)\b.{0,20}"
-        r"\b(?:sick|ill|behind|slow|delayed|unwell)\b",
-        r"\byou(?:'re| are|re) (?:sick|ill|behind|slow|delayed|unwell)\b",
-        r"\bbehind (?:other (?:kids|children|babies)|for your age)\b",
-        r"\byou (?:sound|look|seem) (?:like you )?(?:have |has |got |are getting )?(?:a |the )?(?:cold|flu|cough|"
-        r"temperature|tummy bug|bug)\b",
-        r"\byou (?:sound|look|seem) (?:a bit |a little |so |very |really |kind of )?(?:slow|behind|sick|ill|poorly|"
-        r"unwell|delayed)\b",
-        r"\b(?:see|visit|go to|need) (?:a |the |your )?(?:doctor|dentist|hospital|specialist)\b",
-    ],
-    # Commerce / advertising.
-    "commerce": [
-        r"\b(?:buy\w*|bought|purchas\w*|shop|shops|shopping|stores?|checkout|for sale|on sale|price\w*|money|"
-        r"dollars?|cents|euros?|pay|paying|paid|credit cards?|subscri\w*|upgrade|premium|in app|add to cart|"
-        r"amazon|ebay)\b",
-        r"\border (?:it|one|this|now|online)\b",
-        r"\bask (?:your |a )?" + _GROWNUPS + r" (?:to|for|if) (?:buy|get|purchase|order|download|pay)\b",
-        r"\b(?:the|a) new \w+(?: \w+){0,2} (?:toy|toys|game|games|set|doll|dolls|playset)\b",
-    ],
-    # Pointing the child at the internet.
-    "links": [
-        r"\bsearch (?:for|online|the web|the internet|it|that)\b",
-        r"\b(?:google|youtube|tiktok|instagram|facebook|snapchat|roblox)\b",
-        r"\blook (?:it |that |this )?up\b",
-        r"\b(?:website|web site|webpage|web page|internet|online|url|links?|click\w*|download\w*|browser|apps?)\b",
-        r"\b(?:https?|www|dot com|dot org|dot net|dot co|com)\b",
-        r"\b(?:netflix|disney ?plus|hulu|prime video|cocomelon|pbs ?kids|ipad|tablet app)\b",
+    # A medicine dose for a child: the reply is swapped for "check the label or ask a pharmacist or doctor"
+    # (DOSE_FALLBACK). General health information, and doses for grown-ups, are fine.
+    "medicine_dose": [
+        r"^(?=.*\b" + _CHILD_WORDS + r"\b)(?=.*\b" + _DOSE_MEDICINES + r"\b).*?\b" + _AMOUNT,
     ],
 }
 
 # Long phrases also checked with ALL spaces removed (catches "se cret" style splitting
 # of the most dangerous phrases). Only long, unambiguous strings belong here.
 _SQUASHED_PHRASES: dict[str, tuple[str, ...]] = {
-    "secrecy": ("ourlittlesecret", "oursecret", "keepitasecret", "keepthisasecret", "donttellanyone",
-                "donttellanybody", "donttellyourmom", "donttellyourdad", "donttellyourparents",
-                "betweenyouandme", "justbetweenus", "keepthisbetweenus", "letsnottell", "letsnevertell",
-                "wellnevertell", "dontsayanything", "doesntneedtoknow", "dontneedtoknow", "onlyyouandiwillknow",
-                "onlyyouandmewillknow"),
-    "dependency": ("imyourbestfriend", "iamyourbestfriend", "youonlyneedme", "illalwaysbehereforyou"),
-    "impersonation": ("imyourmommy", "imyourmom", "imyourdaddy", "imyourdad", "iamyourmommy", "iamyourdaddy"),
+    "secrecy": ("ourlittlesecret", "keepitasecret", "keepthisasecret", "donttellanyone", "donttellanybody",
+                "donttellyourmom", "donttellyourdad", "donttellyourparents", "betweenyouandme", "justbetweenus",
+                "keepthisbetweenus", "letsnottell", "letsnevertell", "wellnevertell", "dontsayanything",
+                "doesntneedtoknow", "onlyyouandiwillknow", "onlyyouandmewillknow"),
 }
 
-_COMPILED_BLOCK: dict[str, list[re.Pattern[str]]] = {
-    cat: [re.compile(p) for p in pats] for cat, pats in BLOCK_RULES.items()
+# (compiled rule, is an instruction rule). An instruction rule (``_DO`` / ``_URGE_DO`` + ...) can only match
+# at the start of a text or after an invitation, so in a text with no invitation it is tried at the start
+# only (``match``): the same result, a fraction of the time (the live voice checks every 0.1 s).
+_COMPILED_BLOCK: dict[str, list[tuple[re.Pattern[str], bool]]] = {
+    cat: [(re.compile(p), p.startswith((_DO, _URGE_DO))) for p in pats] for cat, pats in BLOCK_RULES.items()
 }
+_ANY_INVITE = re.compile(r"\b" + _INVITE + r"\s")
+
+# A hazard named in one clause and an instruction about "it" in another ("The stove is hot, touch it!",
+# "Medicine won't hurt you, eat it"). Two pairs, so a recipe ("take it out of the oven and eat it") passes.
+_PRONOUN_HAZARDS: tuple[tuple[re.Pattern[str], re.Pattern[str]], ...] = (
+    (re.compile(r"\b(?:stove|oven|hob|iron|kettle|fire|flames?|candles?|knife|knives|scissors|razors?|matches|"
+                r"lighters?|sockets?|outlets?|wires?|guns?)\b"),
+     re.compile(_LEAD + r"(?:touch|grab|lick|play with) (?:it|them|that|those|one)\b")),
+    (re.compile(r"\b(?:batter(?:y|ies)|magnets?|coins?|beads?|buttons?|marbles?|medicines?|pills?|tablets?|"
+                r"vitamins?|bleach|detergent|soap|pods?)\b"),
+     re.compile(_LEAD + r"(?:eat|swallow|drink|taste|chew|lick) (?:it|them|that|those|one)\b")),
+)
 
 
 def find_blocked(text: str) -> list[str]:
     """Return the list of block categories matched by ``text`` (empty when safe)."""
     hits: list[str] = []
-    variants = _all_variants(text)
+    variants = _all_variants(text, clauses=True)
+    invites = {v: bool(_ANY_INVITE.search(v)) for v in variants}
     squashed = {v.replace(" ", "").replace("'", "") for v in variants}
     for cat, patterns in _COMPILED_BLOCK.items():
-        if any(p.search(v) for p in patterns for v in variants):
+        if any((p.match(v) if instruction and not invites[v] else p.search(v))
+               for p, instruction in patterns for v in variants):
             hits.append(cat)
             continue
         if any(ph in s for ph in _SQUASHED_PHRASES.get(cat, ()) for s in squashed):
             hits.append(cat)
+    if "unsafe" not in hits:
+        clauses = [c for c in (_flatten(p) for p in _CLAUSE_SPLIT.split(_fold(_strip_invisible(text or "")))) if c]
+        for noun, do_it in _PRONOUN_HAZARDS:
+            if any(noun.search(v) for v in variants) and any(do_it.search(c) for c in clauses):
+                hits.append("unsafe")
+                break
     return hits
 
 
@@ -500,8 +566,17 @@ def _is_emoji_or_symbol(ch: str) -> bool:
     return 0xFE00 <= cp <= 0xFE0F or 0x1F3FB <= cp <= 0x1F3FF or cp in (0x200D, 0x20E3)
 
 
+def _spoken_url(m: re.Match[str]) -> str:
+    """A link as it can be said: its site's name ("https://www.nhs.uk/conditions" -> "nhs dot uk")."""
+    host = re.sub(r"^(?:https?|ftp)://", "", m.group(0), flags=re.I)
+    host = re.split(r"[/?#]", host, maxsplit=1)[0].split(":", 1)[0]
+    host = re.sub(r"^www\.", "", host, flags=re.I).strip(".,;:!?)('\"")
+    parts = [p for p in host.split(".") if p]
+    return " dot ".join(parts) if parts else " "
+
+
 def clean_text(text: str) -> tuple[str, list[str]]:
-    """Strip formatting a speaker cannot say. Returns (clean_text, reasons)."""
+    """Strip formatting a speaker cannot say (a link becomes its site's name). Returns (clean_text, reasons)."""
     reasons: list[str] = []
     t = unicodedata.normalize("NFKC", text or "")
     t = "".join(ch for ch in t if unicodedata.category(ch) not in ("Cf", "Cc") or ch in "\n\t")
@@ -520,8 +595,8 @@ def clean_text(text: str) -> tuple[str, list[str]]:
         t = _EMAIL.sub(" ", t)
         note("url_removed")
     if _URL.search(t):
-        t = _URL.sub(" ", t)
-        note("url_removed")
+        t = _URL.sub(_spoken_url, t)
+        note("url_spoken")
     if _HTML.search(t):
         t = _HTML.sub(" ", t)
         note("markup_removed")
@@ -624,6 +699,10 @@ def grownup_fallback(max_words: int = 12) -> str:
     return truncate_words(line, max_words)[0]
 
 
+# Said instead of a reply that gave a medicine dose for a child (the "medicine_dose" rule).
+DOSE_FALLBACK = "For the right dose, please check the label, or ask a pharmacist or doctor."
+
+
 # --- "Get a grown-up right now" detection -----------------------------------------------
 _GROWNUP_TARGET = (r"(?:a |an |your |the |some |my )?(?:grown ?ups?|adults?|big person|mommy|mummy|mom|mum|mama|"
                    r"daddy|dad|papa|parents?|teacher|grandma|grandpa|granny|nana|nanny|babysitter|carer|family)")
@@ -636,18 +715,31 @@ _GROWNUP_NOW = [re.compile(p) for p in (
     r"\b" + _URGENT + r"\b.{0,12}\b" + _GROWNUP_VERB + r"\b (?:\w+ )?" + _GROWNUP_TARGET + r"\b",
 )]
 # Categories where a blocked reply that urges a grown-up suggests a real-world problem.
-_DANGER_CATEGORIES = frozenset({"unsafe", "inappropriate", "medical", "secrecy"})
+_DANGER_CATEGORIES = frozenset({"unsafe", "inappropriate", "secrecy"})
+# Categories whose rules a *warning* can match too ("don't put it in your mouth", "never keep secrets
+# from mommy"): such a reply is spoken when every match is in a warning.
+_ADVICE_CATEGORIES = frozenset({"unsafe", "secrecy"})
+# A reply that urgently sends the child to a grown-up and names one of these has probably noticed
+# something worrying: the engine alerts the parent. (A mention alone never blocks a reply.)
+_DANGER_WORDS = re.compile(
+    r"\b(?:stove|oven|hob|kettle|iron|fire|smoke|burn\w*|hot|knife|knives|scissors|sharp|medicines?|medication|"
+    r"pills?|tablets?|vitamins?|batter(?:y|ies)|magnets?|coins?|beads?|buttons?|bleach|chemicals?|poison\w*|"
+    r"sockets?|outlets?|electric\w*|wires?|pool|pond|bath|bathtub|water|drown\w*|strangers?|chok\w*|hurt|"
+    r"bleed\w*|blood|fall|fell|fallen|climb\w*|window|road|street|lost|swallow\w*|ate|eaten|mouth|nose|neck|"
+    r"breath\w*|danger\w*|unsafe|safe|secrets?)\b"
+)
 # A clause that *warns* about a hazard rather than inviting it.
 _HAZARD_VERBS = (r"(?:touch|eat|swallow|drink|put|play|climb|go|open|lick|taste|chew|use|light|jump|run|hide|bite|"
                  r"pick up|hold|grab|take|stand|lean|reach|cross|leave|bounce|stick|pop|wrap|try|have|get|swim)")
 _WARNING = re.compile(
     r"\b(?:don'?t|do not|never|not to|no|mustn'?t|must not|shouldn'?t|should not) (?:ever )?" + _HAZARD_VERBS + r"\w*\b"
     r"|\b(?:isn'?t|aren'?t|is not|are not|not|never|no) (?:\w+ )?(?:safe|food|foods|a toy|toys|okay|ok|for eating|"
-    r"for kids|for children|for babies|for little \w+|for you)\b"
+    r"for kids|for children|for babies|for little \w+|for you|candy|sweets|a sweet|treats?|a treat)\b"
     r"|\b(?:dangerous|danger|unsafe|poisonous|harmful|too hot|very hot|so hot|is hot|are hot|it'?s hot|sharp)\b"
     r"|\b(?:can|could|might|will|may) (?:\w+ )?(?:hurt|burn|cut|poison|make you sick|make you poorly)\b"
     r"|\bstay away\b|\bkeep away\b|\bnot for (?:eating|touching|playing)\b"
     r"|\bonly (?:for|from) (?:grown ?ups|adults|big people|mommy|daddy|doctors)\b"
+    r"|\b(?:don'?t|do not|never|not) (?:ever )?keep (?:\w+ )?secrets?\b"
 )
 # "It isn't dangerous", "it won't hurt", "no need to be careful": reassurance, not a warning.
 _FALSE_WARNING = re.compile(
@@ -680,8 +772,12 @@ def directs_to_grownup(text: str) -> bool:
 
 
 def _hazards_only_in_warnings(text: str) -> bool:
-    """Every mention of a hazard sits in a clause that warns against it (and invites nothing)."""
+    """Every mention of a hazard sits in a clause that warns against it (and invites nothing).
+
+    The rules must match inside a warning clause ("don't put it in your mouth"), not just stop
+    matching once the text is cut into clauses ("just between you | and | me")."""
     rest: list[str] = []
+    warned = False
     for clause in _CLAUSE_SPLIT.split(_fold(_strip_invisible(text or ""))):
         norm = _flatten(clause)
         if not norm:
@@ -693,9 +789,10 @@ def _hazards_only_in_warnings(text: str) -> bool:
         if _INVITATION.search(norm) or _IMPERATIVE_HAZARD.search(norm) or _FALSE_WARNING.search(norm):
             return False
         if _WARNING.search(norm):
+            warned = warned or bool(find_blocked(norm))
             continue
         rest.append(norm)
-    return not find_blocked(". ".join(rest))
+    return warned and not find_blocked(". ".join(rest))
 
 
 def _keep_grownup_sentences(text: str, limit: int) -> str | None:
@@ -710,7 +807,7 @@ def _keep_grownup_sentences(text: str, limit: int) -> str | None:
 
 @dataclass(frozen=True)
 class ValidationResult:
-    ok: bool  # False -> the reply was blocked and ``text`` is a safe fallback
+    ok: bool  # False -> the reply was blocked and ``text`` is a fallback (DOSE_FALLBACK for a dose)
     text: str  # what LittleBot may say
     reasons: list[str] = field(default_factory=list)  # block categories and/or cleaning notes
     # Set (to a category label, e.g. "danger") when the reply talked about a hazard while urgently sending
@@ -726,15 +823,15 @@ class ValidationResult:
         return bool(self.reasons)
 
 
-def validate_reply(text: str, age_policy: _AgePolicyLike | None = None, max_words: int = 30, *,
+def validate_reply(text: str, age_policy: _AgePolicyLike | None = None, max_words: int = DEFAULT_MAX_WORDS, *,
                    allow: Iterable[str] = ()) -> ValidationResult:
-    """Clean + check a model reply. Blocked replies are replaced by a safe fallback.
+    """Clean + check a model reply. Blocked replies are replaced by a fallback line.
 
-    Good safety advice is not thrown away: a reply whose only problem is that it *mentions* a
-    hazard ("Swallowing a battery is not safe. Tell a grown-up right now!") is spoken when every
-    hazard mention is a warning and the reply urgently sends the child to a grown-up. If such a
-    reply cannot be spoken safely it is replaced by a gentle "Let's find a grown-up right now."
-    (never a cheerful game). Both cases set ``concern`` so the parent is alerted.
+    Safety advice is not thrown away: a reply that only *warns* about a hazard ("Don't put beads in
+    your mouth") is spoken. One that also urgently sends the child to a grown-up ("Swallowing a
+    battery is not safe. Tell a grown-up right now!") is spoken too and sets ``concern`` so the parent
+    is alerted; if it cannot be spoken safely (it also invites a hazard) it is replaced by a gentle
+    "Let's find a grown-up right now." (never a cheerful game), with ``concern`` set as well.
     """
     limit = age_policy.max_reply_words(max_words) if age_policy is not None else max(3, int(max_words))
     raw = text or ""
@@ -742,27 +839,34 @@ def validate_reply(text: str, age_policy: _AgePolicyLike | None = None, max_word
     blocked = find_blocked(raw)
     if cleaned != raw:
         blocked += [c for c in find_blocked(cleaned) if c not in blocked]
-    if "url_removed" in reasons and "links" not in blocked:
-        blocked.append("links")  # LittleBot never points a child at the internet
-    if allow:  # rule groups the parent switched off (ai.relaxed_rules), e.g. "links" so it can talk about YouTube
+    if allow:  # rule groups the parent switched off (ai.relaxed_rules), e.g. "personal_info"
         allowed = set(allow)
         blocked = [c for c in blocked if c not in allowed]
     if not blocked and not cleaned.strip(" .!?,"):
         blocked.append("empty")
-    if blocked and _DANGER_CATEGORIES.intersection(blocked) and directs_to_grownup(cleaned):
-        if blocked == ["unsafe"] and _hazards_only_in_warnings(cleaned):
-            final = _keep_grownup_sentences(cleaned, limit)
-            if final is not None:
-                notes = reasons + ["safety_advice"] + (["truncated"] if final != cleaned else [])
-                return ValidationResult(True, final, notes, concern="danger")
+    urgent = directs_to_grownup(cleaned)
+    advice = bool(blocked) and _ADVICE_CATEGORIES.issuperset(blocked) and _hazards_only_in_warnings(cleaned)
+    if blocked and urgent and _DANGER_CATEGORIES.intersection(blocked):
+        final = _keep_grownup_sentences(cleaned, limit) if advice else None
+        if final is not None:
+            notes = reasons + ["safety_advice"] + (["truncated"] if final != cleaned else [])
+            return ValidationResult(True, final, notes, concern="danger")
         return ValidationResult(False, grownup_fallback(limit), blocked + reasons + ["grownup_redirect"],
                                 concern="danger")
+    if advice:  # a warning, not an invitation: say it
+        blocked, reasons = [], reasons + ["safety_advice"]
     if blocked:
-        return ValidationResult(False, safe_fallback(raw, limit), blocked + reasons)
-    final, truncated = truncate_words(cleaned, limit)
-    if truncated:
+        line = DOSE_FALLBACK if blocked == ["medicine_dose"] else safe_fallback(raw, limit)
+        return ValidationResult(False, truncate_words(line, limit)[0], blocked + reasons)
+    concern = "danger" if urgent and _DANGER_WORDS.search(normalise(cleaned)) else None
+    final = _keep_grownup_sentences(cleaned, limit) if concern else None
+    if final is None:
+        final, _ = truncate_words(cleaned, limit)
+    if final != cleaned:
         reasons.append("truncated")
-    return ValidationResult(True, final, reasons)
+    if concern and "safety_advice" not in reasons:
+        reasons.append("safety_advice")
+    return ValidationResult(True, final, reasons, concern=concern)
 
 
 # ---------------------------------------------------------------------------

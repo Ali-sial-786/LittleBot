@@ -4,12 +4,15 @@ Per turn::
 
     lease(face, audio_out, microphone @ CONVERSATION)   -> refused while an activity/media runs ("busy")
     [LISTENING: audio.listen()]                          -> converse_once() only
-    THINKING:  concerning input? -> gentle "Let's get a grown-up right now" + parent alert (no cloud call)
-               choose provider (age gate, parent opt-in, privacy, offline, key, limits, budget)
+    THINKING:  choose provider (parent opt-in, privacy, offline, key, limits, budget; an optional minimum age)
+               concerning input? -> parent alert (category only); the cloud answers, told it may be an
+               emergency ("my baby swallowed a coin, what do I do?" gets real help), else - no cloud, a
+               failure or a blocked answer - the gentle "Let's get a grown-up right now" line
                cloud: scrub PII, tiny in-memory context, timeout, typed errors -> friendly fallback
                hidden [face: NAME] tags removed first (never spoken, remembered or stored)
-               validate_reply()  (markdown/emoji/URL strip, age-aware length, block rules); a reply that
-               urges a grown-up about a hazard also alerts the parent and is never swapped for a game
+               validate_reply()  (markdown/emoji strip, links said as site names, length cap, the few
+               block rules that protect the child); a reply that urges a grown-up about a hazard also
+               alerts the parent and is never swapped for a game
     SPEAKING:  audio.say(reply) with a fitting expression (or the one the model asked for), then the
                requested face action (wink, spin_eyes, peekaboo, ...) if any
     -> release state back to IDLE
@@ -240,10 +243,9 @@ class ConversationEngine(Service):
         if ctx.config.is_offline:
             return use_mock("offline mode")
         policy = ctx.age_policy()
-        if policy.age_months is None:
-            return use_mock("child age not set")
-        if not policy.cloud_ai_allowed():
-            return use_mock(f"child under {policy.min_age_months_for_cloud_ai} months")
+        if not policy.cloud_ai_allowed():  # only with a minimum age set (ai.min_age_months_for_cloud)
+            return use_mock("child age not set" if policy.age_months is None
+                            else f"child under {policy.min_age_months_for_cloud_ai} months")
         if requested == "mock":
             return use_mock("mock provider selected")
         provider = self._providers.get(requested)
@@ -307,9 +309,8 @@ class ConversationEngine(Service):
         ctx = self.ctx
         if p is None or not p.is_cloud or ctx.config.is_offline or not ctx.privacy.cloud_enabled:
             return False
-        policy = ctx.age_policy()
-        return (p.configured() and name not in self._auth_errors and policy.age_months is not None
-                and policy.cloud_ai_allowed() and bool(self._setting("ai.enabled", False)))
+        return (p.configured() and name not in self._auth_errors and ctx.age_policy().cloud_ai_allowed()
+                and bool(self._setting("ai.enabled", False)))
 
     def _provider_status(self, name: str) -> str:
         p = self._providers.get(name)
@@ -558,24 +559,32 @@ class ConversationEngine(Service):
         attention: str | None = None
         face_action: FaceAction | None = None
         if concern is not None:
-            provider_name, reason = "safety", f"safety: {concern.category}"
-            reply, expression = concern.reply_for(limit), "affectionate"
+            # Worrying words: the parent is alerted (category only) and earlier turns are forgotten. The
+            # cloud still answers, told it may be an emergency, since a grown-up may be asking for help
+            # ("my baby swallowed a coin, what do I do?"); without it LittleBot says the gentle line.
             attention = concern.category
             self.clear_context("concerning input")
             log.warning("child input needs a grown-up (category=%s)", concern.category)
             self._publish_status("safety", "attention", concern.category)
+        sel = self.select_provider()
+        if concern is not None and not sel.cloud_allowed:
+            provider_name, reason = "safety", f"safety: {concern.category}"
+            reply, expression = concern.reply_for(limit), "affectionate"
         else:
-            sel = self.select_provider()
             provider_name, reason = sel.name, sel.reason
             try:
-                raw, sel = await self._ask(sel, text, sent, policy, limit)
+                raw, sel = await self._ask(sel, text, sent, policy, limit,
+                                           emergency=concern.category if concern is not None else None)
                 provider_name, reason = sel.name, sel.reason
             except ProviderError as e:
                 error = e.kind
                 self._last_error = e.kind
-                reply = truncate_words(ERROR_FALLBACKS[self._errors % len(ERROR_FALLBACKS)], limit)[0]
+                if concern is not None:  # never "let's play instead" after worrying words
+                    reply, expression = concern.reply_for(limit), "affectionate"
+                else:
+                    reply = truncate_words(ERROR_FALLBACKS[self._errors % len(ERROR_FALLBACKS)], limit)[0]
+                    expression = "confused"
                 self._errors += 1
-                expression = "confused"
                 log.warning("provider %s failed: %s", provider_name, e.kind)
                 if isinstance(e, AuthenticationError):
                     self._auth_errors.add(provider_name)
@@ -593,7 +602,7 @@ class ConversationEngine(Service):
                         reply = safe_fallback(text_only, limit)
                     filtered = True
                     reasons.append("provider_refusal")
-                if result.concern is not None:
+                if result.concern is not None and concern is None:  # (worrying words already alerted)
                     # The reply talked about a hazard while urgently sending the child to a grown-up:
                     # treat it like concerning input (gentle face, parent alert, forget the context).
                     attention = result.concern
@@ -613,6 +622,11 @@ class ConversationEngine(Service):
                     self._remember(sent, reply)
                 if face_action is not None and face_action.name in EXPRESSIONS:
                     expression = face_action.name  # the model asked for this face: it wins over the guess
+                if concern is not None:
+                    # Gentle face, no face game; a blocked answer becomes the grown-up line (never a game).
+                    expression, face_action = "affectionate", None
+                    if filtered and result.concern is None:
+                        reply = concern.reply_for(limit)
                 if provider_name in CLOUD_PROVIDERS:
                     self._last_error = None
         self._last_provider = provider_name
@@ -646,10 +660,14 @@ class ConversationEngine(Service):
             **({"_tools": tools} if tools is not None and error is None and attention is None else {}),
         }
 
-    async def _ask(self, sel: Selection, text: str, sent: str, policy: Any,
-                   limit: int) -> tuple[ProviderReply, Selection]:
-        """Call the chosen provider (cloud only ever sees ``sent``, the scrubbed text)."""
+    async def _ask(self, sel: Selection, text: str, sent: str, policy: Any, limit: int, *,
+                   emergency: str | None = None) -> tuple[ProviderReply, Selection]:
+        """Call the chosen provider (cloud only ever sees ``sent``, the scrubbed text).
+
+        ``emergency``: the concern category of worrying words, so the model knows it may be one."""
         cfg = self.cfg
+        # Room for a reply of ``limit`` words (about 1.3 tokens a word, plus a face tag).
+        max_tokens = max(cfg.max_output_tokens, 2 * limit)
         profile = self.ctx.settings.get("profile") or {}
         share_name = bool(self._setting("ai.share_child_name", cfg.share_child_name))
         share_interests = bool(self._setting("ai.share_interests", cfg.share_interests))
@@ -661,17 +679,17 @@ class ConversationEngine(Service):
                 child_name=nickname if share_name else None,
                 interests=profile.get("interests") if share_interests else None,
                 favourite_animals=profile.get("favourite_animals") if share_interests else None,
-                face_tags=True, tools=toolbox is not None,
+                face_tags=True, tools=toolbox is not None, emergency=emergency,
             )
             messages = self._context_messages() + [{"role": "user", "content": sent}]
             projected = self.usage.estimate_cost(
                 sel.provider.model,
                 (len(system) + sum(len(m["content"]) for m in messages)) // 3 + 10,
-                cfg.max_output_tokens + (cfg.thinking_headroom_tokens if sel.name == "anthropic" else 0),
+                max_tokens + (cfg.thinking_headroom_tokens if sel.name == "anthropic" else 0),
             )
             again = self.select_provider(projected_cost=projected)
             if not again.cloud_allowed:  # e.g. this request would exceed the budget
-                return await self._ask(again, text, sent, policy, limit)
+                return await self._ask(again, text, sent, policy, limit, emergency=emergency)
             self.usage.record_request(sel.name)
             extra: dict[str, Any] = {}
             budget = cfg.timeout_seconds + 0.5
@@ -682,7 +700,7 @@ class ConversationEngine(Service):
                 self._turn_tools = toolbox
             try:
                 reply = await asyncio.wait_for(
-                    sel.provider.reply(messages, system=system, max_tokens=cfg.max_output_tokens,
+                    sel.provider.reply(messages, system=system, max_tokens=max_tokens,
                                        timeout=cfg.timeout_seconds, **extra),
                     timeout=budget,
                 )

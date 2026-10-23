@@ -398,7 +398,9 @@ async def test_profile_validation(authed, bad):
 async def test_ai_settings(authed, dctx, fakes):
     info = (await authed.get("/api/ai")).json()
     assert info["settings"]["enabled"] is False and info["keys"]["has_anthropic_key"] is True
-    assert info["policy"]["cloud_ai_age_ok"] is False and info["brain"]["usage"]["requests_today"] == 3
+    # no minimum age by default: cloud AI is the parent's choice at any age
+    assert info["policy"]["cloud_ai_age_ok"] is True and info["brain"]["usage"]["requests_today"] == 3
+    assert info["policy"]["min_age_months_for_cloud"] == 0
     r = await authed.put("/api/ai/settings", json={"enabled": True, "provider": "anthropic", "max_words": 20,
                                                    "max_requests_per_hour": 10, "max_requests_per_day": 50,
                                                    "daily_budget_usd": 0.25})
@@ -407,6 +409,7 @@ async def test_ai_settings(authed, dctx, fakes):
     assert dctx.settings.get("ai.daily_budget_usd") == 0.25
     assert (await authed.put("/api/ai/settings", json={"provider": "skynet"})).status_code == 422
     assert (await authed.put("/api/ai/settings", json={"max_words": 1000})).status_code == 422
+    assert (await authed.put("/api/ai/settings", json={"max_words": 120})).status_code == 200  # room for long answers
     providers = (await authed.get("/api/ai/providers")).json()["providers"]
     assert {p["name"] for p in providers} == {"mock", "anthropic", "openai"}
 

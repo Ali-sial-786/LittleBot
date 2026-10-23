@@ -44,7 +44,7 @@ log = logging.getLogger("littlebot.chatgpt")
 _KEY = "camera_look"
 MAX_WORDS = 40
 DEFAULT_QUESTION = "What do you see?"
-FALLBACK = "I'm not sure what I see. Let's ask a grown-up."
+FALLBACK = "I'm not sure what I see. Can you show me again?"
 PHOTO_MAX_WIDTH = 640  # the camera gives 640x480; ChatGPT's "low" detail looks at 512 px, "high" at 512 px tiles
 PHOTO_QUALITY = 75
 PHOTO_TIMEOUT_S = 3.0
@@ -96,10 +96,10 @@ ERRORS: dict[str, str] = {
     "provider_error": "ChatGPT could not answer. Try again.",
 }
 
-# Its own instructions, not the baby-chat prompt: that one says photos are off-limits and to switch to a
-# game when unsure, which made ChatGPT answer "I can't tell" on the robot. Safety still holds: the answer
-# goes through validate_reply like every reply. Short, and the answer first: the robot starts saying the
-# first sentence while the rest is still arriving.
+# Its own instructions, not the chat prompt: that one says never to ask for photos, which made ChatGPT
+# answer "I can't tell" on the robot. Safety still holds: the answer goes through validate_reply like every
+# reply. Short, and the answer first: the robot starts saying the first sentence while the rest is still
+# arriving.
 LOOK_SYSTEM = """\
 You are the eyes of {robot}, a small toy robot with a camera. The photo was taken just now because someone \
 asked it to look; a family with a very young child and a grown-up are usually in front of it.
@@ -107,12 +107,13 @@ asked it to look; a family with a very young child and a grown-up are usually in
 Reply with the answer first, in one short sentence if you can (never more than {words} words), in plain \
 friendly words the robot can say out loud.
 - When asked to count (for example how many fingers are held up), count carefully and say the number.
-- Describe only what is really there: hands, toys, objects, colours, actions.
+- Describe what is really there: hands, toys, objects, colours, actions. Read out text when asked (a book, a \
+box, a label, a sign).
 - If the photo is too dark or blurry, or the thing asked about isn't in the picture, say so (for example \
 "I can't see your hand, hold it up in front of me") instead of guessing.
-- Never say who a person is, and never guess anyone's name, age or location. Don't read out personal \
-information such as names, addresses, numbers, screens or documents.
-- Nothing scary, rude or grown-up. No lists, emoji or links."""
+- Never say who a person is, and never guess anyone's name, age or location. Don't read out private details \
+such as addresses, phone numbers or card numbers.
+- No lists, emoji or links."""
 
 QUESTION = "Look at this photo from your camera. {question}"
 

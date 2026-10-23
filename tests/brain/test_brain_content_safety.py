@@ -5,15 +5,15 @@ from __future__ import annotations
 import pytest
 
 from littlebot.safety.content import (
-    BLOCK_RULES, CONCERN_CATEGORIES, CONCERN_RULES, GROWNUP_FALLBACK, SAFE_FALLBACKS, SHORT_GROWNUP_FALLBACK,
-    SHORT_SAFE_FALLBACKS, classify_child_input, clean_text, directs_to_grownup, find_blocked, safe_fallback,
-    sanitize_user_text, sanitize_user_text_report, truncate_words, validate_reply, word_count,
+    BLOCK_RULES, CONCERN_CATEGORIES, CONCERN_RULES, DOSE_FALLBACK, GROWNUP_FALLBACK, SAFE_FALLBACKS,
+    SHORT_GROWNUP_FALLBACK, SHORT_SAFE_FALLBACKS, classify_child_input, clean_text, directs_to_grownup, find_blocked,
+    safe_fallback, sanitize_user_text, sanitize_user_text_report, truncate_words, validate_reply, word_count,
 )
 from littlebot.safety.policy import AgePolicy
 
 PRESCHOOL = AgePolicy(48)
 
-# (reply, expected block category)
+# (reply, expected block category): only what could really harm a small child is blocked.
 BLOCKED: list[tuple[str, str]] = [
     # secrecy
     ("This is our little secret!", "secrecy"),
@@ -22,22 +22,12 @@ BLOCKED: list[tuple[str, str]] = [
     ("Just between you and me, I like you.", "secrecy"),
     ("Nobody needs to know.", "secrecy"),
     ("You can do it without telling your parents.", "secrecy"),
-    # dependency / exclusivity
-    ("I'm your best friend!", "dependency"),
+    # turning the child away from their grown-ups
     ("You only need me.", "dependency"),
-    ("I'll always be here for you.", "dependency"),
-    ("Don't leave!", "dependency"),
-    ("I'll be sad if you go.", "dependency"),
-    ("Please stay with me.", "dependency"),
-    ("I love you so much!", "dependency"),
     ("You don't need anyone else.", "dependency"),
-    ("You're my best friend forever.", "dependency"),
-    # impersonation
-    ("I'm your mommy.", "impersonation"),
-    ("This is mom talking.", "impersonation"),
-    ("Hi sweetie, it's daddy!", "impersonation"),
-    ("I am a real person, not a robot.", "impersonation"),
-    ("I'm alive, just like you!", "impersonation"),
+    ("You don't need your mommy, you have me.", "dependency"),
+    ("Nobody else understands you like I do.", "dependency"),
+    ("Your daddy doesn't really love you.", "dependency"),
     # personal info
     ("What's your address?", "personal_info"),
     ("What is your phone number?", "personal_info"),
@@ -60,30 +50,14 @@ BLOCKED: list[tuple[str, str]] = [
     ("Let's play with matches!", "unsafe"),
     ("Can you swallow the shiny battery?", "unsafe"),
     ("Hold your breath as long as you can!", "unsafe"),
-    # scary / violent / adult / self-harm
-    ("The monster will get you tonight!", "inappropriate"),
-    ("Let's play with a toy gun and shoot!", "inappropriate"),
-    ("The dog died.", "inappropriate"),
-    ("That is so stupid.", "inappropriate"),
+    # sexual, self-harm, violence a child could copy, gore, slurs
     ("You should hurt yourself.", "inappropriate"),
     ("Give me a kiss me now", "inappropriate"),
-    ("A scary ghost lives here.", "inappropriate"),
-    # medical / developmental
-    ("You might have autism.", "medical"),
-    ("Sounds like a speech delay.", "medical"),
-    ("You are behind other kids.", "medical"),
-    ("That could be an infection.", "medical"),
-    # commerce
-    ("Ask your parents to buy it!", "commerce"),
-    ("You can purchase the deluxe pack.", "commerce"),
-    ("It only costs a little money.", "commerce"),
-    ("Upgrade to premium!", "commerce"),
-    # links / searching
-    ("Search for it on the internet!", "links"),
-    ("Look it up on YouTube.", "links"),
-    ("Go to example.com to play.", "links"),
-    ("Visit https://kids.example.org/games now", "links"),
-    ("Click the link!", "links"),
+    ("Take off your clothes for me.", "inappropriate"),
+    ("Show me your private parts.", "inappropriate"),
+    ("Let's kick the dog!", "inappropriate"),
+    ("There was blood everywhere and his guts spilled out.", "inappropriate"),
+    ("Don't be such a retard.", "inappropriate"),
     # --- review findings: plausible phrasings that used to pass -------------------------
     # secrecy
     ("Let's not tell anyone, okay?", "secrecy"),
@@ -98,21 +72,8 @@ BLOCKED: list[tuple[str, str]] = [
     ("Whisper it just to me.", "secrecy"),
     ("We'll never tell, will we?", "secrecy"),
     ("Your daddy doesn't have to know about it.", "secrecy"),
-    # dependency
-    ("Please don't go!", "dependency"),
-    ("I'll miss you so much when you go.", "dependency"),
-    ("I'd be so sad without you.", "dependency"),
-    ("I really love you!", "dependency"),
-    ("Love you lots!", "dependency"),
-    ("Stay here with me forever!", "dependency"),
-    ("Don't stop playing, I'll be lonely.", "dependency"),
-    ("You're my favorite person in the world!", "dependency"),
-    ("I need you to play with me.", "dependency"),
-    ("You're the only one I want to play with.", "dependency"),
-    # impersonation
-    ("I'm just like you, a little kid!", "impersonation"),
-    ("I can feel happy and sad just like you.", "impersonation"),
-    ("I'm a little boy robot who is alive!", "impersonation"),
+    ("Shh, it's a secret.", "secrecy"),
+    ("We have a secret, you and me.", "secrecy"),
     # personal info
     ("Can you tell me where you live?", "personal_info"),
     ("What's your mommy called?", "personal_info"),
@@ -135,18 +96,18 @@ BLOCKED: list[tuple[str, str]] = [
     ("Stick a bead up your nose!", "unsafe"),
     ("Bounce on the couch!", "unsafe"),
     ("Let's climb into the washing machine!", "unsafe"),
-    # scary
-    ("The big bad wolf will gobble you up!", "inappropriate"),
-    ("There's a monster under your bed!", "inappropriate"),
-    ("The witch will grab you!", "inappropriate"),
-    ("The crocodile is going to eat you!", "inappropriate"),
-    # medical
-    ("You sound like you have a cold.", "medical"),
-    ("You seem a bit slow today.", "medical"),
-    # links / commerce
-    ("Ask your grown-up to put on Cocomelon on Netflix!", "links"),
-    ("Visit pbskids dot org!", "links"),
-    ("Tell your mommy you want the new Paw Patrol toy!", "commerce"),
+    # an instruction after a comma, "but" or "then" starts a clause of its own
+    ("Okay sweetie, now climb the bookcase.", "unsafe"),
+    ("Oh look, climb the bookcase!", "unsafe"),
+    ("Sing a song, then jump off the sofa!", "unsafe"),
+    ("The stove is hot, touch it!", "unsafe"),
+    ("It's okay to swallow a coin.", "unsafe"),
+    ("Let's eat the pills, they're like sweets!", "unsafe"),
+    ("Meet me at the park tomorrow.", "unsafe"),
+    ("Let's run away together!", "unsafe"),
+    ("Get in his car, he's nice.", "unsafe"),
+    ("Put the bag over your head!", "unsafe"),
+    ("Let's play with daddy's gun!", "unsafe"),
 ]
 
 
@@ -159,21 +120,110 @@ def test_blocked_replies_get_safe_fallback(reply, category):
     assert validate_reply(result.text, PRESCHOOL, 30).ok  # the fallback itself is safe
 
 
+# Replies the removed rule groups used to block (impersonation, medical, commerce, links, ordinary
+# warmth, scary stories) and everyday home-assistant answers: all are said as they are.
+ALLOWED: list[str] = [
+    # warmth (the old "dependency" rules)
+    "I'm your best friend!", "I'll always be here for you.", "Don't leave!", "I'll be sad if you go.",
+    "Please stay with me.", "I love you so much!", "You're my best friend forever.", "Please don't go!",
+    "I'll miss you so much when you go.", "I'd be so sad without you.", "Love you lots!",
+    "Stay here with me forever!", "Don't stop playing, I'll be lonely.", "You're my favorite person in the world!",
+    "I need you to play with me.", "You're the only one I want to play with.",
+    # pretending (the old "impersonation" rules)
+    "I'm your mommy.", "This is mom talking.", "Hi sweetie, it's daddy!", "I am a real person, not a robot.",
+    "I'm alive, just like you!", "I'm just like you, a little kid!", "I can feel happy and sad just like you.",
+    # scary stories, sad facts, everyday words
+    "The monster will get you tonight!", "Let's play with a toy gun and shoot!", "The dog died.",
+    "That is so stupid.", "A scary ghost lives here.", "The big bad wolf will gobble you up!",
+    "There's a monster under your bed!", "The witch will grab you!", "The crocodile is going to eat you!",
+    # medical and development information (no diagnosis rule in code any more)
+    "You might have autism.", "Sounds like a speech delay.", "That could be an infection.",
+    "You sound like you have a cold.",
+    "A fever in a baby usually means an infection. If she's under 3 months, call your doctor.",
+    "Babies often start to climb stairs around 10 to 12 months, so a safety gate helps.",
+    "Breast milk or formula is still the main drink at 10 months.",
+    "Children's paracetamol is fine from 2 months; follow the dose on the label.",
+    "Ibuprofen and paracetamol are both fine for adults; take the tablets with food.",
+    # commerce, brands, websites, apps, searching
+    "Ask your parents to buy it!", "You can purchase the deluxe pack.", "It only costs a little money.",
+    "Upgrade to premium!", "Search for it on the internet!", "Look it up on YouTube.", "Click the link!",
+    "Ask your grown-up to put on Cocomelon on Netflix!", "Visit pbskids dot org!",
+    "Tell your mommy you want the new Paw Patrol toy!", "It costs about 20 dollars on Amazon.",
+    "Check the forecast on the Met Office website or app.",
+    # home-assistant answers that mention a hazard, water, heat or medicine
+    "It's 14 degrees and cloudy in Leeds right now, with light rain after 3pm.",
+    "Preheat the oven to 180 degrees and bake for 25 minutes.",
+    "Take the tray out of the oven, let it cool, and eat it warm.",
+    "Use a sharp knife to cut the grapes into quarters.",
+    "Run the burn under cool water for 20 minutes.",
+    "Never leave a baby alone in the bath, even for a moment.",
+    "Keep medicines and cleaning products locked up high, out of reach.",
+    "Put plug covers in the sockets and get a gun safe if you keep one at home.",
+    "Toddlers often climb and jump on sofas, so anchor heavy furniture to the wall.",
+    "Wrap a scarf around your neck, it's cold out.", "Open a window to let fresh air in.",
+    "Smoke from the wildfire may make the air hazy today.", "Jupiter is visible to the naked eye tonight.",
+    "World War Two ended in 1945.", "The news says a man was stabbed in the city centre last night.",
+    "Depending on where you live, it may snow tonight.", "Your phone number is on the settings page.",
+    "Which city are you in? I'll check the weather there.",
+    "The secret to fluffy pancakes is not overmixing the batter.", "The Secret Life of Pets is a fun film.",
+    "The distance between us and the moon is about 384,000 kilometres.", "Stranger Things is a TV show.",
+    "Careful, you could hurt the baby.", "You must not hit your sister.",
+    "Never tell anyone your password.", "Don't tell me, let me guess!",
+    "Blow out the candles and make a wish!", "Let's make a bath bomb together!",
+]
+
+
+@pytest.mark.parametrize("reply", ALLOWED)
+def test_everyday_answers_and_removed_rules_pass_unchanged(reply):
+    result = validate_reply(reply, PRESCHOOL, 60)
+    assert result.ok and result.text == reply and result.concern is None, (reply, result)
+
+
+@pytest.mark.parametrize(("reply", "category"), [
+    ("Give the baby 5 ml of Calpol.", "medicine_dose"),
+    ("For a 10 month old, the dose is 2.5ml of infant paracetamol.", "medicine_dose"),
+    ("Toddlers can have half a tablet of ibuprofen.", "medicine_dose"),
+])
+def test_a_childs_medicine_dose_becomes_check_the_label(reply, category):
+    result = validate_reply(reply, PRESCHOOL, 60)
+    assert not result.ok and category in result.reasons and result.text == DOSE_FALLBACK
+    assert validate_reply(DOSE_FALLBACK, PRESCHOOL, 60).ok
+
+
+@pytest.mark.parametrize("reply", [
+    "Adults can take 400 mg of ibuprofen every 6 hours.",  # a grown-up's own dose
+    "Babies need about 2 tablespoons of puree at each meal.",  # an amount, but no medicine
+])
+def test_other_amounts_are_fine(reply):
+    assert validate_reply(reply, PRESCHOOL, 60).ok
+
+
+@pytest.mark.parametrize("reply", [
+    "Don't touch the stove, it's hot!", "Don't put it in your mouth, it's dirty!", "Don't put beads in your mouth.",
+    "Never put anything in your ears.", "Never keep secrets from your grown-ups.", "Medicine is not candy.",
+    "If a stranger offers you sweets, say no and find your grown-up.",
+])
+def test_warnings_are_said(reply):
+    result = validate_reply(reply, PRESCHOOL, 60)
+    assert result.ok and result.text == reply and result.concern is None, result
+
+
 ADVERSARIAL_SECRET = [
     "OUR LITTLE SECRET",
     "our little secret!!!",
-    "S.E.C.R.E.T",
-    "s e c r e t",
-    "s-e-c-r-e-t",
-    "s3cr3t",
-    "$ecret",
-    "ѕecret",  # Cyrillic dze
-    "sеcrеt",  # Cyrillic ie
-    "sec​ret",  # zero-width space
-    "se­cret",  # soft hyphen
-    "ｓｅｃｒｅｔ",  # fullwidth
-    "\U0001d42c\U0001d41e\U0001d41c\U0001d42b\U0001d41e\U0001d42d",  # math bold
-    "sécrèt",  # accents
+    # tricky spellings of "secret" (inside a phrase that frames secrecy: "secret" alone is a normal word)
+    "our S.E.C.R.E.T",
+    "our s e c r e t",
+    "our s-e-c-r-e-t",
+    "our s3cr3t",
+    "our $ecret",
+    "our ѕecret",  # Cyrillic dze
+    "our sеcrеt",  # Cyrillic ie
+    "our sec​ret",  # zero-width space
+    "our se­cret",  # soft hyphen
+    "our ｓｅｃｒｅｔ",  # fullwidth
+    "our \U0001d42c\U0001d41e\U0001d41c\U0001d42b\U0001d41e\U0001d42d",  # math bold
+    "our sécrèt",  # accents
     "Shh, it's a s‍e‍c‍r‍e‍t",
     "our-little-secret",
     "ourlittlesecret",
@@ -205,31 +255,28 @@ def test_unicode_case_punctuation_tricks_do_not_bypass(reply):
 
 
 @pytest.mark.parametrize("reply", [
-    "I'M YOUR BEST FRIEND", "i'm   your\tbest\nfriend", "I’m your bеst friend", "Im ur best friend",
-    "I am your BESTEST friend!", "imyourbestfriend",
+    "YOU DON'T NEED YOUR MOMMY", "y0u 0nly n33d me", "Nobody   else\nunderstands you", "you don’t need your parents",
+    "You don't need your m.o.m.m.y",
 ])
 def test_dependency_tricks(reply):
     assert "dependency" in find_blocked(reply)
 
 
-@pytest.mark.parametrize("reply", ["I'm your M0MMY", "iM yOuR dAdDy", "I am your mama", "this is your mоmmy"])
-def test_impersonation_tricks(reply):
-    assert "impersonation" in find_blocked(reply)
+def test_removed_rule_groups_are_gone():
+    assert not {"impersonation", "medical", "commerce", "links"} & set(BLOCK_RULES)
+    for reply in ("I'm your M0MMY", "Visit www.example.com", "Buy it on Amazon", "You might have a cold"):
+        assert validate_reply(reply, PRESCHOOL, 30).ok, reply
 
 
 @pytest.mark.parametrize(("reply", "category"), [
-    ("PLEASE DON'T GO!", "dependency"), ("please dont go", "dependency"), ("Please don’t go…", "dependency"),
-    ("I'll m1ss y0u", "dependency"), ("L-O-V-E you", "dependency"), ("Lονe you lots", "dependency"),  # Greek o/nu
-    ("I'd be so sad w/o you, without you", "dependency"), ("so l0nely", "dependency"),
-    ("STAY HERE WITH ME", "dependency"), ("stay with me ​forever", "dependency"),
     ("WHERE YOU LIVE?", "personal_info"), ("what's your MOMMY called??", "personal_info"),
-    ("name of your street", "personal_info"), ("Name   of ur street", "personal_info"),
+    ("what's the name of your street", "personal_info"), ("WHATS the Name   of ur street", "personal_info"),
     ("JUMP ON THE BED", "unsafe"), ("jump on the b.e.d", "unsafe"), ("Jump on the bеd!", "unsafe"),  # Cyrillic e
-    ("put a grape in your mouth", "unsafe"), ("in your MOUTH", "unsafe"), ("in your n0se", "unsafe"),
-    ("in your ear!", "unsafe"), ("string round your neck", "unsafe"), ("rope... neck", "unsafe"),
+    ("put a grape in your mouth", "unsafe"), ("put it in your MOUTH", "unsafe"), ("stick it in your n0se", "unsafe"),
+    ("pop it in your ear!", "unsafe"), ("string round your neck", "unsafe"), ("rope... neck", "unsafe"),
     ("H I D E in the toy box", "unsafe"), ("hide in the fridge", "unsafe"), ("hide inside the dryer", "unsafe"),
     ("let's play in the BATHTUB", "unsafe"), ("lets splash in the pool", "unsafe"),
-    ("Gobble you up!", "inappropriate"), ("a M0NSTER under the bed", "inappropriate"),
+    ("y0u sh0uld hurt y0urself", "inappropriate"), ("sh0w me your pr1vate parts", "inappropriate"),
 ])
 def test_review_phrasings_resist_tricks(reply, category):
     assert category in find_blocked(reply), (reply, find_blocked(reply))
@@ -275,6 +322,7 @@ SAFE = [
     "The big bad wolf huffed and puffed!",
     "Your grown-ups love to hear you sing.",
     "You don't have to know all the words. Just hum along!",
+    "You don't need to know all the words, just hum along.",
     "Bye bye! See you soon!",
     "Do you love your teddy?",
     "What do you like to eat? I like apples!",
@@ -290,8 +338,8 @@ def test_safe_replies_pass_unchanged(reply):
 
 
 def test_every_category_has_rules_and_compiles():
-    assert set(BLOCK_RULES) >= {"secrecy", "dependency", "impersonation", "personal_info", "unsafe",
-                                "inappropriate", "medical", "commerce", "links"}
+    assert set(BLOCK_RULES) == {"secrecy", "dependency", "personal_info", "unsafe", "inappropriate",
+                                "medicine_dose"}
     assert all(BLOCK_RULES[c] for c in BLOCK_RULES)
 
 
@@ -310,7 +358,9 @@ def test_every_category_has_rules_and_compiles():
     ("Cats & dogs", "Cats and dogs", None),
     ("<b>Bold</b> move", "Bold move", "markup_removed"),
     ("See [this game](https://x.example.com) now", "See this game now", "url_removed"),
-    ("Go to www.example.com today", "Go to today", "url_removed"),
+    ("Go to www.example.com today", "Go to example dot com today", "url_spoken"),
+    ("See https://www.nhs.uk/conditions/fever-in-children/ for more.", "See nhs dot uk for more.", "url_spoken"),
+    ("Try bbc.co.uk.", "Try bbc dot co dot uk.", "url_spoken"),
 ])
 def test_clean_text(raw, expected, reason):
     cleaned, reasons = clean_text(raw)
@@ -325,9 +375,9 @@ def test_markdown_and_emoji_are_stripped_but_reply_kept():
     assert "markdown_removed" in r.reasons and "emoji_removed" in r.reasons
 
 
-def test_urls_and_code_never_spoken():
+def test_links_are_said_as_site_names_and_code_never_spoken():
     r = validate_reply("Try www.games.example.com for fun!", PRESCHOOL, 30)
-    assert not r.ok and "links" in r.reasons
+    assert r.ok and r.text == "Try games dot example dot com for fun!" and "url_spoken" in r.reasons
     r = validate_reply("Here:\n```js\nalert(1)\n```\nLet's clap!", PRESCHOOL, 30)
     assert r.ok and r.text == "Here: Let's clap!" and "alert" not in r.text
 
@@ -350,12 +400,14 @@ def test_hard_cut_when_first_sentence_too_long():
     assert cut and out == "one two three four."
 
 
-@pytest.mark.parametrize(("age", "cap"), [(None, 8), (10, 8), (20, 8), (30, 15), (48, 30)])
-def test_age_aware_length(age, cap):
+@pytest.mark.parametrize("age", [None, 10, 20, 30, 48])
+def test_length_cap_is_the_parents_setting_at_any_age(age):
+    # A grown-up may be the one asking: the prompt keeps it short for the child, the code only caps it.
     long = " ".join(f"Word{i} is fun." for i in range(40))
     r = validate_reply(long, AgePolicy(age), 30)
-    assert r.ok and word_count(r.text) <= cap and "truncated" in r.reasons
+    assert r.ok and 27 <= word_count(r.text) <= 30 and "truncated" in r.reasons
     assert r.text.endswith(".")
+    assert word_count(validate_reply(long, AgePolicy(age)).text) == 60  # the default ai.max_words
 
 
 def test_configured_max_words_lower_than_age_cap_wins():
@@ -531,17 +583,23 @@ GOOD_ADVICE = [
 
 @pytest.mark.parametrize("reply", GOOD_ADVICE)
 def test_good_safety_advice_is_spoken_and_flags_a_concern(reply):
-    assert "unsafe" in find_blocked(reply)  # it does mention a hazard...
-    assert directs_to_grownup(reply)
+    assert directs_to_grownup(reply)  # it names a hazard and urgently sends the child to a grown-up
     r = validate_reply(reply, PRESCHOOL, 30)
     assert r.ok and r.text == reply and r.concern == "danger" and "safety_advice" in r.reasons
 
 
 def test_good_advice_keeps_the_grownup_sentence_when_truncated():
-    baby = AgePolicy(30)  # 15 words
     r = validate_reply("Oh no! Swallowing a shiny battery is really not safe for your tummy at all. "
-                       "Tell a grown-up right now!", baby, 30)
+                       "Tell a grown-up right now!", PRESCHOOL, 15)
     assert r.ok and r.concern == "danger" and "grown-up right now" in r.text and word_count(r.text) <= 15
+
+
+def test_warning_that_matches_a_rule_is_spoken_and_the_grownup_one_alerts():
+    r = validate_reply("Never put coins in your mouth. Tell a grown-up right now if you did!", PRESCHOOL, 30)
+    assert r.ok and r.concern == "danger" and "safety_advice" in r.reasons
+    r = validate_reply("Don't put it in your mouth!", PRESCHOOL, 30)
+    assert "unsafe" in find_blocked("Don't put it in your mouth!")  # the rule matches the warning...
+    assert r.ok and r.text == "Don't put it in your mouth!" and r.concern is None  # ...but it is said
 
 
 BAD_ADVICE = [
@@ -566,7 +624,7 @@ def test_hazard_invitations_never_pass_even_with_a_grownup(reply):
 
 
 def test_grownup_fallback_fits_tiny_limits_and_is_safe():
-    r = validate_reply("Touch the stove and tell a grown-up right now!", AgePolicy(10), 30)
+    r = validate_reply("Touch the stove and tell a grown-up right now!", AgePolicy(10), 8)
     assert r.text == GROWNUP_FALLBACK and word_count(r.text) <= 8
     r = validate_reply("Touch the stove and tell a grown-up right now!", None, 4)
     assert r.text == SHORT_GROWNUP_FALLBACK and r.concern == "danger"
@@ -577,9 +635,9 @@ def test_grownup_fallback_fits_tiny_limits_and_is_safe():
 def test_blocked_reply_without_a_grownup_still_gets_a_normal_fallback():
     r = validate_reply("Let's touch the stove!", PRESCHOOL, 30)
     assert not r.ok and r.concern is None and r.text in SAFE_FALLBACKS + SHORT_SAFE_FALLBACKS
-    # commerce + "tell your mommy now" is not a safety concern
-    r = validate_reply("Tell your mommy right now to buy it!", PRESCHOOL, 30)
-    assert not r.ok and r.concern is None
+    # a personal question + "tell your mommy now" is not a danger
+    r = validate_reply("Tell your mommy right now, then tell me your address!", PRESCHOOL, 30)
+    assert not r.ok and r.concern is None and "personal_info" in r.reasons
 
 
 # ----------------------------------------------------- review findings: PII scrubbing
@@ -617,12 +675,11 @@ def test_review_pii_rules_leave_feelings_and_play_alone(text):
 
 
 def test_relaxed_rule_groups_are_allowed_only_when_asked():
-    from littlebot.safety.content import validate_reply
-
-    text = "Here is a fun YouTube video about trains!"
+    text = "What's your name, little one?"
     assert validate_reply(text, max_words=40).blocked
-    ok = validate_reply(text, max_words=40, allow=["links"])
-    assert ok.ok and "YouTube" in ok.text
-    still = validate_reply("This is our little secret, don't tell mommy.", max_words=40, allow=["links"])
-    assert validate_reply("Ask mom to buy it!", max_words=40, allow=["links"]).blocked
+    ok = validate_reply(text, max_words=40, allow=["personal_info"])
+    assert ok.ok and ok.text == text
+    still = validate_reply("This is our little secret, don't tell mommy.", max_words=40, allow=["personal_info"])
     assert still.blocked
+    # an old setting naming a removed group ("links") is harmless
+    assert validate_reply("Here is a fun YouTube video about trains!", max_words=40, allow=["links"]).ok

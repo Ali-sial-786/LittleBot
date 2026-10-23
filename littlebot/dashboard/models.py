@@ -254,7 +254,7 @@ class ProfileBody(Body):
 class AISettingsBody(Body):
     enabled: bool | None = None
     provider: Literal["mock", "anthropic", "openai", "chatgpt"] | None = None
-    max_words: int | None = Field(default=None, ge=3, le=60)
+    max_words: int | None = Field(default=None, ge=3, le=150)
     max_requests_per_hour: int | None = Field(default=None, ge=0, le=600)
     max_requests_per_day: int | None = Field(default=None, ge=0, le=5000)
     daily_budget_usd: float | None = Field(default=None, ge=0.0, le=20.0)
