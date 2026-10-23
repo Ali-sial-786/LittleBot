@@ -170,7 +170,10 @@ class CameraLook:
                 return result(error=code)
             finally:
                 photo = None  # drop the image right away (nothing else holds it)
-            checked = validate_reply(reply.text or "", max_words=MAX_WORDS)
+            from littlebot.brain.face_actions import extract_tags  # noqa: PLC0415
+
+            answer_text, _ = extract_tags(reply.text or "")  # a stray [face: ...] tag must never be read out
+            checked = validate_reply(answer_text, max_words=MAX_WORDS)
             answer = checked.text if checked.ok and checked.text.strip() else FALLBACK
             return result(answer=answer)
         finally:

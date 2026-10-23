@@ -240,6 +240,18 @@ shirt?". It is **off by default**.
   own instead, it has not seen anything (it is told never to pretend), so ask again: "look and
   tell me how many fingers I'm holding up".
 
+### LittleBot's face
+
+ChatGPT knows LittleBot has an animated face and which faces it can make: happy, surprised, sleepy,
+curious, excited, sad, playful, celebrating, affectionate, confused, thinking, neutral, wink,
+spin_eyes, peekaboo (eyes closed, then "peek!"), nod, shake, bounce, wiggle, sparkle, hearts and
+confetti.
+
+* **Live voice:** ask "make a happy face", "wink" or "play peekaboo". The voice hands it to
+  LittleBot (like a look-up), the face plays it straight away, and the voice carries on talking.
+* **Typed / push-to-talk:** ChatGPT may end a reply with a hidden tag such as `[face: happy]`.
+  LittleBot removes it before speaking (it is never spoken, stored or shown) and plays that face.
+
 ## 5. Settings you may want to change
 
 In `config/local.yaml` (or with `LITTLEBOT__CHATGPT__<KEY>=value` environment variables).

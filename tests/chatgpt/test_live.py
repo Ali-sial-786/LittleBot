@@ -322,3 +322,17 @@ async def test_no_photo_when_the_parent_has_not_allowed_it(live, ctx):
     delegate(server, "v3", "Look: how many fingers am I holding?")
     await wait_for(lambda: answers(server, "v3"))
     assert look.asked == [] and svc.status()["photos"] == 0
+
+
+async def test_face_requests_play_on_the_face(live, ctx):
+    pytest.importorskip("littlebot.brain.face_actions")
+    svc, server, _audio, provider, _alerts = live
+    await connect(svc, server)
+    assert "happy" in server.requests[0]["body"]["session"]["instructions"]  # the voice knows its faces
+    delegate(server, "f1", "face: surprised")
+    await wait_for(lambda: answers(server, "f1"))
+    assert answers(server, "f1")[0].startswith("Done")
+    await wait_for(lambda: ctx.face.expression == "surprised")
+    delegate(server, "f2", "Make a happy face please")
+    await wait_for(lambda: ctx.face.expression == "happy")
+    assert provider.calls == []  # handled locally, no text model involved

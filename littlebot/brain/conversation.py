@@ -7,9 +7,11 @@ Per turn::
     THINKING:  concerning input? -> gentle "Let's get a grown-up right now" + parent alert (no cloud call)
                choose provider (age gate, parent opt-in, privacy, offline, key, limits, budget)
                cloud: scrub PII, tiny in-memory context, timeout, typed errors -> friendly fallback
+               hidden [face: NAME] tags removed first (never spoken, remembered or stored)
                validate_reply()  (markdown/emoji/URL strip, age-aware length, block rules); a reply that
                urges a grown-up about a hazard also alerts the parent and is never swapped for a game
-    SPEAKING:  audio.say(reply) with a fitting expression
+    SPEAKING:  audio.say(reply) with a fitting expression (or the one the model asked for), then the
+               requested face action (wink, spin_eyes, peekaboo, ...) if any
     -> release state back to IDLE
 
 Privacy: nothing is persisted by default - only the last few (scrubbed) turns are kept in
@@ -30,6 +32,7 @@ from typing import Any, Awaitable, Callable
 
 import httpx
 
+from littlebot.brain.face_actions import FaceAction, extract_tags, perform
 from littlebot.brain.prompts import build_system_prompt, clean_profile_items
 from littlebot.brain.providers import (
     AnthropicProvider, AuthenticationError, BaseProvider, Message, MockProvider, OpenAIProvider, ProviderError,
@@ -534,6 +537,7 @@ class ConversationEngine(Service):
         if scrubbed:
             log.info("removed personal info before thinking: %s", ",".join(scrubbed))
         attention: str | None = None
+        face_action: FaceAction | None = None
         if concern is not None:
             provider_name, reason = "safety", f"safety: {concern.category}"
             reply, expression = concern.reply_for(limit), "affectionate"
@@ -560,12 +564,14 @@ class ConversationEngine(Service):
                 else:
                     self._publish_status(provider_name, "error", e.kind)
             else:
-                result = validate_reply(raw.text, policy, max_words)
+                # Hidden face tags go first: only the clean words are checked, spoken, remembered or stored.
+                text_only, face_actions = extract_tags(raw.text)
+                result = validate_reply(text_only, policy, max_words)
                 reply, reasons = result.text, list(result.reasons)
                 filtered = not result.ok
                 if raw.stop_reason == "refusal" and result.concern is None:
                     if result.ok:
-                        reply = safe_fallback(raw.text, limit)
+                        reply = safe_fallback(text_only, limit)
                     filtered = True
                     reasons.append("provider_refusal")
                 if result.concern is not None:
@@ -580,9 +586,14 @@ class ConversationEngine(Service):
                     expression = "playful"
                     log.info("reply from %s replaced by a safe fallback (%s)", provider_name,
                              ",".join(r for r in reasons if ":" not in r))
+                    if face_actions and "empty" in result.reasons and raw.stop_reason != "refusal":
+                        face_action = face_actions[-1]  # the reply was only a face tag: still show the face
                 else:
                     expression = raw.expression if raw.expression in EXPRESSIONS else choose_expression(reply)
+                    face_action = face_actions[-1] if face_actions else None
                     self._remember(sent, reply)
+                if face_action is not None and face_action.name in EXPRESSIONS:
+                    expression = face_action.name  # the model asked for this face: it wins over the guess
                 if provider_name in CLOUD_PROVIDERS:
                     self._last_error = None
         self._last_provider = provider_name
@@ -596,6 +607,9 @@ class ConversationEngine(Service):
             spoken = await self._speak(reply, expression)
         else:
             self._face(expression, hold=2.0)
+        if face_action is not None and not self._stop_requested:
+            # After the words, so the requested face is the last one shown (peekaboo takes ~1.5 s).
+            await perform(ctx, face_action)
         latency = int((time.monotonic() - t0) * 1000)
         log.info("turn done provider=%s words=%d filtered=%s error=%s latency_ms=%d",
                  provider_name, len(reply.split()), filtered, error, latency)
@@ -604,6 +618,7 @@ class ConversationEngine(Service):
             "reason": reason, "expression": expression, "latency_ms": latency, "spoken": spoken,
             "checks": [r for r in reasons if r != "empty"][:8],
             **({"attention": attention} if attention is not None else {}),
+            **({"face_action": face_action.name} if face_action is not None else {}),
         }
 
     async def _ask(self, sel: Selection, text: str, sent: str, policy: Any,
@@ -620,6 +635,7 @@ class ConversationEngine(Service):
                 child_name=nickname if share_name else None,
                 interests=profile.get("interests") if share_interests else None,
                 favourite_animals=profile.get("favourite_animals") if share_interests else None,
+                face_tags=True,
             )
             messages = self._context_messages() + [{"role": "user", "content": sent}]
             projected = self.usage.estimate_cost(

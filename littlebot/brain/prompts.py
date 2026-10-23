@@ -11,6 +11,7 @@ from __future__ import annotations
 import re
 from typing import Iterable
 
+from littlebot.brain.face_actions import menu_text
 from littlebot.safety.content import find_blocked, normalise
 from littlebot.safety.policy import age_group_for, age_group_label
 
@@ -72,8 +73,13 @@ def build_system_prompt(
     child_name: str | None = None,
     interests: Iterable[object] | None = None,
     favourite_animals: Iterable[object] | None = None,
+    face_tags: bool = False,
 ) -> str:
-    """System prompt for one turn. Pass ``child_name`` / interests only with parent opt-in."""
+    """System prompt for one turn. Pass ``child_name`` / interests only with parent opt-in.
+
+    ``face_tags``: offer the hidden ``[face: NAME]`` tag. Only for callers that remove the tags
+    (``face_actions.extract_tags``) before a reply is validated or spoken, i.e. typed chat.
+    """
     group = age_group_for(age_months)
     label = age_group_label(group)
     lines = [
@@ -107,6 +113,16 @@ def build_system_prompt(
         "- If a topic is off-limits or you are unsure, gently switch to a simple happy game.",
         "- If the child seems hurt, scared, lost or unsafe, kindly tell them to find a grown-up right now.",
     ]
+    if face_tags:
+        lines += [
+            "",
+            "Your face:",
+            "- You are a robot with an animated face on a screen. You can show one expression per reply by adding "
+            "a tag like [face: happy] at the very end of your reply.",
+            f"- Faces you can show: {menu_text()}.",
+            "- The tag is hidden and never spoken. Use it when it fits, at most one per reply, and never describe "
+            "the tag in words.",
+        ]
     likes = clean_profile_items(favourite_animals) + [i for i in clean_profile_items(interests)
                                                       if i not in clean_profile_items(favourite_animals)]
     name = clean_child_name(child_name) if child_name else None

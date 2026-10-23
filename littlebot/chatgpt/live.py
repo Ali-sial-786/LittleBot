@@ -115,6 +115,11 @@ suggest asking a doctor instead.
 When a question needs facts you are not sure of, delegate it to the client and wait for the result, \
 then say it simply in your own words. If you don't know, say so.
 
+You have an animated face on a screen (big cartoon eyes). Faces you can make: {faces}. When someone asks you \
+to make a face, wink, spin your eyes or play peekaboo, delegate it to the client as "face: <name>" (for example \
+"face: happy" or "face: peekaboo"), wait, then carry on talking. You may also do this yourself at big moments \
+(a celebration, a surprise), but not on every sentence. Never say the word "face:" out loud.
+
 You have a camera, but you only see when the client looks for you. When someone asks what you see, shows you \
 something, or asks how many fingers they are holding up, what colour something is, or similar, delegate it to the \
 client with the word "look" and their question, wait, then say the answer. Never pretend to see without that."""
@@ -468,7 +473,8 @@ class LiveCall:
         from littlebot.brain.prompts import age_description  # noqa: PLC0415
 
         age = self.ctx.settings.child_age_months()
-        text = VOICE_INSTRUCTIONS.format(name=self.ctx.config.robot_name, child=age_description(age))
+        text = VOICE_INSTRUCTIONS.format(name=self.ctx.config.robot_name, child=age_description(age),
+                                         faces=_face_menu())
         now = _dt.datetime.now()
         return f"{text}\nAt the start of this call it is {now:%A}, {now:%H:%M} local time."
 
@@ -576,18 +582,35 @@ class LiveCall:
             if not question:
                 heard = [c["text"] for c in self._captions if c["who"] == "heard"]
                 question = heard[-1] if heard else ""
+            action = _face_request(question)
+            if action is not None:
+                # Local and instant: answer first so the voice isn't kept waiting, then play it.
+                self._send_result(d.id, f"Done: LittleBot is showing {action.name.replace('_', ' ')} on its face now.")
+                await self._perform_face(action)
+                return
             if not question:
                 text = wire.NO_INPUT_RESULT
             elif WANTS_LOOK.search(question) and self._camera() is not None:
                 text = await self._look(question)
             else:
                 text = await self._look_up(sanitize_user_text(question, max_chars=600))
-            if not self._ended.is_set() and self.channel is not None and self.channel.readyState == "open":
-                for frame in wire.result_frames(d.id, text):
-                    self.channel.send(frame)
+            self._send_result(d.id, text)
         finally:
             self._delegations -= 1
             self._last_activity = self.svc._now()
+
+    def _send_result(self, delegation_id: str, text: str) -> None:
+        if not self._ended.is_set() and self.channel is not None and self.channel.readyState == "open":
+            for frame in wire.result_frames(delegation_id, text):
+                self.channel.send(frame)
+
+    async def _perform_face(self, action: Any) -> None:
+        try:
+            from littlebot.brain.face_actions import perform  # noqa: PLC0415
+
+            await perform(self.ctx, action)
+        except Exception:  # noqa: BLE001 - a face that doesn't play must never end the call
+            log.debug("face action %s failed", getattr(action, "name", action), exc_info=True)
 
     def _camera(self) -> Any:
         """The camera look-up, when the parent allowed the AI to see (privacy switch); else None."""
@@ -623,8 +646,11 @@ class LiveCall:
                                                     system=system, max_tokens=200, timeout=15.0)
         except (ProviderError, asyncio.TimeoutError):
             return wire.FAILED_RESULT
-        checked = validate_reply(reply.text, max_words=40)
-        return checked.text if checked.ok and reply.text.strip() else NOT_SURE
+        from littlebot.brain.face_actions import extract_tags  # noqa: PLC0415
+
+        text, _ = extract_tags(reply.text)  # a stray [face: ...] tag must never be read out
+        checked = validate_reply(text, max_words=40)
+        return checked.text if checked.ok and text.strip() else NOT_SURE
 
     # ------------------------------------------------------------ watch
     async def _watch(self) -> None:
@@ -705,6 +731,26 @@ class LiveCall:
         self.phase = "ended"
         self.end_reason = self.end_reason or ("failed" if self.error else "ended")
         self._publish(Topics.BRAIN_STATUS, {"provider": "live", "status": "live_ended", "detail": self.end_reason[:60]})
+
+
+def _face_menu() -> str:
+    try:
+        from littlebot.brain.face_actions import menu_text  # noqa: PLC0415
+
+        return menu_text()
+    except Exception:  # noqa: BLE001
+        return "happy, surprised, sleepy, curious, excited, sad, playful, celebrating, wink, spin_eyes, peekaboo"
+
+
+def _face_request(text: str) -> Any:
+    """A hand-off asking LittleBot to make a face ("face: happy", "make a happy face", "wink"), else None."""
+    if not text.strip():
+        return None
+    try:
+        from littlebot.brain.face_actions import parse_request  # noqa: PLC0415
+    except ImportError:
+        return None
+    return parse_request(text)
 
 
 class MicTrack:
