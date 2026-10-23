@@ -7,7 +7,7 @@ cd "$(dirname "$0")"
 SCAD=${SCAD:-littlebot_enclosure.scad}
 OUT=${OUT:-stl}
 IMG=${IMG:-images}
-PARTS=(body base head head_back coupler ring_gear pinion arm servo_frame camera lcd_tabs)
+PARTS=(body base head head_back coupler ring_gear pinion arm servo_frame camera pi_carrier)
 (($#)) && PARTS=("$@")
 mkdir -p "$OUT" "$IMG"
 for p in "${PARTS[@]}"; do
@@ -15,7 +15,8 @@ for p in "${PARTS[@]}"; do
     openscad -q -o "$OUT/$p.stl" -D "part=\"$p\"" "$SCAD"
     python3 stl_tools.py binary "$OUT/$p.stl"
 done
-python3 stl_tools.py report "$OUT"/*.stl
+files=(); for p in "${PARTS[@]}"; do files+=("$OUT/$p.stl"); done
+python3 stl_tools.py report "${files[@]}"
 if (($# == 0)) && command -v xvfb-run >/dev/null; then
     shot() { xvfb-run -a -s "-screen 0 1600x1200x24" openscad -q -o "$IMG/$1.png" -D "part=\"$2\"" -D "section_cut=${4:-0}" \
              --imgsize=1300,1000 --camera="$3" --colorscheme=Tomorrow --projection="${5:-p}" "$SCAD"; }

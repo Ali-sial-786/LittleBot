@@ -10,7 +10,7 @@
 //    head        head shell (print FACE DOWN)          head_back  back cap (back face down)
 //    visor       black screen visor (face down)        ear_left, ear_right (outer face down)
 //    camera_pod  camera housing on the head (top down)  camera     camera bracket
-//    lcd_tabs    display clamp tabs
+//    pi_carrier  frame that holds the Pi 5 (+ the screen plugged onto it) on the visor posts
 //    coupler, ring_gear, pinion, servo_frame         geared neck (same principle as v1)
 //    torso       torso shell (print TOP DOWN)          torso_back rear cover (flat)
 //    arm_left, arm_right                               (outer face down)
@@ -78,12 +78,37 @@ visor_w = 112; visor_h = 86; visor_r = 30; visor_t = 4; visor_z = 68;
 ear_d = 52; ear_z = 66; ear_y = 62; ear_proud = 12; ear_screw_dz = 23;
 led_ring_r0 = 11; led_ring_r1 = 19.5;   // pocket for a 12-LED ring (37 mm OD, 23 mm ID)
 
-/* [Display - MPI3508] */
-lcd_w = 85.51; lcd_h = 56.0; lcd_stack = 7.32;
-aa_w = 73.44; aa_h = 48.96; lcd_aa_offset = 3.03; window_margin = 1.0; pcb_overhang = 2.3;
+/* [Screen - MPI3508, plugged straight onto the Pi's GPIO header (lcdwiki drawing 2025-08-18)] */
+// Screen frame: x along the glass from its wide-border end (left with the HDMI socket pointing
+// down), z up from the HDMI edge, depth from the glass front. The screen has NO mounting holes:
+// the stack (screen + Pi) is held by the Pi's four M2.5 holes, see pi_carrier().
+lcd_w = 85.51; lcd_h = 56.0;           // glass outline
+lcd_glass_t = 5.70;                    // glass front -> front of the screen PCB (touch 1.2 + LCD 2.49 + 2.01)
+lcd_stack = 7.32;                      // glass front -> back of the screen PCB
+aa_w = 73.44; aa_h = 48.96;            // active area
+lcd_aa_offset = 2.32;                  // MEASURE: AA centre right of the glass centre (borders 8.35 / 3.72 mm)
+window_margin = 0.5;                   // window = AA + this each side (the black mask is about AA + 0.9)
+lcd_gasket = 0.5;                      // 1 mm foam tape between visor and glass, compressed
+lcd_ear = 2.3;                         // PCB tabs beyond both long edges at x 10..20.5 and 64.5..75
+lcd_sock_h = 13.54;                    // MEASURE: screen's 2x13 GPIO socket below its PCB (20.86 - 7.32)
+lcd_pin1 = [8.88, 51.64];              // socket pin 1 (inner row, 8.88 from the end, 1.82 + 2.54 from the edge)
+lcd_hdmi_x = 33.0; lcd_hdmi_z = 1.70;  // full-size HDMI socket: centre / opening above the glass edge
+lcd_jack_x = 53.68;                    // 3.5 mm audio jack, sticks out 1.79 below the glass edge
 
-/* [Camera - U20CAM-1080P] */
-cam_board = 32; cam_hole_sp = 28;      // MEASURE
+/* [Raspberry Pi 5 + official Active Cooler (Raspberry Pi drawings)] */
+pi_l = 85; pi_wd = 56; pi_pcb_t = 1.4;
+pi_hdr_h = 2.5;                        // plastic of the Pi's 40-pin header (pins reach 8.57)
+pi_pin1 = [8.40, 51.24];               // header pin 1 (inner row) from the SD-card end / USB-C edge
+pi_hole_pts = [[3.5, 3.5], [61.5, 3.5], [3.5, 52.5], [61.5, 52.5]];   // M2.5, 2.7 mm holes
+cooler_h = 12.0;                       // MEASURE: top of the Active Cooler above the Pi PCB (about 11.5..12)
+pi_standoff = 4;                       // Pi underside -> carrier plate
+
+/* [HDMI link screen <-> Pi: micro-HDMI to HDMI "U" adapter for 3.5" screens on a Pi 4/5] */
+hdmi_link = [26, 14];                  // keep-out below the stack: width along the edge, drop below the glass edge
+
+/* [Camera - InnoMaker U20CAM-1080P] */
+cam_board = 32;
+cam_hole_sp = [26, 28.5];              // MEASURE: M2 hole spacing; the bracket holes are slots covering this range
 pod_w = 56; pod_d = 40; pod_h = 40; pod_y0 = 6;
 cam_board_y = 26;                      // board position from the head front (lens length)
 cam_aperture = 17;
@@ -91,16 +116,22 @@ cam_aperture = 17;
 /* [Speaker - Adafruit 3369] */
 spk_w = 84; spk_h = 43; spk_d = 32; spk_z = 41;   // MEASURE; spk_z = bottom of the speaker (torso coords)
 spk_y = 6;                                        // speaker front, behind the chest grille
+spk_grille_hw = 34; spk_grille_r = 15;            // pill-shaped grille: half width, end radius (the speaker's front is an oval grille)
 
 /* [Microphone - Adafruit 3367 mini USB mic, 22.2 x 18.3 x 7.0] */
 mic_l = 22.2; mic_w = 18.3; mic_t = 7.0; mic_body = 10.2;  // body = the part outside the USB plug
 mic_x0 = -34; mic_zc = 100;            // closed end of the sleeve / centre height (torso coords)
 mic_y0 = torso_wall + 1.5;             // mic face 1.5 mm behind the chest wall (leaves room for the socket)
 
-/* [Servos - MG90S] */
-sv_l = 22.8; sv_w = 12.2; sv_tab_l = 32.2; sv_tab_t = 2.5; sv_tab_z = 15.9;
-sv_case_h = 22.7; sv_boss_h = 28.5; sv_spline_h = 32.0; sv_shaft_off = 6.1;
-sv_hole_sp = 27.6; sv_boss_d = 12.4;
+/* [Servos - MG90S (TowerPro drawing: A 32.5, B 22.8, C 28.4, D 12.4, E 32.1, F 18.5)] */
+sv_l = 22.8; sv_w = 12.4; sv_tab_l = 32.1; sv_tab_t = 2.5; sv_tab_z = 15.9;
+sv_case_h = 22.7; sv_boss_h = 28.4; sv_spline_h = 32.5; sv_shaft_off = 6.1;
+sv_hole_sp = 27.6; sv_boss_d = 12.4;   // MEASURE sv_hole_sp, sv_tab_z (F = 18.5 is the top of the tabs)
+
+/* [PCA9685 - Adafruit 815 layout (most clones copy it)] */
+pca_l = 62.23; pca_w = 25.4;
+pca_holes = [[3.30, 3.30], [59.18, 3.30], [3.30, 22.35], [59.18, 22.35]];   // 2.5 mm holes, 55.88 x 19.05
+pca_x0 = -pca_l/2; pca_y0 = 40;        // board corner on the shelf (base coordinates)
 
 /* [Arms] */
 shoulder_yt = 45; shoulder_zt = 100;   // torso coordinates
@@ -133,9 +164,19 @@ head_z0 = torso_z0 + torso_h + bearing_h + coupler_h;
 lcd_x0 = -lcd_w/2 - lcd_aa_offset;  lcd_x1 = lcd_x0 + lcd_w;
 lcd_z0 = visor_z - lcd_h/2;  lcd_z1 = lcd_z0 + lcd_h;
 visor_back_y = 3;                      // visor seat depth in the head front
+// The screen + Pi stack (head coordinates). The header sets where the Pi sits under the screen.
+glass_y = visor_back_y + lcd_gasket;   // glass front
+pi_off = lcd_pin1 - pi_pin1;           // Pi corner (SD-card end, USB-C edge) in the screen frame
+pi_x0 = lcd_x0 + pi_off[0];  pi_z0 = lcd_z0 + pi_off[1];
+pi_top_y = glass_y + lcd_stack + lcd_sock_h + pi_hdr_h;   // component side of the Pi
+pi_bot_y = pi_top_y + pi_pcb_t;
+carrier_y = pi_bot_y + pi_standoff;  carrier_t = 3;
+function pi_h(p) = [pi_x0 + p[0], pi_z0 + p[1]];          // Pi board point -> head (x, z)
+function lcd_h_pt(p) = [lcd_x0 + p[0], lcd_z0 + p[1]];    // screen point -> head (x, z)
 
 echo(str("LittleBot v2: total height ", head_z0 + head_h, " mm; widest ", 2 * (arm_inner_x + arm_t), " mm (arms) / ", base_w, " (base)"));
-echo(str("LittleBot v2: HDMI plug clearance below display = ", lcd_z0 - pcb_overhang - head_bottom_t, " mm (needs >= 31 for a straight plug)"));
+echo(str("LittleBot v2: screen PCB -> Pi PCB ", lcd_sock_h + pi_hdr_h, " mm; glass front -> Pi underside ", pi_bot_y - glass_y,
+         " mm; Pi corner at head (", pi_x0, ", ", pi_z0, ")"));
 
 // -----------------------------------------------------------------------------
 // Helpers
@@ -151,6 +192,7 @@ module teardrop_x(d, len) { rotate([0, 90, 0]) linear_extrude(len, center = true
 // horizontal standoff along +y whose underside is pointed (prints without support when the part is upside down)
 module teardrop_y(d, len, tip = -1) { rotate([-90, 0, 0]) linear_extrude(len) hull() { circle(d = d, $fn = 24); translate([0, -tip * d/2 * 1.414]) square(eps, center = true); } }
 
+function in_stadium(x, z, hw, r) = abs(x) <= hw - r ? abs(z) <= r : norm([abs(x) - (hw - r), z]) <= r;
 function polar(r, a) = [r * cos(a), r * sin(a)];
 function inv_deg(a) = (tan(a) - a * PI / 180) * 180 / PI;
 function flank(r, rb, th, invpa) = th + invpa - inv_deg(acos(min(1, rb / r)));
@@ -269,13 +311,21 @@ module base_floor(mobile = false) {
 }
 shelf_post_x = bat_w/2 + 3.5;   // posts just outside the bay walls
 
+pca_standoff = 4;    // PCA9685 standoffs on the shelf (its solder joints clear the shelf)
 module shelf() {
     sx = shelf_post_x + 5; y0 = bat_y0 + 1; y1 = bat_y1 - 1;
     difference() {
-        translate([0, (y0 + y1)/2, 0]) linear_extrude(2.5) rrect(2 * sx, y1 - y0, 4);
+        union() {
+            translate([0, (y0 + y1)/2, 0]) linear_extrude(2.5) rrect(2 * sx, y1 - y0, 4);
+            for (h = pca_holes) translate([pca_x0 + h[0], pca_y0 + h[1], 2.5 - eps]) cylinder(d = 5.5, h = pca_standoff + eps);
+        }
         for (s = [-1, 1]) for (yy = [bat_y0 + 6, bat_y1 - 6]) translate([s * shelf_post_x, yy, -1]) cylinder(d = clear_m3, h = 5, $fn = fn_small);
-        for (gx = [-25:10:25]) for (gy = [y0 + 9:10:y1 - 9]) if (gy < 88) translate([gx, gy, -1]) cylinder(d = 2.5, h = 5, $fn = 10);
-        translate([0, torso_y0 + 81, -1]) linear_extrude(5) rrect(62, 34, 6);    // room for the Pi's USB plugs
+        // tie-down grid (zip ties / later boards), clear of the PCA9685 standoffs
+        for (gx = [-25:10:25]) for (gy = [y0 + 9:10:y1 - 9]) if (gy < 88 && (gy < pca_y0 - 3 || gy > pca_y0 + pca_w + 3 || abs(gx) < 20))
+            translate([gx, gy, -1]) cylinder(d = 2.5, h = 5, $fn = 10);
+        // PCA9685 (Adafruit 815 hole pattern): M2.5 self-tapping into the standoffs
+        for (h = pca_holes) translate([pca_x0 + h[0], pca_y0 + h[1], 0.8]) cylinder(d = pilot_m25, h = 10, $fn = fn_small);
+        translate([0, torso_y0 + 81, -1]) linear_extrude(5) rrect(62, 34, 6);    // cable pass-through to the torso
     }
 }
 
@@ -343,10 +393,9 @@ module torso_inner() {
     }
 }
 
-// Pi 5 mounted upright on the spine: USB ports point DOWN (into the base),
-// USB-C + micro-HDMI point to the robot's left (+x), GPIO on the right.
-pi_z_top = 100; pi_spine_y = 62; pi_standoff = 6;   // Pi board at y 68 so GPIO jumpers clear the back cover
-function pi_holes_t() = [for (px = [3.5, 61.5]) for (py = [3.5, 52.5]) [28 - py, pi_z_top - px]];   // (x, z)
+// The Pi 5 now lives in the head, under the screen (see pi_carrier). The two columns that used to
+// carry it stay: they support the torso top under the neck.
+torso_col_y = 60.75;
 
 module torso_shell() {
     difference() {
@@ -358,10 +407,8 @@ module torso_shell() {
                     torso_gear_guard();
                     for (px = frame_pillar_x) translate([px, pinion_yt, hs_tab_top - sv_tab_t]) cylinder(d = 8, h = torso_top_in - hs_tab_top + sv_tab_t + eps);
                     torso_arm_ribs();
-                    // Pi spine: plate + two columns up to the top plate
-                    translate([0, pi_spine_y, 0]) rotate([90, 0, 0]) linear_extrude(2.5) polygon([[-30, 10], [30, 10], [30, 113], [0, 83], [-30, 113]]);
-                    for (s = [-1, 1]) translate([s * 32, pi_spine_y - 1.25, 10]) cylinder(d = 8, h = torso_top_in - 10 + eps);
-                    for (p = pi_holes_t()) translate([p[0], pi_spine_y - eps, p[1]]) teardrop_y(6, pi_standoff, tip = 1);
+                    // two columns under the top plate (the neck sits between them)
+                    for (s = [-1, 1]) translate([s * 32, torso_col_y, 10]) cylinder(d = 8, h = torso_top_in - 10 + eps);
                     // speaker ribs (zip-tie slots)
                     for (s = [-1, 1]) translate([s > 0 ? spk_w/2 + 0.3 : -spk_w/2 - 3.3, 0, spk_z - 2]) {
                         translate([0, spk_y - 4, 0]) cube([3, spk_d + 3, torso_top_in - spk_z + 2 + eps]);
@@ -382,16 +429,12 @@ module torso_shell() {
         }
         // neck hole
         translate([0, neck_yt, torso_top_in - 1]) cylinder(r = spigot_r + clr, h = torso_top_t + 2);
-        // Pi standoff pilots
-        for (p = pi_holes_t()) translate([p[0], pi_spine_y - 3, p[1]]) rotate([-90, 0, 0]) cylinder(d = pilot_m25, h = pi_standoff + 4, $fn = fn_small);
         // arm shaft holes
         for (s = [-1, 1]) translate([s * (torso_w1/2 - torso_wall/2), shoulder_yt, shoulder_zt]) teardrop_x(sv_boss_d + 1.6, torso_wall + 2);
         // arm-servo tab pilots and windows are in torso_arm_ribs()
-        // chest speaker grille: rings of 3 mm holes
-        if (detail) translate([0, -1, spk_z + spk_h/2]) rotate([-90, 0, 0]) {
-            cylinder(d = 3, h = 8, $fn = fn_small);
-            for (ring = [1:4]) for (k = [0:6 * ring - 1]) rotate(k * 360 / (6 * ring)) translate([ring * 6, 0, 0]) cylinder(d = 3, h = 8, $fn = fn_small);
-        }
+        // chest speaker grille: 3 mm holes in a pill shape over the speaker's oval front (both drivers)
+        if (detail) for (row = [-3:3]) for (gx = [-35:5:35]) let (px = gx + (abs(row) % 2) * 2.5, pz = row * 4.4)
+            if (in_stadium(px, pz, spk_grille_hw, spk_grille_r)) translate([px, -1, spk_z + spk_h/2 + pz]) rotate([-90, 0, 0]) cylinder(d = 3, h = 8, $fn = fn_small);
         // microphone holes
         if (detail) for (dz = [-5, 0, 5]) for (dx = [2, 5.5, 9]) translate([mic_x0 + dx, -1, mic_zc + dz]) rotate([-90, 0, 0]) cylinder(d = 2.2, h = 8, $fn = 10);
         // rear opening (U-shaped, open at the bottom -> prints without bridging)
@@ -436,7 +479,7 @@ module torso_back() {
             rotate([-90, 0, 0]) cylinder(d = clear_m3, h = 10, $fn = fn_small);
             rotate([-90, 0, 0]) cylinder(d1 = 6.4, d2 = clear_m3, h = 1.6, $fn = 24);
         }
-        // cooling slots in front of the Pi's fan + a round "dot" grille
+        // vent slots + a round "dot" grille
         if (detail) for (vx = [-15:5:15]) translate([46 + vx - 1.25 - clr, -1, 40]) cube([2.5, 6, 34]);
         if (detail) for (ring = [0:2]) for (k = [0:max(1, 6 * ring) - 1]) rotate([0, 360 * k / max(1, 6 * ring), 0])
             translate([46 - clr + ring * 5, -1, 92]) rotate([-90, 0, 0]) cylinder(d = 2.5, h = 6, $fn = 10);
@@ -523,8 +566,13 @@ module head_cavity() {
     }
 }
 function head_back_boss_pts() = [[-36, 18], [36, 18], [-36, 86], [36, 86]];   // (x, z) - inside the back face
-function lcd_boss_pts() = [[lcd_x0 - 3.6, lcd_z0 + 18], [lcd_x0 - 3.6, lcd_z1 - 11], [lcd_x1 + 3.9, lcd_z0 + 11], [lcd_x1 + 3.9, lcd_z1 - 11]];
 function visor_screw_pts() = [for (sx = [-1, 1]) for (sz = [-1, 1]) [sx * (visor_w/2 - 10), visor_z + sz * (visor_h/2 - 10)]];
+// Posts on the back of the visor carrying the Pi carrier: inside the head's face opening, outside
+// the stack, its plugs and the SD card. Two left of the screen, one beside the Pi's (unused)
+// Ethernet jack, one above the top-right PCB tab.
+visor_post_d = 7;
+function visor_post_pts() = [[lcd_x0 - 4.4, visor_z - 10], [lcd_x0 - 4.4, visor_z + 10],
+                             [pi_h([pi_l + 3, 0])[0] + 5.1, visor_z - 14], [30, visor_z + 35]];
 pod_screw_pts = [[-20, pod_y0 + 6.2], [20, pod_y0 + 6.2]];   // front corners, clear of the camera bracket
 cam_z = head_h + 18;  // lens centre height in the pod (head coordinates)
 
@@ -565,6 +613,12 @@ module head_shell() {
             for (dz = [-ear_screw_dz, ear_screw_dz]) translate([s * (head_w/2 - 4), ear_y, ear_z + dz]) rotate([0, 90, 0]) cylinder(d = clear_m3, h = 20, center = true, $fn = fn_small);
             translate([s * (head_w/2 - 4), ear_y, ear_z - 15]) rotate([0, 90, 0]) cylinder(d = 6, h = 20, center = true, $fn = 20);   // LED ring wires
         }
+        // vents for the Pi (2.5 mm slots, too narrow for little fingers): the cooler's fins blow towards
+        // the Pi's SD-card end (viewer's left) -> slots in the left wall; fresh air in under the face
+        if (detail) {
+            for (zz = [lcd_z0 + 13 : 6 : lcd_z1 - 12]) translate([-head_w/2 - 10, glass_y + 9, zz - 1.25]) cube([20, 18, 2.5]);
+            for (xx = [-15 : 5 : 15]) translate([xx - 1.25, glass_y + 9, -1]) cube([2.5, 16, head_bottom_t + 2]);
+        }
         // camera pod: opening for the board + screws
         translate([0, cam_board_y + 9, head_h - 30]) linear_extrude(40) rrect(24, 14, 4);
         for (p = pod_screw_pts) translate([p[0], p[1], head_h - 20]) cylinder(d = clear_m3, h = 30, $fn = fn_small);
@@ -592,30 +646,53 @@ module head_back() {
 }
 
 module visor() {
-    // local: front face y = -1 (proud), back face y = visor_back_y; in head coordinates
+    // local: front face y = -1 (proud), back face y = visor_back_y; in head coordinates.
+    // The screen has no mounting holes: its glass sits in the locating ribs (on 1 mm foam) and the
+    // Pi carrier, screwed to the four posts, holds the whole screen + Pi stack against the visor.
     difference() {
         union() {
             xz_extrude(visor_back_y - visor_t, visor_back_y) translate([0, visor_z]) rrect(visor_w, visor_h, visor_r);
-            // display locating ribs + clamp bosses on the back
-            xz_extrude(visor_back_y - eps, visor_back_y + 2) difference() {
+            // glass locating ribs (3 mm: they reach past the 1.2 mm touch panel onto the LCD glass)
+            xz_extrude(visor_back_y - eps, visor_back_y + 3) difference() {
                 translate([(lcd_x0 + lcd_x1)/2, (lcd_z0 + lcd_z1)/2]) square([lcd_w + 2*clr + 2.4, lcd_h + 2*clr + 2.4], center = true);
                 translate([(lcd_x0 + lcd_x1)/2, (lcd_z0 + lcd_z1)/2]) square([lcd_w + 2*clr, lcd_h + 2*clr], center = true);
                 for (cx = [lcd_x0, lcd_x1]) for (cz = [lcd_z0, lcd_z1]) translate([cx, cz]) square(10, center = true);
             }
-            for (p = lcd_boss_pts()) translate([p[0], 0, p[1]]) cyl_y(7, visor_back_y - eps, visor_back_y + lcd_stack + 0.8);
+            // posts for the Pi carrier
+            for (p = visor_post_pts()) translate([p[0], 0, p[1]]) cyl_y(visor_post_d, visor_back_y - eps, carrier_y);
         }
         hull() {
             xz_extrude(visor_back_y - visor_t - 1, visor_back_y + 1) translate([0, visor_z]) rrect(aa_w + 2*window_margin, aa_h + 2*window_margin, 2.5);
             xz_extrude(visor_back_y - visor_t - 1, visor_back_y - visor_t + eps) translate([0, visor_z]) rrect(aa_w + 2*window_margin + 5, aa_h + 2*window_margin + 5, 4);
         }
-        for (p = lcd_boss_pts()) translate([p[0], 0, p[1]]) cyl_y(pilot_m25, visor_back_y, visor_back_y + lcd_stack + 2, fn_small);
+        for (p = visor_post_pts()) translate([p[0], 0, p[1]]) cyl_y(pilot_m25, carrier_y - 10, carrier_y + 1, fn_small);
         for (p = visor_screw_pts()) translate([p[0], 0, p[1]]) cyl_y(pilot_m25, visor_back_y - visor_t + 1.2, visor_back_y + 1, fn_small);
     }
 }
 
-module lcd_tab() { difference() { hull() { cylinder(d = 7, h = 3); translate([5.5, 0, 0]) cylinder(d = 6, h = 3); }
-    translate([0, 0, -1]) cylinder(d = clear_m25, h = 5, $fn = fn_small); translate([0, 0, 1.8]) cylinder(d = 5, h = 2, $fn = 24); } }
-module lcd_tabs() { for (i = [0:3]) translate([i * 16, 0, 0]) lcd_tab(); }
+// Pi carrier: a frame behind the Pi. The Pi screws onto its four standoffs (M2.5 from the
+// component side, before the screen goes on); the frame screws onto the visor posts from behind
+// (oversized holes, so the glass can settle in the visor ribs before tightening).
+// Head coordinates; prints back face down.
+module pi_carrier() {
+    st = [for (p = pi_hole_pts) pi_h(p)];                    // standoffs (x, z)
+    posts = visor_post_pts();
+    bar = 8;
+    module seg(a, b, w) { hull() { translate(a) circle(d = w); translate(b) circle(d = w); } }
+    difference() {
+        union() {
+            translate([0, carrier_y + carrier_t, 0]) rotate([90, 0, 0]) linear_extrude(carrier_t) union() {
+                seg(st[0], st[1], bar); seg(st[1], st[3], bar); seg(st[3], st[2], bar); seg(st[2], st[0], bar);
+                seg(posts[0], [st[0][0], posts[0][1]], bar); seg(posts[1], [st[0][0], posts[1][1]], bar);
+                seg(posts[2], [st[1][0], posts[2][1]], bar); seg(posts[3], st[3], bar);
+                for (p = posts) translate(p) circle(d = visor_post_d + 2);
+            }
+            for (p = st) translate([p[0], 0, p[1]]) cyl_y(6.5, pi_bot_y, carrier_y + eps);
+        }
+        for (p = st) translate([p[0], 0, p[1]]) cyl_y(pilot_m25, pi_bot_y - 1, carrier_y + carrier_t + 1, fn_small);
+        for (p = posts) translate([p[0], 0, p[1]]) cyl_y(clear_m25 + 0.6, carrier_y - 1, carrier_y + carrier_t + 1, fn_small);
+    }
+}
 
 module ear() {
     // in head coordinates for the +x side; the left ear is the same part mirrored in place.
@@ -670,8 +747,12 @@ module camera_bracket() {
                 translate([0, 11, 0]) rotate([0, 90, 0]) cylinder(d = 10, h = 2.5, center = true);
             }
         }
+        // lens holder (14 mm block, screw ears 18 mm apart) and the 5-pin cable connector below it
         cube([17, 20, 17], center = true);
-        for (sx = [-1, 1]) for (sz = [-1, 1]) translate([sx * cam_hole_sp/2, -1, sz * cam_hole_sp/2]) rotate([-90, 0, 0]) cylinder(d = 2.4, h = pt + 2, $fn = fn_small);
+        cube([25, 20, 7], center = true);
+        translate([-6, -1, -cam_board/2 - 3]) cube([16, pt + 2, cam_board/2 + 3 - 7]);
+        // board screws: diagonal slots for 26..28.5 mm hole spacing
+        for (sx = [-1, 1]) for (sz = [-1, 1]) hull() for (sp = cam_hole_sp) translate([sx * sp/2, -1, sz * sp/2]) rotate([-90, 0, 0]) cylinder(d = 2.4, h = pt + 2, $fn = fn_small);
         for (s = [-1, 1]) translate([s * 19.25, 0, 0]) hull() for (yy = [5, 11]) translate([0, yy, 0]) rotate([0, 90, 0]) cylinder(d = 2.3, h = 6, center = true, $fn = fn_small);
     }
 }
@@ -714,29 +795,74 @@ module servo_dummy() {
 }
 module place_torso() { translate([0, torso_y0, torso_z0]) children(); }
 module place_head()  { translate([0, head_y0, head_z0]) children(); }
-module pi_dummy_t() {   // torso coordinates
-    color("green") translate([-28, pi_spine_y + pi_standoff, pi_z_top - 85]) cube([56, 1.6, 85]);
-    color("#555") translate([-22, pi_spine_y + pi_standoff + 1.6, pi_z_top - 68]) cube([43.5, 14.5, 64.5]);           // official Active Cooler (63.5 x 42.5 x 13.7)
-    color("#999") translate([-27, pi_spine_y + pi_standoff + 1.6, pi_z_top - 85 - 2]) cube([53, 16, 21]);              // USB/Ethernet block
-    color("#222") translate([-25, pi_spine_y + pi_standoff + 1.6, pi_z_top - 85 - 33]) cube([50, 14, 33]);             // USB plugs (down)
-    for (px = [11.2, 25.8, 39.2]) color("#222") translate([28, pi_spine_y + pi_standoff + 1.6, pi_z_top - px - 4]) cube([22, 4, 8]); // USB-C + HDMI plugs
+
+// --- screen + Pi stack (head coordinates), from the lcdwiki and Raspberry Pi drawings ---
+// s shrinks every box (the interference checks allow touching faces).
+module hbox(x0, x1, y0, y1, z0, z1, s = 0) { translate([x0 + s, y0 + s, z0 + s]) cube([x1 - x0 - 2*s, y1 - y0 - 2*s, z1 - z0 - 2*s]); }
+// box in the screen frame: x from the wide-border end, z from the HDMI edge, y depth from the glass front
+module lbox(x0, x1, z0, z1, y0, y1, s = 0) { hbox(lcd_x0 + x0, lcd_x0 + x1, glass_y + y0, glass_y + y1, lcd_z0 + z0, lcd_z0 + z1, s); }
+// box in the Pi frame: x from the SD-card end, z from the USB-C edge, h = height above the component side (towards the screen)
+module pbox(x0, x1, z0, z1, h0, h1, s = 0) { hbox(pi_x0 + x0, pi_x0 + x1, pi_top_y - h1, pi_top_y - h0, pi_z0 + z0, pi_z0 + z1, s); }
+
+module screen_dummy(s = 0) {
+    lbox(0, lcd_w, 0, lcd_h, 0, lcd_glass_t, s);                                         // glass (touch + LCD + backlight)
+    lbox(0.4, lcd_w, 0, lcd_h, lcd_glass_t, lcd_stack, s);                              // screen PCB
+    for (x = [[10, 20.5], [64.5, 75]]) for (z = [[-lcd_ear, 0], [lcd_h, lcd_h + lcd_ear]]) lbox(x[0], x[1], z[0], z[1], lcd_glass_t, lcd_stack, s);
+    // parts on the back of the screen PCB
+    lbox(lcd_pin1[0] - 1.27, lcd_pin1[0] - 1.27 + 33.02, lcd_pin1[1] - 1.27, lcd_pin1[1] + 3.81, lcd_stack, lcd_stack + lcd_sock_h, s);  // 2x13 socket
+    lbox(lcd_hdmi_x - 7.5, lcd_hdmi_x + 7.5, lcd_hdmi_z, 10.65, lcd_stack, lcd_stack + 6.7, s);            // HDMI socket
+    lbox(lcd_jack_x - 3.45, lcd_jack_x + 3.45, -1.79, 12.2, lcd_stack, lcd_stack + 5.1, s);                // 3.5 mm jack
+    lbox(0.4, 6.1, 6.1, 14.1, lcd_stack, lcd_stack + 3.4, s);                                              // micro-USB (power in)
+    lbox(14, 58, 13, 47, lcd_stack, lcd_stack + 1.8, s);                                                   // scaler IC and small parts
 }
+module pi_dummy(s = 0) {
+    pbox(0, pi_l, 0, pi_wd, -pi_pcb_t, 0, s);                                            // board
+    pbox(7.13, 57.93, 50.02, 55.0, 0, pi_hdr_h, s);                                      // header plastic
+    pbox(40.15, 57.93, 50.02, 55.0, pi_hdr_h, 8.57, s);                                  // pins 27..40 (not covered by the screen socket)
+    pbox(69.5, pi_l + 3, 2, 54, 0, 15.8, s);                                             // 2 x USB-A + Ethernet
+    for (x = [25.8, 39.2]) pbox(x - 3.75, x + 3.75, -0.5, 7.5, 0, 3.4, s);               // micro-HDMI
+    pbox(11.2 - 4.5, 11.2 + 4.5, -0.5, 7.5, 0, 3.2, s);                                  // USB-C
+    pbox(-2.5, 12, 22.7, 33.7, -pi_pcb_t - 1.6, -pi_pcb_t, s);                           // microSD card (underside)
+}
+module cooler_dummy(s = 0) {   // official Active Cooler: push pins in the Pi's two 3 mm holes
+    pbox(6.5, 64, 9.0, 49, 0, 3, s);                                                     // heatsink base (edge 2.5 mm in from the outline)
+    pbox(0.5, 6.5, 6.5, 49, 0, 3, s);                                                    // push-pin boss corner
+    pbox(7.0, 27.5, 9.0, 49, 0, cooler_h, s);                                            // fin block
+    pbox(27.5, 64, 18, 49, 0, cooler_h, s);                                              // blower fan + right end
+    for (p = [[3.5, 9.5], [61.5, 46.5]]) translate([pi_h(p)[0], 0, pi_h(p)[1]]) cyl_y(3 - 2*s, pi_bot_y, pi_bot_y + 1.0 - s, 12);  // pin tails
+}
+// cables plugged into the stack: USB-A (camera, speaker, mic), USB-C power, HDMI adapter keep-out
+module stack_plugs(s = 0) {
+    for (z = [29.1, 47.0]) pbox(pi_l + 3, pi_l + 3 + 25, z - 7, z + 7, 0, 15.8, s);     // USB-A plugs, 25 mm incl. cable bend
+    pbox(11.2 - 6.25, 11.2 + 6.25, -31, -0.5, 1.6 - 3.75, 1.6 + 3.75, s);                // USB-C plug, 30 mm
+    hdmi_zone(s);
+}
+module hdmi_zone(s = 0) {   // micro-HDMI -> HDMI U adapter (about 35 x 20 x 10) between the Pi's HDMI0 and the screen
+    hbox(pi_h([20.5, 0])[0], pi_h([20.5 + hdmi_link[0], 0])[0], glass_y + 5, pi_top_y, lcd_z0 - hdmi_link[1], pi_z0 - 0.6, s);
+}
+module pi_screws() {   // M2.5 pan heads on the component side + shafts into the carrier standoffs
+    for (p = pi_hole_pts) translate([pi_h(p)[0], 0, pi_h(p)[1]]) { cyl_y(4.6, pi_top_y - 1.8, pi_top_y, 16); cyl_y(2.5, pi_top_y, carrier_y + carrier_t - 0.5, 12); }
+}
+module stack_assembly() {
+    color("#0a0a0a") screen_dummy();
+    color("#1a5") pi_dummy();
+    color("#777") cooler_dummy();
+    color("#222") stack_plugs();
+}
+
 module electronics() {
     place_torso() {
-        pi_dummy_t();
         color("#111") translate([-spk_w/2, spk_y, spk_z]) cube([spk_w, spk_d, spk_h]);
         color("#333") translate([mic_x0 + 0.3, mic_y0, mic_zc - mic_w/2]) cube([mic_l, mic_t, mic_w]);
         translate([0, pinion_yt, hs_spline_z]) servo_dummy();
         for (s = [-1, 1]) translate([s * as_spline_x, shoulder_yt, shoulder_zt]) rotate(s > 0 ? [90, 0, 90] : [-90, 0, 90]) servo_dummy();
     }
     place_head() {
-        color("#0a0a0a") translate([lcd_x0, visor_back_y, lcd_z0]) cube([lcd_w, 5.7, lcd_h]);
-        color("#1a5") translate([lcd_x0, visor_back_y + 5.7, lcd_z0 - pcb_overhang]) cube([75, 1.6, lcd_h + 2*pcb_overhang]);
-        color("#222") translate([lcd_x0 + 32 - 10.5, visor_back_y + 7.32, lcd_z0 - pcb_overhang - 31]) cube([21, 12, 37]);
+        stack_assembly();
         color("#844") translate([-cam_board/2, cam_board_y, cam_z - cam_board/2]) cube([cam_board, 1.6, cam_board]);
     }
     color("#333") translate([-bat_w/2 + 1, bat_y1 - 1 - 96, base_z0 + base_floor_t]) cube([bat_w - 2, 96, 26]);     // power bank (future)
-    color("#2a2") translate([-30, 40, base_z0 + base_floor_t + bat_h + 2.5]) cube([62.5, 25.4, 12]);                   // PCA9685 on the shelf
+    color("#2a2") translate([pca_x0, pca_y0, base_z0 + base_floor_t + bat_h + 2.5 + pca_standoff]) cube([pca_l, pca_w, 12]);   // PCA9685 on the shelf
 }
 
 module place_arm(s, a = arm_neutral) {
@@ -764,6 +890,7 @@ module assembly(explode = 0) {
         color("#f7f4ee") place_head() head_shell();
         color("#e9e5dc") translate([0, explode * 0.5, 0]) place_head() head_back();
         color("#151a22") translate([0, -explode * 0.4, 0]) place_head() visor();
+        color("#aab") translate([0, explode * 0.35, 0]) place_head() pi_carrier();
         color("#9fd3f5") place_head() { ear(); mirror([1, 0, 0]) ear(); }
         color("#f7f4ee") translate([0, 0, explode * 0.3]) place_head() camera_pod();
         color("#aab") place_head() translate([0, cam_board_y - 2.5, cam_z]) camera_bracket();
@@ -798,7 +925,7 @@ module print_part(p) {
     else if (p == "ear_left")    mirror([0, 1, 0]) print_part("ear_right");     // the head tapers, so the ears are mirror images
     else if (p == "camera_pod")  translate([0, 0, head_h + pod_h]) mirror([0, 0, 1]) camera_pod();
     else if (p == "camera")      rotate([90, 0, 0]) camera_bracket();
-    else if (p == "lcd_tabs")    lcd_tabs();
+    else if (p == "pi_carrier")  translate([0, 0, carrier_y + carrier_t]) rotate([-90, 0, 0]) pi_carrier();   // back face down
     else if (p == "arm_left")    arm_left();      // inner (flat) face down
     else if (p == "arm_right")   arm_right();
 }

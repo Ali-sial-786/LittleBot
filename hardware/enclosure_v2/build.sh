@@ -9,13 +9,13 @@ OUT=${OUT:-stl}
 IMG=${IMG:-images}
 PARTS=(base base_floor base_floor_mobile shelf well_cover front_blank front_sonar rear_blank rear_usb
        torso torso_back coupler ring_gear pinion servo_frame
-       head head_back visor ear_left ear_right camera_pod camera lcd_tabs arm_left arm_right)
+       head head_back visor ear_left ear_right camera_pod camera pi_carrier arm_left arm_right)
 (($#)) && PARTS=("$@")
 mkdir -p "$OUT" "$IMG"
 render() { openscad -q -o "$OUT/$1.stl" -D "part=\"$1\"" "$SCAD" && python3 stl_tools.py binary "$OUT/$1.stl" && echo "==> $1"; }
 export -f render; export OUT SCAD
 printf '%s\n' "${PARTS[@]}" | xargs -P "${JOBS:-4}" -I{} bash -c 'render {}'
-files=(); for p in "${PARTS[@]}"; do [[ $p == lcd_tabs ]] && files+=("$OUT/$p.stl=4") || files+=("$OUT/$p.stl"); done
+files=(); for p in "${PARTS[@]}"; do files+=("$OUT/$p.stl"); done
 status=0; python3 stl_tools.py report "${files[@]}" || status=1
 (($# == 0)) && { python3 make_plates.py || status=1; }   # group the parts into build plates
 if (($# == 0)) && command -v xvfb-run >/dev/null; then

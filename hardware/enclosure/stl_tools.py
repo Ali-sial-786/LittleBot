@@ -3,6 +3,7 @@
 
     stl_tools.py binary FILE.stl     convert OpenSCAD's ASCII STL to binary in place (~5x smaller)
     stl_tools.py report FILES...     size, triangle count, watertight check, fits-the-bed check
+    stl_tools.py bbox FILE.stl       bounding-box size (used for the INFO checks)
 """
 from __future__ import annotations
 
@@ -56,6 +57,11 @@ def main(argv: list[str]) -> int:
         for f in argv[1:]:
             p = Path(f)
             write_binary(p, read_stl(p))
+        return 0
+    if len(argv) == 2 and argv[0] == "bbox":
+        t = read_stl(Path(argv[1]))
+        size = t.reshape(-1, 3).max(0) - t.reshape(-1, 3).min(0)
+        print(f"{size[0]:.1f} x {size[1]:.1f} x {size[2]:.1f} mm (x, depth, height)")
         return 0
     if len(argv) >= 2 and argv[0] == "report":
         ok = True

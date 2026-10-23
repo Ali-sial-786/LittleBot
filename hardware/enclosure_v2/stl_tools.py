@@ -5,6 +5,7 @@
     stl_tools.py report FILES...        size, triangles, watertight, shells, bed fit, overhangs
                                         (FILE.stl=N: the part is N separate pieces on purpose)
     stl_tools.py overhangs FILE.stl     list the biggest overhang patches (where supports would be needed)
+    stl_tools.py bbox FILE.stl          bounding-box size (used for the INFO checks)
 
 "shells" counts separate solid bodies: a printable part must be exactly 1 (no floating islands).
 "overhang" is the area (mm^2) of downward faces flatter than 45 degrees that do not sit on the
@@ -132,6 +133,11 @@ def main(argv: list[str]) -> int:
             print(f"{Path(f).stem:<18}{size[0]:6.1f} x {size[1]:6.1f} x {size[2]:6.1f}   {len(t):>10}  {'yes' if wt else 'NO ':<10}  "
                   f"{shells:>6}  {'yes' if fits else 'NO':<13}  {area[mask].sum():9.0f}")
         return 0 if ok else 1
+    if len(argv) == 2 and argv[0] == "bbox":
+        t = read_stl(Path(argv[1]))
+        size = t.reshape(-1, 3).max(0) - t.reshape(-1, 3).min(0)
+        print(f"{size[0]:.1f} x {size[1]:.1f} x {size[2]:.1f} mm (x, depth, height)")
+        return 0
     if len(argv) == 2 and argv[0] == "overhangs":
         for a, lo, hi in overhang_patches(read_stl(Path(argv[1]))):
             print(f"{a:8.1f} mm2   x {lo[0]:7.1f}..{hi[0]:7.1f}   y {lo[1]:7.1f}..{hi[1]:7.1f}   z {lo[2]:6.1f}..{hi[2]:6.1f}")

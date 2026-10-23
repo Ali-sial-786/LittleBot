@@ -21,40 +21,24 @@ module servo_shrunk() {
 // --- torso electronics (torso coordinates) ---
 module head_servo_s() { translate([0, pinion_yt, hs_spline_z]) servo_shrunk(); }
 module arm_servos_s() { for (k = [-1, 1]) translate([k * as_spline_x, shoulder_yt, shoulder_zt]) rotate(k > 0 ? [90, 0, 90] : [-90, 0, 90]) servo_shrunk(); }
-module pi_s() {
-    yb = pi_spine_y + pi_standoff;
-    translate([-28 + s, yb + s, pi_z_top - 85 + s]) cube([56 - 2*s, 1.6 - 2*s, 85 - 2*s]);                 // board
-    translate([-22, yb + 1.6, pi_z_top - 68]) cube([43.5, 14.5, 64.5]);                               // official Active Cooler (63.5 x 42.5 x 13.7 + pad)
-    translate([-27, yb + 1.6, pi_z_top - 85 - 2]) cube([53, 16, 21]);                                 // USB + Ethernet block
-    translate([-25, yb + 1.6, pi_z_top - 85 - 36]) cube([50, 14, 36]);                                // USB plugs (pointing down)
-    for (px = [11.2, 25.8, 39.2]) translate([28, yb + 1.6, pi_z_top - px - 4]) cube([24, 4, 8]);     // USB-C + 2 micro-HDMI plugs
-    translate([-26.8, yb + 1.6, pi_z_top - 58]) cube([5.2, 22.5, 51]);                                // GPIO header + jumper wires
-}
 // Adafruit 3367 mic + a USB extension socket (about 18 x 9.5 x 32 mm) plugged onto it
 module mic_s() { translate([mic_x0 + s, mic_y0 + s, mic_zc - mic_w/2 + s]) cube([mic_l - 2*s, mic_t - 2*s, mic_w - 2*s]);
                  translate([mic_x0 + mic_body + s, mic_y0 + mic_t/2 - 4.75, mic_zc - 9]) cube([32, 9.5, 18]); }
 module speaker_s() { translate([-spk_w/2 + s, spk_y + s, spk_z + s]) cube([spk_w - 2*s, spk_d - 2*s, spk_h - 2*s]); }
-module torso_electronics_s() { head_servo_s(); arm_servos_s(); pi_s(); speaker_s(); mic_s(); }
+module torso_electronics_s() { head_servo_s(); arm_servos_s(); speaker_s(); mic_s(); }
 
 // --- head electronics (head coordinates) ---
-module display_s() {
-    translate([lcd_x0 + s, visor_back_y + 0.05 + s, lcd_z0 + s]) cube([lcd_w - 2*s, 5.7 - 2*s, lcd_h - 2*s]);
-    translate([lcd_x0 + s, visor_back_y + 5.7 + s, lcd_z0 - pcb_overhang + s]) cube([75 - 2*s, 1.6 - 2*s, lcd_h + 2*pcb_overhang - 2*s]);
-    // 90-degree HDMI adapter (male up into the display, socket facing the back) + the official
-    // cable's HDMI plug (about 20 x 10 x 45 mm with strain relief) running backwards
-    translate([lcd_x0 + 32 - 12, visor_back_y + 7.32, lcd_z0 - pcb_overhang - 22]) cube([24, 15, 22]);
-    translate([lcd_x0 + 32 - 11, visor_back_y + 7.32 + 15, lcd_z0 - pcb_overhang - 17]) cube([22, 50, 12]);
-    translate([lcd_x0 + 2, visor_back_y + 7.32, lcd_z1 - 10]) cube([34, 9, 10]);                        // 26-pin header + jumpers
-}
+// screen + Pi stack, cooler, plugs (littlebot_v2.scad), shrunk by s
+module stack_s() { screen_dummy(s); pi_dummy(s); cooler_dummy(s); stack_plugs(s); }
 module camera_s() {
     translate([-cam_board/2 + s, cam_board_y + s, cam_z - cam_board/2 + s]) cube([cam_board - 2*s, 1.6 - 2*s, cam_board - 2*s]);
     translate([0, cam_board_y, cam_z]) rotate([90, 0, 0]) cylinder(d = 14, h = cam_board_y - pod_y0 - 2.2 - 0.3);    // lens
-    translate([-6, cam_board_y + 1.6, cam_z - 12]) cube([12, 6, 8]);                                                     // cable connector
+    translate([-6, cam_board_y - 10, cam_z - 16]) cube([16, 10, 8]);                                                     // 5-pin connector + plug (lens side)
 }
 
 // --- base electronics (robot coordinates) ---
 module bank_s()  { translate([-bat_w/2 + 1 + s, bat_y1 - 1 - 96 + s, base_z0 + base_floor_t + s]) cube([bat_w - 2 - 2*s, 96 - 2*s, 26 - 2*s]); }
-module pca_s()   { translate([-30, 40, base_z0 + base_floor_t + bat_h + 2.5 + s]) cube([62.5, 25.4, 12]); }
+module pca_s()   { translate([pca_x0, pca_y0, base_z0 + base_floor_t + bat_h + 2.5 + pca_standoff + s]) cube([pca_l, pca_w, 12]); }   // board + headers/plugs
 module sonar_s() { translate([-22.5, 12 - bezel_t + s, front_z + 4 - 10]) cube([45, 1.6 + 4, 20]);           // board + parts on its back
                    translate([-5.5, 12 - bezel_t + s, front_z + 4 - 10]) cube([11, 1.6 + 20, 4.5]);       // header + straight dupont plug
                    for (k = [-1, 1]) translate([k * sonar_sp/2, -bezel_t + 0.5, front_z + 4]) rotate([-90, 0, 0]) cylinder(d = 16, h = 12); }
@@ -63,7 +47,7 @@ module wheels_s() { for (k = [-1, 1]) translate([k * wheel_x, wheel_y, wheel_d/2
 
 // --- moving assemblies ---
 module rotate_about_neck(a) { translate([0, neck_y, 0]) rotate(a) translate([0, -neck_y, 0]) children(); }
-module head_all() { place_head() { head_shell(); head_back(); visor(); ear(); mirror([1, 0, 0]) ear(); camera_pod(); } }
+module head_all() { place_head() { head_shell(); head_back(); visor(); pi_carrier(); ear(); mirror([1, 0, 0]) ear(); camera_pod(); } }
 module moving_neck() { place_torso() translate([0, neck_yt, 0]) rotate(head_angle) translate([0, -neck_yt, 0]) {
     translate([0, neck_yt, torso_h + s]) coupler(); translate([0, neck_yt, gear_z0]) ring_gear(); } }
 module arms_at(a) { for (k = [-1, 1]) place_arm(k, a); }
@@ -71,27 +55,40 @@ module base_parts() { base_shell(); base_floor(false); translate([0, 0, base_z0 
 
 if (check == "electronics_vs_torso")  intersection() { torso_shell(); torso_electronics_s(); }
 if (check == "electronics_overlap")   place_torso() union() {
-    intersection() { head_servo_s(); union() { arm_servos_s(); pi_s(); speaker_s(); } }
-    intersection() { arm_servos_s(); union() { pi_s(); speaker_s(); } }
-    intersection() { pi_s(); speaker_s(); }
-    intersection() { mic_s(); union() { head_servo_s(); arm_servos_s(); pi_s(); speaker_s(); } } }
+    intersection() { head_servo_s(); union() { arm_servos_s(); speaker_s(); } }
+    intersection() { arm_servos_s(); speaker_s(); }
+    intersection() { mic_s(); union() { head_servo_s(); arm_servos_s(); speaker_s(); } } }
 if (check == "torso_parts_vs_electronics") intersection() { union() { translate([0, pinion_yt, hs_tab_top - sv_tab_t - frame_t]) servo_frame();
     translate([0, neck_yt, gear_z0]) ring_gear(); translate([0, pinion_yt, gear_z0]) pinion(); translate([-46 + clr, torso_d - torso_wall, 0]) torso_back(); }
-    union() { arm_servos_s(); pi_s(); speaker_s(); mic_s(); } }
+    union() { arm_servos_s(); speaker_s(); mic_s(); } }
 if (check == "frame_vs_servo")        intersection() { translate([0, pinion_yt, hs_tab_top - sv_tab_t - frame_t]) servo_frame(); head_servo_s(); }
 if (check == "pinion_vs_torso")       intersection() { torso_shell(); translate([0, pinion_yt, gear_z0]) pinion(); }
 if (check == "gears_mesh_clear")      intersection() { translate([0, pinion_yt, gear_z0]) rotate(7.5) pinion(); translate([0, neck_yt, gear_z0]) ring_gear(); }
 if (check == "back_cover_vs_torso")   intersection() { torso_shell(); translate([0, s, 0]) translate([-46 + clr, torso_d - torso_wall, 0]) torso_back(); }
 if (check == "neck_vs_torso")         intersection() { place_torso() torso_shell(); moving_neck(); }
 if (check == "head_vs_torso")         intersection() { place_torso() torso_shell(); translate([0, 0, s]) rotate_about_neck(head_angle) head_all(); }
-if (check == "display_vs_head")       intersection() { place_head() union() { head_shell(); visor(); } place_head() display_s(); }
+// the screen + Pi stack and everything plugged into it vs the head, visor (ribs, posts) and Pi carrier
+if (check == "stack_vs_head")         intersection() { place_head() union() { head_shell(); visor(); pi_carrier(); camera_pod(); translate([0, cam_board_y - 2.5, cam_z]) camera_bracket(); }
+                                                       place_head() stack_s(); }
+// the Pi's M2.5 screws (heads on the component side) clear the screen, its socket and the cooler
+if (check == "pi_screws_clear")       place_head() intersection() { pi_screws(); union() { screen_dummy(); cooler_dummy(); pbox(7.13, 57.93, 50.02, 55.0, 0, 8.57); pbox(69.5, pi_l + 3, 2, 54, 0, 15.8); } }
+// parts of the stack don't run into each other (plugs, HDMI adapter, SD card, cooler vs Pi)
+if (check == "stack_internal")        place_head() union() {
+    intersection() { screen_dummy(s); union() { pi_dummy(s); stack_plugs(s); } }
+    intersection() { pi_dummy(s); union() { stack_plugs(s); cooler_dummy(s); } }
+    intersection() { cooler_dummy(s); stack_plugs(s); }
+    intersection() { hdmi_zone(s); union() { for (z = [29.1, 47.0]) pbox(pi_l + 3, pi_l + 28, z - 7, z + 7, 0, 15.8, s); pbox(11.2 - 6.25, 11.2 + 6.25, -31, -0.5, -2.15, 5.35, s); } } }
+// INFO (parts compatibility, not the enclosure): the Active Cooler under the screen, from the drawings
+if (check == "info_cooler_vs_screen") place_head() intersection() { screen_dummy(s); cooler_dummy(s); }
 if (check == "camera_vs_head")        intersection() { place_head() union() { head_shell(); camera_pod(); translate([0, cam_board_y - 2.5, cam_z]) camera_bracket(); } place_head() camera_s(); }
 if (check == "bracket_vs_pod")        intersection() { place_head() union() { head_shell(); camera_pod(); } place_head() translate([0, cam_board_y - 2.5, cam_z]) camera_bracket(); }
 if (check == "head_parts_overlap")    place_head() union() {
     intersection() { head_shell(); translate([0, -s, 0]) visor(); }
     intersection() { head_shell(); translate([0, s, 0]) head_back(); }
     intersection() { head_shell(); for (k = [-1, 1]) translate([k * s, 0, 0]) mirror([k < 0 ? 1 : 0, 0, 0]) ear(); }
-    intersection() { head_shell(); translate([0, 0, s]) camera_pod(); } }
+    intersection() { head_shell(); translate([0, 0, s]) camera_pod(); }
+    intersection() { union() { head_shell(); camera_pod(); } pi_carrier(); }
+    intersection() { visor(); translate([0, s, 0]) pi_carrier(); } }
 if (check == "torso_vs_base")         intersection() { base_shell(); translate([0, 0, s]) place_torso() torso_shell(); }
 if (check == "base_parts_overlap")    union() {
     intersection() { base_shell(); translate([0, 0, -s]) base_floor(false); }
@@ -102,7 +99,7 @@ if (check == "base_parts_overlap")    union() {
     intersection() { union() { base_shell(); base_floor(false); } translate([0, -s, 0]) place_front_plate() port_plate(front_w, front_h, "blank"); }
     intersection() { union() { base_shell(); base_floor(false); } translate([0, s, 0]) place_rear_plate() port_plate(rear_w, rear_h, "rear"); } }
 if (check == "electronics_vs_base")   intersection() { union() { base_parts(); place_torso() torso_shell(); }
-    union() { bank_s(); pca_s(); place_torso() pi_s(); } }
+    union() { bank_s(); pca_s(); } }
 if (check == "sonar_vs_base")         intersection() { union() { base_parts(); place_front_plate() port_plate(front_w, front_h, "sonar"); } sonar_s(); }
 if (check == "wheels_vs_mobile_base") intersection() { union() { base_shell(); base_floor(true); place_torso() torso_shell(); } wheels_s(); }
 if (check == "arms_vs_torso")         intersection() { place_torso() torso_shell(); arms_at(arm_angle); }
