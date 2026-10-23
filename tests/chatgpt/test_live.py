@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Any
 
 import httpx
@@ -275,8 +276,11 @@ async def test_unavailable_voice_falls_back_to_sol(ctx, tmp_path):
 
 
 class FakeLook:
-    def __init__(self, blocked: str | None = None, answer: str = "You are holding up three fingers.") -> None:
-        self.blocked, self.answer = blocked, answer
+    """Stands in for CameraLook: ``asked`` counts the looks (each one would be a photo)."""
+
+    def __init__(self, blocked: str | None = None, answer: str = "You are holding up three fingers.",
+                 error: str | None = None, detail: str | None = None, delay: float = 0.0) -> None:
+        self.blocked, self.answer, self.error, self.detail, self.delay = blocked, answer, error, detail, delay
         self.asked: list[tuple[str, str]] = []
 
     def blocked_reason(self) -> str | None:
@@ -284,6 +288,10 @@ class FakeLook:
 
     async def look(self, question: str, *, asked_by: str = "parent") -> dict[str, Any]:
         self.asked.append((question, asked_by))
+        if self.delay:
+            await asyncio.sleep(self.delay)
+        if self.error:
+            return {"ok": False, "answer": None, "error": self.error, "detail": self.detail, "latency_ms": 5}
         return {"ok": True, "answer": self.answer, "error": None, "detail": None, "latency_ms": 5}
 
 
@@ -295,6 +303,18 @@ def delegate(server: FakeOpenAI, did: str, text: str) -> None:
 def answers(server: FakeOpenAI, did: str) -> list[str]:
     return [m["content"][0]["text"] for m in server.received
             if m.get("type") == "delegation.context.append" and m.get("delegation_item_id") == did]
+
+
+def notes(server: FakeOpenAI) -> list[str]:
+    return [m["content"][0]["text"] for m in server.received if m.get("type") == "session.context.append"]
+
+
+def hear(server: FakeOpenAI, text: str) -> None:
+    server.send({"type": "turn.done", "turn": {"role": "user", "transcript": text}})
+
+
+def note_captions(svc: LiveVoiceService) -> list[str]:
+    return [c["text"] for c in svc.status().get("captions", []) if c["who"] == "note"]
 
 
 async def test_seeing_questions_take_one_photo(live, ctx):
@@ -314,14 +334,155 @@ async def test_seeing_questions_take_one_photo(live, ctx):
     assert len(look.asked) == 1 and len(provider.calls) == 1
 
 
-async def test_no_photo_when_the_parent_has_not_allowed_it(live, ctx):
+async def test_look_up_is_not_a_look(live, ctx):
     pytest.importorskip("littlebot.chatgpt.look")
     svc, server, _audio, provider, _alerts = live
-    look = ctx.extras["camera_look"] = FakeLook(blocked="ai_camera_off")
+    look = ctx.extras["camera_look"] = FakeLook()
+    await connect(svc, server)
+    delegate(server, "u1", "Look up what sound a cow makes")
+    await wait_for(lambda: answers(server, "u1"))
+    assert answers(server, "u1") == ["A cow says moo."] and look.asked == [] and len(provider.calls) == 1
+
+
+@pytest.mark.parametrize("reason,needle,note", [
+    ("ai_camera_off", "switching on Let the AI look through the camera, on the Privacy page", "Let the AI look"),
+    ("camera_off", "my camera is switched off on the Privacy page", "camera is turned off"),
+    ("no_camera", "my camera isn't working", "No camera is working"),
+    ("not_signed_in", "can't see right now", "No photo taken"),
+])
+async def test_no_photo_when_the_parent_has_not_allowed_it(live, ctx, reason, needle, note):
+    pytest.importorskip("littlebot.chatgpt.look")
+    svc, server, _audio, provider, _alerts = live
+    look = ctx.extras["camera_look"] = FakeLook(blocked=reason)
     await connect(svc, server)
     delegate(server, "v3", "Look: how many fingers am I holding?")
     await wait_for(lambda: answers(server, "v3"))
     assert look.asked == [] and svc.status()["photos"] == 0
+    (text,) = answers(server, "v3")
+    assert needle in text and "don't guess" in text  # says why, instead of the text model saying "I can't see"
+    assert provider.calls == []
+    assert any(c.startswith("No photo taken") and note in c for c in note_captions(svc))
+    # a knowledge question that only mentions a colour still goes to the text model
+    delegate(server, "v4", "What colour is a banana?")
+    await wait_for(lambda: answers(server, "v4"))
+    assert answers(server, "v4") == ["A cow says moo."] and look.asked == []
+
+
+def test_what_the_voice_is_told_when_it_cannot_see_is_safe_to_say():
+    from littlebot.chatgpt.live import CANT_LOOK
+    from littlebot.safety.content import validate_reply
+
+    for text in CANT_LOOK.values():
+        said = text.split('"')[1]  # the words the voice is given to say
+        assert not validate_reply(said, max_words=10_000).blocked, said
+
+
+@pytest.mark.parametrize("code,needle", [("photo_failed", "camera couldn't take a picture"),
+                                         ("timeout", "took too long"),
+                                         ("network", "couldn't reach ChatGPT to look"),
+                                         ("usage_limit", "couldn't reach ChatGPT to look")])
+async def test_failed_look_tells_the_voice_why(live, ctx, code, needle):
+    pytest.importorskip("littlebot.chatgpt.look")
+    svc, server, _audio, provider, _alerts = live
+    look = ctx.extras["camera_look"] = FakeLook(error=code, detail=f"Dashboard detail for {code}.")
+    await connect(svc, server)
+    delegate(server, "e1", "Look: how many fingers am I holding up?")
+    await wait_for(lambda: answers(server, "e1"))
+    (text,) = answers(server, "e1")
+    assert needle in text and "don't guess" in text
+    assert len(look.asked) == 1 and svc.status()["photos"] == 0 and provider.calls == []
+    assert f"Looking didn't work: Dashboard detail for {code}." in note_captions(svc)
+
+
+async def test_asking_to_see_looks_even_without_a_hand_off(live, ctx):
+    pytest.importorskip("littlebot.chatgpt.look")
+    svc, server, _audio, provider, _alerts = live
+    look = ctx.extras["camera_look"] = FakeLook()
+    await connect(svc, server)
+    hear(server, "See you later!")  # not about seeing: no photo
+    hear(server, "How many fingers am I holding up?")
+    await wait_for(lambda: notes(server))
+    assert look.asked == [("How many fingers am I holding up?", "live")]
+    assert notes(server) == ["You just looked through your camera. You are holding up three fingers. "
+                             "Tell them what you saw."]
+    assert svc.status()["photos"] == 1 and provider.calls == []
+
+
+async def test_a_hand_off_during_that_look_shares_the_one_photo(live, ctx):
+    pytest.importorskip("littlebot.chatgpt.look")
+    svc, server, _audio, _provider, _alerts = live
+    look = ctx.extras["camera_look"] = FakeLook(delay=0.5)
+    await connect(svc, server)
+    hear(server, "how many fingers am I holding up")
+    delegate(server, "s1", "Look: how many fingers is the person holding up?")
+    await wait_for(lambda: answers(server, "s1"))
+    assert answers(server, "s1") == ["You are holding up three fingers."]
+    await asyncio.sleep(1.2)
+    assert len(look.asked) == 1 and svc.status()["photos"] == 1
+    assert notes(server) == []  # the hand-off got the answer: the voice hears it once
+
+
+async def test_a_hand_off_just_after_that_look_shares_it_but_a_new_question_looks_again(live, ctx):
+    pytest.importorskip("littlebot.chatgpt.look")
+    svc, server, _audio, _provider, _alerts = live
+    look = ctx.extras["camera_look"] = FakeLook()
+    await connect(svc, server)
+    hear(server, "What am I holding?")
+    await wait_for(lambda: notes(server))
+    delegate(server, "s2", "Look: what is the person holding?")
+    await wait_for(lambda: answers(server, "s2"))
+    assert answers(server, "s2") == ["You are holding up three fingers."] and len(look.asked) == 1
+    hear(server, "and now?")  # something new was said: the next hand-off is a new question
+    delegate(server, "s3", "Look again: how many fingers now?")
+    await wait_for(lambda: answers(server, "s3"))
+    assert len(look.asked) == 2 and svc.status()["photos"] == 2
+
+
+async def test_a_hand_off_before_the_words_arrive_takes_one_photo(live, ctx):
+    pytest.importorskip("littlebot.chatgpt.look")
+    svc, server, _audio, _provider, _alerts = live
+    look = ctx.extras["camera_look"] = FakeLook(delay=0.3)
+    await connect(svc, server)
+    delegate(server, "s4", "Look: what is the person holding?")
+    hear(server, "what am I holding")
+    await wait_for(lambda: answers(server, "s4"))
+    await asyncio.sleep(1.2)
+    assert len(look.asked) == 1 and notes(server) == []
+
+
+async def test_asking_to_see_when_not_allowed_tells_the_voice_why_once(live, ctx):
+    pytest.importorskip("littlebot.chatgpt.look")
+    svc, server, _audio, _provider, _alerts = live
+    look = ctx.extras["camera_look"] = FakeLook(blocked="ai_camera_off")
+    await connect(svc, server)
+    hear(server, "can you see me?")
+    await wait_for(lambda: notes(server))
+    (text,) = notes(server)
+    assert text.startswith("They asked you to look.") and "Let the AI look through the camera" in text
+    assert look.asked == [] and svc.status()["photos"] == 0
+    assert any(c.startswith("No photo taken") for c in note_captions(svc))
+
+
+def test_seeing_words():
+    from littlebot.chatgpt.live import asks_to_see
+
+    for text in ("How many fingers am I holding up?", "how many fingers do you see", "What am I holding?",
+                 "Guess what I\u2019m holding!", "whats in my hand", "Can you see me?", "Do you see my teddy?",
+                 "What colour is this?", "what color are my eyes", "What do you see?", "Look at this!",
+                 "count my fingers", "What is she wearing?"):
+        assert asks_to_see(text), text
+    for text in ("See you later!", "nice to see you", "How many fingers does a cat have?",
+                 "how many fingers do you have", "Do you see what I mean?", "What colour is the sky?",
+                 "I like to look up at the clouds", "Make a happy face", "Let me see", ""):
+        assert not asks_to_see(text), text
+
+
+def test_seeing_questions_are_not_face_requests():
+    face_actions = pytest.importorskip("littlebot.brain.face_actions")
+    for text in ("how many fingers am I holding up?", "Look: how many fingers am I holding?",
+                 "Look at the camera: how many fingers is the person holding up?", "What am I holding?",
+                 "Can you see me?", "What colour is this?", "Look at this!", "What do you see?"):
+        assert face_actions.parse_request(text) is None, text
 
 
 async def test_face_requests_play_on_the_face(live, ctx):
@@ -336,3 +497,94 @@ async def test_face_requests_play_on_the_face(live, ctx):
     delegate(server, "f2", "Make a happy face please")
     await wait_for(lambda: ctx.face.expression == "happy")
     assert provider.calls == []  # handled locally, no text model involved
+
+
+def say(server: FakeOpenAI, *parts: str) -> None:
+    """The voice speaks: caption pieces while it talks, then the whole turn."""
+    for part in parts:
+        server.send({"type": "output_transcript.added", "item": {"text": part}})
+    server.send({"type": "turn.done", "turn": {"role": "assistant", "transcript": "".join(parts)}})
+
+
+async def test_asking_for_a_face_plays_it_without_a_hand_off(live, ctx, caplog):
+    pytest.importorskip("littlebot.brain.face_actions")
+    caplog.set_level(logging.INFO, logger="littlebot.chatgpt.live")
+    svc, server, _audio, provider, _alerts = live
+    await connect(svc, server)
+    hear(server, "Make a happy face!")
+    await wait_for(lambda: ctx.face.expression == "happy")
+    await wait_for(lambda: notes(server))
+    assert notes(server) == ["LittleBot is showing happy on its face now."]
+    delegate(server, "h1", "face: happy")  # the voice hands it over too: answered, not played twice
+    await wait_for(lambda: answers(server, "h1"))
+    assert answers(server, "h1")[0].startswith("Done")
+    await asyncio.sleep(0.2)
+    assert [a for (a, _k) in ctx.face.called("set_expression")] == [("happy",)]
+    assert provider.calls == []
+    log_text = caplog.text
+    assert "face happy played (from=user)" in log_text and "hand-off received (kind=face)" in log_text
+    assert "face happy already playing (from=delegation)" in log_text
+    assert "first 'delegation.created' event" in log_text
+    assert "Make a happy face" not in log_text  # nothing the person said is logged
+
+
+async def test_the_voice_saying_peekaboo_plays_it_once(live, ctx, caplog):
+    pytest.importorskip("littlebot.brain.face_actions")
+    caplog.set_level(logging.INFO, logger="littlebot.chatgpt.live")
+    svc, server, _audio, _provider, _alerts = live
+    await connect(svc, server)
+    say(server, "Ready? ", "Peek-a-boo! ", "I see you!")
+    await wait_for(lambda: ctx.face.called("close_eyes"))
+    await wait_for(lambda: ctx.face.called("open_eyes"))
+    assert not ctx.face.eyes_closed
+    names = [n for (n, _a, _k) in ctx.face.calls if n in ("close_eyes", "open_eyes")]
+    assert names == ["close_eyes", "open_eyes"]  # once for the turn, not on every caption piece
+    assert "face peekaboo played (from=voice)" in caplog.text
+
+
+async def test_the_voice_saying_wink_plays_it(live, ctx):
+    pytest.importorskip("littlebot.brain.face_actions")
+    svc, server, _audio, _provider, _alerts = live
+    await connect(svc, server)
+    say(server, "Twinkle twinkle little star. ")  # not a wink
+    say(server, "Watch me! ", "I'm winking at you.")
+    await wait_for(lambda: ctx.face.called("set_expression"))
+    assert [a for (a, _k) in ctx.face.called("set_expression")] == [("playful",)]  # the playful face winks
+
+
+def test_faces_the_voice_announces():
+    pytest.importorskip("littlebot.brain.face_actions")
+    from littlebot.chatgpt.live import _voice_face
+
+    cases = {"Peekaboo!": "peekaboo", "peek a boo, I see you": "peekaboo", "Wink wink!": "wink",
+             "Here's my happy face!": "happy", "This is my silly face.": "playful", "Watch me spin my eyes!": "spin_eyes",
+             "Twinkle twinkle little star": None, "Show me your happy face!": None, "I'm so happy!": None,
+             "Let's look at the book.": None}
+    for text, name in cases.items():
+        action = _voice_face(text)
+        assert (action.name if action else None) == name, text
+
+
+async def test_look_outcome_is_logged_without_content(live, ctx, caplog):
+    pytest.importorskip("littlebot.chatgpt.look")
+    caplog.set_level(logging.INFO, logger="littlebot.chatgpt.live")
+    svc, server, _audio, _provider, _alerts = live
+    ctx.extras["camera_look"] = FakeLook(blocked="ai_camera_off")
+    await connect(svc, server)
+    delegate(server, "l1", "Look: how many fingers am I holding up?")
+    await wait_for(lambda: answers(server, "l1"))
+    assert "hand-off received (kind=look)" in caplog.text
+    assert "look triggered (from=delegation) -> blocked:ai_camera_off" in caplog.text
+    assert "fingers" not in caplog.text
+
+
+async def test_everyday_words_do_not_change_the_face(live, ctx):
+    pytest.importorskip("littlebot.brain.face_actions")
+    svc, server, _audio, _provider, _alerts = live
+    await connect(svc, server)
+    before = ctx.face.expression
+    for text in ("that makes me sad", "give me a hug", "bounce the ball"):
+        server.send({"type": "turn.done", "turn": {"role": "user", "transcript": text}})
+    server.send({"type": "turn.done", "turn": {"role": "user", "transcript": "make a surprised face"}})
+    await wait_for(lambda: ctx.face.expression == "surprised")
+    assert before != "sad" and ctx.face.called("set_expression")[0][0][0] == "surprised"

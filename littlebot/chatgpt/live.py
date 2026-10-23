@@ -20,6 +20,9 @@ Safety, enforced here in code (docs/AI_SAFETY.md, "Live voice"):
   parent (category only, never the words);
 * look-ups the voice hands over (delegations) are answered by the ChatGPT text model with
   LittleBot's child-safe prompt and validated before the voice is given them;
+* a photo is taken only for a question that needs it (the voice's hand-off, or the person's own
+  words when the voice doesn't hand it over), only if the parent allows it in Privacy, and at
+  most one per question; when looking isn't allowed the voice is told why instead of guessing;
 * nothing is recorded; captions live in memory during the call only and are cleared at the end.
 
 UNDOCUMENTED endpoint, as in WatchGPT ("a spike to see whether it works, not a contract").
@@ -30,6 +33,7 @@ from __future__ import annotations
 
 import asyncio
 import collections
+import dataclasses
 import datetime as _dt
 import fractions
 import logging
@@ -55,10 +59,74 @@ log = logging.getLogger("littlebot.chatgpt.live")
 OWNER = "live_voice"
 CALL_URL = "https://chatgpt.com/backend-api/codex/realtime/calls?intent=quicksilver&architecture=avas"
 VOICES = ("cove", "arbor", "breeze", "ember", "juniper", "maple", "sol", "spruce", "vale")  # known; others are tried too
-# A look-up the voice hands over that needs the camera ("how many fingers am I holding up?").
-WANTS_LOOK = re.compile(r"\b(?:look(?:ing)?|camera|see|seeing|sees|fingers?|holding|hold(?:s|ing)? up|show(?:s|ing)?|"
-                        r"colou?rs?|wearing|what(?:'s| is) (?:this|that))\b", re.I)
-CANT_SEE = "Say you can't see right now, and suggest the grown-up shows you again later."
+# A look-up the voice hands over that needs the camera ("how many fingers am I holding up?");
+# "look up the weather" is a look-up, not a look.
+WANTS_LOOK = re.compile(r"\b(?:look(?:ing)?\b(?!\s+(?:it\s+)?up\b)|(?:camera|see|seeing|sees|fingers?|holding|"
+                        r"hold(?:s|ing)? up|show(?:s|ing)?|colou?rs?|wearing|what(?:'s| is) (?:this|that))\b)", re.I)
+# Hand-offs clearly about the camera: when looking isn't allowed they get the reason, not the text model.
+LOOK_WORDS = re.compile(r"\b(?:look(?:ing)?\b(?!\s+(?:it\s+)?up\b)|camera\b|fingers?\b)", re.I)
+_WHO = r"(?:i|we|he|she|they|it|baby|the baby|daddy|mummy|mommy|mama|papa|dad|mum|mom)"
+_POSS = r"(?:my|our|his|her|their|the baby's)"
+# The person's own words asking LittleBot to look (matched on a final transcript normalised by
+# asks_to_see). The voice may say "let me look" without handing the question over; LittleBot then
+# looks anyway. Kept narrow: "see you later" or "how many fingers does a cat have" take no photo.
+USER_WANTS_LOOK = re.compile(r"\b(?:" + "|".join((
+    r"how many fingers\b(?! (?:does|do|did|has|have) (?!i\b|we\b|you see\b))",
+    rf"how many(?: \w+){{0,3}} (?:am|are|is|do|have) {_WHO} (?:holding|showing|got)\b",
+    rf"what (?:am|are|is) {_WHO} (?:holding|wearing|showing|pointing at)\b",
+    rf"what {_WHO} (?:am|are|is) (?:holding|wearing|showing|pointing at)\b",
+    rf"what is in {_POSS} hands?\b",
+    rf"what (?:do|does|did) {_WHO} (?:have|hold) in {_POSS} hands?\b",
+    rf"(?:can|could|do|did) you see (?:me|us|this|that|these|those|it|him|her|them|{_POSS}|anything|something)\b",
+    r"are you seeing (?:this|that|me|us)\b",
+    r"what (?:do|can|did|could) you see\b",
+    r"what are you looking at\b",
+    rf"what colou?rs? (?:is|are|am) (?:this|that|these|those|it|i|we|he|she|they|{_POSS})\b",
+    rf"look(?:ing)? at (?:me|us|this|that|these|those|it|him|her|what|{_POSS})\b",
+    r"(?:take|have) a look\b",
+    rf"count (?:{_POSS}|these|those) \w+",
+)) + r")")
+LOOK_REUSE_S = 8.0  # a look this recent answers the same question again: one photo per question
+NOTE_GRACE_S = 1.0  # a hand-off on its way gets a look's answer instead of a note, so the voice hears it once
+CANT_SEE = "You couldn't look. Say you can't see right now, and suggest the grown-up shows you again later; " \
+           "don't guess what is there."
+# Why LittleBot can't look (CameraLook.blocked_reason), with the words for the voice to use. The wording
+# avoids "turn on the camera": the safety rules treat that as asking for pictures and would end the call.
+CANT_LOOK = {
+    "ai_camera_off": "You can't see yet, so don't guess or pretend. Tell them, in these words: \"I can't see you yet. "
+                     "A grown-up can let me look by switching on Let the AI look through the camera, on the Privacy "
+                     "page of my dashboard.\"",
+    "camera_off": "You can't see right now, so don't guess or pretend. Tell them, in these words: \"I can't see right "
+                  "now, because my camera is switched off on the Privacy page of my dashboard. A grown-up can switch "
+                  "it back on there.\"",
+    "no_camera": "You can't see right now, so don't guess or pretend. Tell them, in these words: \"I can't see right "
+                 "now, my camera isn't working. A grown-up can check it.\"",
+}
+_NO_CHATGPT = "you couldn't reach ChatGPT to look"
+# What went wrong while looking (CameraLook.look error codes), in words the voice can say.
+LOOK_FAILED = {
+    "photo_failed": "your camera couldn't take a picture",
+    "timeout": "looking took too long",
+    "busy": "you were already looking at something else",
+    "refused": "ChatGPT wouldn't say what it saw",
+    **{code: _NO_CHATGPT for code in ("network", "rate_limited", "usage_limit", "expired", "auth",
+                                      "plan_not_included", "provider_error")},
+}
+# Dashboard caption wording where look.ERRORS isn't specific enough.
+LOOK_NOTES = {"ai_camera_off": "\"Let the AI look through the camera when asked\" is off in Privacy."}
+FACE_REUSE_S = 5.0  # the same face asked for again this soon (words, then a hand-off) plays once
+# Faces the voice announces in its own words ("Peekaboo!", "here's my happy face"), played even when it
+# doesn't hand them over. Conservative: only the voice talking about its own face, at most once per turn.
+_VOICE_EXPRESSIONS = {"happy": "happy", "surprised": "surprised", "surprise": "surprised", "sad": "sad",
+                      "sleepy": "sleepy", "silly": "playful", "playful": "playful", "excited": "excited",
+                      "curious": "curious", "confused": "confused", "puzzled": "confused", "thinking": "thinking"}
+VOICE_FACE_CUES: tuple[tuple[re.Pattern[str], str | None], ...] = (
+    (re.compile(r"\bpeek[\s-]?a[\s-]?boo\b", re.I), "peekaboo"),
+    (re.compile(r"\bspin(?:s|ning)? my eyes\b|\bmy eyes (?:go |are )?spin(?:s|ning)?\b", re.I), "spin_eyes"),
+    (re.compile(r"\bwink(?:s|ing)?\b", re.I), "wink"),
+    (re.compile(r"\bmy (" + "|".join(_VOICE_EXPRESSIONS) + r") face\b", re.I), None),  # that expression
+)
+MAX_SEEN_TYPES = 40
 POLL_S = 0.05
 GOODBYE_QUIET_S = 0.8
 GOODBYE_MAX_S = 10.0
@@ -122,7 +190,8 @@ to make a face, wink, spin your eyes or play peekaboo, delegate it to the client
 
 You have a camera, but you only see when the client looks for you. When someone asks what you see, shows you \
 something, or asks how many fingers they are holding up, what colour something is, or similar, delegate it to the \
-client with the word "look" and their question, wait, then say the answer. Never pretend to see without that."""
+client with the word "look" and their question, wait, then say the answer. Never pretend to see without that. \
+If the client tells you what your camera just saw, or why you can't see, tell them that."""
 
 LOOKUP_NOTE = """
 You are answering a question that LittleBot's voice will say out loud to a family with a very young child; \
@@ -348,6 +417,12 @@ class LiveCall:
         self.safety_stop: str | None = None
         self.voice: str | None = None
         self.photos = 0
+        self._look_job: _LookJob | None = None
+        self._user_turns = 0  # final things the person said; a look is shared only within one of them
+        self._told_blocked: set[str] = set()
+        self._recent_face: tuple[str, float] | None = None  # (name, when) the latest face played
+        self._voice_face_this_turn = False
+        self._seen_types: set[str] = set()
 
     # ------------------------------------------------------------ views
     def snapshot(self) -> dict[str, Any]:
@@ -373,10 +448,11 @@ class LiveCall:
             self.audio.mute()
         self._ended.set()
 
-    def _spawn(self, coro: Any) -> None:
+    def _spawn(self, coro: Any) -> asyncio.Task[Any]:
         t = asyncio.get_running_loop().create_task(coro)
         self._tasks.add(t)
         t.add_done_callback(self._tasks.discard)
+        return t
 
     def _publish(self, topic: str, data: dict[str, Any]) -> None:
         try:
@@ -515,7 +591,10 @@ class LiveCall:
         parsed = wire.parse(message)
         if parsed is None:
             return
-        _etype, event = parsed
+        etype, event = parsed
+        if etype not in self._seen_types and len(self._seen_types) < MAX_SEEN_TYPES:
+            self._seen_types.add(etype)  # shows in the journal whether hand-offs arrive at all
+            log.info("live voice: first %r event", etype[:60])
         now = self.svc._now()
         if isinstance(event, wire.AssistantText):
             self._last_activity = now
@@ -526,16 +605,32 @@ class LiveCall:
                 self._assistant_turn = (self._assistant_turn + event.text)[-2000:]
                 text = self._assistant_turn
             self._check_reply(text, event.final)
+            if not self._voice_face_this_turn and not self._ended.is_set():
+                action = _voice_face(text)
+                if action is not None:
+                    self._voice_face_this_turn = True
+                    self._play_face(action, "voice")
+            if event.final:
+                self._voice_face_this_turn = False
         elif isinstance(event, wire.UserText):
             self._last_activity = now
             self._heard_user = True
             if event.final:
                 self._caption("heard", event.text)
+                if event.text.strip():
+                    self._user_turns += 1
                 concern = classify_child_input(event.text)
                 if concern is not None:
                     log.warning("live voice: worrying words heard (category=%s)", concern.category)
                     self._publish(Topics.BRAIN_STATUS, {"provider": "live", "status": "attention",
                                                         "detail": concern.category})
+                # The person's own words: only when clearly about the face, so everyday talk
+                # ("that makes me sad", "give me a hug") doesn't change it.
+                action = _face_request(event.text) if USER_FACE_CUE.search(event.text) else None
+                if action is None:
+                    self._look_if_asked(event.text)
+                elif self._play_face(action, "user"):
+                    self._note(f"LittleBot is showing {action.name.replace('_', ' ')} on its face now.")
         elif isinstance(event, wire.Delegation):
             self._spawn(self._answer(event))
         elif isinstance(event, wire.Failure):
@@ -583,15 +678,19 @@ class LiveCall:
                 heard = [c["text"] for c in self._captions if c["who"] == "heard"]
                 question = heard[-1] if heard else ""
             action = _face_request(question)
+            kind = ("face" if action is not None else "empty" if not question
+                    else "look" if self._needs_camera(question) else "lookup")
+            log.info("live voice: hand-off received (kind=%s)", kind)
             if action is not None:
-                # Local and instant: answer first so the voice isn't kept waiting, then play it.
+                # Local and instant: answer first so the voice isn't kept waiting, then play it
+                # (not again if the person's or the voice's own words just played it).
                 self._send_result(d.id, f"Done: LittleBot is showing {action.name.replace('_', ' ')} on its face now.")
-                await self._perform_face(action)
+                self._play_face(action, "delegation")
                 return
-            if not question:
+            if kind == "empty":
                 text = wire.NO_INPUT_RESULT
-            elif WANTS_LOOK.search(question) and self._camera() is not None:
-                text = await self._look(question)
+            elif kind == "look":
+                text = await self._look_for_voice(question)
             else:
                 text = await self._look_up(sanitize_user_text(question, max_chars=600))
             self._send_result(d.id, text)
@@ -604,6 +703,18 @@ class LiveCall:
             for frame in wire.result_frames(delegation_id, text):
                 self.channel.send(frame)
 
+    def _play_face(self, action: Any, source: str) -> bool:
+        """Play a face now, unless the same one just played (words and a hand-off often both ask)."""
+        name, now = action.name, self.svc._now()
+        recent = self._recent_face
+        if recent is not None and recent[0] == name and now - recent[1] < FACE_REUSE_S:
+            log.info("live voice: face %s already playing (from=%s)", name, source)
+            return False
+        self._recent_face = (name, now)
+        log.info("live voice: face %s played (from=%s)", name, source)
+        self._spawn(self._perform_face(action))
+        return True
+
     async def _perform_face(self, action: Any) -> None:
         try:
             from littlebot.brain.face_actions import perform  # noqa: PLC0415
@@ -613,24 +724,117 @@ class LiveCall:
             log.debug("face action %s failed", getattr(action, "name", action), exc_info=True)
 
     def _camera(self) -> Any:
-        """The camera look-up, when the parent allowed the AI to see (privacy switch); else None."""
+        """The shared camera look-up (it says itself whether the parent allows looking), or None."""
         try:
             from littlebot.chatgpt.look import get_look  # noqa: PLC0415
         except ImportError:
             return None
-        look = get_look(self.ctx)
-        return look if look.blocked_reason() is None else None
+        return get_look(self.ctx)
 
-    async def _look(self, question: str) -> str:
-        """One photo, answered by the ChatGPT text model (validated there); never kept."""
+    def _needs_camera(self, question: str) -> bool:
+        """A hand-off answered by looking, or, when looking isn't allowed, by saying why."""
+        if not WANTS_LOOK.search(question):
+            return False
         look = self._camera()
         if look is None:
-            return CANT_SEE
-        self._caption("note", "LittleBot took a photo to answer (sent to ChatGPT, not kept)")
+            return False
+        if look.blocked_reason() is None:
+            return True
+        return bool(LOOK_WORDS.search(question) or asks_to_see(question))  # else the text model answers
+
+    async def _look_for_voice(self, question: str) -> str:
+        """A seeing hand-off: use the look already taken for this question, else take one."""
+        job = self._shared_look()
+        if job is not None:
+            job.claimed = True
+            log.info("live voice: look shared (from=delegation)")
+        else:
+            job = self._start_look(question, by_user=False)
+        await asyncio.shield(job.task)
+        if job.blocked:
+            self._told_blocked.add(job.blocked)
+        return job.text
+
+    def _shared_look(self) -> "_LookJob | None":
+        job = self._look_job
+        if job is None:
+            return None
+        if job.ended is None:
+            return job  # under way: one photo per question
+        fresh = self.svc._now() - job.ended < LOOK_REUSE_S
+        return job if job.by_user and not job.claimed and job.turn == self._user_turns and fresh else None
+
+    def _look_if_asked(self, text: str) -> None:
+        """The person asked LittleBot to look: look even if the voice doesn't hand the question over."""
+        if not asks_to_see(text):
+            return
+        job = self._look_job
+        if job is not None and (job.ended is None or self.svc._now() - job.ended < LOOK_REUSE_S):
+            return  # a look for this question is under way or just happened
+        if self._camera() is None:
+            return
+        self._spawn(self._tell_voice(self._start_look(text, by_user=True)))
+
+    def _start_look(self, question: str, *, by_user: bool) -> "_LookJob":
+        job = self._look_job = _LookJob(started=self.svc._now(), by_user=by_user, turn=self._user_turns)
+        job.task = self._spawn(self._run_look(job, question))
+        return job
+
+    async def _run_look(self, job: "_LookJob", question: str) -> None:
+        try:
+            await self._look(job, question)
+        except Exception:  # noqa: BLE001 - a broken look must never leave the voice waiting
+            log.warning("live voice: looking failed", exc_info=True)
+        finally:
+            job.ended = self.svc._now()
+            log.info("live voice: look triggered (from=%s) -> %s", "user" if job.by_user else "delegation",
+                     job.outcome)
+
+    async def _tell_voice(self, job: "_LookJob") -> None:
+        """After a look the person asked for in their own words: tell the voice, unless it asked itself."""
+        await asyncio.shield(job.task)
+        wait = NOTE_GRACE_S - (self.svc._now() - job.started)
+        if wait > 0:
+            await asyncio.sleep(wait)
+        if job.claimed or self._ended.is_set():
+            return  # the hand-off got the answer
+        if job.ok:
+            self._note(f"You just looked through your camera. {job.text} Tell them what you saw.")
+        elif job.blocked is None or job.blocked not in self._told_blocked:
+            if job.blocked:
+                self._told_blocked.add(job.blocked)  # say why once per call, not on every "look at me!"
+            self._note(f"They asked you to look. {job.text}")
+        self._last_activity = self.svc._now()
+
+    async def _look(self, job: "_LookJob", question: str) -> None:
+        """One photo, answered by the ChatGPT text model (validated there); never kept.
+
+        Fills in ``job``: the answer, or what to tell the voice about why it couldn't see.
+        """
+        look = self._camera()
+        if look is None:
+            job.outcome = "unavailable"
+            return
+        reason = look.blocked_reason()
+        if reason is not None:
+            self._caption("note", f"No photo taken: {_look_note(reason)}")
+            job.text, job.blocked, job.outcome = CANT_LOOK.get(reason, CANT_SEE), reason, f"blocked:{reason}"
+            return
+        self._caption("note", "LittleBot is taking a photo to answer (sent to ChatGPT, not kept)")
         result = await look.look(question, asked_by="live")
-        if result.get("ok"):
+        answer = str(result.get("answer") or "").strip()
+        if result.get("ok") and answer:
             self.photos += 1
-        return str(result.get("answer") or "") if result.get("ok") and result.get("answer") else CANT_SEE
+            job.ok, job.text, job.outcome = True, answer, "ok"
+            return
+        code = job.outcome = str(result.get("error") or "no_answer")[:40]
+        self._caption("note", f"Looking didn't work: {result.get('detail') or _look_note(code)}")
+        if code in CANT_LOOK:  # switched off or broke between the check and the photo
+            job.text, job.blocked = CANT_LOOK[code], code
+            return
+        why = LOOK_FAILED.get(code, "something went wrong")
+        job.text = (f"You tried to look, but {why}, so you didn't see anything this time. Say that briefly, "
+                    "don't guess what is there, and suggest trying again in a moment.")
 
     async def _look_up(self, question: str) -> str:
         policy = self.ctx.age_policy()
@@ -698,7 +902,7 @@ class LiveCall:
                 pass
 
     def _note(self, text: str) -> None:
-        if self.channel is not None and self.channel.readyState == "open":
+        if not self._ended.is_set() and self.channel is not None and self.channel.readyState == "open":
             for frame in wire.note_frames(text):
                 self.channel.send(frame)
 
@@ -740,6 +944,59 @@ def _face_menu() -> str:
         return menu_text()
     except Exception:  # noqa: BLE001
         return "happy, surprised, sleepy, curious, excited, sad, playful, celebrating, wink, spin_eyes, peekaboo"
+
+
+def asks_to_see(text: str) -> bool:
+    """True when the person's own words ask LittleBot to look ("how many fingers am I holding up?")."""
+    t = str(text or "").lower().replace("\u2019", "'")
+    t = re.sub(r"\b(what|that|it|who)'s\b|\bwhats\b", lambda m: f"{m.group(1) or 'what'} is", t)
+    t = re.sub(r"\bi'?m\b", "i am", t)
+    t = re.sub(r"\b(you|we|they)'re\b", r"\1 are", t)
+    t = re.sub(r"[^a-z0-9' ]+", " ", t)
+    return bool(USER_WANTS_LOOK.search(re.sub(r"\s+", " ", t)))
+
+
+def _look_note(code: str) -> str:
+    """Why no photo / no answer, for the dashboard captions (never shown to the voice)."""
+    if code in LOOK_NOTES:
+        return LOOK_NOTES[code]
+    try:
+        from littlebot.chatgpt.look import ERRORS  # noqa: PLC0415
+    except ImportError:
+        ERRORS = {}  # noqa: N806
+    return ERRORS.get(code) or f"ChatGPT could not look ({code})."
+
+
+@dataclasses.dataclass(eq=False)
+class _LookJob:
+    """One look (at most one photo) for one question, shared by the voice's hand-off and the person's words."""
+
+    started: float
+    by_user: bool  # started from the person's own words, not a hand-off
+    turn: int  # LiveCall._user_turns when it started
+    task: asyncio.Task[None] | None = None
+    ended: float | None = None
+    claimed: bool = False  # a hand-off got its answer, so the voice isn't also sent a note
+    ok: bool = False
+    text: str = CANT_SEE
+    blocked: str | None = None
+    outcome: str = "failed"  # for the log: ok, an error code or blocked:<reason>
+
+
+def _voice_face(text: str) -> Any:
+    """A face the voice announces in its own words ("Peekaboo!", "here's my happy face"), else None."""
+    for pattern, name in VOICE_FACE_CUES:
+        m = pattern.search(text)
+        if m is not None:
+            try:
+                from littlebot.brain.face_actions import FaceAction  # noqa: PLC0415
+            except ImportError:
+                return None
+            return FaceAction(name or _VOICE_EXPRESSIONS[m.group(1).lower()])
+    return None
+
+
+USER_FACE_CUE = re.compile(r"\b(?:face|faces|wink\w*|peek[- ]?a[- ]?boo|peekaboo|spin\w*|eyes|smile|blink\w*)\b", re.I)
 
 
 def _face_request(text: str) -> Any:
