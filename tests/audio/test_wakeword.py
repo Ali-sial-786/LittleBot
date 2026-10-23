@@ -271,6 +271,44 @@ async def test_failed_connect_plays_uhoh(rig):
     await _listening(r)
 
 
+async def test_log_says_why_the_earcon_was_not_heard(rig, caplog):
+    caplog.set_level(logging.INFO, logger="littlebot.wake")
+    r = await rig()
+    r.out.fail_on_open = True  # the USB speaker is gone
+    await _listening(r)
+    r.rec.say("hey bot")
+    await until(lambda: r.live.calls, what="live voice started anyway")
+    assert "wake word: earcon 'listen' not played (simulated speaker, volume 50%, speaker unavailable: " \
+           "simulated: speaker missing; see the audio log)" in caplog.text
+    assert "wake word: starting live voice" in caplog.text and "wake word: live voice started" in caplog.text
+    await until(lambda: "wake word: live voice connected" in caplog.text, what="connected logged")
+    await r.live.end()
+    await _listening(r)
+    assert "wake word: listening again" in caplog.text
+    # volume 0: it "played", and the log says nothing could be heard
+    q = await rig()
+    q.audio.set_volume(0.0)
+    await _listening(q)
+    q.rec.say("hey bot")
+    await until(lambda: q.live.calls, what="live voice started")
+    assert "earcon 'listen' played (simulated speaker, volume 0%, speaker simulated: simulated speaker (nothing is " \
+           "heard): the volume is 0, so nothing was heard)" in caplog.text
+
+
+async def test_a_stuck_speaker_never_holds_up_live_voice(rig, caplog, monkeypatch):
+    caplog.set_level(logging.INFO, logger="littlebot.wake")
+    monkeypatch.setattr(wakeword, "EARCON_TIMEOUT", 0.2)
+    r = await rig(wake={"sound": "chime"})  # 1.35 s, played in real time: "stuck" for longer than the timeout
+    r.out.time_scale = 1.0
+    await _listening(r)
+    r.rec.say("hey bot")
+    await until(lambda: r.live.calls, timeout=1.0, what="live voice started without waiting for the speaker")
+    assert "earcon 'chime' not played within 0 s (the speaker seems stuck); going on" in caplog.text
+    await until(lambda: "wake word: live voice connected" in caplog.text, what="connected")
+    await r.live.end()
+    await _listening(r)
+
+
 async def test_debounce_no_retrigger_within_cooldown(rig):
     r = await rig(error="cloud_off", wake={"cooldown_seconds": 1.5})
     await _listening(r)

@@ -66,6 +66,8 @@ RETRY_SECONDS = 5.0  # after a microphone error
 AVAILABILITY_RECHECK = 10.0  # look for a newly downloaded model this often
 MIN_LISTEN_SECONDS = 0.3  # a listen that ends sooner is followed by a short pause (no busy loop)
 CONNECT_GRACE_SECONDS = 10.0  # beyond chatgpt.live_connect_timeout_seconds
+# The earcon is 0.27 s: a speaker that hangs never keeps live voice (and so the wake word) waiting longer.
+EARCON_TIMEOUT = 8.0
 
 # Pauses after which the model is unloaded (they usually last long; ~130 MB back for a video).
 _LONG_PAUSES = {"disabled", "microphone_off", "video", "stopped"}
@@ -219,6 +221,7 @@ class WakeWordService(Service):
         self._paused = "starting"
         self._listening = False
         self._listened_once = False
+        self._relisten_note = False  # log "listening again" once after a wake phrase was handled
         self._gain = 1.0
         self._tasks: set[asyncio.Task[Any]] = set()
         self._attached: Any = None
@@ -505,6 +508,9 @@ class WakeWordService(Service):
         if not self._listened_once:
             self._listened_once = True
             log.info("wake word: listening for %s", " / ".join(f"'{p}'" for p, _ in self._phrases))
+        elif self._relisten_note:
+            self._relisten_note = False
+            log.info("wake word: listening again")
         else:
             log.debug("wake word: listening")
         self._update_health()
@@ -601,8 +607,10 @@ class WakeWordService(Service):
                 res: dict[str, Any] = {"ok": False, "error": "unavailable",
                                        "detail": "Live voice isn't available on this robot."}
             else:
+                log.info("wake word: starting live voice")
                 res = await live.start_session(parent_present=True)
             if res.get("ok"):
+                log.info("wake word: live voice started; connecting")
                 self._note("started")
                 self._spawn(self._watch_connect(live))
                 return
@@ -611,7 +619,7 @@ class WakeWordService(Service):
             self._note("blocked", error=error, detail=detail)
             if entered:
                 ctx.state.release(RobotState.LISTENING, "wake word: live voice could not start")
-            await self._play("uhoh")
+            await self._play("uhoh", "error sound")
         except asyncio.CancelledError:
             raise
         except Exception as e:  # noqa: BLE001
@@ -620,10 +628,11 @@ class WakeWordService(Service):
             if entered:
                 with contextlib.suppress(Exception):
                     ctx.state.release(RobotState.LISTENING, "wake word: live voice failed")
-            await self._play("uhoh")
+            await self._play("uhoh", "error sound")
         finally:
             with self._cv:
                 self._triggered = False
+                self._relisten_note = True
                 self._cooldown_until = time.monotonic() + float(self.cfg.cooldown_seconds)
                 self._cv.notify_all()
 
@@ -639,6 +648,8 @@ class WakeWordService(Service):
                 return
             if st.get("active"):
                 if st.get("phase") not in (None, "connecting"):
+                    ms = st.get("connect_ms")
+                    log.info("wake word: live voice connected%s", f" in {ms} ms" if ms is not None else "")
                     self._note("connected")
                     return
                 continue
@@ -647,17 +658,36 @@ class WakeWordService(Service):
                 why = last.get("error") or last.get("ended_reason") or "ended before connecting"
                 log.warning("wake word: live voice did not connect (%s)", why)
                 self._note("failed", error="not_connected", detail=str(why))
-                await self._play("uhoh")
+                await self._play("uhoh", "error sound")
             return
+        log.warning("wake word: live voice still connecting after %.0f s", timeout)
 
-    async def _play(self, name: str) -> None:
+    async def _play(self, name: str, what: str = "earcon") -> bool:
+        """Play ``name`` and log whether it was heard (and if not, why). Never raises, never hangs."""
         audio = self.ctx.audio
-        if audio is None or not name:
-            return
+        if not name:
+            return False
+        if audio is None:
+            log.warning("wake word: %s '%s' not played (no audio system)", what, name)
+            return False
         try:
-            await audio.play_sound(name)
-        except Exception:  # noqa: BLE001 - a missing sound never blocks live voice
-            log.debug("could not play %s", name, exc_info=True)
+            ok = bool(await asyncio.wait_for(audio.play_sound(name), EARCON_TIMEOUT))
+        except asyncio.CancelledError:
+            raise
+        except asyncio.TimeoutError:
+            log.warning("wake word: %s '%s' not played within %.0f s (the speaker seems stuck); going on",
+                        what, name, EARCON_TIMEOUT)
+            return False
+        except Exception as e:  # noqa: BLE001 - a missing sound never blocks live voice
+            log.warning("wake word: %s '%s' not played (%s: %s)", what, name, type(e).__name__, e)
+            return False
+        if ok:
+            log.info("wake word: %s '%s' played (%s)", what, name, _speaker_note(audio))
+        else:
+            lent = getattr(audio, "suspended", None)
+            why = f"the speaker is lent to {lent}" if lent else f"{_speaker_note(audio)}; see the audio log"
+            log.warning("wake word: %s '%s' not played (%s)", what, name, why)
+        return ok
 
     def _note(self, result: str, *, error: str | None = None, detail: str | None = None) -> None:
         heard = dict(self.last_heard or {"phrase": None, "at": time.time()})
@@ -718,6 +748,22 @@ class WakeWordService(Service):
             "triggers": self.triggers,
             "last_heard": dict(self.last_heard) if self.last_heard else None,
         }
+
+
+def _speaker_note(audio: Any) -> str:
+    """The speaker as the log should show it: device, volume and anything that keeps it quiet."""
+    try:
+        st = audio.status()
+        spk = st.get("speaker") or {}
+        vol = float(st.get("volume", 0.0))
+    except Exception:  # noqa: BLE001 - only for the log
+        return "speaker status unknown"
+    note = f"{spk.get('device') or spk.get('backend') or 'speaker'}, volume {vol:.0%}"
+    if spk.get("status") not in (None, dev.STATUS_OK):
+        note += f", speaker {spk.get('status')}: {spk.get('detail') or ''}".rstrip(": ")
+    if vol <= 0.01:
+        note += ": the volume is 0, so nothing was heard"
+    return note
 
 
 def create_service(ctx: Any) -> WakeWordService:
