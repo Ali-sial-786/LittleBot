@@ -62,8 +62,8 @@ the screen's socket covers pins 1-26, so pins 1, 3, 5 and 6 can't take jumper wi
 pins in one of these ways:
 
 * a **GPIO stacking header** between the Pi and the screen (its long pins stick out beside the
-  screen's socket; it also raises the screen about 11 mm, which the enclosure models handle with
-  one parameter, `pi_hdr_h`: see `hardware/enclosure_v2/README.md`);
+  screen's socket; it also raises the screen about 8.5 mm, which the enclosure models handle with
+  one parameter, `pi_hdr_h` = 11: see `hardware/enclosure_v2/README.md`);
 * a **GPIO splitter / extender** with two 40-pin sockets; or
 * wires **soldered to the underside** of the Pi's header pins 1, 3, 5 and 6.
 
