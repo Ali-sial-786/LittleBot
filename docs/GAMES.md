@@ -46,7 +46,7 @@ hardware:
 1. `sudo evtest` shows the touchscreen and sensible coordinates.
 2. Start Bubble Pop from the dashboard and tap a bubble: it should pop where you touched. If taps
    land in the wrong place, calibrate (DISPLAY_SETUP.md 5.3/5.4) - targets are big (bubbles
-   have ~18 px of slack) but not that forgiving.
+   have ~18 px of slack) but not that forgiving. `scripts/calibrate_touch.py` does it for you.
 3. If touches do nothing at all while `evtest` works, SDL may not be synthesising mouse events
    (`SDL_HINT_TOUCH_MOUSE_EVENTS=0`); handling `FINGERDOWN` in `face/display.py` would then be needed.
 

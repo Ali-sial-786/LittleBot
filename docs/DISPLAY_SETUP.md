@@ -184,8 +184,19 @@ automatic. With two screens, labwc (0.7+) supports in `~/.config/labwc/rc.xml`:
 
 ### 5.3 Calibration
 
+If taps land in the wrong place (mirrored, swapped, shifted), run LittleBot's own calibration:
+
+```bash
+.venv/bin/python scripts/calibrate_touch.py      # touch the 5 crosses, then: sudo reboot
+.venv/bin/python scripts/calibrate_touch.py --reset   # undo (then reboot)
+```
+
+It stops LittleBot while it shows crosses on the screen, reads the raw touch readings and saves a
+libinput calibration matrix in `/etc/udev/rules.d/99-littlebot-touch.rules` (option 2 below, worked
+out for you; any swap, mirror, rotation, offset or stretch). The middle cross checks the result.
+
 `xinput_calibrator` and the vendor's `99-calibration.conf` are X11-only and do nothing on
-Wayland. Options on Wayland:
+Wayland. By hand on Wayland:
 
 1. Adjust the overlay's `xmin/xmax/ymin/ymax` (raw ADC limits, 0-4095) until the corners
    line up - use `evtest` to read the raw values at each corner.
