@@ -14,7 +14,7 @@ export default {
       },
     });
     const camera = flag('camera_enabled', 'Camera',
-      'Lets LittleBot notice a face and look at your child. Pictures are analysed on the robot, in memory, and thrown away straight after - never saved, and never sent (unless you let the AI look, below).');
+      'Lets LittleBot notice a face and look at your child. Pictures are analysed on the robot, in memory, and thrown away straight after - never saved, and never sent (except to your own dashboard while you watch the Camera page, and to the AI if you let it look, below). Turning it off also stops the Camera page.');
     const mic = flag('microphone_enabled', 'Microphone',
       'Lets LittleBot hear simple words during games and conversations. Sound is never recorded or stored. LittleBot does not listen while it is talking.');
     const cloud = flag('cloud_enabled', 'Cloud communication',
@@ -33,7 +33,7 @@ export default {
           h('div', { class: 'hero-note' }, icon('shield'),
             h('div', {},
               h('h2', { text: 'LittleBot never stores audio or video' }),
-              h('p', { class: 'mt-1', text: 'Camera frames and microphone sound are processed on the robot and discarded immediately. Nothing is uploaded unless you turn on cloud communication, and camera images are never sent anywhere - unless you also let the AI look through the camera, and then only one photo each time someone asks.' })))),
+              h('p', { class: 'mt-1', text: 'Camera frames and microphone sound are processed on the robot and discarded immediately. Nothing is uploaded unless you turn on cloud communication, and camera images are never sent anywhere - except to your own dashboard while you watch the Camera page (LittleBot shows a camera sign meanwhile), and, if you also let the AI look through the camera, one photo each time someone asks.' })))),
         offlineNote,
         h('div', { class: 'grid two' },
           h('section', { class: 'card' }, h('div', { class: 'card-head' }, h('h2', {}, icon('eye'), 'Sensors & sharing')), camera.el, mic.el, cloud.el, aiCamera.el, history.el),

@@ -15,7 +15,7 @@ is explicitly enabled. Parent-facing instructions: [DASHBOARD_GUIDE.md](../DASHB
 | `deps.py` | `DashState` (ctx, lazy robot facade, auth, background tasks, parent alerts, aggregated `status()`, STOP fallback, `ensure_setup_code()`), `HostAllowlist`, bind-host / URL helpers |
 | `models.py` | pydantic request bodies (`extra="forbid"`, length limits, unicode/control-char cleaning) |
 | `scrub.py` | second safety net that hides secret-looking keys/values in anything sent to the browser |
-| `routes/*.py` | one router per section (auth, robot/system, face, activities, media, profile, ai, chatgpt, privacy, devices, motion, simulator) |
+| `routes/*.py` | one router per section (auth, robot/system, face, camera, activities, media, profile, ai, chatgpt, privacy, devices, motion, simulator) |
 | `__main__.py` | `python -m littlebot.dashboard reset-password [--data-dir] [--port] [--yes]` (forgotten password recovery, run on the robot; works while LittleBot is running) |
 | `static/` | `index.html`, `app.css`, `favicon.svg`, `js/app.js` (boot, auth screens, router, polling), `js/api.js`, `js/ui.js`, `js/pages/*.js` |
 
@@ -30,7 +30,9 @@ is explicitly enabled. Parent-facing instructions: [DASHBOARD_GUIDE.md](../DASHB
   `{"status": "unavailable"}`, actions answer `503` with a friendly message.
 * Optional duck-typed extras: `activities.clear_history()`, `brain.clear_history()`,
   `media.update_item(id, title=, enabled=)` (rename / allow; otherwise rename = remove + re-add),
-  `media.reorder_items(ids)`.
+  `media.reorder_items(ids)`, and for the Camera page `vision.live_view_frame()` /
+  `stop_live_view()` / `watching()` (`littlebot/vision/service.py`; without them the page says
+  the live view isn't available).
 * If `littlebot.media.player_routes.create_player_router(media)` is importable it is mounted
   as-is at `/player*` **without parent auth** (the player checks its own kiosk token) and
   keeps its own CSP / frame headers (the dashboard only adds `nosniff` + `Referrer-Policy`
@@ -206,6 +208,37 @@ Responses carry `{account: {signed_in, email (masked), plan, pending: {user_code
 | POST | `/api/privacy/clear-history` | | `activities.clear_history()`, `brain.clear_history()` if present |
 | POST | `/api/privacy/stop-interactions` | | same as STOP (`source="privacy"`) |
 
+### Camera (live view)
+
+The Camera page asks for one small JPEG after another; each request waits (up to 2 s) for a
+frame newer than the last one it showed, so the robot sets the pace (vision's read rate: 5 fps with `pi.yaml`, 6 by
+default, at most 8). Frames come from the vision thread's own camera via `vision.live_view_frame()`: it encodes
+them only while a page keeps asking and stops ~3 s after the last request (or at once on
+`/stop`). Every response is `Cache-Control: no-store`; nothing is written or logged. Errors are
+JSON `{detail (parent wording), code, why?}`:
+
+| `code` | HTTP | When |
+|---|---|---|
+| `camera_off` | 403 | camera switched off in Privacy (checked before and after waiting for a frame) |
+| `paused` | 409 | a video plays (`detect_mode: paused`); the page retries every 3 s and resumes by itself |
+| `no_camera` | 503 | unplugged / not found / `camera.backend: none`; `why` carries the vision detail |
+| `busy` | 409 | 4 devices already watching |
+| `timeout` | 504 | no frame within 2 s (camera opening, very dim light) |
+| `stopped` | 409 | this viewer id was stopped (a late request can't restart it) |
+| `not_watching` | 409 | snapshot from a page that isn't watching |
+| `unavailable` | 503 | no vision module, or one without the live view, or no OpenCV |
+
+| Method | Path | Body / query | Calls |
+|---|---|---|---|
+| GET | `/api/camera` | | `{available, camera_enabled, camera, detail, backend, simulated, resolution, mode, blocked, blocked_detail, live_view: {viewers, fps, encode_ms, frame_kb, max_fps, width}}` |
+| GET | `/api/camera/frame` | `?viewer=<8-64 [A-Za-z0-9_-]>&after=<seq>` | `vision.live_view_frame(viewer, after=, label="the dashboard (<client ip>)")` -> `image/jpeg` + `X-Frame-Seq` |
+| POST | `/api/camera/stop` | `{viewer}` | `vision.stop_live_view(viewer)` -> `{ok, stopped}` |
+| POST | `/api/camera/snapshot` | `{viewer}` | only while that viewer is watching (so the robot shows its camera sign): `vision.capture_photo(max_width=640, quality=85)` -> `image/jpeg` with `Content-Disposition: attachment` (the browser saves it; the robot keeps nothing) |
+
+GET is used for frames because they are reads: the session cookie is `SameSite=Strict` and every
+`/api` response carries `Cross-Origin-Resource-Policy: same-origin`, so another site can neither
+send the cookie nor read a frame. `stop` and `snapshot` need the CSRF token like every POST.
+
 ### Audio and camera ("Audio & devices" page)
 
 | Method | Path | Body | Calls |
@@ -251,6 +284,10 @@ raised / head turned to the robot's left), falling back to angles and limits.
 * No build step, no frameworks, no CDN: ES modules served from `/static/js`. Works offline.
 * Hash router (`#/home`, `#/activities`, ...). Phone: sticky top bar (live face + state + red
   **STOP**), bottom tab bar (Home, Activities, Videos, Face, More). Desktop >= 960 px: sidebar.
+* `pages/camera.js`: the frame loop above, drawn with `createImageBitmap` on a `<canvas>` (no
+  `blob:` image URLs, so the CSP stays `img-src 'self'`); a fresh random viewer id per Start;
+  on Stop, leaving the page, `visibilitychange` (hidden) or `pagehide` it aborts the pending
+  request and posts `/stop` with `keepalive`. The fps shown is measured in the browser.
 * `GET /api/status` every 1.5 s while the tab is visible (stops when hidden, resumes on
   focus); an offline bar appears when the robot can't be reached; a 401 returns to login.
 * A pending caregiver prompt shows prominently on Home and Activities and as a bar on other
@@ -272,6 +309,11 @@ facade; face/audio/motion fakes from `littlebot.testing`):
 * `test_dashboard_service.py` - bind-host logic, real uvicorn on an ephemeral port in the test
   loop (setup code logged, HTTP round trip), port in use -> FAILED without crashing, STOP
   cancels dashboard tasks, `reset-password` CLI.
+* `test_dashboard_camera.py` - camera endpoints refuse without login (and start nothing), frames
+  from the real `VisionService` on a mock camera (one camera open, `no-store`), privacy off
+  (also while a request waits), work stops when the viewer goes away / on Stop, video pause
+  answered at once, no camera, snapshot only while watching, start/stop log lines without image
+  data.
 * `test_dashboard_security.py` - Host allowlist (rebinding Host refused before any route, local
   names / ports, `allowed_hosts`, LAN IPs only with `lan_access`, `testserver` only when
   configured); real uvicorn ignores `X-Forwarded-For`; global login and setup lockouts across

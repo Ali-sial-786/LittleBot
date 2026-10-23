@@ -44,6 +44,7 @@ unavailable or disconnected) or `disabled` (privacy off / `camera.backend: none`
 | `vision.person_left` | `{}` | once, after no face for `left_after_seconds` |
 | `vision.gesture` | `{gesture: "wave"\|"motion", confidence}` | experimental, only if `vision.gestures_enabled` |
 | `vision.camera_status` | `{status, detail, backend}` | on change only |
+| `vision.live_view` | `{active, viewers}` | a dashboard viewer started / stopped watching (the face display shows a camera sign while `active`). Never any image data. |
 
 `x, y, w, h` are pixels in a `frame_w x frame_h` frame (the capture size). `faces[0]` is the
 **primary** face (`primary: true`) and carries the **smoothed** gaze; other faces carry their raw
@@ -71,6 +72,42 @@ camera sends (cheap, no decode; keeps the driver queue empty so frames are never
 6 MJPG frames/s are decoded. `read(timeout)` never blocks longer than its timeout; a driver
 that stops answering is detected after `camera.stall_seconds` (3 s). Only the newest frame
 is held, and only until it is handed over.
+
+## Live view (the dashboard's Camera page)
+
+`await live_view_frame(viewer, after=0, label="", timeout=2.0) -> (jpeg, seq)`,
+`stop_live_view(viewer) -> bool`, `watching(viewer) -> bool`. Not part of `VisionAPI` (an
+optional extra, like `keep_photo_warm`); the dashboard checks for it.
+
+* Each call registers or refreshes `viewer`. While anyone is registered, the vision thread
+  JPEG-encodes the frames **it reads anyway**: 480 px wide (bilinear from 640), quality 60,
+  dim rooms lifted (`brighten_if_dark`), at most `LIVE_VIEW_MAX_FPS` (8) per second. Only the
+  newest one is kept, in memory, for the viewers; everybody gets the same encoded frame.
+* The encode runs **after** detection and gestures in the same cycle, so a viewer never delays
+  a detection. Awake, the read schedule is unchanged (`detect_fps`: 6/s, 5 in `pi.yaml`; 10 with gestures): the same
+  detections at the same moments with or without a viewer (tested). Only when vision reads
+  fewer than `LIVE_VIEW_MIN_FPS` (5) frames/s, i.e. while the robot sleeps, a viewer raises the
+  read rate to 5/s; detection stays at its own 1.5/s.
+* Separate from the warm photo (its own slot, size and quality; no AI consent involved), so a
+  viewer can never keep the AI's photo alive or change it. Photos are still served first.
+  No arbiter lease, no second camera open.
+* Stops on its own: a viewer that has not asked for `LIVE_VIEW_IDLE` (3 s) is forgotten, and with
+  the last one the frame. `stop_live_view` ends one at once (and that id cannot start again).
+  Privacy off (at once, in the bus callback), a lost camera, `camera.backend: none`, video
+  playback (`paused`) and `stop()` end every viewer and answer waiting calls with
+  `PhotoUnavailable(camera_off | no_camera | paused)`; new calls get the same reason at once.
+* At most 4 viewers (`busy`). Start / stop of each viewer is logged at INFO (who, why, how long,
+  how many frames, never image data) and published as `vision.live_view`.
+* `status()["live_view"] = {viewers, fps, encode_ms, frame_kb, max_fps, width}` (current, not
+  as of the last cycle).
+
+Cost measured in the dev container (x86 Xeon 2.1 GHz, MJPG 640x480 video fixture so every
+read is a real JPEG decode, robot + dashboard in one process, viewer in another): one viewer
+adds **+2.7 % of one core** (vision thread +0.65 %: ~1.2 ms per encode at 6 fps; event loop
++1.4 %: one HTTP request per frame; OpenCV threads +0.35 %), a second viewer +0.9 % more (HTTP
+only); asleep, one viewer adds +3 % (it also reads 5 frames/s instead of 1.5). ~13 KB per frame,
+0.65 Mbit/s. Back to the baseline within 3 s of the last request. Expect roughly 1.5-2.5x these
+figures on the Pi 5 (**to be measured there**).
 
 ## Robot state -> how much vision work (CPU for video)
 
@@ -205,6 +242,9 @@ including `none` and privacy off, because it is not camera data.
   is the gesture analyser's previous 80x60 grey frame (for differencing), cleared on release.
 * Detection only. YuNet's facial landmarks are discarded immediately; no embeddings, no
   identity, no age/emotion/attribute estimation, no face recognition models.
+* The dashboard live view (above) sends frames only to the logged-in parent's browser while it
+  keeps asking, never stores them and stops within 3 s of the last request; the robot's screen
+  shows a camera sign meanwhile and each start / stop is logged.
 * `check_camera.py` writes an image only with `--save PATH`, exactly one frame, and says so.
 * Status and events contain only box coordinates, counts and rates.
 

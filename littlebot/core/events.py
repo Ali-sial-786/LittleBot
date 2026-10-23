@@ -54,6 +54,7 @@ class Topics:
     VISION_GESTURE = "vision.gesture"  # {gesture: "wave"|"motion", confidence}
     VISION_CAMERA_STATUS = "vision.camera_status"  # {status: "ok"|"disconnected"|"disabled"|"unavailable", detail, backend}
     VISION_PHOTO = "vision.photo"  # {asked_by} one still photo was taken for ChatGPT (never the question or image)
+    VISION_LIVE_VIEW = "vision.live_view"  # {active, viewers} a parent watches the camera on the dashboard (no images)
 
     # --- audio ---
     AUDIO_SPEECH_STARTED = "audio.speech_started"  # {text, duration_estimate}

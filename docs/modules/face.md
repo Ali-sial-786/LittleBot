@@ -159,6 +159,13 @@ cached by the quantised shape.
 * Touch: when not in simulator mode (the robot's own screen), tapping the face makes
   LittleBot look at the finger, smile, bounce and giggle (`audio.play_sound("giggle")`),
   with a 1.5 s cooldown. Disable with `TAP_REACTION_ENABLED = False` in `face/display.py`.
+* Camera sign: while a parent watches the camera live on the dashboard (`vision.live_view`
+  with `active: true`; read from `vision.status()` when the window opens), a small rounded
+  camera with a dot sits in the face's top-right corner (30x22 px at 480x320, scaled with the
+  window), over the face, a game or the video veil, so watching is never hidden. It uses the
+  face's palette: plum ink at ~60 % with a raspberry dot on the pastel screen, the eye colour on a
+  dark one. Drawn 4x and smooth-scaled once per size (cached), so it costs one blit a frame;
+  still, never animated, so it doesn't pull a child's attention.
 
 ### Keyboard / mouse (press **H** in the window for this list)
 

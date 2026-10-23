@@ -637,3 +637,18 @@ details.disclosure > summary { cursor: pointer; font-weight: 650; padding: 4px 0
 }
 .game-running h2 { font-size: 1.2rem; }
 .game-clock { font-weight: 700; }
+
+/* camera live view (pages/camera.js) */
+.cam-stage { position: relative; width: 100%; aspect-ratio: 4 / 3; border-radius: var(--radius-sm); overflow: hidden; background: #0b111c; }
+.cam-canvas { display: block; width: 100%; height: 100%; object-fit: contain; }
+.cam-msg { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; padding: 16px; text-align: center; color: #e7ecf3; background: #0b111c; }
+.cam-msg-icon svg { width: 34px; height: 34px; opacity: .75; }
+.cam-msg strong { font-size: 1.05rem; }
+.cam-msg span { color: #b4bfcd; font-size: .9rem; max-width: 38ch; }
+.cam-msg .cam-why { color: #8b97a9; font-size: .8rem; overflow-wrap: anywhere; }
+.cam-msg a { color: #74c2f3; font-weight: 650; }
+.cam-live, .cam-fps { position: absolute; top: 10px; display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px; background: rgba(11, 17, 28, .62); color: #fff; font-size: .75rem; font-weight: 750; pointer-events: none; }
+.cam-live { left: 10px; letter-spacing: .08em; }
+.cam-fps { right: 10px; }
+.cam-dot { width: 8px; height: 8px; border-radius: 50%; background: #ef5a5a; }
+.cam-notes { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 8px; color: var(--text-2); font-size: .93rem; }
