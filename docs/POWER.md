@@ -141,7 +141,9 @@ Powered from the Pi they cause brown-outs, resets and SD corruption.
 - **Separate regulated 5-6 V supply** for the servos, rated >= 3 A for three MG90S
   (e.g. a 5 V 3-4 A adapter, or a UBEC from a battery). Connect it to the PCA9685's
   **V+ screw terminal**, never to the Pi's 5 V pins.
-- **PCA9685 logic**: VCC from the Pi's **3.3 V** (pin 1), SDA pin 3, SCL pin 5.
+- **PCA9685 logic**: VCC from the Pi's **3.3 V** (pin 1), SDA pin 3, SCL pin 5. With the
+  screen plugged onto the header these pins are under it: use a stacking header, a GPIO
+  splitter or wires soldered under the Pi (see [MOTION_SAFETY.md](MOTION_SAFETY.md) section 2).
 - **Common ground**: connect the servo supply's GND, the PCA9685 GND and a Pi GND pin
   together - without it the PWM signal has no reference.
 - Add a 470-1000 uF electrolytic capacitor across V+/GND on the PCA9685 (most boards
