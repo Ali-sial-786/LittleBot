@@ -45,6 +45,9 @@ class GameHost(Protocol):
     def child_gaze(self) -> tuple[float, float] | None:
         """Where LittleBot should look to look at the child (normalised screen coords), if a face is seen."""
 
+    def tell(self, text: str) -> None:
+        """Something for LittleBot's voice to say in its own words, when a voice chat is on ("you won")."""
+
     def hands_ready(self) -> bool:
         """True when the camera can read a hand sign now (camera switched on, hand models installed)."""
 
@@ -67,6 +70,7 @@ class RecordingHost:
         self.can_see = False  # hands_ready()
         self.hand_signs: list[str | None] = []  # what see_hand() "sees", one per look (then None)
         self.looks: list[Any] = []
+        self.told: list[str] = []
         self._clock = clock or time.monotonic
 
     def sound(self, name: str, *, volume: float | None = None, max_wait: float | None = None) -> None:
@@ -80,6 +84,9 @@ class RecordingHost:
 
     def child_gaze(self) -> tuple[float, float] | None:
         return self.gaze
+
+    def tell(self, text: str) -> None:
+        self.told.append(text)
 
     def hands_ready(self) -> bool:
         return self.can_see

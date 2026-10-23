@@ -1098,3 +1098,84 @@ async def test_more_words_after_stop_keep_the_call(live, monkeypatch):
     hear(server, "Stop the music please.")  # ... and ends as something else
     await asyncio.sleep(0.4)
     assert svc.status()["active"]
+
+
+class FakeGames:
+    """Enough of GamesService for the voice: start / stop / hear / status."""
+
+    def __init__(self) -> None:
+        self.running: str | None = None
+        self.started: list[str] = []
+        self.heard: list[str] = []
+        self.stopped = 0
+
+    @property
+    def active(self) -> bool:
+        return self.running is not None
+
+    def list(self):
+        return [{"id": "rps", "name": "Rock Paper Scissors"}, {"id": "bubbles", "name": "Bubble Pop"}]
+
+    def status(self):
+        return {"id": self.running} if self.running else {}
+
+    async def start(self, game_id, *, source="voice"):
+        self.running = game_id
+        self.started.append(game_id)
+        return True
+
+    def stop(self, reason="stopped"):
+        self.running = None
+        self.stopped += 1
+        return True
+
+    def hear(self, text):
+        self.heard.append(text)
+        return self.running == "rps" and text.lower().strip(" !.") in ("rock", "paper", "scissors")
+
+
+async def test_asking_for_a_game_starts_it_and_a_hand_off_doesnt_start_it_again(live, ctx):
+    svc, server, _audio, _provider, _alerts = live
+    games = ctx.games = FakeGames()
+    await connect(svc, server)
+    hear(server, "Let's play rock, paper, scissors!")
+    await wait_for(lambda: notes(server))
+    assert games.started == ["rps"]
+    assert "Rock Paper Scissors is on your screen now" in notes(server)[-1]
+    assert "never make your own pick" in notes(server)[-1]
+    delegate(server, "d1", "start the rock paper scissors game")
+    await wait_for(lambda: answers(server, "d1"))
+    assert "already" in answers(server, "d1")[0] and games.started == ["rps"]
+
+
+async def test_a_move_goes_to_the_game_and_its_result_to_the_voice(live, ctx):
+    svc, server, audio, _provider, _alerts = live
+    games = ctx.games = FakeGames()
+    games.running = "rps"
+    await connect(svc, server)
+    await wait_for(lambda: audio.frames > 5)
+    hear(server, "Rock!")
+    await wait_for(lambda: games.heard == ["Rock!"])
+    await asyncio.sleep(0.2)
+    held_from = audio.frames
+    await asyncio.sleep(0.2)
+    assert audio.frames - held_from <= 1  # the voice waits for the game ("I pick..." would be made up)
+    ctx.bus.publish("game.news", {"id": "rps", "name": "Rock Paper Scissors",
+                                  "text": "Rock Paper Scissors: they picked rock, you picked paper on the screen, "
+                                          "so you (LittleBot) win."}, source="games")
+    await wait_for(lambda: any("you picked paper" in n for n in notes(server)))
+    server.voice_quiet = True
+    await asyncio.sleep(0.3)
+    server.voice_quiet = False
+    await wait_for(lambda: audio.frames - held_from > 10)  # and then says it
+
+
+async def test_stop_playing_brings_the_face_back(live, ctx):
+    svc, server, _audio, _provider, _alerts = live
+    games = ctx.games = FakeGames()
+    games.running = "bubbles"
+    await connect(svc, server)
+    hear(server, "Okay, stop playing now and show me your face.")
+    await wait_for(lambda: games.stopped == 1)
+    await wait_for(lambda: any("your face is back" in n for n in notes(server)))
+    assert svc.status()["active"]  # the chat goes on

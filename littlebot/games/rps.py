@@ -189,6 +189,12 @@ class RockPaperScissors(Game):
         self.bot = self.rng.choice(CHOICES)
         self.result = outcome(self.you, self.bot)
         self.set_phase("reveal")
+        tell = getattr(self.host, "tell", None)
+        if tell is not None:  # LittleBot's voice (in a voice chat) says what it picked and who won
+            who = {"win": "they win", "lose": "you (LittleBot) win", "draw": "it's a draw"}[self.result]
+            how = "showed the camera" if self.seen else "picked"
+            tell(f"Rock Paper Scissors: they {how} {self.you}, you picked {self.bot} on the screen, so {who}. "
+                 f"Score: them {self.wins + (self.result == 'win')}, you {self.losses + (self.result == 'lose')}.")
         if self.result == "win":
             self.wins += 1
             self.score += 1

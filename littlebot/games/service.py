@@ -53,6 +53,7 @@ log = logging.getLogger("littlebot.games")
 OWNER = "games"
 GAME_STARTED = "game.started"  # {id, name, source, limit_seconds, shared}
 GAME_FINISHED = "game.finished"  # {id, name, reason, completed, duration_seconds, summary, score}
+GAME_NEWS = "game.news"  # {id, name, text}: what a game wants said (a Rock Paper Scissors round's result)
 
 VOICE_OWNERS = frozenset({"conversation", "live_voice"})
 SHARABLE = (Resource.FACE, Resource.AUDIO_OUT)
@@ -165,6 +166,11 @@ class _Host:
 
     def child_gaze(self) -> tuple[float, float] | None:
         return self.svc.child_gaze()
+
+    def tell(self, text: str) -> None:
+        s = self.svc._session
+        if s is not None and not s.ended:
+            self.svc._publish(GAME_NEWS, {"id": s.info.id, "name": s.info.name, "text": str(text)[:300]})
 
     def hands_ready(self) -> bool:
         from littlebot.games import hand_sign  # noqa: PLC0415
@@ -645,17 +651,21 @@ class GamesService(Service):
         self._gaze = None
 
     def _on_utterance(self, event: Event) -> None:
-        text = str(event.get("text") or "")
+        self.hear(str(event.get("text") or ""))
+
+    def hear(self, text: str) -> bool:
+        """Words the person said (local speech recognition, or live voice's transcript) for the game."""
         if not text:
-            return
+            return False
         with self._lock:
             s = self._session
             if s is None or s.ended:
-                return
+                return False
             try:
-                s.game.hear(text)
+                return bool(s.game.hear(text))
             except Exception:  # noqa: BLE001
                 log.debug("game hear failed", exc_info=True)
+                return False
 
 
 def _log_failure(fut: Any, what: str) -> None:

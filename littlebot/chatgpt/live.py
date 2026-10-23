@@ -158,6 +158,27 @@ _STOP_WHAT = (r"(?:stop(?: (?:talking|listening|it|now|that|for now))*(?: and (?
 STOP_CALL = re.compile(rf"^(?:{_STOP_LEAD} )*{_STOP_WHAT}"
                        r"(?: (?:please|now|thanks|thank you|littlebot|little bot|bot|robot))*$")
 STOP_SETTLE_S = 0.8  # their words so far say stop and nothing more came: stop (the final words may come late)
+# The person's own words asking for one of LittleBot's on-screen games: LittleBot starts it itself (the voice
+# can't see the screen and would often just play it out loud), keeps the voice quiet until it has been told,
+# passes their moves ("rock!") to the game and lets the game say what happened (who won).
+GAME_ALIASES: tuple[tuple[str, str], ...] = (
+    ("rps", r"rock paper (?:and )?scissors?"),
+    ("tictactoe", r"tic ?tac ?toe|noughts and crosses|x'?s and o'?s"),
+    ("bubbles", r"bubble pop|bubbles? game|pop(?:ping)? (?:the )?bubbles"),
+    ("peekaboo", r"peekaboo friends|peek ?a ?boo (?:game|friends)"),
+    ("colours", r"colou?r burst|colou?rs? game|painting game"),
+    ("star", r"follow the star|star game"),
+    ("memory", r"memory lights|memory game"),
+    ("reaction", r"reaction (?:race|game)"),
+)
+_GAME_VERB = r"(?:play(?:ing)?|start|open|put on|show me|try)"
+STOP_GAME = re.compile(r"\b(?:stop (?:the )?(?:game|playing)|(?:i'?m|we'?re) (?:done|finished) playing|"
+                       r"no more (?:games?|playing)|(?:end|quit|close|exit) (?:the )?game|"
+                       r"(?:show|go back to|back to|bring back) (?:me )?your face|your face back)\b")
+GAME_NOTES = {
+    "rps": "They play by saying (or showing the camera) rock, paper or scissors. LittleBot picks on the screen "
+           "and tells you who won: never make your own pick or play it out loud. ",
+}
 PARTIAL_MAX_CHARS = 300  # what the person is still saying, kept to start a look before they finish
 CANT_SEE = "You couldn't look. Say you can't see right now, and suggest the grown-up shows you again later; " \
            "don't guess what is there."
@@ -311,7 +332,9 @@ connected, what you can do), delegate it to the client in plain words, for examp
 baby shark song video", "start the peekaboo activity", "play a game", "go to sleep", "how hot is the robot", \
 "what can the robot do". Wait, then say what the client tells you, briefly. A video, an activity or going to sleep \
 starts after you finish speaking, and then this voice chat ends: say a short goodbye. If the client says it is \
-still working on something, say you are thinking and wait; the answer comes soon."""
+still working on something, say you are thinking and wait; the answer comes soon. A game stays on the screen \
+while you keep talking, and LittleBot runs it: never play it out loud or make your own move (in Rock Paper \
+Scissors LittleBot picks on the screen); the client tells you what happened, then you say it."""
 
 LOOKUP_NOTE = f"""
 You are answering a question that LittleBot's voice will say out loud to a family with a very young child; \
@@ -383,6 +406,7 @@ class LiveVoiceService(Service):
         self._subs = [
             bus.subscribe(Topics.STOP_ALL, lambda e: self._end_threadsafe("stopped (STOP ALL)")),
             bus.subscribe(Topics.PRIVACY_CHANGED, self._on_privacy),
+            bus.subscribe("game.news", self._on_game_news),  # littlebot.games.service.GAME_NEWS
         ]
         err = aiortc_error()
         if err:
@@ -403,6 +427,16 @@ class LiveVoiceService(Service):
         p = self.ctx.privacy
         if not (p.cloud_enabled and p.microphone_enabled):
             self._end_threadsafe("stopped (privacy settings changed)")
+
+    def _on_game_news(self, event: Event) -> None:
+        """A game says what happened ("they picked rock, you picked paper: you win"): the voice says it."""
+        call, loop, text = self._call, self._loop, str(event.get("text") or "")
+        if call is None or loop is None or loop.is_closed() or not text:
+            return
+        try:
+            loop.call_soon_threadsafe(call.game_news, text)
+        except RuntimeError:
+            pass
 
     def _end_threadsafe(self, reason: str) -> None:
         call, loop = self._call, self._loop
@@ -560,6 +594,8 @@ class LiveCall:
         self.photos = 0
         self._look_job: _LookJob | None = None
         self._stop_words = ""  # what they are saying, while it is only a stop ("stop talking")
+        self._game_hold: _Hold | None = None  # the voice waits for the game (a move made, a game starting)
+        self._game_started: tuple[str, float] | None = None  # (id, when) of a game started from their words
         self._hush_job: _LookJob | None = None  # the voice's sound is held back until this look's answer
         self._hush_release = False  # the voice has that answer: let its sound through at the next pause
         self._hush_quiet_since: float | None = None
@@ -839,12 +875,13 @@ class LiveCall:
                                                         "detail": concern.category})
                 # The person's own words: only when clearly about the face, so everyday talk
                 # ("that makes me sad", "give me a hug") doesn't change it.
-                action = _face_request(event.text) if USER_FACE_CUE.search(event.text) \
-                    and not self._is_control(event.text) else None  # "start the peekaboo activity": tools
-                if action is None:
-                    self._look_if_asked(event.text)
-                elif self._play_face(action, "user"):
-                    self._note(f"LittleBot is showing {action.name.replace('_', ' ')} on its face now.")
+                if not self._game_words(event.text):
+                    action = _face_request(event.text) if USER_FACE_CUE.search(event.text) \
+                        and not self._is_control(event.text) else None  # "start the peekaboo activity": tools
+                    if action is None:
+                        self._look_if_asked(event.text)
+                    elif self._play_face(action, "user"):
+                        self._note(f"LittleBot is showing {action.name.replace('_', ' ')} on its face now.")
                 self._words_began_at = None  # the next words are a new turn
         elif isinstance(event, wire.Delegation):
             self._spawn(self._answer(event))
@@ -854,6 +891,75 @@ class LiveCall:
             if event.reason != "close_requested":
                 self.error = "ChatGPT ended the call."
             self.end(f"closed by ChatGPT ({event.reason or 'no reason'})")
+
+    # ------------------------------------------------------------ games on the screen
+    def _game_words(self, text: str) -> bool:
+        """Their words about LittleBot's on-screen games: start one, stop it, or a move in it ("rock!")."""
+        games = getattr(self.ctx, "games", None)
+        if games is None:
+            return False
+        plain = _plain_words(text)
+        try:
+            active = bool(games.active)
+            running = (games.status() or {}).get("id") if active else None
+        except Exception:  # noqa: BLE001
+            return False
+        if active and STOP_GAME.search(plain):
+            self._spawn(self._stop_game(games))
+            return True
+        wanted = _game_wanted(plain)
+        if wanted is not None and wanted != running:
+            self._hold_voice_for_game()
+            self._spawn(self._start_game(games, wanted))
+            return True
+        if active and games.hear(text):
+            self._hold_voice_for_game()  # until the game says what happened
+            return True
+        return False
+
+    def _hold_voice_for_game(self) -> None:
+        hold = self._game_hold = _Hold(self.svc._now())
+        self._hush(hold)  # type: ignore[arg-type]  # only .started is used
+
+    def game_news(self, text: str) -> None:
+        """What the game on the screen wants said (``littlebot.games.service.GAME_NEWS``)."""
+        if self._ended.is_set():
+            return
+        self._note(f"{text} Say it now, in a few words.")
+        self._release_game_hold()
+
+    def _release_game_hold(self) -> None:
+        hold, self._game_hold = self._game_hold, None
+        if hold is not None:
+            self._unhush(hold)  # type: ignore[arg-type]
+
+    async def _start_game(self, games: Any, game_id: str) -> None:
+        info = next((g for g in (games.list() or []) if g.get("id") == game_id), {})
+        name = info.get("name") or game_id
+        try:
+            ok = bool(await games.start(game_id, source="live voice"))
+        except Exception:  # noqa: BLE001
+            log.warning("live voice: starting the game failed", exc_info=True)
+            ok = False
+        log.info("live voice: game %s %s from their words", game_id, "started" if ok else "didn't start")
+        if ok:
+            self._game_started = (game_id, self.svc._now())
+            self._note(f"{name} is on your screen now: LittleBot started it. {GAME_NOTES.get(game_id, '')}"
+                       "Tell them it's on, in a few words.")
+        else:
+            why = str((games.status() or {}).get("last_error") or "it couldn't start")[:160]
+            self._note(f"They asked for {name}, but it couldn't start: {why} Say so briefly.")
+        self._release_game_hold()
+
+    async def _stop_game(self, games: Any) -> None:
+        try:
+            stopped = games.stop("asked in the voice chat")
+            if hasattr(stopped, "__await__"):
+                await stopped
+        except Exception:  # noqa: BLE001
+            log.warning("live voice: stopping the game failed", exc_info=True)
+        log.info("live voice: game stopped from their words")
+        self._note("The game is stopped and your face is back on the screen. Say so in a few words.")
 
     def _caption(self, who: str, text: str) -> None:
         text = " ".join(str(text).split())[:300]
@@ -905,6 +1011,11 @@ class LiveCall:
             # "start the peekaboo activity", "show me a video": tools. But a look stays a look whatever it
             # names ("look: what game is the child holding?"): the tools would only ask the camera themselves,
             # two text-model requests later.
+            started = self._game_started
+            if started is not None and self.svc._now() - started[1] < 20 and \
+                    _game_wanted(_plain_words(question)) == started[0]:
+                self._send_result(d.id, "Done: that game is on the screen already (LittleBot started it).")
+                return
             control = self._is_control(question) and not (
                 seeing and SEE_FIRST.search(question) and not CONTROL_ACTS.search(question))
             action = None if control or info else _face_request(question)
@@ -1549,6 +1660,21 @@ def _voice_face(text: str) -> Any:
             except ImportError:
                 return None
             return FaceAction(name or _VOICE_EXPRESSIONS[m.group(1).lower()])
+    return None
+
+
+@dataclasses.dataclass(eq=False)
+class _Hold:
+    """The voice is held back for a game (see LiveCall._hush, which only needs ``started``)."""
+
+    started: float
+
+
+def _game_wanted(plain: str) -> str | None:
+    """The game id their (plain) words ask for ("let's play rock paper scissors"), else None."""
+    for game_id, alias in GAME_ALIASES:
+        if re.search(rf"\b{_GAME_VERB}\b(?:.*\b)?(?:{alias})\b", plain):
+            return game_id
     return None
 
 
