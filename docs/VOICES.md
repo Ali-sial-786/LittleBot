@@ -133,7 +133,7 @@ it is unsure in practice, and the Pi's timing and memory.
 | "The voice model isn't downloaded yet." | `.venv/bin/python scripts/download_models.py voices` |
 | "The voice model couldn't be loaded." | `.venv/bin/python scripts/download_models.py voices --force`, then switch it off and on in Privacy |
 | "LittleBot heard only N seconds of talking." | Read all three sentences, closer to the robot; check **Audio & devices → Test microphone** |
-| "That didn't sound like one voice." | Only that person talks, in a quiet room, no TV |
+| "That didn't sound like one voice." | Only that person talks, in a quiet room, no TV. One odd piece (a cough, the baby) is left out by itself; more than a third of the recording unlike the rest is not. The log line "voice recognition: recording of ... piece(s), each like the rest [...]" shows how alike the pieces were (`grep -a "piece(s)" data/logs/littlebot.log`) |
 | "That sounds more like Sara than Ali." | Someone else read the sentences, or their voices are very alike; try again with only Ali |
 | "The microphone is in use by live voice" | End the voice chat first; the recording needs the microphone |
 | It never says who is talking | Check the switch and that the person shows **Voice: set up**; the log says `live voice: the wake phrase was not recognised (unsure)` when it wasn't sure. Record again in the room where you talk to it, at the distance you usually talk from |

@@ -146,6 +146,15 @@ async def test_a_recording_keeps_a_few_voiceprints_and_never_the_sound(voices, v
                         "VALUES (?, ?, 'x', 'dashboard', 'now')", (ali, b"\0" * 32000))
 
 
+async def test_one_odd_piece_in_a_recording_is_left_out(voices, caplog):
+    caplog.set_level(logging.INFO, logger="littlebot.voices")
+    ali = add_person(voices, "Ali", "dad")
+    recording = np.concatenate([say(0, 12.0), say(2, 3.0)])  # Ali reading, and 3 s of someone else (the baby)
+    result = await voices.enrol(ali, recording, 48000)
+    assert result["ok"] and voices.store.count(ali) == 4
+    assert "5 piece(s)" in caplog.text and "1 left out" in caplog.text
+
+
 async def test_a_recording_that_is_too_short_or_not_one_voice_is_not_kept(voices):
     ali, sara = add_person(voices, "Ali", "dad"), add_person(voices, "Sara", "mum")
     short = await enrol(voices, ali, 0, seconds=2.0)

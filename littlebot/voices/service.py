@@ -78,6 +78,7 @@ ENROL_MIN_SPEECH_S = 4.0  # the dashboard's recording: at least this much speech
 ENROL_WINDOW_S = 3.0  # one voiceprint per this much of it ...
 ENROL_MAX_SAMPLES = 4  # ...at most this many per recording
 ENROL_CONSISTENT = 0.30  # every two pieces must sound alike (one voice; real speech: one person >= ~0.5, two <= ~0.2)
+ENROL_MAX_ODD = 1 / 3  # up to this share of the pieces may be left out for sounding unlike the rest (a cough, the baby)
 WAKE_TOPIC = "audio.wake_word"  # littlebot.audio.wakeword.WAKE_TOPIC: "Hey LittleBot" was heard
 UNLOAD_IDLE_S = 600.0  # the model (~75 MB) is dropped after this long without use
 RECORD_SECONDS = 20.0  # the dashboard's recording
@@ -439,9 +440,12 @@ class VoiceRecognition(Service):
         if speech_s < ENROL_MIN_SPEECH_S or not vs:
             error = "too_little"
         else:
+            vs, scores, worst = one_voice_pieces(vs)
+            log.info("voice recognition: recording of %.1f s of speech: %d piece(s), each like the rest %s, %d left "
+                     "out, closest two apart %.2f (one voice: at least %.2f)", speech_s, len(scores),
+                     [round(x, 2) for x in scores], len(scores) - len(vs), worst, ENROL_CONSISTENT)
             centre = unit(np.mean(vs, axis=0))
-            if len(vs) > 1 and min(float(np.dot(a, b)) for i, a in enumerate(vs) for b in vs[i + 1:]) \
-                    < ENROL_CONSISTENT:
+            if worst < ENROL_CONSISTENT:
                 error = "many_voices"
             else:
                 known = self.store.known()
@@ -541,6 +545,22 @@ def get_voices(ctx: Any) -> VoiceRecognition:
     return voices
 
 
+def one_voice_pieces(vs: list[np.ndarray]) -> tuple[list[np.ndarray], list[float], float]:
+    """The recording's voiceprints that sound like one voice: ``(kept, scores, worst)``. ``scores``: each piece
+    against the average of the others. Pieces unlike the rest (below ENROL_CONSISTENT: a cough, the baby, a door)
+    are left out, the least alike first, up to ENROL_MAX_ODD of them; ``worst`` is then the least alike two kept
+    (1.0 for one piece). Two people talking in turns leave more than that unlike each other: still below."""
+    if len(vs) < 2:
+        return list(vs), [1.0] * len(vs), 1.0
+    total = np.sum(vs, axis=0)
+    scores = [float(np.dot(v, unit(total - v))) for v in vs]
+    odd = sorted((i for i, x in enumerate(scores) if x < ENROL_CONSISTENT), key=lambda i: scores[i])
+    odd = odd[:int(len(vs) * ENROL_MAX_ODD)]
+    kept = [v for i, v in enumerate(vs) if i not in odd]
+    worst = min((float(np.dot(a, b)) for i, a in enumerate(kept) for b in kept[i + 1:]), default=1.0)
+    return kept, scores, worst
+
+
 __all__ = [
     "ENROL_ERRORS",
     "ERRORS",
@@ -553,4 +573,5 @@ __all__ = [
     "VoiceRecognition",
     "best_match",
     "get_voices",
+    "one_voice_pieces",
 ]
