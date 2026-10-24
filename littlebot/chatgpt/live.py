@@ -73,11 +73,17 @@ CALL_URL = "https://chatgpt.com/backend-api/codex/realtime/calls?intent=quicksil
 VOICES = ("cove", "arbor", "breeze", "ember", "juniper", "maple", "sol", "spruce", "vale")  # known; others are tried too
 # A look-up the voice hands over that needs the camera ("how many fingers am I holding up?");
 # "look up the weather" is a look-up, not a look.
+# "Show" only counts as showing LittleBot something ("what am I showing you?"): "show me the hourly" is
+# about the screen.
 WANTS_LOOK = re.compile(r"\b(?:look(?:ing)?\b(?!\s+(?:it\s+)?up\b)|(?:camera|see|seeing|sees|fingers?|holding|"
-                        r"hold(?:s|ing)? up|show(?:s|ing)?|colou?rs?|wearing|what(?:'s| is) (?:this|that)|"
+                        r"hold(?:s|ing)? up|show(?:s|ing)? you|(?:am|are|is|i'm|we're|he's|she's|they're) "
+                        r"(?:\w+ )?showing|colou?rs?|wearing|what(?:'s| is) (?:this|that)|"
                         r"what (?:this|that|these|those) (?:is|are)|in (?:[\w']+ ){0,2}hands?)\b)", re.I)
 # Hand-offs clearly about the camera: when looking isn't allowed they get the reason, not the text model.
 LOOK_WORDS = re.compile(r"\b(?:look(?:ing)?\b(?!\s+(?:it\s+)?up\b)|camera\b|fingers?\b)", re.I)
+# While a card is on the screen, only these (or the person's own words asking to look) take a photo.
+CAMERA_WORDS = re.compile(r"\b(?:camera|photo|fingers?|holding|wearing|in (?:[\w']+ ){0,2}hands?|"
+                          r"look(?:ing)? at (?:me|us|this|that|him|her|them|it)\b)", re.I)
 # A hand-off that is about the camera even though it names a game, a video or an activity ("look: what game
 # is the child holding?"): it is looked at, not handed to the tools, unless it also asks for something done.
 SEE_FIRST = re.compile(r"\b(?:camera|fingers?|look(?:ing)?\b(?!\s+(?:it\s+)?(?:up|for|around|after)\b)|"
@@ -264,7 +270,8 @@ CONTROL_WORDS = re.compile(r"\b(?:activit(?:y|ies)|games?|videos?|youtube|cartoo
                            r"how hot|cpu|memory|wi-?fi|stop everything)\b", re.I)
 # Hand-offs asking for live information: the text model answers them with its tools (get_weather, get_time,
 # web search), never the camera or a face ("what's the weather looking like?", "show me the weather").
-INFO_WORDS = re.compile(r"\b(?:weather|forecasts?|rain(?:ing|y)?|snow(?:ing|y)?|sunny|umbrella|"
+INFO_WORDS = re.compile(r"\b(?:weather|forecasts?|hourly|rain(?:ing|y)?|snow(?:ing|y)?|sunny|umbrella|windy|"
+                        r"humid(?:ity)?|degrees|(?:hot|cold|warm|chilly) (?:outside|out there)|"
                         r"what time|what(?:'s| is) the time|time is it|what day|what date|(?:the|today'?s) date|"
                         r"news|headlines?|scores?)\b", re.I)
 CHECK_WINDOW = 320  # characters of a reply in progress checked at a time
@@ -1598,12 +1605,22 @@ class LiveCall:
         """A hand-off answered by looking, or, when looking isn't allowed, by saying why."""
         if not (WANTS_LOOK.search(question) or asks_to_see(question)):
             return False
+        if self._card_on_screen() and not (CAMERA_WORDS.search(question) or asks_to_see(question)):
+            return False  # "let me see tomorrow", "show it hour by hour": about the card, not the camera
         look = self._camera()
         if look is None:
             return False
         if look.blocked_reason() is None:
             return True
         return bool(LOOK_WORDS.search(question) or asks_to_see(question))  # else the text model answers
+
+    def _card_on_screen(self) -> bool:
+        """An info card (the weather, a recipe) is on the screen right now."""
+        screens = getattr(self.ctx, "screens", None)
+        try:
+            return screens is not None and screens.current is not None
+        except Exception:  # noqa: BLE001
+            return False
 
     def _about_the_look(self, question: str) -> bool:
         """A hand-off about the look the person's own words just asked for ("what is that thing?")."""

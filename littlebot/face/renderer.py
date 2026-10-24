@@ -662,8 +662,8 @@ class FaceRenderer:
             return
         size_q = max(2, int(round(s.size)))
         ang_step = 10 if s.kind == "confetti" else 5
-        ang = (_q(s.angle, ang_step) * ang_step) % 360 if s.kind not in ("dot", "blush", "play") else 0
-        light = light and s.kind == "sparkle"  # only sparkles are drawn differently on a light screen
+        ang = (_q(s.angle, ang_step) * ang_step) % 360 if s.kind not in ("dot", "blush", "play", "cloud", "puff") else 0
+        light = light and s.kind in ("sparkle", "cloud", "puff")  # drawn differently on a light screen
         key = (s.kind, size_q, s.color, ang, light)
         img = self._sprites.get_or(key, lambda: self._make_sprite(s.kind, size_q, s.color, ang, light))
         if img is None:
@@ -687,6 +687,8 @@ class FaceRenderer:
             big = pygame.Surface((size * ss + 2, size * ss + 2), pygame.SRCALPHA)
             pygame.draw.circle(big, (*color, 255), (big.get_width() / 2, big.get_height() / 2), size * ss / 2)
             base = pygame.transform.smoothscale(big, (size + 1, size + 1))
+        elif kind in ("cloud", "puff"):
+            base = self._cloud(size, color, light, puff=kind == "puff")
         elif kind == "confetti":
             w, h = size, max(3, int(size * 0.5))
             base = pygame.Surface((w, h), pygame.SRCALPHA)
@@ -700,6 +702,26 @@ class FaceRenderer:
         if angle:
             base = pygame.transform.rotozoom(base, angle, 1.0)
         return _fast(base)
+
+    def _cloud(self, size: int, color: Color, light: bool, puff: bool = False) -> pygame.Surface:
+        """A thought cloud ``size`` wide (or one round puff of its trail): a soft fill with an outline
+        in the glyph colour, so the thinking dots inside it read on the dark sky and the pink screen."""
+        ss = self.ss
+        S = size * ss
+        line = max(2.0, 3.0 * ss)
+        if puff:
+            bumps, h = [(0.5, 0.5, 0.5)], S  # (x, y, r) in units of the width
+        else:  # bumps along the top, a flatter belly below
+            bumps = [(0.18, 0.32, 0.16), (0.36, 0.20, 0.17), (0.60, 0.18, 0.17), (0.82, 0.32, 0.16),
+                     (0.64, 0.38, 0.16), (0.38, 0.39, 0.16), (0.50, 0.30, 0.22)]
+            h = S * 0.56
+        pad = int(line * 2)
+        big = pygame.Surface((S + 2 * pad, int(h) + 2 * pad), pygame.SRCALPHA)
+        fill = _mix(color, (255, 255, 255), 0.82) if light else _scale(color, 0.22)
+        for grow, col in ((line, color), (0.0, fill)):
+            for bx, by, br in bumps:
+                pygame.draw.circle(big, (*col, 255), (pad + bx * S, pad + by * S), br * S + grow)
+        return pygame.transform.smoothscale(big, (max(2, big.get_width() // ss), max(2, big.get_height() // ss)))
 
     def _heart(self, size: int, color: Color) -> pygame.Surface:
         ss = self.ss

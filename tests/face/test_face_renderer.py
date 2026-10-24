@@ -125,7 +125,7 @@ def test_every_animation_renders(renderer, name):
 def test_mouth_and_all_sprite_kinds_render(renderer):
     a = _settled()
     f0 = a.frame()
-    kinds = ["heart", "sparkle", "z", "question", "dot", "confetti", "blush"]  # "play" only shows when hidden
+    kinds = ["heart", "sparkle", "z", "question", "dot", "cloud", "puff", "confetti", "blush"]  # "play" only shows when hidden
     sprites = tuple(Sprite(k, 60 + i * 50, 280, 24, 1.0, angle=17 * i, color=(255, 200, 120))
                     for i, k in enumerate(kinds))
     f = FaceFrame(width=480, height=320, t=1.0, background=f0.background, color=f0.color, glow=1.0,

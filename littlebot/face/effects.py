@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from typing import Iterable
 
 from littlebot.core.interfaces import FACE_ANIMATIONS
-from littlebot.face.frame import EYE_Y, MOUTH_Y, NATIVE_H, NATIVE_W, Color, EyeFrame, Sprite, is_light_background
+from littlebot.face.frame import EYE_Y, NATIVE_H, NATIVE_W, Color, EyeFrame, Sprite, is_light_background
 
 # Seconds each one-shot animation lasts.
 ANIMATION_DURATIONS: dict[str, float] = {
@@ -347,13 +347,38 @@ def _soft(c: Color, k: float = 0.85) -> Color:
     return (int(c[0] + (255 - c[0]) * (1 - k)), int(c[1] + (255 - c[1]) * (1 - k)), int(c[2] + (255 - c[2]) * (1 - k)))
 
 
+THOUGHT_W, THOUGHT_H = 106.0, 56.0  # the thought cloud, up and to the right of the eyes
+
+
+def _thought_sprites(a: float, t: float, eyes: tuple[EyeFrame, ...], color: Color) -> list[Sprite]:
+    """The thinking "..." in a cloud above the right eye (a thought bubble), with two little puffs
+    trailing off towards the forehead. It follows the eye a little but always stays on screen."""
+    right = max(eyes, key=lambda e: e.cx) if eyes else None
+    ex, top = (right.cx, right.cy - (right.full_h or right.h) / 2) if right is not None else (NATIVE_W / 2 + 103, 73)
+    cx = min(NATIVE_W - THOUGHT_W / 2 - 4, ex + 50)
+    cy = max(THOUGHT_H / 2 + 4, min(top - 14, 36.0))
+    bob = 2.0 * math.sin(t * 1.3)
+    rise = clamp01(a * 1.4)  # the cloud puffs up as it fades in
+    out = [
+        Sprite("puff", cx - THOUGHT_W * 0.5 - 6, cy + 8 + bob * 0.5, 13 * rise, a, color=color),
+        Sprite("puff", cx - THOUGHT_W * 0.5 - 22, cy + 18 + bob * 0.3, 8 * rise, a, color=color),
+        Sprite("cloud", cx, cy + bob, THOUGHT_W * (0.6 + 0.4 * rise), a, color=color),
+    ]
+    for i in range(3):
+        ph = (t * 1.5 - i * 0.18) % 1.0
+        lift = math.sin(math.pi * clamp01(ph / 0.45))
+        out.append(Sprite("dot", cx - 24 + 24 * i, cy + bob + 3 - 7 * lift, 12 + i, a * (0.7 + 0.3 * lift),
+                          color=color))
+    return out
+
+
 def extras_sprites(
     alphas: dict[str, float], t: float, eyes: Iterable[EyeFrame], eye_color: Color,
     palette: Palette = DARK_PALETTE, mouth: tuple[float, float] | None = None,
 ) -> list[Sprite]:
     """Continuous overlays requested by the current expression (faded by ``alphas``).
 
-    ``mouth`` is the mouth's centre: the thinking dots trail off beside it ("hmm...").
+    ``mouth`` is the mouth's centre (kept for callers; the thinking dots now sit in a thought cloud).
     """
     out: list[Sprite] = []
     eyes = tuple(eyes)
@@ -391,10 +416,5 @@ def extras_sprites(
                           color=glyph if palette.light else _soft(eye_color, 0.9)))
     a = alphas.get("dots", 0.0)
     if a > 0.01:
-        mx, my = mouth if mouth is not None else (NATIVE_W / 2 - 52, MOUTH_Y)
-        for i in range(3):
-            ph = (t * 1.5 - i * 0.18) % 1.0
-            lift = math.sin(math.pi * clamp01(ph / 0.45))
-            out.append(Sprite("dot", mx + 40 + 22 * i, my - 2 - 9 * lift, 12 + i,
-                              a * (0.7 + 0.3 * lift), color=glyph if palette.light else _soft(eye_color, 0.9)))
+        out.extend(_thought_sprites(a, t, eyes, glyph if palette.light else _soft(eye_color, 0.9)))
     return _painted(out, palette)

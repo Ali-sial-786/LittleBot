@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from types import SimpleNamespace
 from typing import Any
 
 import httpx
@@ -347,6 +348,28 @@ async def test_weather_hand_offs_get_the_tools_not_the_camera_and_answer_in_time
         assert web.count("api.open-meteo.com") == 1  # the second question used the cached forecast
         assert caplog.text.count("hand-off received (kind=info)") == 2 and "kind=look" not in caplog.text
         assert svc.status()["photos"] == 0
+    finally:
+        await close(svc, server)
+
+
+async def test_steering_the_weather_card_is_not_a_look(ctx, make_live, caplog):
+    """"Show me the hourly" with the weather card up once took a photo ("it's too dark, I can't see")."""
+    import logging
+
+    caplog.set_level(logging.INFO, logger="littlebot.chatgpt.live")
+    _fake_weather(ctx)
+    ctx.screens = SimpleNamespace(current=object())  # a card on the screen
+    provider = ToolProvider(text="Here's the hourly forecast.")
+    svc, server, _audio = await make_live(provider)
+    try:
+        for i, question in enumerate(("Show me the hourly", "Show it hour by hour on the screen",
+                                      "Can I see tomorrow instead?", "show the hourly temperatures")):
+            delegate(server, f"s{i}", question)
+            await wait_for(lambda i=i: answers(server, f"s{i}"))
+        assert "kind=look)" not in caplog.text and svc.status()["photos"] == 0
+        assert live_mod.CAMERA_WORDS.search("how many fingers am I holding up?")  # still a look when asked
+        assert live_mod.WANTS_LOOK.search("what am I showing you") and live_mod.WANTS_LOOK.search("I'm showing you")
+        assert not live_mod.WANTS_LOOK.search("show me tomorrow")
     finally:
         await close(svc, server)
 
