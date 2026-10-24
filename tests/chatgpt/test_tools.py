@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 
-from littlebot.chatgpt.tools import TOOL_NAMES, RobotToolbox, speakable_title, wifi_status
+from littlebot.chatgpt.tools import BROWSER_TOOLS, TOOL_NAMES, RobotToolbox, speakable_title, wifi_status
 from littlebot.core.state import RobotState
 
 
@@ -166,7 +166,8 @@ def test_specs_are_json_schema_functions_and_live_has_no_camera_tool(ctx):
     live = RobotToolbox(ctx, mode="live").specs()
     functions = [s for s in chat if s.get("type", "function") == "function"]
     names = {s["name"] for s in functions}
-    assert names == TOOL_NAMES - {"show_on_screen"}  # this robot has no screen service: no cards to show
+    # this robot has no screen service and no browser view: no cards to show, no browser tools
+    assert names == TOOL_NAMES - {"show_on_screen"} - BROWSER_TOOLS
     assert {"get_robot_status", "describe_yourself", "start_activity", "set_volume", "volume_up", "set_face",
             "go_to_sleep", "wake_up", "stop_everything", "search_youtube", "play_youtube", "stop_video",
             "start_game", "look_through_camera", "get_weather", "get_time"} <= names

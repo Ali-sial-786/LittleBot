@@ -293,6 +293,11 @@ told what is on the screen and never reads it out. Bus topics: `live.call_starte
 `live.call_ended` `{reason}` around each call; a card's `screen.news` `{text}` ("the egg timer is done")
 is passed to the voice as a note.
 
+Explicit "google it" / "look it up online" / "search that in the browser" requests from a grown-up show
+Google (SafeSearch on, no address bar) on the screen instead of a card, through the director's rules or the
+`search_in_browser` / `browser` tools; "scroll down", "open the first one", "what does it say?" and "close
+it" steer it. See [BROWSER.md](BROWSER.md).
+
 ### Wake word: "Hey LittleBot"
 
 Say **"Hey LittleBot"** (or **"Hey Bot"**) near the robot: its face starts listening, it plays a

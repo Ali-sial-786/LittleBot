@@ -76,6 +76,11 @@ Dashboard → **Privacy** → *LittleBot's screen*:
 
 The same section shows what is on the screen now, with a button to close it.
 
+**The browser view** is the other thing that can take the screen in a chat: only when a grown-up
+explicitly says "google it" / "look it up online" / "search that in the browser" (never a card for those
+words; no card is decided while it shows). Its own switch, *Allow the browser view (Google with
+SafeSearch, grown-ups only)*, is in this section too. See [BROWSER.md](BROWSER.md).
+
 `screens.enabled: false` in the config (`config/default.yaml`, `screens:` section) switches the feature
 off whatever the parent chose; `linger_seconds` and `presenter_backing` live there too.
 

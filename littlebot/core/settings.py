@@ -87,6 +87,8 @@ def build_defaults(cfg: LittleBotConfig) -> dict[str, Any]:
         # pictures from the internet (strict safe search, never kept)
         "screens.enabled": True,
         "screens.web_pictures": True,
+        # the browser view: Google (SafeSearch on) on the screen when a grown-up explicitly asks (littlebot/browser)
+        "browser.enabled": True,
         # child profile (minimum necessary information; all optional)
         "profile": {
             "nickname": "",

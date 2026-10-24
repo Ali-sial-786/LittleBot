@@ -12,6 +12,12 @@ that is up, close it, or nothing (most turns: chit-chat, songs, talking to the b
    (a "games" card: the voice is then told to say the games' names); with a card up, "next step" / "go back" /
    "stop the timer" become that card's command, "close it" / "hide that" / "show me your face" close it
    (``local_rule``).
+   Explicit browser requests come first and never get a card (``browser_rule``, with ``ctx.browser``,
+   littlebot/browser): "google it", "google <x>", "search that in the browser", "look it up online", "open the
+   browser", "check the web" open Google (SafeSearch on) for their words after the trigger, else for the subject
+   of the conversation (one small model request, ``QUERY_PROMPT``; the last thing they said if that fails). While
+   the browser shows, "scroll down", "go back", "open the first one", "zoom in", "close it" steer it and "what does
+   it say?" reads the page into a note for the voice to sum up.
 2. **The pre-filter** (instant): turns plainly not worth a card cost nothing (``prefilter``): a stop word,
    a look or camera question (live.py's own path, ``asks_to_see``), the robot's own controls (videos,
    volume, games, faces), songs, chit-chat and babble, and, with no card up, anything without a question
@@ -182,6 +188,67 @@ SPEAKER_BEFORE_S = 3.0  # an identification this long before their final words s
 GAMES_NOTE = ("On your screen now: the menu of your games: {what}. Say the games' names out loud now, briefly, and ask "
               "which one they'd like to play.")
 
+# ---------------------------------------------------------------- the browser view (littlebot/browser)
+# Only explicit requests: the words "google", "online", "the browser", "the web", "the internet". Matched on _plain.
+_BLEAD = rf"{_LEAD}(?:let'?s |lets |i want (?:you )?to |i'?d like (?:you )?to |just |quickly |go |go and )?"
+_WEB = r"(?:online|on the internet|on the web|on google|in (?:the |your |a )?(?:web )?browser|on (?:the |your )?browser)"
+_THAT = r"(?:it|that|this|them|those|that one|this one)"
+BROWSER_SEARCH = re.compile(rf"^{_BLEAD}(?:"
+                            r"google(?: search)?(?: for)? (?P<q1>.+)|"
+                            r"(?:do|run) a google search(?: for (?P<q2>.+))?|"
+                            rf"(?:look|search|check|find) {_THAT} (?:up )?{_WEB}|"
+                            rf"(?:look up|look for|search for|search|check|find|look) (?P<q3>.+?) (?:up )?{_WEB}|"
+                            rf"(?:search|look|check|have a look) {_WEB}(?: for (?P<q4>.+))?|"
+                            r"(?:search|check|look on|look at|try|use) (?:the )?(?:web|internet|google)(?: for (?P<q5>.+))?|"
+                            r"(?:open|show|start|bring up|pull up|get|use|launch) (?:me |us )?(?:the |your |a )?"
+                            r"(?:web )?(?:browser|google)(?: (?:and |to )?(?:search|look up|find|google|look)(?: for)?"
+                            r" (?P<q6>.+))?|"
+                            r"(?:show|find|get) (?:me |us )?(?P<q7>.+?) on google"
+                            rf"){_TAIL}$")
+_PAGE = r"(?:it|that|this|the page|the web ?page|the website|the site|the article|that page|this page|the screen)"
+BROWSER_READ = re.compile(rf"^{_BLEAD}(?:what (?:does|did|do) {_PAGE} say|what does it say (?:on|in) (?:the )?(?:page|screen)|"
+                          rf"what'?s on {_PAGE}|what is on {_PAGE}|what'?s it say|"
+                          rf"read (?:me )?{_PAGE}(?: to me| to us)?(?: out(?: loud)?)?|"
+                          rf"(?:summari[sz]e|sum up) {_PAGE}|tell me what {_PAGE} says|what does the (?:page|article) say)"
+                          rf"{_TAIL}$")
+BROWSER_SCROLL = re.compile(rf"^{_BLEAD}(?:"
+                            r"(?:scroll|go|move|page|swipe)(?: it| the page)? (?P<dir>down|up)"
+                            r"(?: (?P<amt>a little bit|a little|a bit|a lot|more|some|a page|one page|half a page|again))?|"
+                            r"keep scrolling|scroll(?: more| again| on)?|show me more|more please|next page|"
+                            r"(?:scroll|go|jump|take me)(?: back)? (?:up |down )?to the (?P<edge>top|bottom|end)(?: of the page)?"
+                            rf"){_TAIL}$")
+BROWSER_BACK = re.compile(rf"^{_BLEAD}(?:go back(?: a page| one page)?|back|previous page|the previous page|"
+                          r"go to the previous page|(?:go )?back to (?:the )?(?:results|google|search(?: results)?|"
+                          rf"last page|list)){_TAIL}$")
+BROWSER_FORWARD = re.compile(rf"^{_BLEAD}(?:go forward(?: a page| one page)?|forward){_TAIL}$")
+BROWSER_RELOAD = re.compile(rf"^{_BLEAD}(?:reload|refresh)(?: (?:it|that|this|the page))?{_TAIL}$")
+BROWSER_ZOOM = re.compile(rf"^{_BLEAD}(?:zoom (?P<z1>in|out)|make (?:it|that|the (?:text|writing|words|page)) "
+                          r"(?P<z2>bigger|larger|smaller)|(?P<z3>bigger|larger|smaller)(?: (?:text|writing|words))?|"
+                          rf"(?P<z4>reset|normal) (?:the )?(?:zoom|size)){_TAIL}$")
+_ORD = r"first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|1st|2nd|3rd|4th|5th|top|last"
+BROWSER_RESULT = re.compile(rf"^{_BLEAD}(?:"
+                            r"(?:open|click|tap|press|choose|pick|select|go to|show me|try|look at|go into|go on)"
+                            rf"(?: on| into)? (?:the )?(?P<ord>{_ORD})(?: (?:one|result|link|site|website|page|article|"
+                            r"answer|hit|search result))?|"
+                            rf"(?:the )?(?P<ord2>{_ORD}) (?:one|result|link)|"
+                            r"(?:open |click |go to |show me )?(?:(?:the )?(?:result|link)(?: number)?|number) "
+                            r"(?P<num>one|two|three|four|five|"
+                            r"six|seven|eight|nine|ten|\d{1,2})"
+                            rf"){_TAIL}$")
+BROWSER_CLOSE = re.compile(rf"^{_BLEAD}(?:close|hide|exit|quit|shut|leave|get out of|turn off|switch off|get rid of|"
+                           r"stop|put away)(?: the| that| this| your)? (?:web )?(?:browser|google|web ?page|website|"
+                           r"site|page|search|internet|results)(?: (?:off|away|down|now))?|"
+                           rf"(?:i'?m|we'?re) (?:done|finished) with (?:the |that |this )?(?:browser|google|page|"
+                           rf"website|search|internet){_TAIL}$")
+_NUMBERS = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9,
+            "ten": 10, "first": 1, "1st": 1, "top": 1, "second": 2, "2nd": 2, "third": 3, "3rd": 3, "fourth": 4,
+            "4th": 4, "fifth": 5, "5th": 5, "sixth": 6, "seventh": 7, "eighth": 8, "ninth": 9, "tenth": 10}
+_TRIM_QUERY = re.compile(r"(?: (?:for|to) (?:me|us)| please| now| littlebot| little bot| robot| for a second)+$")
+QUERY_PROMPT = """You help {robot}, a small home robot with a screen, search Google for a grown-up who just asked it to google something or look it up online without saying what. From the conversation, work out what they want looked up and answer with exactly one JSON object and nothing else: {{"query": "<a short Google search, a few words>"}}, or {{"query": ""}} when nothing in the conversation is worth searching for. Never put personal details in the query."""
+QUERY_CHARS = 120
+BROWSER_DONE_NOTE = "Done: {what}. Say okay in a few words, or nothing."
+BROWSER_BLOCKED_NOTE = "LittleBot won't search for that. Say kindly, in a few words, that you can't look that up."
+
 
 def _plain(text: str) -> str:
     """Lower case, letters, digits and apostrophes, single spaces: "Close it, please!" -> "close it please"."""
@@ -210,6 +277,54 @@ def prefilter(text: str, *, card_up: bool = False) -> str | None:
         return "talking to the baby"
     if not card_up and not INFO_CUE.search(plain):
         return "no question"
+    return None
+
+
+def browser_rule(text: str, *, up: bool = False) -> Decision | None:
+    """An explicit browser request (``do == "browse"``: ``action`` "open" with ``spec["query"]``: their words, or
+    None when they named none), or with the browser ``up`` a request to steer it ("scroll", "open_result",
+    "back", "forward", "reload", "zoom", "read", "close"); else None (an ordinary turn)."""
+    plain = _plain(text)
+    if not plain:
+        return None
+    m = BROWSER_SEARCH.match(plain)
+    if m:
+        query = next((g for g in m.groups() if g), None)
+        query = _TRIM_QUERY.sub("", query or "").strip()
+        if not query or re.fullmatch(_THAT, query):
+            query = ""
+        return Decision("browse", action="open", spec={"query": query or None}, why="browser words")
+    if not up:
+        return None
+    if CLOSE_WORDS.match(plain) or BROWSER_CLOSE.match(plain):
+        return Decision("browse", action="close", why="close words")
+    if BROWSER_READ.match(plain):
+        return Decision("browse", action="read", why="read words")
+    m = BROWSER_SCROLL.match(plain)
+    if m:
+        edge = m.group("edge")
+        if edge:
+            return Decision("browse", action="scroll", args={"direction": "bottom" if edge == "end" else edge})
+        amt = m.group("amt") or ""
+        amount = ("little" if "bit" in amt or "little" in amt else "half" if "half" in amt
+                  else "lot" if "lot" in amt else "page")
+        return Decision("browse", action="scroll", args={"direction": m.group("dir") or "down", "amount": amount})
+    m = BROWSER_RESULT.match(plain)
+    if m:
+        word = m.group("ord") or m.group("ord2") or m.group("num") or "1"
+        n: Any = _NUMBERS.get(word, word)  # "last" stays a word (the browser counts the results)
+        return Decision("browse", action="open_result", args={"n": int(n) if str(n).isdigit() else n})
+    if BROWSER_BACK.match(plain):
+        return Decision("browse", action="back")
+    if BROWSER_FORWARD.match(plain):
+        return Decision("browse", action="forward")
+    if BROWSER_RELOAD.match(plain):
+        return Decision("browse", action="reload")
+    m = BROWSER_ZOOM.match(plain)
+    if m:
+        word = next(g for g in m.groups() if g)
+        level = "in" if word in ("in", "bigger", "larger") else "out" if word in ("out", "smaller") else "reset"
+        return Decision("browse", action="zoom", args={"level": level})
     return None
 
 
@@ -513,7 +628,7 @@ class ScreenDirector:
             return
         self._turn += 1
         self._lines.append(("heard", text[:LINE_CHARS]))
-        if handled or not self.enabled():
+        if handled or self._browser_turn(text) or not self.enabled():
             return
         t0 = self._now()
         child = self._speaker(t0)
@@ -538,7 +653,7 @@ class ScreenDirector:
         if why is None and not self._cloud_ok():
             why = "cloud off"
         if why is None and self._screen_taken():
-            why = "a game is on the screen"
+            why = "a game or the browser is on the screen"
         if why is not None:
             log.debug("screen: nothing to decide (%s)", why)
             return
@@ -797,6 +912,137 @@ class ScreenDirector:
         self.history.append({"what": what, "path": path, "ms": ms, "detail": detail})
         log.info("screen: %s (%s, %d ms)%s", what, path, ms, f": {detail}" if detail else "")
 
+    # ------------------------------------------------------------ the browser view (littlebot/browser)
+    @property
+    def browser(self) -> Any:
+        return getattr(self.ctx, "browser", None)
+
+    def _browser_turn(self, text: str) -> bool:
+        """An explicit browser request, or steering the browser while it shows: done here, never a card. False:
+        an ordinary turn (also when there is no browser view, or the parent switched it off)."""
+        browser = self.browser
+        if browser is None or self._closed:
+            return False
+        try:
+            up = bool(browser.active)
+            if not up and not browser.offered():
+                return False
+        except Exception:  # noqa: BLE001
+            return False
+        from littlebot.chatgpt import live  # noqa: PLC0415 - a look at the camera is the call's own
+
+        if live.asks_to_see(text):
+            return False
+        rule = browser_rule(text, up=up)
+        if rule is None:
+            return False
+        t0 = self._now()
+        if self._speaker(t0):  # voice recognition says the child spoke: no browser, no card
+            log.debug("screen: no browser (the child spoke)")
+            return True
+        self._spawn(self._browse(rule, t0, self._turn))
+        return True
+
+    async def _browse(self, rule: Decision, t0: float, turn: int) -> None:
+        browser = self.browser
+        try:
+            if rule.action == "open":
+                await self._browse_open((rule.spec or {}).get("query"), t0, turn)
+            elif rule.action == "read":
+                result = await browser.read()
+                text = str(result.get("text") or "").strip() if result.get("ok") else ""
+                self._log("browser read", t0, "rule", "" if result.get("ok") else str(result.get("error")))
+                if text:
+                    from littlebot.browser.service import READ_NOTE  # noqa: PLC0415
+
+                    self._tell(READ_NOTE.format(text=text))
+                elif result.get("ok"):
+                    self._tell("The page on your screen shows no text to read. Say so briefly.")
+            elif rule.action == "close":
+                ok = bool(browser.close("asked in the voice chat"))
+                self._log("browser close", t0, "rule", "" if ok else "it wasn't open")
+                if ok:
+                    from littlebot.browser.service import CLOSED_NOTE  # noqa: PLC0415
+
+                    self._tell(CLOSED_NOTE)
+            else:
+                result = await browser.control(rule.action, dict(rule.args), source=SOURCE)
+                self._log(f"browser {rule.action}", t0, "rule", "" if result.get("ok") else str(result.get("error")))
+                self._browse_note(rule, result)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - a browser that can't be steered is left as it is
+            log.warning("screen: the browser request failed", exc_info=True)
+
+    async def _browse_open(self, query: str | None, t0: float, turn: int) -> None:
+        from littlebot.browser.service import ERRORS, OPEN_NOTE, REFUSED_NOTE  # noqa: PLC0415
+
+        path = "rule"
+        if not query:
+            query, path = await self._browse_query(turn), "rule+model"
+        result = await self.browser.open(query or None, source=SOURCE)
+        self._log("browser open", t0, path, "" if result.get("ok") else str(result.get("error")))
+        if result.get("ok"):
+            if not result.get("already"):
+                self._tell(OPEN_NOTE.format(what=str(result.get("showing") or "Google")[:NOTE_CHARS]))
+        elif result.get("error") == "blocked":
+            self._tell(BROWSER_BLOCKED_NOTE)
+        else:
+            why = str(result.get("detail") or ERRORS.get(str(result.get("error")), "it didn't work this time."))
+            self._tell(REFUSED_NOTE.format(why=why[:NOTE_CHARS]))
+
+    async def _browse_query(self, turn: int) -> str:
+        """What "google it" means here: the model's few words from the conversation, else the last thing they
+        asked before (when it was more than a word or two), else "" (Google's start page)."""
+        earlier = [t for who, t in list(self._lines)[:-1] if who == "heard"]
+        fallback = ""
+        if earlier and real_words(earlier[-1]) >= 2 and browser_rule(earlier[-1], up=True) is None:
+            fallback = earlier[-1][:QUERY_CHARS]
+        if not self._cloud_ok() or len(self._lines) < 2:
+            return fallback
+        try:
+            provider = self._provider_factory()
+            opts = _reply_options(provider.reply, effort=self.effort)
+            robot = getattr(self.ctx.config, "robot_name", "LittleBot")
+            reply = await asyncio.wait_for(provider.reply(
+                [{"role": "user", "content": self._context()}], system=QUERY_PROMPT.format(robot=robot),
+                max_tokens=100, timeout=self.timeout, **opts), self.timeout)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - no model: their last question
+            return fallback
+        obj = parse_decision(getattr(reply, "text", "") or "")
+        query = obj.get("query") if isinstance(obj, dict) else None
+        if not isinstance(query, str):
+            return fallback
+        return _text(query, QUERY_CHARS) or fallback
+
+    def _browse_note(self, rule: Decision, result: dict[str, Any]) -> None:
+        """A short note to the voice about what the browser did (so it can say okay, or why not)."""
+        if result.get("already"):
+            return
+        showing = str(result.get("showing") or "the page")[:NOTE_CHARS]
+        if not result.get("ok"):
+            error = result.get("error")
+            if error == "no_result":
+                self._tell("There is no such result on the page. Say so briefly.")
+            elif error not in (None, "not_open"):
+                self._tell(f"The browser couldn't do that: {result.get('detail') or error} Say so briefly.")
+            return
+        if rule.action == "open_result":
+            what = f"the browser opened \u201c{result.get('opened') or 'the result'}\u201d"
+        elif rule.action in ("back", "forward"):
+            what = f"the browser went {rule.action}: it shows {showing}" if result.get("moved", True) \
+                else f"there is no page to go {rule.action} to"
+        elif rule.action == "scroll":
+            what = "the browser scrolled" + (" (the bottom of the page)" if result.get("at_bottom") else "")
+        elif rule.action == "zoom":
+            what = "the browser's pages are " + ("bigger" if rule.args.get("level") == "in" else "smaller"
+                                                 if rule.args.get("level") == "out" else "back to normal size")
+        else:
+            what = "the browser reloaded the page"
+        self._tell(BROWSER_DONE_NOTE.format(what=what))
+
     # ------------------------------------------------------------ helpers
     def _types(self) -> dict[str, Any]:
         if self._types_fn is not None:
@@ -854,8 +1100,9 @@ class ScreenDirector:
 
     def _screen_taken(self) -> bool:
         games = getattr(self.ctx, "games", None)
+        browser = getattr(self.ctx, "browser", None)
         try:
-            return games is not None and bool(games.active)
+            return (games is not None and bool(games.active)) or (browser is not None and bool(browser.active))
         except Exception:  # noqa: BLE001
             return False
 
@@ -866,5 +1113,5 @@ class ScreenDirector:
         return task
 
 
-__all__ = ["Decision", "ScreenDirector", "clean_args", "clean_spec", "local_rule", "parse_decision", "prefilter",
-           "unsafe"]
+__all__ = ["Decision", "ScreenDirector", "browser_rule", "clean_args", "clean_spec", "local_rule", "parse_decision",
+           "prefilter", "unsafe"]
