@@ -128,6 +128,17 @@ FOLLOW_UPS = re.compile(r"(?:and|what about|how about) (?:this|that|these|those|
                         r"how many (?:now|this time)|(?:what about|how about|and) (?:this|that) (?:one )?now")
 _FILLERS = re.compile(r"^(?:(?:hey|hi|oh|ooh|wow|look|so|ok|okay|um|uh|littlebot|little bot|robot) )+|"
                       r"(?: (?:littlebot|little bot|robot|please))+$")
+# "Do you know who I am?", "who's this?": answered by face recognition (littlebot/vision/faces.py), when it's on.
+# Whole sentences (after _sentences), so "who is this song by" or "who is the president" never count.
+WHO_SENTENCES = re.compile(
+    r"(?:(?:and|but|now|well|then|so|tell me|guess) )*(?:"
+    r"who am i|(?:do |can )?you (?:know|remember|recogni[sz]e|tell) (?:who i am|who this is|who is (?:here|talking|"
+    r"speaking|with you|in front of you)|me|us|my face|my name)|"
+    r"who (?:is|are) (?:this|that|these|those|here|there|talking|speaking|with you|in front of (?:you|the camera|"
+    r"your camera))(?: (?:person|man|lady|woman|guy|grown up|people))?|"
+    r"who (?:are you|do you think you are) (?:talking|speaking) to|who (?:can|do) you see|"
+    r"can you see (?:me|who i am|who this is|who is here)|what is my name|who do you think i am"
+    r")(?: (?:now|then|again|yet|today|right now|already))?")
 FOLLOW_UP_S = 30.0  # "and now?" this soon after a look asks to look again
 LOOK_REUSE_S = 8.0  # a look this recent answers the same question again: one photo per question
 # The voice usually hands a seeing question over a moment after the person's last words, and then gets the
@@ -232,6 +243,7 @@ STILL_WORKING = ("LittleBot is still working on that. Say, in a few words, that 
                  "tell them in a moment, then wait: the answer comes next.")
 # "remember: Ali is Amara's dad" / "forget: ..." from the voice (VOICE_INSTRUCTIONS); not a question about the past.
 REMEMBER_ASK = re.compile(r"^\s*(?:please\s+)?(remember|forget)\b\s*(?::|that\b)?\s*([^?]+?)[\s.!]*$", re.I)
+FACES_WAIT_S = 1.0  # from the call's start: how long connecting waits for the first face check (see _instructions)
 TALKS_FROM_MONTHS = 24  # younger: whoever talks to LittleBot in sentences is a grown-up, not the child
 LATE_ANSWER = "Here is the answer to what they asked a moment ago: {answer} Tell them now, in your own words."
 LATE_FAILED = "What they asked a moment ago didn't work out this time. Say so briefly; they can ask again."
@@ -773,6 +785,7 @@ class LiveCall:
         offer = await self.pc.createOffer()
         await self.pc.setLocalDescription(offer)  # gathers candidates (no trickle ICE with this endpoint)
         sdp = self.pc.localDescription.sdp
+        await self._first_face_check(t0)
         timeout = self.cfg.live_connect_timeout_seconds
         voices = list(dict.fromkeys(v.strip().lower() for v in [self.cfg.live_voice, *self.cfg.live_voice_fallbacks]
                                     if v and v.strip())) or ["sol"]
@@ -816,7 +829,8 @@ class LiveCall:
         if age is not None and age < TALKS_FROM_MONTHS:
             text += (f"\n{who[0].upper() + who[1:]} is too young to talk in sentences: whoever talks to you in words "
                      f"is one of {who}'s grown-ups, never {who}, so don't call them {who}. Babbling, cooing and baby "
-                     f"sounds are {who}. If a grown-up tells you who they are, use their name.")
+                     f"sounds are {who}. If a grown-up tells you who they are, use their name; if you don't know which grown-up is "
+                     f"talking, use no name for them.")
         else:
             text += (f"\nGrown-ups talk to you too: only call someone {who} when it's clearly the child. If a "
                      f"grown-up tells you who they are, use their name.")
@@ -842,6 +856,26 @@ class LiveCall:
         if nick:
             kept = [re.sub(rf"\b{re.escape(nick)}\b", "the little one", n, flags=re.I) for n in kept]
         return kept
+
+    async def _first_face_check(self, t0: float) -> None:
+        """Give the first face check a moment (FACES_WAIT_S from the start) so the instructions can say who is here."""
+        faces = self._faces
+        if faces is None or faces.checked.is_set():
+            return
+        wait = FACES_WAIT_S - max(0.0, self.svc._now() - t0)
+        if wait > 0:
+            try:
+                await asyncio.wait_for(asyncio.shield(faces.checked.wait()), wait)
+            except asyncio.TimeoutError:
+                log.info("live voice: the first face check wasn't ready in %.1f s; connecting anyway", FACES_WAIT_S)
+
+    def _nickname(self) -> str | None:
+        try:
+            from littlebot.brain.prompts import clean_child_name  # noqa: PLC0415
+
+            return clean_child_name((self.ctx.settings.get("profile") or {}).get("nickname"))
+        except Exception:  # noqa: BLE001
+            return None
 
     def _child_name(self) -> str | None:
         """The child's nickname from the profile, unless the parent switched sharing it off (``ai.share_child_name``)."""
@@ -1206,6 +1240,10 @@ class LiveCall:
                 return
             if await self._video_hand_off(d.id, question):
                 return
+            if self._who_asked(question):  # "who is here": face recognition answers, on the robot
+                log.info("live voice: hand-off received (kind=who)")
+                await self._deliver(d.id, self._spawn(self._look_for_voice(question, kind="who")), "who")
+                return
             control = self._is_control(question) and not (
                 seeing and SEE_FIRST.search(question) and not CONTROL_ACTS.search(question))
             action = None if control or info else _face_request(question)
@@ -1422,6 +1460,20 @@ class LiveCall:
             return None
         return get_look(self.ctx)
 
+    def _who_asked(self, text: str, *, partial: bool = False) -> bool:
+        """ "Do you know who I am?" while face recognition can answer it (on, a camera, models, someone added)."""
+        faces = self._faces
+        if faces is None or faces.closed or not text:
+            return False
+        if text.strip().lower().startswith(("who is here", "who:")):  # the voice's own hand-off (FACES_INTRO)
+            hit = True
+        else:
+            hit = any(WHO_SENTENCES.fullmatch(s) for s in _sentences(text, partial=partial))
+        try:
+            return hit and faces.faces.blocked_reason() is None
+        except Exception:  # noqa: BLE001
+            return False
+
     def _needs_camera(self, question: str) -> bool:
         """A hand-off answered by looking, or, when looking isn't allowed, by saying why."""
         if not (WANTS_LOOK.search(question) or asks_to_see(question)):
@@ -1438,7 +1490,7 @@ class LiveCall:
         job = self._shared_look()
         return job is not None and job.by_user and bool(SEEN_HINT.search(question))
 
-    async def _look_for_voice(self, question: str) -> str:
+    async def _look_for_voice(self, question: str, kind: str = "look") -> str:
         """A seeing hand-off: use the look already taken for this question, else take one.
 
         Answers as soon as the camera answer's first sentence is ready; any rest follows as a note. If
@@ -1452,7 +1504,7 @@ class LiveCall:
                      int((t0 - job.started) * 1000))
             why = f"the hand-off came at +{int((t0 - job.started) * 1000)} ms"
         else:
-            job = self._start_look(question, source="delegation")
+            job = self._start_look(question, source="delegation", kind=kind)
             why = "the hand-off asked for it"
         await asyncio.shield(job.progress.wait())
         if job.blocked:
@@ -1487,13 +1539,15 @@ class LiveCall:
         since = began - job.ended if job is not None and job.ended is not None and began is not None \
             and job.by_user and self._user_turns >= job.turn else None
         earlier = since is not None and since >= 0
-        if not asks_to_see(text, partial=partial, follow_up=since is not None and 0 <= since < FOLLOW_UP_S):
+        who = self._who_asked(text, partial=partial)
+        if not who and not asks_to_see(text, partial=partial, follow_up=since is not None and 0 <= since < FOLLOW_UP_S):
             return
         if job is not None and not earlier and (job.ended is None or self.svc._now() - job.ended < LOOK_REUSE_S):
             return  # a look for this question is under way or just happened
-        if self._camera() is None:
+        if not who and self._camera() is None:
             return
-        self._spawn(self._tell_voice(self._start_look(text, source="partial" if partial else "user")))
+        self._spawn(self._tell_voice(self._start_look(text, source="partial" if partial else "user",
+                                                      kind="who" if who else "look")))
 
     def _look_if_asked_early(self, text: str) -> None:
         """A piece of what the person is saying (``input_transcript.added``): look once the words ask to."""
@@ -1514,18 +1568,21 @@ class LiveCall:
             log.info("live voice: asked to stop (before their words were final)")
             self.end("asked to stop")
 
-    def _start_look(self, question: str, *, source: str) -> "_LookJob":
+    def _start_look(self, question: str, *, source: str, kind: str = "look") -> "_LookJob":
         # a look started while the person is still talking belongs to the turn their words will end
         turn = self._user_turns + (1 if source == "partial" else 0)
         job = self._look_job = _LookJob(started=self.svc._now(), by_user=source != "delegation", turn=turn,
-                                        source=source)
+                                        source=source, kind=kind)
         self._hush(job)  # whatever the voice says until the answer is only "one second..."
         job.task = self._spawn(self._run_look(job, question))
         return job
 
     async def _run_look(self, job: "_LookJob", question: str) -> None:
         try:
-            await self._look(job, question)
+            if job.kind == "who" and self._faces is not None:
+                job.text, job.ok, job.outcome = await self._faces.answer_now(), True, "who"
+            else:
+                await self._look(job, question)
         except Exception:  # noqa: BLE001 - a broken look must never leave the voice waiting
             log.warning("live voice: looking failed", exc_info=True)
         finally:
@@ -1635,7 +1692,8 @@ class LiveCall:
 
             if on and self._faces is None:
                 self._faces = faces.CallFaces(faces.get_faces(self.ctx), tell=self._tell_faces,
-                                              hide=faces.hidden_child_name(self.ctx), now=self.svc._now)
+                                              hide=faces.hidden_child_name(self.ctx), child=self._nickname(),
+                                              now=self.svc._now)
                 self._spawn(self._faces.run())
             elif not on and self._faces is not None:
                 self._faces.close()
@@ -1888,6 +1946,7 @@ class _LookJob:
     by_user: bool  # started from the person's own words, not a hand-off
     turn: int  # the LiveCall._user_turns its question belongs to
     source: str = "user"  # partial (words still coming) | user (their finished words) | delegation (hand-off)
+    kind: str = "look"  # look (a photo for ChatGPT) | who (face recognition on the robot, nothing sent)
     task: asyncio.Task[None] | None = None
     ended: float | None = None
     claimed: bool = False  # a hand-off got its answer, so the voice isn't also sent a note

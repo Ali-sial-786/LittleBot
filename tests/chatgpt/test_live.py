@@ -1253,6 +1253,7 @@ class SeenFaces:
         self.seen = list(people)
         self.reason = reason
         self.checks = 0
+        self.delay = 0.0  # each check takes this long (the Pi loading the models, a slow photo)
         self.store = SimpleNamespace(has_samples=lambda: True)
 
     def blocked_reason(self) -> str | None:
@@ -1262,6 +1263,8 @@ class SeenFaces:
         from littlebot.vision import faces  # noqa: PLC0415
 
         self.checks += 1
+        if self.delay:
+            await asyncio.sleep(self.delay)
         return faces.Sighting(0.0, tuple(faces.Seen(p, 0.8 if p else 0.1, (0.05 + 0.6 * i, 0.3, 0.2, 0.3))
                                          for i, p in enumerate(self.seen)))
 
@@ -1482,3 +1485,67 @@ async def test_an_error_from_chatgpt_is_logged_with_its_message_and_what_was_sen
     assert "Item not found (param id); LittleBot last sent: a hand-off answer (" in caplog.text
     assert "Ali" not in caplog.text  # never the text itself
     assert svc.status()["active"]
+
+
+async def test_connecting_waits_a_moment_for_the_first_face_check(live, ctx):
+    svc, server, _audio, _provider, _alerts = live
+    seen = ctx.extras["faces"] = SeenFaces(person(1, "Ali", "dad"))
+    seen.delay = 0.4  # slower than building the offer, well inside FACES_WAIT_S
+    await connect(svc, server)
+    assert "In front of your camera now: Ali (dad)." in server.requests[-1]["body"]["session"]["instructions"]
+
+
+async def test_do_you_know_who_i_am_is_answered_by_face_recognition(live, ctx, quick_faces):
+    svc, server, _audio, provider, _alerts = live
+    ctx.settings.set("profile", {"nickname": "Amara", "age_months": 10})
+    ctx.extras["faces"] = SeenFaces(person(1, "Ali", "dad"))
+    await connect(svc, server)
+    hear(server, "Hey LittleBot, do you know who I am?")
+    await wait_for(lambda: any("the grown-up talking to you is Ali (dad)" in n for n in notes(server)))
+    assert not provider.calls  # answered on the robot: no photo, no text model
+
+
+async def test_a_who_hand_off_gets_the_names(live, ctx, quick_faces):
+    svc, server, _audio, _provider, _alerts = live
+    ctx.extras["faces"] = SeenFaces(person(1, "Ali", "dad"))
+    await connect(svc, server)
+    delegate(server, "w1", "who is here")
+    await wait_for(lambda: answers(server, "w1"))
+    assert "Ali (dad)" in answers(server, "w1")[0]
+
+
+async def test_the_baby_in_view_is_never_taken_for_the_grown_up_asking(live, ctx, quick_faces):
+    svc, server, _audio, _provider, _alerts = live
+    ctx.settings.set("profile", {"nickname": "Amara", "age_months": 10})
+    ctx.extras["faces"] = SeenFaces(person(3, "Amara", "the baby"))
+    await connect(svc, server)
+    hear(server, "Who am I?")
+    await wait_for(lambda: any("grown-up who isn't in view" in n for n in notes(server)))
+    assert any("Never call them by the little one's name" in n for n in notes(server))
+
+
+async def test_who_questions_about_other_things_are_left_to_the_voice(live, ctx, quick_faces):
+    svc, server, _audio, _provider, _alerts = live
+    seen = ctx.extras["faces"] = SeenFaces(person(1, "Ali", "dad"))
+    await connect(svc, server)
+    checks = seen.checks
+    hear(server, "Who is this song by?")
+    hear(server, "Who is the president of France?")
+    await asyncio.sleep(0.3)
+    assert not any("the grown-up talking to you" in n for n in notes(server))
+    assert seen.checks - checks < 10  # only the regular checks
+
+
+def test_who_questions_are_whole_sentences_about_who_is_here():
+    from littlebot.chatgpt.live import WHO_SENTENCES, _sentences
+
+    def asks(text: str) -> bool:
+        return any(WHO_SENTENCES.fullmatch(s) for s in _sentences(text, partial=False))
+
+    for text in ("Do you know who I am?", "Hey LittleBot, who am I?", "Who's this?", "Do you recognise me?",
+                 "Can you see me?", "Who are you talking to?", "What's my name?", "Do you remember me?",
+                 "Who is in front of you right now?", "Who do you think I am?"):
+        assert asks(text), text
+    for text in ("Who is this song by?", "Who is the president?", "Who sings Baby Shark?", "I am Ali.",
+                 "Who wants a snack?", "Do you know what time it is?"):
+        assert not asks(text), text

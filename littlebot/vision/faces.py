@@ -117,7 +117,8 @@ SAMPLE_ERRORS = {
 }
 FACES_INTRO = ("LittleBot recognises the family members a grown-up showed it, on the robot, and tells you who is "
                "in front of your camera. The person talking may be someone else nearby. Use only the names "
-               "LittleBot gives you; never guess who someone is.")
+               "LittleBot gives you; never guess who someone is. When someone asks who they are or who you can "
+               "see, delegate it to the client as \"who is here\" and wait.")
 QUIET = "Don't announce this; just know it."
 
 _SCHEMA = """
@@ -770,6 +771,36 @@ def look_context(sighting: Sighting, hide: str | None = None) -> str | None:
             "you can't tell who is who.")
 
 
+_CHILD_ROLE = re.compile(r"\b(?:baby|child|kid|toddler|daughter|son|little one)\b", re.I)
+
+
+def who_answer(sighting: Sighting | None, hide: str | None = None, child: str | None = None) -> str:
+    """For "do you know who I am?" / "who is this?": what a fresh check saw, for the voice to say now.
+    ``child``: the child's nickname. Whoever asks is talking, so the child in view (too young to ask)
+    is never taken for the person asking."""
+    if sighting is None:
+        return ("Nobody has been added to LittleBot's face recognition yet, so you can't tell who anyone is. Say so; "
+                "a grown-up can add the family under Who's who on the Profile page of the dashboard.")
+    if not sighting.faces:
+        return ("Nobody is in front of your camera right now, so you can't tell who is talking. Say so, and ask "
+                "them to come in front of your camera.")
+    people = sighting.people()
+    if not people:
+        return ("LittleBot's face recognition doesn't know the person in front of the camera. Say you don't "
+                "recognise them yet, never guess a name; a grown-up can add them under Who's who on the dashboard.")
+    kids = [p for p in people if _CHILD_ROLE.search(p.role) or (child and p.name.lower() == child.lower())]
+    grown = [p for p in people if p not in kids]
+    others = f", and {sighting.unknown} {'person' if sighting.unknown == 1 else 'people'} it doesn't know" \
+        if sighting.unknown else ""
+    seen = f"LittleBot's face recognition sees {describe(people, hide)} in front of the camera right now{others}."
+    if len(grown) == 1 and not sighting.unknown:
+        return f"{seen} So the grown-up talking to you is {describe(grown, hide)}: answer warmly, by name."
+    if not grown:
+        return (f"{seen} The person asking is a grown-up who isn't in view, so you can't tell which grown-up it "
+                "is: say who you can see, and ask who they are. Never call them by the little one's name.")
+    return f"{seen} Say who you can see; if you can't tell which of them is talking, say so rather than guess."
+
+
 class CallFaces:
     """Who is in front of the camera during one live call (littlebot/chatgpt/live.py).
 
@@ -779,10 +810,11 @@ class CallFaces:
     again). ``for_look()``: their names for a camera look. Only names and roles are ever passed on."""
 
     def __init__(self, faces: FaceRecognition, *, tell: Callable[[str], bool], hide: str | None = None,
-                 now: Callable[[], float] = time.monotonic) -> None:
+                 child: str | None = None, now: Callable[[], float] = time.monotonic) -> None:
         self.faces = faces
         self.tell = tell
         self.hide = hide
+        self.child = child  # the child's nickname: never taken for the person asking "who am I?"
         self._now = now
         self.presence = Presence()
         self.latest: Sighting | None = None
@@ -792,6 +824,7 @@ class CallFaces:
         self._checks = 0
         self._said_why: str | None = None
         self.closed = False
+        self.checked = asyncio.Event()  # the first check is done (or recognising can't run): the intro can say who
 
     def intro(self) -> str:
         """For the call's instructions (built just before connecting): the latest check, if there is one."""
@@ -813,6 +846,23 @@ class CallFaces:
             return None
         return look_context(s, self.hide)
 
+    async def answer_now(self) -> str:
+        """A fresh check for "who am I?", also kept as the latest (the voice then knows who is here)."""
+        try:
+            sighting = await self.faces.who_is_there()
+        except FacesUnavailable as e:
+            self._say_why(e.reason)
+            return ("LittleBot's face recognition can't look right now, so you can't tell who is there. Say so "
+                    "briefly; never guess.")
+        now = self._now()
+        if sighting is not None:
+            self.latest, self.latest_at = sighting, now
+            self.presence.update(sighting.people(), now, at_once=True)
+            self.told, self._told_at = frozenset(p.id for p in sighting.people()), now
+        log.info("live voice: asked who is there (%d face(s), %d known)",
+                 len(sighting.faces) if sighting else 0, len(sighting.people()) if sighting else 0)
+        return who_answer(sighting, self.hide, self.child)
+
     def close(self) -> None:
         self.closed = True
         self.latest = None
@@ -827,7 +877,10 @@ class CallFaces:
                 self._blocked(reason, now)
             elif last_check is None or now - last_check >= CHECK_EVERY_S:
                 last_check = now
-                await self._check()
+                try:
+                    await self._check()
+                finally:
+                    self.checked.set()
             self._maybe_tell(self._now())
             await asyncio.sleep(TICK_S)
 
@@ -853,6 +906,7 @@ class CallFaces:
         self.presence.update(sighting.people(), now, at_once=self._checks == 1)
 
     def _blocked(self, reason: str, now: float) -> None:
+        self.checked.set()
         self._say_why(reason)
         if reason in ("off", "camera_off"):  # the parent withdrew it: forget at once, and tell the voice
             self.latest = None
@@ -884,4 +938,4 @@ class CallFaces:
 
 __all__ = ["CallFaces", "FaceEngine", "FaceRecognition", "FacesUnavailable", "Known", "PeopleStore", "Presence",
            "Seen", "SeenFace", "Sighting", "assign", "best_match", "centre_of", "clean_label", "describe",
-           "get_faces", "hidden_child_name", "look_context"]
+           "get_faces", "hidden_child_name", "look_context", "who_answer"]

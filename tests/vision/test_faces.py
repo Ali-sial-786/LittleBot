@@ -814,3 +814,30 @@ def test_the_real_models_load_when_they_are_downloaded(ctx):
         pytest.skip("face models not downloaded (scripts/download_models.py faces)")
     engine = F.FaceEngine(det, sface)
     assert engine.look(np.full((480, 640, 3), 90, np.uint8)) == []  # a blank photo has nobody in it
+
+
+def _who(*people: Any) -> F.Sighting:
+    def known(pid: int, name: str, role: str) -> F.Known:
+        centre = np.zeros(F.FEATURES, np.float32)
+        centre[pid] = 1.0
+        return F.Known(pid, name, role, centre)
+
+    seen = [F.Seen(known(*p) if p else None, 0.8 if p else 0.1, (0.1, 0.1, 0.2, 0.2)) for p in people]
+    return F.Sighting(0.0, tuple(seen))
+
+
+def test_who_answer_names_the_grown_up_and_never_takes_the_baby_for_the_one_asking():
+    assert "the grown-up talking to you is Ali (dad)" in F.who_answer(_who((1, "Ali", "dad")))
+    baby = F.who_answer(_who((2, "Amara", "the baby")), child="Amara")
+    assert "a grown-up who isn't in view" in baby and "Never call them by the little one's name" in baby
+    assert "isn't in view" in F.who_answer(_who((2, "Amara", "")), child="amara")  # by name, whatever the role
+    both = F.who_answer(_who((1, "Ali", "dad"), (2, "Amara", "the baby")), child="Amara")
+    assert "Ali (dad) and Amara (the baby)" in both and "the grown-up talking to you is Ali (dad)" in both
+    two = F.who_answer(_who((1, "Ali", "dad"), (3, "Sara", "mum")))
+    assert "if you can't tell which of them is talking, say so" in two
+    assert "1 person it doesn't know" in F.who_answer(_who((1, "Ali", "dad"), None))
+    assert "doesn't know the person" in F.who_answer(_who(None))
+    assert "Nobody is in front of your camera" in F.who_answer(_who())
+    assert "Nobody has been added" in F.who_answer(None)
+    hidden = F.who_answer(_who((2, "Amara", "the baby")), hide="Amara", child="Amara")
+    assert "Amara" not in hidden and "the little one" in hidden
