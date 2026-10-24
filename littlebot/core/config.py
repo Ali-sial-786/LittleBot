@@ -298,7 +298,7 @@ class ChatGPTConfig(_Section):
     # is heard. auto = only with echo cancelling (PipeWire's echo-cancelled devices in use), on = always (with a
     # headset or hardware echo cancelling), off = never (half-duplex as before).
     live_barge_in: Literal["auto", "on", "off"] = "auto"
-    live_barge_in_speech_ms: int = Field(default=400, ge=150, le=2000)  # voiced grown-up speech needed
+    live_barge_in_speech_ms: int = Field(default=300, ge=150, le=2000)  # voiced grown-up speech needed
     live_barge_in_over_echo_db: float = Field(default=10.0, ge=0.0, le=40.0)  # this much louder than the echo left
     live_barge_in_min_level: float = Field(default=0.008, ge=0.0, le=0.5)  # and at least this loud (RMS 0..1)
     live_barge_in_max_pitch_hz: float = Field(default=260.0, ge=150.0, le=400.0)  # higher voices: a child's

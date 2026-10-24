@@ -80,7 +80,7 @@ ECHO_REF_S = 0.3  # the echo of what the speaker played up to this long ago may 
 ECHO_LEARN_MIN = 0.002  # the echo is measured only while the speaker plays at least this loud (RMS after volume)
 ID_AFTER_S = 0.2  # ask voice recognition (ctx.voices) about a run once this much was heard
 ID_TIMEOUT_S = 1.0
-FAST_SPEECH_S = 0.25  # voice recognition says a grown-up: this much speech is enough
+FAST_SPEECH_S = 0.2  # voice recognition says a grown-up: this much speech is enough
 PREROLL_MAX_S = 0.8  # the microphone kept for the pre-roll (in memory, the last 0.8 s only)
 PREROLL_LEAD_S = 0.1  # the pre-roll starts this long before their speech did
 QUIET_LEVEL = 0.0105  # RMS below which a frame of the pre-roll is a pause (as in littlebot/audio/carry.py)
@@ -102,7 +102,7 @@ class BargeInSettings:
     """``chatgpt.live_barge_in*`` (littlebot/core/config.py, docs/CHATGPT.md)."""
 
     mode: str = "auto"  # auto: only with echo cancelling | on | off
-    speech_s: float = 0.4  # voiced grown-up speech needed
+    speech_s: float = 0.3  # voiced grown-up speech needed
     over_echo_db: float = 10.0  # louder than what is left of the voice (and the room's noise) by this much
     min_level: float = 0.008  # and at least this loud (RMS, full scale 1.0)
     max_pitch_hz: float = 260.0  # voiced above this: a child (doesn't interrupt)
@@ -244,7 +244,8 @@ class BargeInDetector:
             return False
         frames = max(1.0, (now - run.onset) / FRAME_S)
         need = FAST_SPEECH_S if run.grown_up else self.s.speech_s
-        if now - run.onset + 1e-6 >= need and run.adult >= ADULT_SHARE * frames and run.adult > 2 * run.child:
+        # only while they are still loud: a short "mm" ends, and the gap after it doesn't count as speech
+        if loud and now - run.onset + 1e-6 >= need and run.adult >= ADULT_SHARE * frames and run.adult > 2 * run.child:
             self.fired, self.run = run, None
             return True
         return False
@@ -293,6 +294,14 @@ def is_go_ahead(text: str) -> bool:
     """"oops, go ahead", "sorry, carry on", "never mind, keep going" ...: they didn't mean to interrupt."""
     plain = " ".join(re.sub(r"[^a-z' ]+", " ", text.lower().replace("’", "'")).split())
     return bool(plain) and GO_AHEAD.match(plain) is not None
+
+
+def _latency_ms(stream: Any) -> float:
+    """A stream's latency (PortAudio's figure, seconds) in ms for the log, 0 when it has none."""
+    try:
+        return max(0.0, float(getattr(stream, "latency", 0.0) or 0.0) * 1000)
+    except (TypeError, ValueError):
+        return 0.0
 
 
 class LiveAudio:
@@ -419,8 +428,9 @@ class LiveAudio:
         self._opened_at = self._now()
         self.mic_at = self.speaker_at = None
         self._decide_barge_in(mic, spk)
-        log.info("live audio: mic %s @ %d Hz, speaker %s @ %d Hz%s; %s", mic["name"], self.mic_rate, spk["name"],
-                 self.out_rate, f" (after {tries} tries)" if tries > 1 else "", self._mode_note())
+        log.info("live audio: mic %s @ %d Hz, speaker %s @ %d Hz%s, latency mic %.0f ms / speaker %.0f ms; %s",
+                 mic["name"], self.mic_rate, spk["name"], self.out_rate, f" (after {tries} tries)" if tries > 1 else "",
+                 _latency_ms(self._in_stream), _latency_ms(self._out_stream), self._mode_note())
 
     def _decide_barge_in(self, mic: dict[str, Any], spk: dict[str, Any]) -> None:
         self.echo_cancelled = dev.is_echo_cancel_device(mic, "input") and dev.is_echo_cancel_device(spk, "output")

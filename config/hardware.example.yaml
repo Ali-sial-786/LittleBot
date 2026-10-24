@@ -117,7 +117,7 @@ motion:
 #   live_echo_tail_ms: 450         # ...and for this long after; raise it if the voice hears itself
 #   live_barge_in: auto            # a grown-up talking over the voice stops it: auto = only with echo
 #                                  # cancelling (scripts/setup_echo_cancel.sh, untested on the Pi) | on | off
-#   live_barge_in_speech_ms: 400   # this much grown-up speech interrupts it
+#   live_barge_in_speech_ms: 300   # this much grown-up speech interrupts it
 #   live_barge_in_over_echo_db: 10.0  # ...louder than what is left of its own voice by this much
 #   live_barge_in_min_level: 0.008    # ...and at least this loud (mic RMS)
 #   live_barge_in_max_pitch_hz: 260.0 # voiced above this = a child: doesn't interrupt

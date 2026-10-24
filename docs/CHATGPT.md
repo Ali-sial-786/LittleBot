@@ -132,7 +132,7 @@ after 10 min"), a safety stop, or an error.
 **With echo cancelling** (set up once with `scripts/setup_echo_cancel.sh`, see
 [PI_SETUP.md](PI_SETUP.md#echo-cancelling)), PipeWire takes LittleBot's own voice out of what the
 microphone hears, so a grown-up can **interrupt it**: just start talking while it speaks. After
-about 0.4 s of your speech its voice fades out, it listens, and ChatGPT hears you from your first
+about 0.3 s of your speech its voice fades out, it listens, and ChatGPT hears you from your first
 word. The face goes from speaking to listening at once.
 
 * **Only grown-ups' voices interrupt it.** It listens for voiced speech at a grown-up's pitch
@@ -607,7 +607,7 @@ chatgpt:
   live_echo_tail_ms: 450          # microphone stays shut this long after LittleBot's voice stops
   live_volume: null               # null = the speaker volume setting; 0..1 (always capped at max_volume)
   live_barge_in: auto             # talking over the voice: auto = only with echo cancelling | on | off
-  live_barge_in_speech_ms: 400    # this much grown-up speech interrupts it
+  live_barge_in_speech_ms: 300    # this much grown-up speech interrupts it
   live_barge_in_over_echo_db: 10  # and it must be this much louder than what is left of its voice
 audio:
   echo_cancel: auto               # use PipeWire's echo-cancelled devices when they exist | on | off
@@ -773,7 +773,7 @@ voice is audible:
   best wins, so a baby's 450 Hz never reads as 225 Hz). Voiced (correlation 0.5 or more) at 75 Hz to
   `live_barge_in_max_pitch_hz` (260) counts as a grown-up, above it as a child.
 * *Long enough:* a run of loud frames (gaps under 0.12 s are consonants) fires after
-  `live_barge_in_speech_ms` (400 ms) when at least 40 % of its frames are grown-up voiced and more
+  `live_barge_in_speech_ms` (300 ms) when at least 40 % of its frames are grown-up voiced and more
   than twice as many as child voiced. A cough (no pitch), a short "mm" (too short), the baby (too
   high), the voice's own echo (not louder than itself) and a quiet TV (the floor) don't.
 * *Voice recognition* (optional): after 0.2 s of a run, `ctx.voices.identify(samples, 16000)` is
@@ -804,7 +804,7 @@ and state go to listening (`LiveCall._barge_in_changed`). Then either:
   sound, at most 2.5 s): a false alarm. The gate shuts and the held voice fades back in where it
   stopped (a little late for the rest of that turn).
 
-One INFO line each time, never any sound: "live voice: interrupted by a grown-up after 0.4 s of
+One INFO line each time, never any sound: "live voice: interrupted by a grown-up after 0.3 s of
 speech (pitch 120 Hz, voice Ali)", "live voice: false alarm (no words within 1.2 s), the voice
 carried on", "live voice: they didn't mean to interrupt ("go ahead"); the voice carries on".
 
@@ -858,7 +858,7 @@ back to text-to-speech; the index is re-read when the file changes. Dashboard: `
 | `live_half_duplex` | `true` | shut the microphone while LittleBot's voice plays. Turn off only with a headset or hardware echo cancellation (barge-in then stays off: the microphone is always open) |
 | `live_echo_tail_ms` | `450` | how long the microphone stays shut after the voice stops |
 | `live_barge_in` | `auto` | a grown-up talking over the voice stops it ([Barge-in](#barge-in-echo-cancelling)): `auto` = only when both devices are PipeWire's echo-cancelled ones (`scripts/setup_echo_cancel.sh`), `on` = always (a headset or hardware echo cancelling), `off` = one at a time |
-| `live_barge_in_speech_ms` | `400` | (150-2000) this much voiced grown-up speech interrupts it. A known grown-up (voice recognition) needs 250 ms |
+| `live_barge_in_speech_ms` | `300` | (150-2000) this much voiced grown-up speech interrupts it. A known grown-up (voice recognition) needs 200 ms |
 | `live_barge_in_over_echo_db` | `10.0` | how much louder than what is left of its own voice (and than the room's noise) speech must be |
 | `live_barge_in_min_level` | `0.008` | and at least this loud (microphone RMS, full scale 1.0) |
 | `live_barge_in_max_pitch_hz` | `260.0` | (150-400) voiced above this counts as a child and doesn't interrupt |

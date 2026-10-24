@@ -75,9 +75,9 @@ def first_fire(mic: np.ndarray, settings: BargeInSettings | None = None, prepare
     return None
 
 
-def test_a_grown_up_talking_over_the_echo_interrupts_after_about_400_ms():
+def test_a_grown_up_talking_over_the_echo_interrupts_after_about_300_ms():
     fired = first_fire(ECHO + NOISE + at(voiced(120, 1.0, 0.05)))
-    assert fired is not None and 2.3 <= fired <= 2.45  # they started at 2.0 s: 0.4 s of speech (live_barge_in_speech_ms)
+    assert fired is not None and 2.2 <= fired <= 2.35  # they started at 2.0 s: 0.3 s of speech (live_barge_in_speech_ms)
     # a woman's voice too, and a deep one
     assert first_fire(ECHO + NOISE + at(voiced(230, 1.0, 0.05, seed=3))) is not None
     assert first_fire(ECHO + NOISE + at(voiced(90, 1.0, 0.05, seed=4))) is not None
@@ -128,7 +128,7 @@ def test_voice_recognition_makes_a_grown_up_quicker_and_a_child_never():
         return prepare
 
     quick = first_fire(adult, prepare=known(True))
-    assert alone is not None and quick is not None and quick <= alone - 0.1  # FAST_SPEECH_S, not 0.4 s
+    assert alone is not None and quick is not None and quick <= alone - 0.1 + 1e-6  # FAST_SPEECH_S, not 0.3 s
     assert first_fire(adult, prepare=known(False)) is None  # a child with a low voice: still no
 
 
@@ -321,10 +321,10 @@ async def test_cutting_in_stops_the_voice_and_sends_them_from_their_first_word(c
         assert np.array_equal(await c.tick(voice=False, user=u), c.mics[-1])  # nothing playing: the microphone is open
         await c.warm_up()
         cut = await c.talk_over(0.6)
-        assert cut is not None and 18 <= cut <= 24  # about 0.4 s of their speech
+        assert cut is not None and 13 <= cut <= 19  # about 0.3 s of their speech
         assert c.events == ["interrupted"] and audio.barge_ins == 1
         assert not audio.speaking and audio.mic_open and audio.interrupted
-        assert "live voice: interrupted by a grown-up after 0.4 s of speech (pitch 12" in caplog.text
+        assert "live voice: interrupted by a grown-up after 0.3 s of speech (pitch 12" in caplog.text
         # the voice faded out in FADE_S (the next ~3 blocks) and is silent since
         k = SPEECH_START + 1 + cut  # the frame read when it decided
         source = c.voice[k].astype(np.float32) / 32768 * 0.5  # what it would have played (tick 0 had no voice)
