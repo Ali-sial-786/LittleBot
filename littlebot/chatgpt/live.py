@@ -562,7 +562,9 @@ class LiveVoiceService(Service):
         return out
 
     # ------------------------------------------------------------ control
-    async def start_session(self, *, parent_present: bool) -> dict[str, Any]:
+    async def start_session(self, *, parent_present: bool, carry: Any = None) -> dict[str, Any]:
+        """``carry``: what was said with the wake word (littlebot/audio/carry.py), sent before the microphone.
+        The caller drops it when this doesn't start; once started, the call drops it when it ends."""
         reason = self.blocked_reason(parent_present)
         if reason:
             return {"ok": False, "error": reason, "detail": ERRORS[reason]}
@@ -575,6 +577,7 @@ class LiveVoiceService(Service):
         if lease is None:
             return {"ok": False, "error": "busy", "detail": ERRORS["busy"]}
         call.lease = lease
+        call.carry = carry
         self._call = call
         self._task = self._loop.create_task(self._run(call), name="live-voice")
         log.info("live voice: parent started a conversation (limit %.0f min)", self.cfg.live_session_minutes)
@@ -612,6 +615,8 @@ class LiveCall:
         self.cfg = svc.cfg
         self.lease: Lease | None = None
         self.audio: Any = None
+        self.carry: Any = None  # what was said with the wake word (littlebot/audio/carry.py), sent first
+        self._feed: Any = None  # live_audio.CarryFeed for it
         self.pc: Any = None
         self.channel: Any = None
         self.phase = "connecting"
@@ -751,9 +756,15 @@ class LiveCall:
         self.audio = self.svc._audio_factory()
         loop = asyncio.get_running_loop()
         await asyncio.to_thread(self.audio.open, loop)
+        mic = self.audio
+        if self.carry is not None:  # started by the wake word: what they said with it goes first
+            from littlebot.chatgpt.live_audio import CarryFeed  # noqa: PLC0415
+
+            mic = self._feed = CarryFeed(self.audio, self.carry)
+            self._feed.start(self._spawn)  # from now on: what they say while it connects waits there too
         bearer = await self.svc.auth.bearer()
         self.pc = RTCPeerConnection(RTCConfiguration(iceServers=[]))
-        self.pc.addTrack(MicTrack(self.audio))
+        self.pc.addTrack(MicTrack(mic))
         self.channel = self.pc.createDataChannel("oai-events")
         self.channel.on("message", self._on_message)
         self.channel.on("open", self._tell_paused_video)
@@ -1772,6 +1783,10 @@ class LiveCall:
         if self._our_state is not None and current in (RobotState.LISTENING, RobotState.SPEAKING, RobotState.THINKING):
             self.ctx.state.release(current, "live voice ended")  # the lease kept anyone else out of these
         self._captions.clear()  # nothing from the conversation is kept
+        if self._feed is not None:
+            self._feed.close()
+        if self.carry is not None:
+            self.carry.drop(self.end_reason or "call ended")
         self._assistant_turn = ""
         self.phase = "ended"
         self.end_reason = self.end_reason or ("failed" if self.error else "ended")

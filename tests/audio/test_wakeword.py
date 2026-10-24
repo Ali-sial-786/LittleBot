@@ -10,6 +10,7 @@ import threading
 import time
 from typing import Any
 
+import numpy as np
 import pytest
 
 from littlebot.audio import wakeword
@@ -37,14 +38,28 @@ class FakeRecognizer:
         self.lock = threading.Lock()
         self.partial_text = ""  # the words so far (VoskKeywordRecognizer.partial)
 
-    def say(self, text: str, conf: float = 1.0) -> None:
+    def say(self, text: str, conf: float = 1.0, *, wake_ended_ago: float | None = None, wake_words: int = 3) -> None:
+        """``wake_ended_ago``: give word times like Vosk (seconds since the first sample it was fed), with the
+        first ``wake_words`` words ending that long before the audio fed so far ends."""
         with self.lock:
-            self.results.append({"text": text, "result": [{"word": w, "conf": conf} for w in text.split()]})
+            result: dict[str, Any] = {"text": text, "result": [{"word": w, "conf": conf} for w in text.split()]}
+            if wake_ended_ago is not None:
+                result["wake_ended_ago"] = (wake_ended_ago, wake_words)
+            self.results.append(result)
 
     def accept(self, pcm16: bytes) -> dict[str, Any] | None:
         with self.lock:
             self.fed += len(pcm16) // 2
-            return self.results.popleft() if self.results else None
+            if not self.results:
+                return None
+            result = self.results.popleft()
+            timing = result.pop("wake_ended_ago", None)
+            if timing is not None:
+                ago, n = timing
+                end = self.fed / self.sample_rate - ago
+                for i, w in enumerate(result["result"]):
+                    w["start"], w["end"] = max(0.0, end - 0.3 * (n - i)), end + 0.2 * max(0, i - n + 1)
+            return result
 
     def reset(self) -> None:
         self.resets += 1
@@ -74,11 +89,14 @@ class ExclusiveMic(MockInput):
 class FakeLive:
     """Enough of LiveVoiceService; like the real one it borrows the audio devices while active."""
 
-    def __init__(self, ctx: Any, *, error: str | None = None, connect: bool = True) -> None:
+    def __init__(self, ctx: Any, *, error: str | None = None, connect: bool = True,
+                 take_mic_after: float = 0.0) -> None:
         self.ctx = ctx
         self.error = error
         self.connect = connect
+        self.take_mic_after = take_mic_after  # the real call borrows the devices at once; a slow start waits
         self.calls: list[bool] = []
+        self.carries: list[Any] = []  # what the wake word carried into each call
         self.active = False
         self.phase: str | None = None
         self.last_call: dict[str, Any] | None = None
@@ -96,8 +114,9 @@ class FakeLive:
         await self.end()
         return {"ok": True}
 
-    async def start_session(self, *, parent_present: bool) -> dict[str, Any]:
+    async def start_session(self, *, parent_present: bool, carry: Any = None) -> dict[str, Any]:
         self.calls.append(parent_present)
+        self.carries.append(carry)
         if self.error:
             return {"ok": False, "error": self.error, "detail": "Sign in with ChatGPT first."}
         self.active, self.phase = True, "connecting"
@@ -106,6 +125,8 @@ class FakeLive:
 
     async def _run(self) -> None:
         audio = self.ctx.audio
+        if self.take_mic_after:
+            await asyncio.sleep(self.take_mic_after)
         await audio.suspend("live voice")
         await asyncio.sleep(0.05)
         if self.connect:
@@ -364,6 +385,171 @@ async def test_other_words_and_low_confidence_do_not_trigger(rig):
     await until(lambda: not r.rec.results, what="results consumed")
     await asyncio.sleep(0.2)
     assert r.live.calls == [] and r.wake.triggers == 0 and r.wake.status()["listening"]
+
+
+# ------------------------------------------------------------------ carrying what was said into the call
+def test_wake_phrase_end_uses_the_recognisers_word_times():
+    words = ("hey", "little", "bot")
+    timed = {"text": "hey little bot what [unk]", "result": [
+        {"word": "hey", "start": 0.0, "end": 1.05, "conf": 1.0}, {"word": "little", "start": 1.05, "end": 1.38},
+        {"word": "bot", "start": 1.38, "end": 1.8}, {"word": "what", "start": 1.89, "end": 2.19},
+        {"word": "[unk]", "start": 2.31, "end": 2.9}]}
+    assert wakeword.wake_phrase_end(timed, words) == (1.8, 2)
+    assert wakeword.wake_phrase_end({"text": "look hey little bot", "result": [
+        {"word": "look", "end": 0.4}, {"word": "hey", "end": 0.7}, {"word": "little", "end": 0.9},
+        {"word": "bot", "end": 1.2}]}, words) == (1.2, 0)
+    assert wakeword.wake_phrase_end(_res("hey", "little", "bot", "now"), words) == (None, 1)  # no word times
+    assert wakeword.wake_phrase_end({"text": "hey little bot"}, words) == (None, 0)
+    assert wakeword.wake_phrase_end(_res("hey", "little", "bot", conf=0.3), words, 0.5) == (None, 0)
+
+
+def test_preroll_keeps_only_the_sentence_being_recognised():
+    from littlebot.audio.carry import PreRoll
+
+    pre = PreRoll(10, max_seconds=1.0, keep_seconds=0.3)  # 10 samples a second: easy numbers
+    at = 0
+    for i in range(15):  # 1.5 s in 0.1 s blocks: only the last second (and a block) stays
+        pre.add(at, np.full(1, i, dtype=np.float32))
+        at += 1
+    assert 1.0 <= pre.seconds <= 1.1 and float(pre.since(None)[-1][0]) == 14
+    assert [float(b[0]) for b in pre.since(12)] == [12, 13, 14]  # from sample 12 on
+    pre.decided()  # the recogniser decided: no wake phrase in it
+    assert pre.seconds <= 0.4
+    pre.clear()
+    assert pre.since(None) == []
+
+
+def test_speech_carry_is_handed_over_once_and_dropping_forgets_it():
+    from littlebot.audio.carry import SpeechCarry
+
+    c = SpeechCarry(16000, quiet_level=0.01)
+    assert c.add(np.full(1600, 0.1, dtype=np.float32)) and c.quiet_s == 0.0
+    assert c.add(np.zeros(3200, dtype=np.float32)) and c.quiet_s == pytest.approx(0.2)
+    assert c.seconds == pytest.approx(0.3) and c.speech_seconds == pytest.approx(0.1)
+    c.seal("live voice took the microphone")
+    assert not c.add(np.ones(10, dtype=np.float32)) and c.seconds == pytest.approx(0.3)  # nothing after sealing
+    assert len(c.take()) == 4800 and len(c.take()) == 0  # once
+    d = SpeechCarry(16000)
+    d.add(np.ones(100, dtype=np.float32))
+    d.drop("live voice could not start")
+    assert d.dropped and len(d.take()) == 0 and not d.add(np.ones(10, dtype=np.float32))
+
+
+async def test_said_in_one_breath_no_earcon_and_what_followed_goes_to_live_voice(rig, caplog):
+    caplog.set_level(logging.INFO, logger="littlebot.wake")
+    r = await rig()
+    await _listening(r)
+    await until(lambda: r.rec.fed >= 1.5 * 16000, what="1.5 s heard")  # some audio before the sentence: not carried
+    r.rec.say("hey little bot what is the weather", wake_ended_ago=0.6)
+    await until(lambda: r.live.calls, what="live voice started")
+    carry = r.live.carries[0]
+    await until(lambda: not carry.is_open, what="the microphone handed over")
+    assert "sound:listen" not in _sounds(r.out)  # they asked already: no earcon
+    assert "wake word: no earcon, they kept talking" in caplog.text
+    assert carry.kept_talking and carry.phrase == "hey little bot" and carry.state == "sealed"
+    # from where the wake phrase ended (0.6 s before the result, the recogniser's step earlier), to the hand-over
+    assert 0.6 <= carry.lead_s <= 0.6 + wakeword.WAKE_CUT_MARGIN + 0.15
+    assert carry.seconds >= carry.lead_s and carry.why == "live voice took the microphone"
+    assert "wake word: kept" in caplog.text and "ms after the wake phrase" in caplog.text
+    await _not_listening(r)
+    assert r.audio.suspended == "live voice" and r.mic.conflicts == 0
+
+
+async def test_only_the_wake_phrase_plays_the_earcon_and_still_carries(rig):
+    r = await rig()
+    await _listening(r)
+    await until(lambda: r.rec.fed >= 16000, what="1 s heard")
+    r.rec.say("hey little bot", wake_ended_ago=0.5)  # then a pause: they wait for the sound
+    await until(lambda: r.live.calls, what="live voice started")
+    carry = r.live.carries[0]
+    assert "sound:listen" in _sounds(r.out) and not carry.kept_talking
+    await until(lambda: not carry.is_open, what="the microphone handed over")
+    assert carry.state == "sealed" and carry.lead_s <= 0.5 + wakeword.WAKE_CUT_MARGIN + 0.15
+
+
+async def test_without_word_times_the_whole_sentence_is_carried(rig):
+    r = await rig()
+    await _listening(r)
+    r.rec.say("hey look")  # a sentence without the wake phrase: forgotten when the recogniser decides
+    await until(lambda: not r.rec.results, what="decided")
+    await asyncio.sleep(0.4)
+    r.rec.say("hey little bot")  # no word times (some recognisers): the sentence so far, wake phrase and all
+    await until(lambda: r.live.calls, what="live voice started")
+    lead = r.live.carries[0].lead_s
+    assert 0.3 <= lead <= 1.2  # since "hey look" was decided (a pause of ~0.3 s kept), never more
+
+
+async def test_carried_words_are_dropped_when_live_voice_cannot_start(rig, caplog):
+    caplog.set_level(logging.INFO, logger="littlebot.wake")
+    r = await rig(error="not_signed_in")
+    await _listening(r)
+    await until(lambda: r.rec.fed >= 16000, what="1 s heard")
+    r.rec.say("hey little bot what is the weather", wake_ended_ago=0.6)
+    await until(lambda: "sound:uhoh" in _sounds(r.out), what="uhoh")
+    carry = r.live.carries[0]
+    assert carry.dropped and carry.why == "live voice could not start" and len(carry.take()) == 0
+    assert "wake word: kept" not in caplog.text
+    await _listening(r)  # after the cooldown
+    assert r.mic.conflicts == 0
+
+
+async def test_what_littlebot_plays_while_carrying_is_never_carried(rig):
+    r = await rig()
+    r.live.take_mic_after = 0.6  # live voice takes its time to borrow the microphone
+    r.out.time_scale = 1.0  # sounds take real time
+    await _listening(r)
+    r.rec.say("hey little bot what is that", wake_ended_ago=0.3)
+    await until(lambda: r.live.carries, what="live voice started")
+    carry = r.live.carries[0]
+    play = asyncio.ensure_future(r.audio.play_sound("chime"))  # 1.35 s: LittleBot makes a sound meanwhile
+    await until(lambda: r.audio.mic_muted(), what="the sound plays")
+    held = carry.seconds
+    await until(lambda: not carry.is_open, what="the microphone handed over")
+    assert carry.seconds - held < 0.1  # nothing heard while it played was kept (else ~0.6 s more)
+    await play
+
+
+def test_while_they_talk_the_microphone_is_handed_over_at_their_next_pause():
+    from littlebot.audio.carry import SpeechCarry
+
+    class Talking:
+        """``talk`` seconds of talking, then quiet; real-time chunks of 32 ms."""
+
+        sample_rate = 16000
+        is_open = True
+
+        def __init__(self, talk: float) -> None:
+            self.t0, self.talk = time.monotonic(), talk
+
+        def read(self, timeout: float) -> np.ndarray:
+            time.sleep(0.032)
+            loud = time.monotonic() - self.t0 < self.talk
+            return np.full(512, 0.2 if loud else 0.0, dtype=np.float32)
+
+    ctx = make_test_context()
+    try:
+        wake = WakeWordService(ctx, recognizer_factory=lambda _rate: FakeRecognizer())
+        wake._audio_busy, wake._busy_reason = True, "lent"  # live voice asks for it at once
+        carry = SpeechCarry(16000, quiet_level=0.01)
+        carry.add(np.full(1600, 0.2, dtype=np.float32))  # they were talking when the recogniser decided
+        t0 = time.monotonic()
+        wake._carry_on(Talking(0.15), 16000, carry)
+        took = time.monotonic() - t0
+        assert 0.15 + wakeword.HANDOVER_QUIET_SECONDS <= took < wakeword.HANDOVER_WAIT_SECONDS  # at the pause
+        assert carry.state == "sealed" and "at a pause" in carry.why and carry.speech_seconds >= 0.2
+        endless = SpeechCarry(16000, quiet_level=0.01)
+        endless.add(np.full(1600, 0.2, dtype=np.float32))
+        t0 = time.monotonic()
+        wake._carry_on(Talking(10.0), 16000, endless)  # no pause (a noisy room): not longer than the limit
+        assert wakeword.HANDOVER_WAIT_SECONDS <= time.monotonic() - t0 < wakeword.HANDOVER_WAIT_SECONDS + 0.15
+        assert "while they were still talking" in endless.why
+        quiet = SpeechCarry(16000, quiet_level=0.01)
+        quiet.add(np.zeros(1600, dtype=np.float32))  # already quiet: handed over straight away
+        t0 = time.monotonic()
+        wake._carry_on(Talking(0.15), 16000, quiet)
+        assert time.monotonic() - t0 < 0.05 and quiet.seconds == pytest.approx(0.1)
+    finally:
+        ctx.db.close()
 
 
 # ------------------------------------------------------------------ microphone sharing / pauses
@@ -687,7 +873,9 @@ async def test_real_input_backend_is_shared_never_opened_twice(fake_sd):
         await until(lambda: wake.status()["listening"], what="back after listen()")
         rec.say("hey little bot")
         await until(lambda: ctx.live.calls and audio.suspended == "live voice", what="live voice")
-        assert not any(s.active for s in fake_sd.in_streams)  # free for live voice's own stream
+        # free for live voice's own stream (at a pause: the fake microphone's tone never pauses, so after the wait)
+        await until(lambda: not any(s.active for s in fake_sd.in_streams), timeout=wakeword.HANDOVER_WAIT_SECONDS + 1,
+                    what="the microphone handed over")
         await ctx.live.end()
         await until(lambda: wake.status()["listening"], what="back after the call")
         assert refused == [] and len(fake_sd.in_streams) >= 3

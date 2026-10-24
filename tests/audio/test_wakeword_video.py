@@ -205,3 +205,14 @@ async def test_no_duck_by_default(vrig):
     r.rec.partial_text = "hey"
     await asyncio.sleep(0.4)
     assert r.wake.ducks == 0
+
+
+async def test_nothing_is_carried_into_the_chat_during_a_video(vrig):
+    """The video's soundtrack reaches the microphone: it must never be sent as what the person said."""
+    r = await vrig()
+    await _listening(r)
+    sounds = _spy_earcon(r)
+    r.rec.say("hey little bot what is that", conf=0.9, wake_ended_ago=0.5)
+    await until(lambda: r.live.calls, what="live voice started")
+    assert r.live.carries == [None]
+    assert sounds and sounds[0][0] == "listen"  # and the earcon plays as usual
