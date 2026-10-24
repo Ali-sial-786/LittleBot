@@ -48,7 +48,7 @@ issued before it. Unknown names / non-finite numbers are logged as warnings and 
 | `close_eyes()` / `open_eyes()` | peekaboo: lids close and stay closed (curved "‿" line); reopening pops with a little boing |
 | `set_state(state)` | one of `FACE_STATES`; switches to that state's default expression (same state = no-op, keeps the current expression) |
 | `play_animation(name)` | one of `FACE_ANIMATIONS`, layered on the expression; replaying restarts it |
-| `status()` | `{expression, state, gaze: {x, y}, eyes_closed, fps, visible}` plus `talking, listening, animations, display`. `fps` is the measured render rate (0.0 when headless). `eyes_closed` is true for `close_eyes()` and while sleeping. |
+| `status()` | `{expression, state, gaze: {x, y}, eyes_closed, fps, visible}` plus `talking, listening, animations, display, dozing`. `fps` is the measured render rate (0.0 when headless). `eyes_closed` is true for `close_eyes()`, while sleeping and once dozing has closed the eyes. |
 
 Controller extras for the display / tools: `update(dt)`, `frame()`, `render(surface, rect=None)`,
 `attach_display()` / `detach_display()`, `target_fps()`, `wants_high_fps()`, `start_ticker()` /
@@ -90,6 +90,23 @@ speaking (speaking), sleeping (sleepy, eyes closed as gentle dark "‿" arcs, sl
 zzz, a tiny breathing "o" mouth), error (confused with a soft lavender tint: never red or scary),
 hidden (fades to a calm, dim screen with a small "play" glyph in the corner while a video owns
 the screen; the only time the mouth is not drawn).
+
+Dozing (`littlebot/face/doze.py`, a look on the idle face, not the SLEEPING state: the wake word,
+camera, touch and dashboard keep working). When nothing has happened for `face.doze_after_seconds`
+(30) the eyes go sleepy, droop, fight it once, then close into the sleeping arcs; a "zzz" floats
+up, breathing slows, the mouth becomes the little breathing "o", and every 15-25 s the eyes
+flutter half open and drift shut again. The frame rate drops to 10 fps. Awake reasons (bus
+topics): a voice chat (`live.call_started` .. `live.call_ended`), the wake word
+(`audio.wake_word`), any robot state but IDLE, speech / sounds / listening (`audio.*`), an
+activity, game, video or info card on the screen (`activity.*`, `game.started/finished`,
+`media.*`, `screen.card_shown/closed/keep_awake`), something said or answered, STOP ALL, and the
+face's own commands (an expression, animation, look or blink someone asked for keeps it awake at
+least 5 s or its hold; `neutral` / `sleepy` don't wake it). Someone walking in
+(`vision.person_present`, or one more face than in the last 10 s) or moving (the tracked face
+moving 15 % of the view, `vision.gesture`) wakes it for `face.awake_on_arrival_seconds` (20): a
+person who stays and keeps still lets it doze again. Waking is gentle: the lids lift over 0.8 s,
+a small stretch and yawn, a soft double blink. Off with `face.doze_enabled` (dashboard: Face page,
+"Dozing and sleep", which also sets `system.sleep_after_idle_minutes`, the real sleep).
 
 One-shot animations: bounce (squash, hop, stretch, land; "wheee" mouth), wiggle, nod, shake,
 spin_eyes (dizzy roll; a little "ooh"), sparkle, hearts, zzz, confetti, peek (duck down with
@@ -149,8 +166,8 @@ cached by the quantised shape.
   calls `robot.shutdown()`). Only `pygame.display` is quit, never the mixer.
 * Renders natively at `display.width x display.height` (480x320) and scales smoothly to
   `display.scale` (windowed) or to the screen (fullscreen, aspect preserved, black borders).
-* Frame rate: `display.fps` while anything animates, `display.idle_fps` when calm, 5 fps
-  while hidden (`controller.target_fps()`); pygame's `Clock.tick` sleeps in between.
+* Frame rate: `display.fps` while anything animates, `display.idle_fps` when calm, 10 fps
+  while dozing, 5 fps while hidden (`controller.target_fps()`); pygame's `Clock.tick` sleeps in between.
 * If the display cannot open (no X/Wayland/KMS, bad `SDL_VIDEODRIVER`) or frames keep
   failing (30 in a row) it logs a clear error and falls back to waiting on
   `robot.shutdown_event`; the robot keeps running headless.

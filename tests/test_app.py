@@ -135,6 +135,28 @@ async def test_idle_watch_gets_sleepy(monkeypatch):
         await b.stop()
 
 
+async def test_greeting_a_dozing_face_wakes_it_gently():
+    ctx = make_test_context()
+    b = Behaviours(ctx)
+    await b.start()
+    try:
+        face = ctx.face
+        ctx.bus.publish(Topics.VISION_PERSON_PRESENT, {"gaze_x": 0.5, "gaze_y": 0.5})
+        assert face.called("play_animation")[-1] == (("bounce",), {})  # awake: the usual happy bounce
+        face.calls.clear()
+        b._greeted_at = 0.0
+        face.dozing = True  # the real face (littlebot/face/doze.py) dozes when nothing happens
+        ctx.bus.publish(Topics.VISION_PERSON_PRESENT, {"gaze_x": 0.5, "gaze_y": 0.5})
+        assert face.called("set_expression")[-1] == (("happy",), {"hold": 2.5})
+        assert not face.called("play_animation")  # its own stretch and blink, not a jump
+        face.calls.clear()
+        ctx.bus.publish(Topics.VISION_PERSON_LEFT, {})
+        assert not face.called("set_expression")  # someone leaving doesn't wake it
+        assert face.called("clear_gaze")
+    finally:
+        await b.stop()
+
+
 def test_restart_request_sets_flag_and_exit_code(monkeypatch):
     from littlebot.app import main as main_mod
     from littlebot.app.robot import RESTART_EXIT_CODE

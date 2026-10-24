@@ -7,6 +7,7 @@ Keeps reactive rules in one place instead of scattering them through modules:
 * detected faces            -> eyes follow the nearest face (if enabled)
 * speech start / finish     -> speaking animation (handled by face) + state
 * long idle                 -> sleepy, then SLEEPING; a person or parent wakes it
+  (the shorter "dozing" look while nothing happens is the face's own: littlebot/face/doze.py)
 * parent STOP               -> everything calms down
 """
 
@@ -109,12 +110,14 @@ class Behaviours:
         if state.is_(RobotState.IDLE) and time.monotonic() - self._greeted_at > 20:
             self._greeted_at = time.monotonic()
             face.set_expression("happy", hold=2.5)
-            face.play_animation("bounce")
+            if not _dozing(face):  # a dozing face wakes with its own little stretch, not a jump
+                face.play_animation("bounce")
 
     def _on_person_left(self, _event: Event) -> None:
         face = self.ctx.face
         if face is not None and self.ctx.state.is_(RobotState.IDLE):
-            face.set_expression("curious", hold=2.0)
+            if not _dozing(face):  # someone leaving doesn't wake a dozing face
+                face.set_expression("curious", hold=2.0)
             face.clear_gaze()
 
     async def _idle_watch(self) -> None:
@@ -131,5 +134,11 @@ class Behaviours:
                 self.ctx.state.transition(RobotState.SLEEPING, "idle timeout")
                 sleepy_shown = False
             elif quiet > minutes * 60 * 0.8 and not sleepy_shown and self.ctx.face is not None:
-                self.ctx.face.set_expression("sleepy", hold=4.0)
+                if not _dozing(self.ctx.face):  # (a dozing face looks sleepy already)
+                    self.ctx.face.set_expression("sleepy", hold=4.0)
                 sleepy_shown = True
+
+
+def _dozing(face: Any) -> bool:
+    """True while the idle face dozes (littlebot/face/doze.py; fakes without it never doze)."""
+    return getattr(face, "dozing", False) is True

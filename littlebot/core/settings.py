@@ -69,6 +69,11 @@ def build_defaults(cfg: LittleBotConfig) -> dict[str, Any]:
         "face.expression_default": "neutral",
         # screen brightness 0.15..1 (a left-edge swipe on the face; littlebot/face/edge_controls.py)
         "display.brightness": 1.0,
+        # the idle face dozes (droopy eyes, a "zzz") when nothing is happening; only a look, the robot stays
+        # awake and listening (littlebot/face/doze.py). Someone walking in wakes it for a while.
+        "face.doze_enabled": True,
+        "face.doze_after_seconds": 30,
+        "face.awake_on_arrival_seconds": 20,
         # system
         "system.sleep_after_idle_minutes": cfg.system.sleep_after_idle_minutes,
         # live information (littlebot/info): the weather's home place as the parent chose it on the

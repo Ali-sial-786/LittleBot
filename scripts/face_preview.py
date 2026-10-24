@@ -237,6 +237,16 @@ def screenshots(out_dir: Path, seed: int) -> list[Path]:
     face.close_eyes()
     _settle(face)
     tiles.append(("close_eyes (peekaboo)", shot(face, "states/eyes_closed")))
+    # dozing: the idle face's look when nothing is happening (littlebot/face/doze.py), and waking up
+    face = fresh()
+    face.animator.set_doze(True)
+    _settle(face, 3.0)
+    tiles.append(("dozing: drooping", shot(face, "states/dozing_droop")))
+    _settle(face, 6.0)
+    tiles.append(("dozing: asleep", shot(face, "states/dozing")))
+    face.animator.set_doze(False)
+    _settle(face, 0.8)
+    tiles.append(("waking up: stretch", shot(face, "states/waking")))
     sheet(tiles, "states")
 
     tiles = []

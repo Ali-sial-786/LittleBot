@@ -3,8 +3,8 @@
 ``FaceAnimator`` owns everything that moves: expression transitions, blinking,
 gaze (explicit look / soft tracking / idle wandering with micro-saccades),
 breathing, the mouth (resting per expression, lip-synced while talking),
-listening indicator, one-shot animations, eyelid closing and the hidden
-(video) fade. Call :meth:`update` with a time step and
+listening indicator, one-shot animations, eyelid closing, dozing (see
+:meth:`FaceAnimator.set_doze`) and the hidden (video) fade. Call :meth:`update` with a time step and
 :meth:`frame` to get a renderer-agnostic :class:`FaceFrame`.
 
 It is deterministic for a given RNG seed and sequence of ``update(dt)`` calls,
@@ -14,6 +14,7 @@ which is what the unit tests rely on. It is *not* thread-safe on its own; the
 
 from __future__ import annotations
 
+import itertools
 import logging
 import math
 import random
@@ -24,7 +25,7 @@ from littlebot.core.config import FaceConfig
 from littlebot.core.events import Topics
 from littlebot.core.interfaces import FACE_ANIMATIONS, FACE_STATES
 from littlebot.face import effects
-from littlebot.face.effects import Motion, clamp01, smootherstep, smoothstep
+from littlebot.face.effects import Motion, bump, clamp01, smootherstep, smoothstep
 from littlebot.face.expressions import (
     DEFAULT_EXPRESSION_FOR_STATE, EXPRESSION_PARAMS, EXTRAS, STATE_TINTS, ExpressionParams, lerp_expression,
 )
@@ -58,6 +59,19 @@ EXTRAS_FADE_SECONDS = 0.3
 MICRO_AMPLITUDE = (0.03, 0.025)
 MAX_ANIMATIONS = 6
 MAX_STEP = 0.5  # clamp huge dt (e.g. after a stall) so nothing jumps wildly
+
+# Dozing (an idle look, not the SLEEPING state): the eyes droop, nearly give in, fight it once, then close;
+# every so often they flutter half open and drift shut again. (seconds into the doze, how closed 0..1)
+DOZE_LIDS: tuple[tuple[float, float], ...] = ((0.0, 0.0), (1.2, 0.0), (3.4, 0.72), (4.3, 0.5), (7.0, 1.0))
+DOZE_DROOP_SECONDS = 1.2  # the eyes go sleepy this slowly
+DOZE_FADE_SECONDS = 1.5  # breathing slows over this long
+DOZE_FLUTTER_FIRST = (9.0, 16.0)  # s after the eyes closed: the first sleepy flutter
+DOZE_FLUTTER_EVERY = (14.0, 26.0)  # s between flutters
+DOZE_FLUTTER_SECONDS = 2.8
+DOZE_FLUTTER_OPEN = 0.4  # how far a flutter opens the eyes (of the way)
+WAKE_OPEN_SECONDS = 0.8  # waking from a doze: the lids lift gently (no "boing")
+WAKE_STRETCH_SECONDS = 1.5  # ... with a little stretch and yawn, then a soft double blink
+WAKE_BLINK_AT = 1.05
 
 # Spring stiffness (rad/s) for each gaze source: higher = snappier.
 OMEGA = {"explicit": 18.0, "track": 9.0, "idle": 24.0, "rest": 5.0}
@@ -198,6 +212,15 @@ class FaceAnimator:
         self.listening_active = False
         self._listen_alpha = 0.0
         self.hidden_amount = 0.0
+        # dozing (set_doze): an idle look; doze_lid is how far dozing has closed the eyes
+        self.dozing = False
+        self.doze_amount = 0.0
+        self.doze_lid = 0.0
+        self._doze_start = 0.0
+        self._next_flutter: float | None = None
+        self._flutter_start: float | None = None
+        self._wake_start: float | None = None
+        self._wake_blinked = False
         # one-shot animations
         self.animations: list[_ActiveAnim] = []
         # notifications for the controller: (topic, payload)
@@ -222,7 +245,7 @@ class FaceAnimator:
         self.state = state
         if not (state in KEEPS_HELD_EXPRESSION and self.hold_until is not None and self.t < self.hold_until):
             self.hold_until = None
-            self._go(DEFAULT_EXPRESSION_FOR_STATE[state])
+            self._go(self._default_expression())
         # else: an expression someone asked for (with a hold) outlives listening/speaking/thinking flips and
         # gives way to the new state's default when its hold ends (see update()).
         if (old == "hidden") != (state == "hidden"):
@@ -266,6 +289,29 @@ class FaceAnimator:
 
     def open_eyes(self) -> None:
         self.eyes_closed = False
+
+    def set_doze(self, on: bool) -> None:
+        """Doze (droopy eyes slowly closing, a floating "zzz", slow breathing) or wake up gently.
+
+        Only shows while the face state is "idle"; any other state takes over at once. Waking
+        lifts the lids slowly with a little stretch, a yawn and a soft double blink (no jump).
+        """
+        on = bool(on)
+        if on == self.dozing:
+            return
+        self.dozing = on
+        if on:
+            self._doze_start = self.t
+            self._flutter_start = None
+            self._next_flutter = self.t + DOZE_LIDS[-1][0] + self.rng.uniform(*DOZE_FLUTTER_FIRST)
+            self._wake_start = None
+            if self.state == "idle" and self.hold_until is None:
+                self._go("sleepy", DOZE_DROOP_SECONDS)
+            return
+        if self.doze_amount > 0.3 and self.state not in ("sleeping", "hidden"):
+            self._wake_start, self._wake_blinked = self.t, False
+        if self.expression == "sleepy" and self.hold_until is None:
+            self._go(self._default_expression(), WAKE_OPEN_SECONDS)
 
     def play_animation(self, name: str) -> bool:
         if name not in FACE_ANIMATIONS:
@@ -343,11 +389,20 @@ class FaceAnimator:
     def active_animations(self) -> list[str]:
         return [a.name for a in self.animations]
 
+    @property
+    def waking(self) -> bool:
+        """True during the little stretch after a doze."""
+        return self._wake_start is not None
+
+    def lid_closure(self) -> float:
+        """How closed the eyelids are 0..1 (closed eyes, sleep or dozing; blinks not included)."""
+        return max(self.closure, self.doze_lid)
+
     def is_animating(self) -> bool:
         """True while something moves fast enough to need the full frame rate."""
         if self.state == "hidden" and self.hidden_amount >= 1.0:
             return False
-        if self.transitioning or self.blinking or self.animations or self.talking:
+        if self.transitioning or self.blinking or self.animations or self.talking or self.waking:
             return True
         if self._pop_start is not None:
             return True
@@ -382,7 +437,7 @@ class FaceAnimator:
         # expression hold expiry
         if self.hold_until is not None and t >= self.hold_until:
             self.hold_until = None
-            self._go(DEFAULT_EXPRESSION_FOR_STATE[self.state])
+            self._go(self._default_expression())
 
         # transition
         if self._trans_elapsed < self._trans_duration:
@@ -404,11 +459,12 @@ class FaceAnimator:
         self._state_tint_mix = _approach(self._state_tint_mix, tint[1] if tint else 0.0, 1.5, dt)
 
         self._update_lids(dt)
+        self._update_doze(dt)
         self._update_blink()
         self._update_gaze(dt)
 
         if self.cfg.breathing:
-            period = 6.0 if self.state == "sleeping" else 4.2
+            period = 6.0 if self.state == "sleeping" else 4.2 + 1.8 * self.doze_amount  # slower while dozing
             self._breath_phase = (self._breath_phase + dt * 2 * math.pi / period) % (2 * math.pi)
 
         self._update_speech(dt)
@@ -436,8 +492,54 @@ class FaceAnimator:
         if self._pop_start is not None and self.t - self._pop_start > POP_SECONDS + OPEN_SECONDS:
             self._pop_start = None
 
+    def _default_expression(self) -> str:
+        """The expression the face rests on: the state's default (sleepy while dozing)."""
+        if self.dozing and self.state == "idle":
+            return "sleepy"
+        return DEFAULT_EXPRESSION_FOR_STATE[self.state]
+
+    def _update_doze(self, dt: float) -> None:
+        active = self.dozing and self.state == "idle"
+        rate = 1 / DOZE_FADE_SECONDS if active else 1 / WAKE_OPEN_SECONDS
+        self.doze_amount = _approach(self.doze_amount, 1.0 if active else 0.0, rate, dt)
+        if active:  # the curve is gentle: easing towards it only shows when dozing off again mid-wake
+            self.doze_lid = _approach(self.doze_lid, self._doze_curve(), 2.0, dt)
+        else:
+            self.doze_lid = _approach(self.doze_lid, 0.0, 1 / WAKE_OPEN_SECONDS, dt)
+        if self._wake_start is not None:
+            u = self.t - self._wake_start
+            if not self._wake_blinked and u >= WAKE_BLINK_AT and self._blink_start is None and self._can_blink():
+                self._wake_blinked = True
+                self._start_blink(True)
+            if u >= WAKE_STRETCH_SECONDS:
+                self._wake_start = None
+
+    def _doze_curve(self) -> float:
+        """How closed dozing wants the eyes right now (droop, fight it, close, the odd flutter)."""
+        t = self.t
+        u = t - self._doze_start
+        for (u0, v0), (u1, v1) in itertools.pairwise(DOZE_LIDS):
+            if u < u1:
+                return v0 + (v1 - v0) * smoothstep((u - u0) / (u1 - u0)) if u >= u0 else v0
+        if self._flutter_start is None and self._next_flutter is not None and t >= self._next_flutter:
+            self._flutter_start = t
+        if self._flutter_start is None:
+            return DOZE_LIDS[-1][1]
+        p = (t - self._flutter_start) / DOZE_FLUTTER_SECONDS
+        if p >= 1.0:
+            self._flutter_start = None
+            self._next_flutter = t + self.rng.uniform(*DOZE_FLUTTER_EVERY)
+            return DOZE_LIDS[-1][1]
+        return 1.0 - DOZE_FLUTTER_OPEN * math.sin(math.pi * p) ** 2
+
+    def _wake_stretch(self) -> float:
+        """0..1..0 over the stretch after a doze."""
+        if self._wake_start is None:
+            return 0.0
+        return bump((self.t - self._wake_start) / WAKE_STRETCH_SECONDS, 0.12, 0.8)
+
     def _can_blink(self) -> bool:
-        if self.state in ("sleeping", "hidden") or self.closure > 0.3:
+        if self.state in ("sleeping", "hidden") or self.lid_closure() > 0.3:
             return False
         return not any(a.name in ("peek", "spin_eyes") for a in self.animations)
 
@@ -465,7 +567,7 @@ class FaceAnimator:
             self.next_blink = t + self._blink_interval()
 
     def _micro_gain(self) -> float:
-        if self.state in ("sleeping", "hidden") or self.closure > 0.5:
+        if self.state in ("sleeping", "hidden") or self.lid_closure() > 0.5:
             return 0.0
         return 0.5 if self.gaze_source == "track" else 1.0
 
@@ -484,7 +586,7 @@ class FaceAnimator:
             else:
                 self._track = None
         if source == "idle":
-            if self.state in ("sleeping", "hidden") or self.closure > 0.5:
+            if self.state in ("sleeping", "hidden") or self.lid_closure() > 0.5:
                 source = "rest"
             elif self.cfg.idle_gaze and p.wander > 0.01:
                 if t >= self._next_wander:
@@ -558,13 +660,13 @@ class FaceAnimator:
             tongue=0.0,
         )
 
-    def _go(self, name: str) -> None:
+    def _go(self, name: str, seconds: float | None = None) -> None:
         if name == self.expression and self._to is EXPRESSION_PARAMS[name]:
             return
         self._from = self.params
         self._to = EXPRESSION_PARAMS[name]
         self._trans_elapsed = 0.0
-        self._trans_duration = max(0.0, float(self.cfg.transition_seconds))
+        self._trans_duration = max(0.0, float(self.cfg.transition_seconds if seconds is None else seconds))
         if self._trans_duration <= 0:
             self.params = self._to
         changed = name != self.expression
@@ -578,15 +680,21 @@ class FaceAnimator:
 
     # ================================================================ mouth
     def _rest_pose(self) -> MouthPose:
-        """The expression's resting mouth (a tiny breathing "o" while asleep)."""
+        """The expression's resting mouth (a tiny breathing "o" while asleep or dozing)."""
         mp = self.params.mouth
         rest = MouthPose(open=mp.open, width=mp.width, smile=mp.smile, round=mp.round, tongue=mp.tongue)
-        if self.state == "sleeping" and self.closure > 0.0:
+        k = self._asleep_amount()
+        if k > 0.0:
             breath = 0.5 + 0.5 * math.sin(self._breath_phase) if self.cfg.breathing else 0.5
             asleep = MouthPose(open=SLEEP_POSE.open * (0.75 + 0.5 * breath), width=SLEEP_POSE.width,
                                smile=SLEEP_POSE.smile, round=SLEEP_POSE.round)
-            rest = lerp_pose(rest, asleep, smoothstep(self.closure))
+            rest = lerp_pose(rest, asleep, k)
         return rest
+
+    def _asleep_amount(self) -> float:
+        """0..1: how asleep the face looks (eyes closed by sleep, or by dozing)."""
+        k = smoothstep(self.closure) if self.state == "sleeping" else 0.0
+        return max(k, smoothstep(self.doze_lid))
 
     def mouth_pose(self, m: Motion | None = None) -> MouthPose:
         """The mouth right now: resting mouth, plus one-shot animations, blended with the talking mouth."""
@@ -611,23 +719,27 @@ class FaceAnimator:
         c = _mix(base, p.tint, clamp01(p.tint_mix))
         if self._state_tint_mix > 0:
             c = _mix(c, self._state_tint, self._state_tint_mix)
-        b = max(0.0, p.brightness) * (1.0 - 0.15 * smoothstep(self.closure) * (self.state == "sleeping"))
+        b = max(0.0, p.brightness) * (1.0 - 0.15 * self._asleep_amount())
         return tuple(int(max(0, min(255, round(v * b)))) for v in c)  # type: ignore[return-value]
 
     def frame(self) -> FaceFrame:
         p, t = self.params, self.t
         m = self.motion()
+        stretch = self._wake_stretch()
+        if stretch > 0.0:  # waking from a doze: the eyes stretch tall and lift a little, a small yawn
+            m.add(Motion(dy=-5.0 * stretch, sx=1.0 - 0.03 * stretch, sy=1.0 + 0.1 * stretch,
+                         mouth_open=0.3 * stretch, mouth_round=0.8 * stretch))
         cx0 = NATIVE_W / 2
         gx, gy = self.gaze()
         gx, gy = _clamp(gx * 2 - 1 + m.gx), _clamp(gy * 2 - 1 + m.gy)
         breath = math.sin(self._breath_phase) if self.cfg.breathing else 0.0
-        breath_dy = breath * (3.0 if self.state == "sleeping" else 1.8)
+        breath_dy = breath * (3.0 if self.state == "sleeping" else 1.8 + 1.2 * self.doze_amount)
         breath_h = 1.0 + 0.012 * breath
         hop = p.bob * abs(math.sin(math.pi * p.bob_hz * t)) if p.bob > 0 and p.bob_hz > 0 else 0.0
         rot = m.rot + (p.sway * math.sin(2 * math.pi * 0.45 * t) if p.sway else 0.0)
         level = self.level if self.talking or self.level > 0.01 else 0.0
         blink = self.current_blink()
-        closure = smoothstep(self.closure)
+        closure = smoothstep(self.lid_closure())
         pop = 1.0
         if self._pop_start is not None:
             u = (t - self._pop_start) / (POP_SECONDS + OPEN_SECONDS)
@@ -683,7 +795,10 @@ class FaceAnimator:
                 shape=self.mouth_shape if self.talk_mix > 0.5 else "",
             )
         anchor = (mouth.cx, mouth.cy) if mouth is not None else None
-        sprites: list[Sprite] = effects.extras_sprites(self.extras_alpha, t, eyes, color, palette, anchor)
+        alphas = self.extras_alpha
+        if self.doze_amount > 0.0:  # dozing: the "zzz" floats up once the eyes are (nearly) closed
+            alphas = dict(alphas, zzz=alphas.get("zzz", 0.0) * clamp01((self.doze_lid - 0.5) / 0.4))
+        sprites: list[Sprite] = effects.extras_sprites(alphas, t, eyes, color, palette, anchor)
         for a in self.animations:
             sprites.extend(effects.animation_sprites(a.name, t - a.start, a.seed, color, palette))
         if self.hidden_amount > 0.0:
@@ -698,6 +813,6 @@ class FaceAnimator:
             color=color, glow=glow, eyes=(eyes[0], eyes[1]), mouth=mouth, sprites=tuple(sprites),
             ring=ring, hidden=self.hidden_amount, expression=self.expression, state=self.state,
             debug={"gaze_x": round(gx, 3), "gaze_y": round(gy, 3), "level": round(level, 3),
-                   "blink": round(blink, 3), "closure": round(self.closure, 3),
+                   "blink": round(blink, 3), "closure": round(self.closure, 3), "doze": round(self.doze_lid, 3),
                    "mouth_open": round(mouth.open, 3) if mouth is not None else 0.0},
         )
