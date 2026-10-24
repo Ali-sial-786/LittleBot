@@ -177,6 +177,10 @@ why live voice only runs while you are there.
   ChatGPT text model.
 * **Photos** are sent only if you turned on **Let the AI look through the camera when asked**,
   and only one photo each time someone asks what LittleBot sees (section 4).
+* **Who is talking:** with **Recognise family members** or **Recognise family voices** on (both off
+  by default), the names and roles of the family LittleBot recognises, on the robot, by face or by
+  voice, go to the voice too, never photos, sound or voiceprints ([VOICES.md](VOICES.md),
+  [AI_SAFETY.md §4](AI_SAFETY.md#4-privacy)).
 * **Nothing is recorded on LittleBot:** no audio and no transcripts. The captions on the dashboard
   (the last 8 lines) exist only in memory during the call and are cleared when it ends. Logs hold
   only timings, end reasons and categories.

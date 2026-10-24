@@ -25,6 +25,9 @@ export default {
     const faces = flag('face_recognition_enabled', 'Recognise family members',
       'LittleBot learns the faces of the people you add under Who\'s who on the Profile page, so the voice chat knows who is in front of the camera and can use their names. It all happens on the robot: only the names and 128 numbers per face sample are kept there, never photos. During a voice chat the names of the people in view are told to the voice (OpenAI); pictures and face data never leave the robot. Also needs Camera on. Switching it off stops recognising; delete the face samples on the Profile page. Off by default.',
       (v) => (v ? 'LittleBot may now recognise the family members you added.' : 'LittleBot no longer recognises faces.'));
+    const voices = flag('voice_recognition_enabled', 'Recognise family voices',
+      'LittleBot learns the voices of the people you add under Who\'s who on the Profile page, so the voice chat knows which grown-up is talking, from "Hey LittleBot" on. It all happens on the robot: only a voiceprint (192 numbers per sample) is kept there, never a recording. You can record a voice on the Profile page, and LittleBot also learns when someone says who they are in a voice chat ("I\'m Ali"). During a voice chat the name of who is talking is told to the voice (OpenAI); sound recordings and voiceprints never leave the robot. Also needs Microphone on. Switching it off stops all of it; delete voiceprints on the Profile page. Off by default.',
+      (v) => (v ? 'LittleBot may now recognise the voices of the family members you added.' : 'LittleBot no longer recognises voices.'));
     const history = flag('record_history', 'Remember activity history',
       'Keeps a simple list of which activities were played (names and times only), stored on the robot.');
     const offlineNote = h('div');
@@ -39,7 +42,7 @@ export default {
               h('p', { class: 'mt-1', text: 'Camera frames and microphone sound are processed on the robot and discarded immediately. Nothing is uploaded unless you turn on cloud communication, and camera images are never sent anywhere - except to your own dashboard while you watch the Camera page (LittleBot shows a camera sign meanwhile), and, if you also let the AI look through the camera, one photo each time someone asks.' })))),
         offlineNote,
         h('div', { class: 'grid two' },
-          h('section', { class: 'card' }, h('div', { class: 'card-head' }, h('h2', {}, icon('eye'), 'Sensors & sharing')), camera.el, mic.el, cloud.el, aiCamera.el, faces.el, history.el),
+          h('section', { class: 'card' }, h('div', { class: 'card-head' }, h('h2', {}, icon('eye'), 'Sensors & sharing')), camera.el, mic.el, cloud.el, aiCamera.el, faces.el, voices.el, history.el),
           h('div', { class: 'stack' },
             h('section', { class: 'card' },
               h('div', { class: 'card-head' }, h('h2', {}, icon('history'), 'Clear history')),
@@ -64,6 +67,7 @@ export default {
       history.set(d.record_history);
       aiCamera.set(!!d.ai_camera_enabled);
       faces.set(!!d.face_recognition_enabled);
+      voices.set(!!d.voice_recognition_enabled);
       cloud.setDisabled(!!d.offline_mode);
       aiCamera.setDisabled(!!d.offline_mode && !d.ai_camera_enabled);
       offlineNote.replaceChildren(...(d.offline_mode ? [banner('info', 'info', 'Offline mode', 'LittleBot is running in offline mode: cloud communication is switched off and cannot be turned on.')] : []));

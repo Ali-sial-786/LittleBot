@@ -1338,6 +1338,87 @@ class AudioService(Service):
             detail += " That is very quiet: speak closer, or raise the capture level / audio.input_gain."
         return {**res, "ok": True, "detail": detail}
 
+    # ============================================================ a recording for a voiceprint
+    async def record_clip(self, seconds: float = 20.0) -> dict[str, Any]:
+        """Record ``seconds`` from the microphone into memory, for the dashboard's "Record voice"
+        (littlebot/voices/): ``{ok, samples, rate, detail}``. Never stored: the caller turns it into a
+        voiceprint and drops it. The same checks as the microphone test (privacy, a real microphone, not
+        while listening or lent to live voice)."""
+        try:
+            secs = max(1.0, min(30.0, float(seconds)))
+        except (TypeError, ValueError):
+            secs = 20.0
+        await self._claim_mic_async("voice recording")  # the wake word closes its stream first
+        try:
+            return await self._record_clip(secs)
+        finally:
+            self._unclaim_mic("voice recording")
+
+    async def _record_clip(self, secs: float) -> dict[str, Any]:
+        fail: dict[str, Any] = {"ok": False, "samples": None, "rate": 0}
+        try:
+            await asyncio.to_thread(self._ensure_devices)
+            if self._inp is None or not self._inp.real or self._inp.status != dev.STATUS_OK:
+                await asyncio.to_thread(self._rescan_input)
+            inp = self._inp
+            if not self._mic_allowed():
+                return {**fail, "detail": "The microphone is turned off in Privacy."}
+            if inp is None or isinstance(inp, NullInput):
+                return {**fail, "detail": "Microphone disabled in config (audio.microphone.backend: none)."}
+            if not inp.real:
+                return {**fail, "detail": "No real microphone found (simulated microphone in use). " + MIC_HINT}
+            if self._listening:
+                return {**fail, "detail": "LittleBot is listening right now; try again in a moment."}
+            if self._suspended:
+                return {**fail, "detail": f"The microphone is in use by {self._suspended}; try again after it ends."}
+            if self.cfg.half_duplex:
+                await self._wait_output_idle(None, limit=10.0)
+            return await asyncio.to_thread(self._capture_clip, secs)
+        except Exception as e:  # noqa: BLE001
+            log.exception("voice recording failed")
+            return {**fail, "detail": f"Recording failed: {e}"}
+
+    def _capture_clip(self, seconds: float) -> dict[str, Any]:
+        inp = self._inp
+        assert inp is not None
+        fail: dict[str, Any] = {"ok": False, "samples": None, "rate": int(inp.sample_rate)}
+        try:
+            inp.open()
+        except AudioDeviceError as e:
+            self._publish_device("microphone")
+            return {**fail, "detail": f"Could not open the microphone: {e}. {MIC_HINT}"}
+        need = int(seconds * inp.sample_rate)
+        chunks: list[np.ndarray] = []
+        got = 0
+        deadline = time.monotonic() + seconds * 2 + 1.0
+        error = ""
+        try:
+            while got < need and time.monotonic() < deadline and self._mic_allowed():
+                try:
+                    chunk = inp.read(0.2)
+                except AudioDeviceError as e:
+                    error = str(e)
+                    break
+                if chunk is None or not len(chunk):
+                    continue
+                if self._mic_muted():  # LittleBot's own sound is never part of someone's voice
+                    continue
+                chunks.append(np.clip(np.asarray(chunk, dtype=np.float32) * self._input_gain, -1.0, 1.0))
+                got += len(chunk)
+        finally:
+            with contextlib.suppress(Exception):
+                inp.close()
+        if error:
+            return {**fail, "detail": f"The microphone stopped during the recording: {error}. {MIC_HINT}"}
+        if not self._mic_allowed():
+            return {**fail, "detail": "The microphone was turned off in Privacy."}
+        if got < need * 0.5:
+            return {**fail, "detail": "The microphone delivered too little sound. " + MIC_HINT}
+        samples = np.concatenate(chunks)
+        del chunks
+        return {"ok": True, "samples": samples, "rate": int(inp.sample_rate),
+                "detail": f"Recorded {got / float(inp.sample_rate):.1f} s."}
+
     # =================================================================== status
     def _provider_label(self, active: Any, primary: Any) -> str:
         if active is primary:

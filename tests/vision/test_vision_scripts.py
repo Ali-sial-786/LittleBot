@@ -146,6 +146,20 @@ def test_download_models_faces_fetches_both_face_models(dl, tmp_path, monkeypatc
     assert Path(faces.SFACE_MODEL).name == fetched[1] == Path(ctx.config.vision.sface_model).name
 
 
+def test_download_models_voices_fetches_the_speaker_model(dl, tmp_path, monkeypatch, ctx, capsys):
+    fetched: list[str] = []
+    monkeypatch.setattr(dl, "download", lambda m, dest, **kw: fetched.append(m.filename) or True)
+    assert dl.main(["voices", "--dest", str(tmp_path)]) == 0
+    assert fetched == ["3dspeaker_speech_eres2net_sv_en_voxceleb_16k.onnx"]
+    assert "pip install -e '.[voices]'" in capsys.readouterr().out
+    m = dl.MODELS["speaker"]
+    assert m.size == 26_485_263 and len(m.sha256) == 64 and "Apache" in m.license
+    from littlebot.voices.service import MODEL, VoiceRecognition
+
+    assert VoiceRecognition(ctx).model_path().name == Path(MODEL).name == fetched[0]  # where voices look for it
+    assert Path(ctx.config.voices.model).name == fetched[0]
+
+
 def test_synthetic_fixture_helpers_are_deterministic():
     a = blank_frame(64, 48)
     draw_cartoon_face(a, 32, 24, 20)

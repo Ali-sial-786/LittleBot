@@ -39,6 +39,10 @@ local-stt = ["vosk>=0.3.45"]
 # wheel; its dependencies (PyAV, pylibsrtp, cryptography, ...) have prebuilt aarch64 wheels
 # (~40 MB download, nothing to compile). Without it, live voice reports itself as not installed.
 live = ["aiortc>=1.10,<2"]
+# Optional, opt-in: recognise the family's voices on the robot (littlebot/voices/, docs/VOICES.md). sherpa-onnx
+# has prebuilt aarch64 wheels for Python 3.13 (~17 MB download); the model comes separately:
+# scripts/download_models.py voices (26 MB, ~75 MB RAM while loaded).
+voices = ["sherpa-onnx>=1.10"]
 dev = ["pytest>=8", "pytest-asyncio>=0.23", "pytest-timeout>=2.2"]
 # Optional: drives the YouTube player page in headless Chromium in tests (skipped when absent).
 browser-tests = ["playwright>=1.40"]

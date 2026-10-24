@@ -8,6 +8,11 @@ phrase, from the moment it was recognised until live voice takes the microphone;
 Privacy: the audio lives in memory only, in this object, and is never written anywhere. It is dropped
 (``drop``) when the call can't start, doesn't connect or ends, and handed over once (``take``). LittleBot's own
 sounds are never added: the wake word leaves out what the microphone hears while LittleBot makes a sound.
+
+Who said it: only while "Recognise family voices" is on (``keep_voice``), the carry also holds the wake phrase
+itself and the first ``VOICE_KEEP_SECONDS`` of what followed, for the call to recognise the voice
+(littlebot/voices/call.py, ``voice_audio``); that copy is dropped as soon as the call has looked at it
+(``forget_voice``) and with the rest (``drop``).
 """
 
 from __future__ import annotations
@@ -21,6 +26,7 @@ import numpy as np
 from littlebot.audio import dsp
 
 QUIET_RATIO = 0.7  # x audio.microphone.vad_threshold: below this a stretch counts as a pause (EnergyVAD's release)
+VOICE_KEEP_SECONDS = 5.0  # keep_voice: the wake phrase plus at most this much of what followed
 
 
 class PreRoll:
@@ -52,6 +58,17 @@ class PreRoll:
         self._blocks.clear()
         self._n = 0
 
+    def before(self, at: int | None) -> list[np.ndarray]:
+        """What was heard before sample ``at`` (nothing when None): the wake phrase, when ``at`` is where it ends."""
+        out: list[np.ndarray] = []
+        if at is None:
+            return out
+        for start, block in self._blocks:
+            if start >= at:
+                break
+            out.append(block[: at - start] if start + len(block) > at else block)
+        return out
+
     def since(self, at: int | None) -> list[np.ndarray]:
         """What was heard from sample ``at`` on (everything kept when None)."""
         out: list[np.ndarray] = []
@@ -74,7 +91,7 @@ class SpeechCarry:
     """Mono float32 audio at ``sample_rate``: open (being filled) -> sealed (the call may send it) or dropped."""
 
     def __init__(self, sample_rate: int, *, phrase: str = "", quiet_level: float = 0.0105,
-                 kept_talking: bool = False, heard_at: float | None = None) -> None:
+                 kept_talking: bool = False, heard_at: float | None = None, keep_voice: bool = False) -> None:
         self.sample_rate = int(sample_rate)
         self.phrase = phrase
         self.quiet_level = float(quiet_level)  # RMS (full scale 1.0) below which a stretch is a pause
@@ -89,6 +106,10 @@ class SpeechCarry:
         self._chunks: list[np.ndarray] = []
         self._samples = 0
         self._speech = 0
+        self.keep_voice = keep_voice  # also keep a copy to recognise who said it (see voice_audio)
+        self._voice: list[np.ndarray] = []
+        self._voice_n = 0
+        self._voice_max = int(VOICE_KEEP_SECONDS * self.sample_rate)
 
     # ------------------------------------------------------------ filling (the wake word's thread)
     def add(self, chunk: np.ndarray) -> bool:
@@ -101,6 +122,9 @@ class SpeechCarry:
                 return False
             self._chunks.append(x.copy())
             self._samples += len(x)
+            if self.keep_voice and self._voice_n < self._voice_max:
+                self._voice.append(x[: self._voice_max - self._voice_n].copy())
+                self._voice_n += len(self._voice[-1])
             if dsp.rms(x) >= self.quiet_level:
                 self._speech += len(x)
                 self.quiet_s = 0.0
@@ -122,6 +146,23 @@ class SpeechCarry:
                 if self.sealed_at is None:
                     self.sealed_at = time.monotonic()
             self._chunks = []
+            self._voice, self._voice_n, self.keep_voice = [], 0, False
+
+    def keep_wake_phrase(self, blocks: list[np.ndarray]) -> None:
+        """The wake phrase itself (said before what is carried), kept only with ``keep_voice``."""
+        with self._lock:
+            if self.keep_voice and self.state != "dropped" and blocks:
+                self._voice.insert(0, np.concatenate([np.asarray(b, dtype=np.float32).reshape(-1) for b in blocks]))
+
+    def voice_audio(self) -> np.ndarray:
+        """The wake phrase and the first VOICE_KEEP_SECONDS after it (a copy; empty without ``keep_voice``)."""
+        with self._lock:
+            parts = list(self._voice)
+        return np.concatenate(parts) if parts else np.zeros(0, dtype=np.float32)
+
+    def forget_voice(self) -> None:
+        with self._lock:
+            self._voice, self._voice_n, self.keep_voice = [], 0, False
 
     def take(self) -> np.ndarray:
         """All of it, once (it is empty afterwards); nothing once dropped."""

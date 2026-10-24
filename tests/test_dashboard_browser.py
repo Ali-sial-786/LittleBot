@@ -291,14 +291,21 @@ def test_whos_who_on_the_profile_page_and_its_privacy_switch(phone):
     card.get_by_role("button", name="Add person").click()
     expect(card.get_by_text("Ali (dad)")).to_be_visible()
     expect(card.get_by_role("button", name="Take a sample")).to_be_visible()
+    expect(card.locator(".banner", has_text="Recognising family voices is off")).to_be_visible()  # off by default
+    expect(card.get_by_text("Voice: not set up.")).to_be_visible()
+    expect(card.get_by_role("button", name="Record Ali's voice")).to_be_visible()
+    expect(card.get_by_role("button", name="Forget Ali's voice")).to_be_hidden()  # nothing to forget
     assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")  # no sideways scroll
     (ali,) = phone.api("GET", "/people")["people"]
-    assert ali["name"] == "Ali" and ali["samples"] == 0
+    assert ali["name"] == "Ali" and ali["samples"] == 0 and ali["voice_samples"] == 0
     phone.api("DELETE", f"/people/{ali['id']}")  # leave the shared robot as it was
     page = phone.open("privacy")
     row = page.locator(".switch-row", has_text="Recognise family members")
     expect(row).to_be_visible()
     expect(row.get_by_role("switch")).not_to_be_checked()
+    row = page.locator(".switch-row", has_text="Recognise family voices")
+    expect(row).to_be_visible()
+    expect(row.get_by_role("switch")).not_to_be_checked()  # off by default
 
 
 def test_settings_show_where_the_weather_is_for_and_let_the_parent_change_it(phone):

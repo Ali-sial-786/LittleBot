@@ -37,6 +37,7 @@ SUBSYSTEMS: tuple[tuple[str, str], ...] = (
     ("brain", "littlebot.brain"),
     ("activities", "littlebot.activities"),
     ("games", "littlebot.games"),  # on-screen games: draws over the face, uses audio + activities
+    ("voices", "littlebot.voices"),  # the family's voices (opt-in): before live voice, which uses them
     ("live", "littlebot.chatgpt"),
     ("wake", "littlebot.audio.wakeword"),  # after audio + live: it shares the mic and starts live voice
 )

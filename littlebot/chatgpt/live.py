@@ -247,6 +247,7 @@ PULSE_EVERY_S = 20.0  # a "still on" line of counts in the log during a call (_p
 AUDIO_REOPENS = 2  # a microphone or speaker that stopped is opened again at most this often in one call
 SENT_STALL_S = 8.0  # the microphone gives sound but none of it is read (sending stopped): the call ends
 FACES_WAIT_S = 1.0  # from the call's start: how long connecting waits for the first face check (see _instructions)
+VOICES_WAIT_S = 1.5  # ...and for knowing, by voice, who said "Hey LittleBot" (littlebot/voices/call.py)
 TALKS_FROM_MONTHS = 24  # younger: whoever talks to LittleBot in sentences is a grown-up, not the child
 NAMING_MIN_WORDS = 3  # their turn had this many words: a grown-up talking (babbling is shorter)
 NAMING_WINDOW_S = 20.0  # the voice's reply this soon after it counts as talking to that grown-up
@@ -694,6 +695,7 @@ class LiveCall:
         self._handover_was_quiet = False
         self._handover_quiet_since: float | None = None
         self._faces: Any = None  # who is in front of the camera (littlebot/vision/faces.py), while warm
+        self._voices: Any = None  # who is talking, by voice (littlebot/voices/call.py), when it's on
 
     # ------------------------------------------------------------ views
     def snapshot(self) -> dict[str, Any]:
@@ -745,6 +747,7 @@ class LiveCall:
     async def run(self) -> None:
         try:
             self._warm_camera(True)  # while connecting: the camera keeps a photo ready, ChatGPT's line opens
+            self._watch_voices(True)  # who woke LittleBot, by voice, while it connects
             await self._connect()
             if not self._ended.is_set():
                 await self._watch()
@@ -789,7 +792,7 @@ class LiveCall:
             self._feed.start(self._spawn)  # from now on: what they say while it connects waits there too
         bearer = await self.svc.auth.bearer()
         self.pc = RTCPeerConnection(RTCConfiguration(iceServers=[]))
-        self.pc.addTrack(MicTrack(mic))
+        self.pc.addTrack(MicTrack(self._voice_tap(mic)))
         self.channel = self.pc.createDataChannel("oai-events")
         self.channel.on("message", self._on_message)
         self.channel.on("open", self._tell_paused_video)
@@ -798,6 +801,7 @@ class LiveCall:
         await self.pc.setLocalDescription(offer)  # gathers candidates (no trickle ICE with this endpoint)
         sdp = self.pc.localDescription.sdp
         await self._first_face_check(t0)
+        await self._first_voice_check(t0)
         timeout = self.cfg.live_connect_timeout_seconds
         voices = list(dict.fromkeys(v.strip().lower() for v in [self.cfg.live_voice, *self.cfg.live_voice_fallbacks]
                                     if v and v.strip())) or ["sol"]
@@ -857,6 +861,9 @@ class LiveCall:
         seen = self._faces.intro() if self._faces is not None else ""  # "In front of your camera now: Ali (dad)."
         if seen:
             text += "\n" + seen
+        heard = self._voices.intro() if self._voices is not None else ""  # "The grown-up who woke you sounds like Ali"
+        if heard:
+            text += "\n" + heard
         now = _dt.datetime.now()
         return f"{text}\nAt the start of this call it is {now:%A}, {now:%H:%M} local time."
 
@@ -1022,6 +1029,7 @@ class LiveCall:
                     self._user_turns += 1
                     self._turn_ended_at = now
                     self._poke()  # their words are finished: a held look answer may go soon
+                    self._voice_turn(event.text)
                 if STOP_CALL.match(_plain_words(event.text)):
                     log.info("live voice: asked to stop")
                     self.end("asked to stop")
@@ -1508,14 +1516,15 @@ class LiveCall:
     def _who_asked(self, text: str, *, partial: bool = False) -> bool:
         """ "Do you know who I am?" while face recognition can answer it (on, a camera, models, someone added)."""
         faces = self._faces
-        if faces is None or faces.closed or not text:
+        voices = self._voices is not None and self._voices.active  # voice recognition can answer it too
+        if (faces is None or faces.closed) and not voices or not text:
             return False
         if text.strip().lower().startswith(("who is here", "who:")):  # the voice's own hand-off (FACES_INTRO)
             hit = True
         else:
             hit = any(WHO_SENTENCES.fullmatch(s) for s in _sentences(text, partial=partial))
         try:
-            return hit and faces.faces.blocked_reason() is None
+            return hit and (voices or faces.faces.blocked_reason() is None)
         except Exception:  # noqa: BLE001
             return False
 
@@ -1624,8 +1633,8 @@ class LiveCall:
 
     async def _run_look(self, job: "_LookJob", question: str) -> None:
         try:
-            if job.kind == "who" and self._faces is not None:
-                job.text, job.ok, job.outcome = await self._faces.answer_now(), True, "who"
+            if job.kind == "who" and (self._faces is not None or self._voices is not None):
+                job.text, job.ok, job.outcome = await self._who_answer(), True, "who"
             else:
                 await self._look(job, question)
         except Exception:  # noqa: BLE001 - a broken look must never leave the voice waiting
@@ -1753,6 +1762,53 @@ class LiveCall:
         self._caption("note", text)
         self._note(text)
         return True
+
+    # ------------------------------------------------------------ who is talking, by voice (littlebot/voices/)
+    def _watch_voices(self, on: bool) -> None:
+        """Who is talking, recognised by voice on the robot (opt-in): from the wake phrase, then each of their turns."""
+        try:
+            if on and self._voices is None:
+                from littlebot.vision.faces import hidden_child_name  # noqa: PLC0415
+                from littlebot.voices.call import CallVoices  # noqa: PLC0415
+
+                voices = getattr(self.ctx, "voices", None)
+                if voices is None or voices.blocked_reason() is not None:
+                    return  # off (or not set up): nothing is listened to at all
+                self._voices = CallVoices(voices, tell=self._tell_faces, spawn=self._spawn, now=self.svc._now,
+                                          publish=lambda data: self._publish(Topics.VOICE_SPEAKER, data),
+                                          hide=hidden_child_name(self.ctx))
+                self._voices.start_from_wake(self.carry)
+                self._spawn(self._voices.run())
+            elif not on and self._voices is not None:
+                self._voices.close()
+        except Exception:  # noqa: BLE001 - knowing who is talking must never stop the call
+            log.debug("live voice: voice recognition failed", exc_info=True)
+
+    def _voice_tap(self, mic: Any) -> Any:
+        """The call's microphone, with a copy for voice recognition (only while it is on)."""
+        return self._voices.tap(mic) if self._voices is not None else mic
+
+    async def _first_voice_check(self, t0: float) -> None:
+        """Give recognising who said "Hey LittleBot" a moment (VOICES_WAIT_S from the start), for the instructions."""
+        voices = self._voices
+        if voices is None or voices.checked.is_set():
+            return
+        wait = VOICES_WAIT_S - max(0.0, self.svc._now() - t0)
+        if wait > 0:
+            try:
+                await asyncio.wait_for(asyncio.shield(voices.checked.wait()), wait)
+            except asyncio.TimeoutError:
+                log.info("live voice: who woke it wasn't known by voice in %.1f s; connecting anyway", VOICES_WAIT_S)
+
+    def _voice_turn(self, text: str) -> None:
+        if self._voices is not None:
+            self._voices.turn_ended(text)  # who said it, "I'm Ali"; the sound since their last turn
+
+    async def _who_answer(self) -> str:
+        """ "Do you know who I am?": face recognition and voice recognition together."""
+        if self._voices is not None:
+            return await self._voices.answer_now(self._faces)
+        return await self._faces.answer_now()
 
     async def _look(self, job: "_LookJob", question: str) -> None:
         """One photo, answered by the ChatGPT text model (validated there); never kept.
@@ -1947,6 +2003,7 @@ class LiveCall:
         if self.audio is not None:
             self.audio.mute()
         self._warm_camera(False)  # the warm photo is dropped now
+        self._watch_voices(False)
         for t in list(self._tasks):
             t.cancel()
         if self._tasks:

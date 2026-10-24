@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Download the optional vision models and the wake-word speech model into models/ (git-ignored).
+"""Download the optional vision and voice models and the wake-word speech model into models/ (git-ignored).
 
     .venv/bin/python scripts/download_models.py            # YuNet (recommended, ~230 KB)
     .venv/bin/python scripts/download_models.py haar       # Haar cascade XML (OpenCV 4.x builds without it)
     .venv/bin/python scripts/download_models.py hands      # optional: count fingers on the robot (~8 MB)
     .venv/bin/python scripts/download_models.py faces      # optional: recognise family members (YuNet + SFace, 39 MB)
+    .venv/bin/python scripts/download_models.py voices     # optional: recognise family voices (ERes2Net, 26 MB)
     .venv/bin/python scripts/download_models.py vosk-en    # wake word "Hey LittleBot" (Vosk small English, 40 MB)
     .venv/bin/python scripts/download_models.py all
     .venv/bin/python scripts/download_models.py --list     # what is installed / verified
@@ -12,7 +13,9 @@
 
 YuNet and Haar only find WHERE faces are. SFace (``faces``) is used only when a parent switches
 on "Recognise family members" in Privacy: it tells apart the family members the parent added on
-the dashboard, on the robot (littlebot/vision/faces.py); nothing else does any biometric analysis.
+the dashboard, on the robot (littlebot/vision/faces.py). The speaker model (``voices``) is used only when a
+parent switches on "Recognise family voices": it tells apart the voices of the same people, on the robot
+(littlebot/voices/; needs the "voices" extra, sherpa-onnx). Nothing else does any biometric analysis.
 Every file is checked against a pinned SHA-256 hash; a mismatch is deleted and reported. Standard
 library only.
 
@@ -114,8 +117,21 @@ MODELS: dict[str, Model] = {
         note="SFace for cv2.FaceRecognizerSF: recognises family members (privacy.face_recognition_enabled); "
              "~110 MB RAM in use",
     ),
+    # Optional: recognise the family's voices (littlebot/voices/, opt-in in Privacy). 192 numbers per
+    # voiceprint, kept on the robot. Needs the "voices" extra (sherpa-onnx). Get it with: download_models.py voices
+    "speaker": Model(
+        filename="3dspeaker_speech_eres2net_sv_en_voxceleb_16k.onnx",
+        sha256="c59158379255ad66e161679cca6af8d52d51e389e3224ab7d7a7baae295c2db5",
+        size=26_485_263,
+        urls=["https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/"
+              "3dspeaker_speech_eres2net_sv_en_voxceleb_16k.onnx"],
+        license="Apache-2.0 (3D-Speaker ERes2Net, VoxCeleb; exported for sherpa-onnx by k2-fsa)",
+        note="speaker embeddings for sherpa-onnx: recognises family voices (privacy.voice_recognition_enabled); "
+             "~75 MB RAM in use",
+    ),
 }
-GROUPS: dict[str, list[str]] = {"hands": ["hand_palm", "hand_pose"], "faces": ["yunet", "sface"]}  # several models
+GROUPS: dict[str, list[str]] = {"hands": ["hand_palm", "hand_pose"], "faces": ["yunet", "sface"],
+                                "voices": ["speaker"]}  # groups (and friendlier names)
 
 
 @dataclass(frozen=True)
@@ -283,7 +299,8 @@ def download(model: Model, dest: Path, *, force: bool = False, timeout: float = 
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Download optional vision models (face detection, finger counting, "
-                                             "opt-in family recognition) and the wake-word speech model.")
+                                             "opt-in family recognition), the opt-in voice model and the "
+                                             "wake-word speech model.")
     choices = [*MODELS, *GROUPS, *ARCHIVES]
     ap.add_argument("names", nargs="*", default=["yunet"], help=f"models: {', '.join(choices)} or all (default: yunet)")
     ap.add_argument("--dest", default=str(DEFAULT_DEST), help="target directory (default: models/)")
@@ -297,7 +314,7 @@ def main(argv: list[str] | None = None) -> int:
         for name, m in MODELS.items():
             status = "verified" if is_verified(m, dest) else ("present, hash differs" if (dest / m.filename).exists()
                                                              else "not downloaded")
-            print(f"{name:6} {m.filename:40} {status:22} {m.license}")
+            print(f"{name:6} {m.filename:50} {status:22} {m.license}")
             print(f"{'':6} {m.note}")
         for name, a in ARCHIVES.items():
             status = "verified" if archive_ready(a, dest) else ("present, not verified" if (dest / a.dirname).exists()
@@ -320,6 +337,10 @@ def main(argv: list[str] | None = None) -> int:
         print("Done. The wake word (\"Hey LittleBot\") uses it within a few seconds; see docs/CHATGPT.md.")
     if ok and "yunet" in names:
         print("Done. vision.detector: yunet (the default) will now use YuNet; check with scripts/check_camera.py.")
+    if ok and "speaker" in names:
+        print("Done. To recognise family voices: install the package (.venv/bin/python -m pip install -e '.[voices]'), "
+              "switch on \"Recognise family voices\" in Privacy, then press Record voice under Who's who on the "
+              "Profile page.")
     if ok and "sface" in names:
         print("Done. To recognise family members: switch on \"Recognise family members\" in Privacy, then add "
               "people under Who's who on the Profile page.")

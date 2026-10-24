@@ -66,6 +66,11 @@ class Topics:
     AUDIO_LISTENING_STOPPED = "audio.listening_stopped"  # {}
     AUDIO_UTTERANCE = "audio.utterance"  # {text, confidence, source: "stt"|"simulated"}
     AUDIO_DEVICE_STATUS = "audio.device_status"  # {device: "microphone"|"speaker", status: ok|simulated|disconnected|unavailable|disabled, detail, backend, name}
+    # who is talking in a live call, by voice (littlebot/voices/call.py): once per identified turn of theirs (and
+    # for the wake phrase), never audio: {person_id, name, role, is_child, score, speech_s, source: "wake"|"turn"};
+    # unsure (or too little speech): person_id / name / role None and is_child None. Only while "Recognise family
+    # voices" is on and someone has recorded their voice; ``score``: the closest voice's cosine similarity.
+    VOICE_SPEAKER = "voice.speaker"
 
     # --- conversation ---
     BRAIN_REPLY = "brain.reply"  # {text, provider, filtered}

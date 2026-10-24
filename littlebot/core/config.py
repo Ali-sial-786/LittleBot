@@ -176,6 +176,15 @@ class AudioConfig(_Section):
     store_recordings: bool = False  # never store audio unless explicitly enabled
 
 
+class VoicesConfig(_Section):
+    """Recognising the family's voices (littlebot/voices/; opt-in: privacy.voice_recognition_enabled)."""
+
+    # 3D-Speaker ERes2Net (VoxCeleb, 16 kHz) for sherpa-onnx: scripts/download_models.py voices
+    model: str = "models/3dspeaker_speech_eres2net_sv_en_voxceleb_16k.onnx"  # relative to the project root
+    match_threshold: float = 0.5  # cosine similarity to a person's average voiceprint (plus a margin over the next)
+    threads: int = 2  # CPU threads for one voiceprint (2: ~0.1 s for 2 s of speech on a Pi 5, estimated)
+
+
 class WakeConfig(_Section):
     """Wake word: saying a phrase starts live voice hands-free (littlebot/audio/wakeword.py).
 
@@ -433,6 +442,7 @@ class LittleBotConfig(BaseModel):
     vision: VisionConfig = Field(default_factory=VisionConfig)
     audio: AudioConfig = Field(default_factory=AudioConfig)
     wake: WakeConfig = Field(default_factory=WakeConfig)
+    voices: VoicesConfig = Field(default_factory=VoicesConfig)
     ai: AIConfig = Field(default_factory=AIConfig)
     chatgpt: ChatGPTConfig = Field(default_factory=ChatGPTConfig)
     info: InfoConfig = Field(default_factory=InfoConfig)

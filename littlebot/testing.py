@@ -141,6 +141,14 @@ class FakeAudio(_Recorder):
     async def test_microphone(self, seconds: float = 2.0) -> dict[str, Any]:
         return {"ok": True, "backend": "fake", "device": None, "peak": 0.0, "rms": 0.0, "detail": "fake"}
 
+    async def record_clip(self, seconds: float = 20.0) -> dict[str, Any]:
+        """Like AudioService.record_clip: ``clip`` (samples, rate) is what the next recording "hears"."""
+        self._rec("record_clip", seconds)
+        clip = getattr(self, "clip", None)
+        if clip is None:
+            return {"ok": False, "samples": None, "rate": 0, "detail": "fake: nothing to record"}
+        return {"ok": True, "samples": clip[0], "rate": clip[1], "detail": "fake"}
+
     def status(self) -> dict[str, Any]:
         return {"speaker": {"backend": "fake", "device": None, "status": "ok", "detail": "fake"},
                 "microphone": {"backend": "fake", "device": None, "status": "ok", "detail": "fake"},
@@ -190,6 +198,69 @@ class FakeMotion(_Recorder):
         return {"backend": "fake", "physical_enabled": False, "armed": False, "estop": self.estop,
                 "moving": False, "gesture": None, "simulation_only": True, "reason": "fake motion",
                 "joints": joints}
+
+
+# ---------------------------------------------------------------- voices (littlebot/voices/)
+SPEAKER_HZ = tuple(200 + 50 * k for k in range(8))  # fake "speaker" k talks as a steady tone at SPEAKER_HZ[k]
+SPEAKER_COMMON = 0.2  # what the fake speakers' voiceprints share (two of them: cosine similarity ~0.15)
+
+
+def speaker_tone(k: int, seconds: float, rate: int = 16000, *, level: float = 0.2, silence: float = 0.0,
+                 int16: bool = False) -> Any:
+    """Fake speaker ``k`` "talking" for ``seconds`` (then ``silence`` seconds of quiet), mono at ``rate``."""
+    import numpy as np  # noqa: PLC0415
+
+    t = np.arange(int(seconds * rate)) / rate
+    x = (level * np.sin(2 * np.pi * SPEAKER_HZ[k] * t)).astype(np.float32)
+    if silence:
+        x = np.concatenate([x, np.zeros(int(silence * rate), dtype=np.float32)])
+    return (x * 32767).astype(np.int16) if int16 else x
+
+
+class FakeSpeakerEngine:
+    """A deterministic stand-in for littlebot.voices.engine.SpeakerEngine (no sherpa-onnx, no model).
+
+    The voiceprint of a sound is the mix of the fake speakers' voiceprints, weighted by how loud each
+    speaker's tone (``SPEAKER_HZ``) is in it: one speaker gives exactly theirs (cosine 1.0 with itself,
+    ~0.15 with anyone else), two speakers at once a blend (close to both: unsure).
+    ``table`` overrides a speaker's voiceprint (any length-``dim`` vector)."""
+
+    name = "fake-speaker.onnx"
+
+    def __init__(self, *, dim: int = 192, table: dict[int, Any] | None = None) -> None:
+        import numpy as np  # noqa: PLC0415
+
+        self.dim = dim
+        self.calls = 0
+        self.seconds: list[float] = []
+        common = np.full(dim, 1.0 / np.sqrt(dim), dtype=np.float32)
+        self.table = {}
+        for k in range(len(SPEAKER_HZ)):
+            own = np.zeros(dim, dtype=np.float32)
+            own[k % dim] = 1.0
+            own -= np.dot(own, common) * common  # orthogonal to the common part
+            own /= np.linalg.norm(own)
+            self.table[k] = np.sqrt(SPEAKER_COMMON) * common + np.sqrt(1 - SPEAKER_COMMON) * own
+        for k, v in (table or {}).items():
+            self.table[k] = np.asarray(v, dtype=np.float32)
+
+    def embed(self, samples: Any) -> Any:
+        import numpy as np  # noqa: PLC0415
+
+        x = np.asarray(samples, dtype=np.float32).reshape(-1)
+        self.calls += 1
+        self.seconds.append(len(x) / 16000)
+        spectrum = np.abs(np.fft.rfft(x))
+        hz = np.fft.rfftfreq(len(x), 1 / 16000)
+        v = np.zeros(self.dim, dtype=np.float32)
+        for k, f in enumerate(SPEAKER_HZ):
+            near = np.abs(hz - f) <= 5
+            weight = float(spectrum[near].max()) if near.any() else 0.0
+            if weight > 1e-3 * max(1.0, float(spectrum.max())):
+                v += weight * self.table[k]
+        if not np.any(v):
+            v[-1] = 1.0  # noise: like nobody
+        return v / np.linalg.norm(v)
 
 
 def make_test_config(**overrides: Any) -> LittleBotConfig:

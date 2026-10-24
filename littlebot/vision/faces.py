@@ -776,6 +776,12 @@ def look_context(sighting: Sighting, hide: str | None = None) -> str | None:
 _CHILD_ROLE = re.compile(r"\b(?:baby|child|kid|toddler|daughter|son|little one)\b", re.I)
 
 
+def is_child(name: str, role: str, child: str | None = None) -> bool:
+    """Whether someone on the list is the little one: a child's role ("the baby"), or the child's nickname
+    (``child``). Also used for voices (littlebot/voices/)."""
+    return bool(_CHILD_ROLE.search(role or "") or (child and (name or "").lower() == child.lower()))
+
+
 def who_answer(sighting: Sighting | None, hide: str | None = None, child: str | None = None) -> str:
     """For "do you know who I am?" / "who is this?": what a fresh check saw, for the voice to say now.
     ``child``: the child's nickname. Whoever asks is talking, so the child in view (too young to ask)
@@ -946,4 +952,4 @@ class CallFaces:
 
 __all__ = ["CallFaces", "FaceEngine", "FaceRecognition", "FacesUnavailable", "Known", "PeopleStore", "Presence",
            "Seen", "SeenFace", "Sighting", "assign", "best_match", "centre_of", "clean_label", "describe",
-           "get_faces", "hidden_child_name", "look_context", "who_answer"]
+           "get_faces", "hidden_child_name", "is_child", "look_context", "who_answer"]

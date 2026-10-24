@@ -39,6 +39,9 @@ def build_defaults(cfg: LittleBotConfig) -> dict[str, Any]:
         # Recognise the family members a parent added (littlebot/vision/faces.py), on the robot. Off until a
         # parent opts in; also needs the camera switch.
         "privacy.face_recognition_enabled": False,
+        # Recognise the voices of the family members a parent added (littlebot/voices/), on the robot: only
+        # voiceprints are kept, never recordings. Off until a parent opts in; also needs the microphone switch.
+        "privacy.voice_recognition_enabled": False,
         # audio
         "audio.volume": cfg.audio.speaker.volume,
         "audio.tts_rate": cfg.audio.tts.rate,
