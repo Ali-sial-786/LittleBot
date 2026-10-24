@@ -817,7 +817,7 @@ class LiveAudio:
         self._hold = False
         self._queue_cap_s = MAX_QUEUED_S
         self._quiet_since = None
-        log.debug("live voice: ChatGPT heard them %d ms after they cut in; the rest of that turn is dropped",
+        log.info("live voice: ChatGPT heard them %d ms after they cut in; the rest of that turn is dropped",
                   int((now - self._barge_at) * 1000))
         self._notify("heard", {})
 
