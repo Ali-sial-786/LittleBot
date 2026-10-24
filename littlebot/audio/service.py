@@ -154,6 +154,7 @@ class AudioService(Service):
         self._bus = ctx.bus
         self._clock = ctx.clock
         self.reconnect_seconds = 5.0
+        dev.set_echo_cancel(getattr(self.cfg, "echo_cancel", "auto"))  # PipeWire's echo-cancelled devices: auto | on | off
 
         # --- volume / rate / gain (parent settings, clamped) ---
         self._max_volume = max(0.0, min(1.0, float(self.cfg.speaker.max_volume)))
@@ -294,8 +295,24 @@ class AudioService(Service):
             self._devices_ready = True
         log.info("audio: speaker=%s (%s), microphone=%s (%s), tts=%s, stt=%s", self._out.name, self._out.status,
                  self._inp.name, self._inp.status, self._tts.name, self._stt.name)
+        self._log_echo_cancel()
         self._publish_device("speaker")
         self._publish_device("microphone")
+
+    def _log_echo_cancel(self) -> None:
+        """Which way the sound goes: PipeWire's echo-cancelled devices (shared, non-exclusive) or the USB ones."""
+        spk = getattr(self._out, "device_name", None)
+        mic = getattr(self._inp, "device_name", None)
+        if dev.is_echo_cancel_device(spk, "output") and dev.is_echo_cancel_device(mic, "input"):
+            log.info("audio: echo cancelling on (PipeWire: %s / %s)", mic, spk)
+        elif isinstance(self._out, SoundDeviceOutput) or isinstance(self._inp, SoundDeviceInput):
+            log.info("audio: echo cancelling off (%s)", dev.echo_cancel_note())
+
+    @property
+    def echo_cancelling(self) -> bool:
+        """Both devices are PipeWire's echo-cancelled ones."""
+        return dev.is_echo_cancel_device(getattr(self._out, "device_name", None), "output") and \
+            dev.is_echo_cancel_device(getattr(self._inp, "device_name", None), "input")
 
     def _ensure_ready(self) -> None:
         if not self._devices_ready:

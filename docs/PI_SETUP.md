@@ -112,12 +112,13 @@ What it does (idempotent - safe to run again after `git pull`):
 | Wake word | "Hey LittleBot" starts live voice ([CHATGPT.md](CHATGPT.md#wake-word-hey-littlebot)), heard offline on the robot: `pip install -e ".[local-stt]"` (vosk, one prebuilt aarch64 wheel, ~3 MB) and `scripts/download_models.py vosk-en` (40 MB download, unpacked to `models/vosk-model-small-en-us-0.15/`, ~140 MB RAM while the wake word is on). A failure only warns; `--no-wake-word` skips both, `--no-models` only the model |
 | Files | `data/logs/`; `config/local.yaml` from `config/hardware.example.yaml` and `.env` from `.env.example` **only if missing**; `.env` set to mode 600 |
 | Sound output | `scripts/set_default_speaker.sh`: the USB speaker and USB microphone become the default sound devices instead of the HDMI screen (a WirePlumber rule in `~/.config/wireplumber` + `wpctl set-default`; no sudo). A failure only warns; `--no-audio-default` skips it |
+| Echo cancelling (opt-in) | Only with `--echo-cancel`: the apt packages `pipewire-alsa libspa-0.2-modules libpipewire-0.3-modules`, then `scripts/setup_echo_cancel.sh` (PipeWire's WebRTC echo canceller between the USB microphone and speaker, so a grown-up can talk over the live voice; [Echo cancelling](#echo-cancelling)). Untested on a real Pi; a failure only warns |
 | Never | edits `config.txt`/`cmdline.txt`, enables I2C (unless `--enable-i2c`), enables servos |
 
 Options: `--with-service` (autostart, section 10), `--headless-service`, `--enable-i2c`
 (later, for the servo board), `--system-opencv`, `--dev` (pytest on the Pi),
-`--skip-apt`, `--no-chromium`, `--no-models`, `--no-live`, `--no-wake-word`, `--no-audio-default`, `--yes`. See
-`scripts/install_pi.sh --help`.
+`--skip-apt`, `--no-chromium`, `--no-models`, `--no-live`, `--no-wake-word`, `--no-audio-default`,
+`--echo-cancel` (section [Echo cancelling](#echo-cancelling)), `--yes`. See `scripts/install_pi.sh --help`.
 
 The wake word keeps the USB microphone open while it is switched on (**AI** → **Live voice**), and
 hands it over to push to talk, the microphone test and live voice. On a 2 GB Pi it costs about
@@ -165,6 +166,57 @@ Sound from the screen (HDMI) instead of the USB speaker: `wpctl status`, then
 `wpctl set-default <ID>` with the number in front of the USB speaker under *Audio -> Sinks*
 (one-off), or `scripts/set_default_speaker.sh` to make USB the default for good - details in
 [TROUBLESHOOTING.md](TROUBLESHOOTING.md#sound-comes-out-of-the-screen-hdmi-instead-of-the-speaker).
+
+### Echo cancelling
+
+**Optional, and untested on a real Pi.** Without it the live voice is one at a time: the
+microphone is shut while LittleBot talks, so nobody can interrupt it. With PipeWire's echo
+canceller (`libpipewire-module-echo-cancel`, WebRTC) LittleBot's own voice is taken out of what the
+microphone hears, and a grown-up can talk over the voice to stop it ([CHATGPT.md](CHATGPT.md#talking-over-it-barge-in)).
+It also takes some of a YouTube video's sound out of what the wake word hears.
+
+As the desktop user (no sudo; the script asks for nothing):
+
+```bash
+cd ~/LittleBot
+scripts/install_pi.sh --echo-cancel --yes      # the packages + the setup below, or only the setup:
+scripts/setup_echo_cancel.sh --dry-run         # what it would do and the files it would write
+scripts/setup_echo_cancel.sh                   # set it up (safe to run again)
+scripts/setup_echo_cancel.sh --check           # PASS / WARN / FAIL per item, changes nothing
+```
+
+What it does (all user-level, nothing in `/etc`):
+
+* writes `~/.config/pipewire/pipewire.conf.d/60-littlebot-echo-cancel.conf`: the echo canceller between
+  the USB microphone ("USB PnP Sound Device") and the USB speaker ("UACDemoV1.0"), found with
+  `pw-dump` (`--mic NAME` / `--speaker NAME` to pick others). It makes a microphone
+  `littlebot_ec_mic` and a speaker `littlebot_ec_speaker` ("LittleBot microphone / speaker (echo
+  cancelled)" in `wpctl status`);
+* adds a marked block to `~/.asoundrc` (the rest of the file is kept) with two ALSA devices of the
+  same names, `type pipewire` (package `pipewire-alsa`), so PortAudio, and so LittleBot, can open them;
+* restarts PipeWire (`systemctl --user restart pipewire pipewire-pulse wireplumber`; sound stops for a
+  moment), makes the two the default sound devices (`wpctl set-default`, so Chromium's YouTube sound
+  goes through the canceller too; `--no-default` doesn't), restarts LittleBot if it runs as a user
+  service, and runs `--check`.
+
+LittleBot then uses them by itself (`audio.echo_cancel: auto`, with the speaker and microphone
+device left on automatic) and says so in its journal: `journalctl --user -u littlebot | grep "echo
+cancelling"` shows "audio: echo cancelling on (PipeWire: littlebot_ec_mic / littlebot_ec_speaker)".
+A device named in `config/local.yaml` (`audio.speaker.device: "UACDemo"` for example) wins over them.
+
+Check by hand: `wpctl status` (the two under *Sinks* and *Sources*, marked `*` as default),
+`pw-cli ls Node | grep littlebot_ec`, `arecord -L | grep -A1 littlebot_ec`, `aplay -L | grep -A1 littlebot_ec`,
+`.venv/bin/python scripts/check_audio.py --list`.
+
+Undo: `scripts/setup_echo_cancel.sh --remove` (removes the file and the `~/.asoundrc` block,
+restarts PipeWire and makes the USB devices the defaults again with `scripts/set_default_speaker.sh`).
+To keep it set up but not use it: `audio.echo_cancel: off` or only `chatgpt.live_barge_in: off`.
+
+What to check on the Pi first (none of it has been tried on real hardware): `--check` passes; the
+voice still sounds right through the canceller; in a live call, talking over
+the voice stops it and it doesn't stop by itself ([CHATGPT.md troubleshooting](CHATGPT.md#7-troubleshooting));
+YouTube still plays; the wake word still works; `top` shows PipeWire's CPU (the WebRTC canceller is
+expected to take a few percent of one core).
 
 ## 7. Configure `config/local.yaml`
 

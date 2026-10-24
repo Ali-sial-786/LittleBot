@@ -21,6 +21,14 @@ default (``None``). Sample rate / channel count fall back to what the device
 supports and audio is resampled. A failure mid-stream raises
 ``AudioDeviceError``; the service marks the device disconnected and retries
 later. Nothing here ever needs a real device to import or construct.
+
+Echo cancelling: ``scripts/setup_echo_cancel.sh`` makes PipeWire's echo-cancelled
+microphone and speaker (``littlebot_ec_mic`` / ``littlebot_ec_speaker``) ALSA devices
+that PortAudio lists. With the default device choice (``None`` / "auto") and
+``audio.echo_cancel: auto`` they are used whenever *both* exist, by everything that
+opens a device here (the audio service, the wake word, live voice), else the USB
+devices as before. Through PipeWire a device can be opened by several streams at
+once; the ``hw:`` USB devices can't.
 """
 
 from __future__ import annotations
@@ -177,21 +185,93 @@ def is_hdmi_device(d: dict[str, Any]) -> bool:
     return bool(_HDMI.search(d.get("name", "")))
 
 
+# ------------------------------------------------------------ echo cancelling (PipeWire)
+# The ALSA PCM names scripts/setup_echo_cancel.sh writes to ~/.asoundrc (one per PipeWire node of the same
+# name). PortAudio's ALSA host API lists every top-level ``pcm.<name>`` of the ALSA configuration by that name.
+EC_MIC = "littlebot_ec_mic"
+EC_SPEAKER = "littlebot_ec_speaker"
+_EC_NAMES = {"input": EC_MIC, "output": EC_SPEAKER}
+EC_MODES = ("auto", "on", "off")
+_ec_mode = "auto"
+_ec_missing_warned = False
+
+
+def set_echo_cancel(mode: str) -> None:
+    """``audio.echo_cancel``: auto (the echo-cancelled devices when they exist), on (the same, warning when they
+    don't), off (never: the USB devices as before)."""
+    global _ec_mode, _ec_missing_warned
+    mode = str(mode or "auto").strip().lower()
+    _ec_mode = mode if mode in EC_MODES else "auto"
+    _ec_missing_warned = False
+
+
+def echo_cancel_mode() -> str:
+    return _ec_mode
+
+
+def is_echo_cancel_device(d: dict[str, Any] | str | None, kind: str | None = None) -> bool:
+    """Whether ``d`` (a device, or its name) is one of PipeWire's echo-cancelled devices (of ``kind``)."""
+    name = (d.get("name", "") if isinstance(d, dict) else str(d or "")).strip().lower()
+    names = [_EC_NAMES[kind]] if kind in _EC_NAMES else list(_EC_NAMES.values())
+    return any(name == n or name.startswith((n + " ", n + ":")) for n in names)
+
+
+def echo_cancel_devices(devs: list[dict[str, Any]] | None = None) -> tuple[dict[str, Any], dict[str, Any]] | None:
+    """PipeWire's echo-cancelled ``(microphone, speaker)``, or None unless *both* are listed.
+
+    One without the other cancels nothing: the canceller only removes what was played through its own
+    speaker, and a ``hw:`` speaker opened directly would also keep PipeWire off the USB device."""
+    devs = query_devices() if devs is None else devs
+    mic = next((d for d in devs if d["max_input_channels"] > 0 and is_echo_cancel_device(d, "input")), None)
+    spk = next((d for d in devs if d["max_output_channels"] > 0 and is_echo_cancel_device(d, "output")), None)
+    return (mic, spk) if mic is not None and spk is not None else None
+
+
+def echo_cancel_note() -> str:
+    """Why echo cancelling isn't in use, for the log."""
+    if _ec_mode == "off":
+        return "audio.echo_cancel: off"
+    if echo_cancel_devices() is not None:
+        return (f"PipeWire's {EC_MIC} / {EC_SPEAKER} exist, but another device was chosen: leave "
+                "audio.microphone.device and audio.speaker.device empty (null) to use them")
+    return "not set up on this robot: scripts/setup_echo_cancel.sh"
+
+
+def _auto_echo_cancel(kind: str, devs: list[dict[str, Any]]) -> dict[str, Any] | None:
+    global _ec_missing_warned
+    if _ec_mode == "off":
+        return None
+    pair = echo_cancel_devices(devs)
+    if pair is not None:
+        return pair[0] if kind == "input" else pair[1]
+    if _ec_mode == "on" and not _ec_missing_warned:
+        _ec_missing_warned = True
+        log.warning("audio.echo_cancel is on, but PipeWire's echo-cancelled devices (%s, %s) aren't there: using "
+                    "the USB devices without echo cancelling. Set them up with scripts/setup_echo_cancel.sh "
+                    "(check: scripts/setup_echo_cancel.sh --check)", EC_MIC, EC_SPEAKER)
+    return None
+
+
 def find_device(spec: int | str | None, kind: str) -> dict[str, Any]:
     """Pick a device: int = index, str = name substring, 'system' = the desktop's default.
 
-    None / 'default' / 'auto': the robot's own USB speaker (or microphone) when one is plugged in,
+    None / 'default' / 'auto': PipeWire's echo-cancelled microphone and speaker when both exist (see
+    ``audio.echo_cancel``), else the robot's own USB speaker (or microphone) when one is plugged in,
     whatever the desktop's default is - on a Pi that default is easily the HDMI screen. Without a
     USB device: the system default, but never HDMI while anything else exists.
     """
     key = "max_output_channels" if kind == "output" else "max_input_channels"
-    devs = [d for d in query_devices() if d[key] > 0]
+    every = query_devices()
+    devs = [d for d in every if d[key] > 0]
     if not devs:
         err = sounddevice_error()
         raise AudioDeviceError(f"no {kind} devices found" + (f" ({err})" if err else ""))
     system = isinstance(spec, str) and spec.strip().lower() == "system"
     if system or spec is None or (isinstance(spec, str) and spec.strip().lower() in ("", "default", "auto", "none")):
         if not system:
+            ec = _auto_echo_cancel(kind, every)
+            if ec is not None:
+                return ec
             usb = [d for d in devs if is_usb_device(d)]
             if usb:
                 return usb[0]

@@ -71,6 +71,8 @@ audio:
     device: null
     volume: 0.4            # start quiet; parents can change it in the dashboard
     max_volume: 0.7        # hard ceiling - test loudness at the child's ear distance first
+  echo_cancel: auto        # auto | on | off: PipeWire's echo-cancelled devices when they exist
+                           # (scripts/setup_echo_cancel.sh, docs/PI_SETUP.md; untested on the Pi)
   tts:
     provider: auto         # espeak-ng (installed by install_pi.sh) unless a piper model is set
 
@@ -111,8 +113,15 @@ motion:
 #   live_voice_fallbacks: [sol]    # known voices: cove | arbor | breeze | ember | juniper | maple | sol | spruce | vale
 #   live_session_minutes: 10       # hard limit per call (the voice says goodbye, then hangs up)
 #   live_idle_hangup_seconds: 90   # hang up after this long with nobody talking (0 = never)
-#   live_half_duplex: true         # no echo cancellation on the Pi: mic sends silence while LittleBot talks
+#   live_half_duplex: true         # without echo cancelling: mic sends silence while LittleBot talks
 #   live_echo_tail_ms: 450         # ...and for this long after; raise it if the voice hears itself
+#   live_barge_in: auto            # a grown-up talking over the voice stops it: auto = only with echo
+#                                  # cancelling (scripts/setup_echo_cancel.sh, untested on the Pi) | on | off
+#   live_barge_in_speech_ms: 400   # this much grown-up speech interrupts it
+#   live_barge_in_over_echo_db: 10.0  # ...louder than what is left of its own voice by this much
+#   live_barge_in_min_level: 0.008    # ...and at least this loud (mic RMS)
+#   live_barge_in_max_pitch_hz: 260.0 # voiced above this = a child: doesn't interrupt
+#   live_barge_in_false_alarm_ms: 1200  # no words of theirs by then: the voice carries on
 #   live_volume: null              # null = the speaker volume; always capped at audio.speaker.max_volume
 #   look_models: []                # camera looks: models tried first (e.g. a faster one), then `models`
 #   look_effort: null              # simple looks ("what colour is this?"): null = none
