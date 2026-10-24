@@ -200,7 +200,7 @@ What it does (all user-level, nothing in `/etc`):
   service, and runs `--check`.
 
 LittleBot then uses them by itself (`audio.echo_cancel: auto`, with the speaker and microphone
-device left on automatic) and says so in its journal: `journalctl --user -u littlebot | grep "echo
+device left on automatic) and says so in its journal: `journalctl --user-unit littlebot | grep "echo
 cancelling"` shows "audio: echo cancelling on (PipeWire: littlebot_ec_mic / littlebot_ec_speaker)".
 A device named in `config/local.yaml` (`audio.speaker.device: "UACDemo"` for example) wins over them.
 
@@ -270,7 +270,7 @@ There is no default password. On first start the dashboard prints a **one-time s
 code** in the app's console/log. Read it on the Pi and open the dashboard:
 
 ```bash
-journalctl --user -u littlebot -b | grep -i setup      # when running as a service
+journalctl --user-unit littlebot -b | grep -i setup      # when running as a service
 grep -i setup data/logs/littlebot.log | tail -3        # or from the app's log file
 ```
 
@@ -293,7 +293,7 @@ their names. Everything runs on the robot; only names and 128 numbers per face s
    know", with its match score and the score needed (`vision.face_match_threshold`, 0.45).
 5. Take new samples of the baby every month or so (the card says when it's time).
 
-In the journal (`journalctl --user -u littlebot -f`), look for `face recognition: models loaded in
+In the journal (`journalctl --user-unit littlebot -f`), look for `face recognition: models loaded in
 ... ms`, `face recognition: sample kept (N for that person)` and, in a voice chat,
 `live voice: face recognition is on (N face(s) in view, N known)`, `live voice: N known face(s) in
 view at the start` and `live voice: told who is in view (N known)`. `face recognition can't run
@@ -361,7 +361,7 @@ Everyday commands (no sudo - it is your user's service):
 
 ```bash
 systemctl --user status littlebot
-journalctl --user -u littlebot -f            # live log (also data/logs/littlebot.log)
+journalctl --user-unit littlebot -f            # live log (also data/logs/littlebot.log)
 systemctl --user restart littlebot
 systemctl --user stop littlebot
 systemctl --user disable littlebot && rm ~/.config/autostart/littlebot.desktop   # turn autostart off

@@ -4,7 +4,7 @@
 # Installed by:  scripts/install_pi.sh --with-service
 #   -> ~/.config/systemd/user/littlebot.service  (@REPO_DIR@ is replaced with the repo path)
 # Manage it with (no sudo - it is your user's service):
-#   systemctl --user status littlebot        journalctl --user -u littlebot -f
+#   systemctl --user status littlebot        journalctl --user-unit littlebot -f
 #   systemctl --user restart littlebot       systemctl --user stop littlebot
 #   systemctl --user disable littlebot       (stop starting it at login)
 #
@@ -19,7 +19,7 @@
 Description=LittleBot companion robot (face window + parent dashboard)
 Documentation=file://@REPO_DIR@/docs/PI_SETUP.md
 After=graphical-session.target pipewire.service wireplumber.service pipewire-pulse.service
-# Give up after 5 failed starts in 10 minutes (then: journalctl --user -u littlebot -b).
+# Give up after 5 failed starts in 10 minutes (then: journalctl --user-unit littlebot -b).
 StartLimitIntervalSec=600
 StartLimitBurst=5
 

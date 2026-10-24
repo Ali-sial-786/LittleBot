@@ -22,7 +22,7 @@ Find it again with:
 
 ```bash
 grep -i "setup code" data/logs/littlebot.log | tail -1          # from the log file
-journalctl --user -u littlebot -b | grep -i "setup code"       # when running as a service (Pi)
+journalctl --user-unit littlebot -b | grep -i "setup code"       # when running as a service (Pi)
 ```
 
 1. Open the dashboard (on the robot: <http://127.0.0.1:8765/>).

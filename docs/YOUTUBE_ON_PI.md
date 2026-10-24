@@ -144,7 +144,7 @@ Run LittleBot normally (`--mode pi`, face + camera + audio), then in a second te
 12. **Talking during a video** (section 10): play a song video at the usual volume and say "Hey
     LittleBot" from where the child sits (1-2 m), ten times: how many paused the video? Then let a
     few typical videos play for 30 minutes with nobody talking and count the false starts
-    (`journalctl --user -u littlebot | grep -c "wake word heard"`) and what was ignored
+    (`journalctl --user-unit littlebot | grep -c "wake word heard"`) and what was ignored
     (`grep "ignored while a video plays"`). Check that the earcon is heard, the face is back
     within ~2 s, "keep watching" carries on at the right place (Chromium restarts: note how long
     it takes), and `free -m` during a video with the wake word on (the model stays loaded).

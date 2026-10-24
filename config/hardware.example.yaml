@@ -145,7 +145,7 @@ dashboard:
 
 # ---------------------------------------------------------------------------
 # Logging: JSON lines; also written to data/logs/littlebot.log (rotating, 3 x 2 MB).
-# The service's stdout/stderr go to the journal: journalctl --user -u littlebot
+# The service's stdout/stderr go to the journal: journalctl --user-unit littlebot
 # ---------------------------------------------------------------------------
 logging:
   level: INFO              # DEBUG while bringing up hardware

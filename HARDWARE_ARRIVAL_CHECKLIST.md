@@ -188,7 +188,7 @@ Remove anything private (Wi-Fi names are not in these outputs; API keys never ar
    bank model and the phase-10 results
 8. Performance: the `perf_monitor.py` summaries (`data/perf/*.summary.json`) for each
    scenario and the `benchmark_face.py` output
-9. Logs from any failure: `journalctl --user -u littlebot -b | tail -100`,
+9. Logs from any failure: `journalctl --user-unit littlebot -b | tail -100`,
    `tail -50 data/logs/littlebot.log`, `journalctl -k -b | tail -50`
 10. Touch (if tried): `dmesg | grep -i ads7846`, `grep -A5 -i touch /proc/bus/input/devices`
 11. Physical notes: does the screen clear the cooler, enclosure temperature, anything

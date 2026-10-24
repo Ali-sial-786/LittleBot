@@ -495,7 +495,7 @@ if ((WITH_SERVICE)); then
         warn "Desktop autologin does not seem to be enabled for $CURRENT_USER. Enable it so LittleBot starts at boot:"
         warn "  sudo raspi-config  ->  System Options  ->  Boot / Auto Login  ->  Desktop Autologin"
     fi
-    info "Start now: systemctl --user start littlebot   Logs: journalctl --user -u littlebot -f"
+    info "Start now: systemctl --user start littlebot   Logs: journalctl --user-unit littlebot -f"
 fi
 
 if ((HEADLESS_SERVICE)); then

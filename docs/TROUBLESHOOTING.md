@@ -15,11 +15,12 @@ Hardware-specific advice is **UNVERIFIED** until the robot has been built.
 | What | Where / command |
 |---|---|
 | App log (rotating JSON lines, 3 x 2 MB) | `data/logs/littlebot.log` (`logging.file`, relative to `data/`) |
-| Autostart user service | `journalctl --user -u littlebot -b` (add `-f` to follow) |
+| Autostart user service | `journalctl --user-unit littlebot -b` (add `-f` to follow) |
 | Headless system service | `journalctl -u littlebot -b` |
+| "No journal files were found" | Raspberry Pi OS keeps user services' logs in the system journal: use `--user-unit littlebot` (as above), not `--user -u littlebot`; or grep the app log with `grep -a` (`grep -a "echo cancelling" data/logs/littlebot.log`; without `-a` grep may only say "binary file matches") |
 | Launcher messages ("display ready ...") | same journal, tag `littlebot` |
 | Kernel (USB, under-voltage, camera, touch) | `journalctl -k -b` or `dmesg` (may need `sudo`) |
-| Previous boot (after a crash/reset) | `journalctl --user -u littlebot -b -1`, `journalctl -k -b -1` |
+| Previous boot (after a crash/reset) | `journalctl --user-unit littlebot -b -1`, `journalctl -k -b -1` |
 | Pretty-print the JSON log | `tail -20 data/logs/littlebot.log \| python3 -m json.tool --json-lines` |
 | **What happened lately, readable** (gaps marked, warnings, the Pi's memory and temperature now) | `python3 scripts/log_timeline.py` (`--minutes 90`, `--since 21:40`, `--all`) |
 
@@ -187,7 +188,7 @@ Optional and **untested on a real Pi** ([PI_SETUP.md](PI_SETUP.md#echo-cancellin
 
 ## Service won't start (autostart)
 
-1. `systemctl --user status littlebot` and `journalctl --user -u littlebot -b | tail -50`.
+1. `systemctl --user status littlebot` and `journalctl --user-unit littlebot -b | tail -50`.
 2. "no desktop session after 90s": Desktop Autologin is not enabled, or you only logged
    in over SSH. Enable it in raspi-config, or start it from the desktop session.
 3. "start request repeated too quickly": it failed 5 times in 10 minutes. Fix the cause,
@@ -223,5 +224,5 @@ endpoint changed (404), "Not installed on this robot yet", echo, talking over it
 ## Anything else
 
 Collect and share: `diagnose.py --json`, the last 100 lines of
-`journalctl --user -u littlebot -b`, `journalctl -k -b | tail -100`, and what you did just
+`journalctl --user-unit littlebot -b`, `journalctl -k -b | tail -100`, and what you did just
 before the problem.

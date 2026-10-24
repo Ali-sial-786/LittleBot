@@ -153,7 +153,7 @@ answer itself. So the conversation is **half-duplex**: while LittleBot's voice i
 0.45 s after it stops, the microphone sends silence. **You can't talk over it or interrupt it.**
 Wait until it stops, then speak. Stand close to LittleBot.
 
-The journal says which it is when a call starts: `journalctl --user -u littlebot | grep "live audio:"`
+The journal says which it is when a call starts: `journalctl --user-unit littlebot | grep "live audio:"`
 ends in "echo cancelling on (PipeWire): a grown-up can talk over the voice (barge-in on)" or
 "one at a time (half-duplex; ...)". The volume is the speaker volume from **Audio & devices**,
 capped for little ears.
@@ -270,7 +270,7 @@ scripted replies meant for older children.
 * **Played instead of text-to-speech** whenever LittleBot says exactly that line (case,
   punctuation and spacing don't matter), with the same volume, mouth movement, STOP and pause.
   The journal says once per line which voice was used:
-  `journalctl --user -u littlebot | grep "speech in"` ("the recorded ChatGPT voice (bubbie)" or
+  `journalctl --user-unit littlebot | grep "speech in"` ("the recorded ChatGPT voice (bubbie)" or
   "text-to-speech (espeak; not recorded)"). The speech-rate setting doesn't change a recording.
 * **Re-record** after changing the nickname or favourites in the profile, or adding your own
   activity: the new lines are simply missing, the button records them.
@@ -634,14 +634,14 @@ All keys and defaults are listed in the [technical section](#configuration).
 | **Not installed on this robot yet** (Live voice card) | The `live` extra (aiortc) is missing | On the robot: `cd ~/LittleBot && .venv/bin/python -m pip install --prefer-binary -e '.[live]'` (or re-run `scripts/install_pi.sh --yes`), then restart LittleBot: `systemctl --user restart littlebot` |
 | "Could not reach OpenAI…" / "Could not connect to ChatGPT live voice…" / "The connection to ChatGPT was lost." | Internet problem (or OpenAI is down) | Check the robot's Wi-Fi. A network that blocks outgoing UDP can stop the call's audio |
 | "ChatGPT ended the call." | OpenAI closed the call | Start a new one |
-| Activities still speak with the robot voice | Their lines aren't recorded yet, or a line changed (another nickname, your own activity) | **Activities** → **Activity voices** → **Record activity voices in the ChatGPT voice**. `journalctl --user -u littlebot \| grep "speech in"` shows which voice each line used |
+| Activities still speak with the robot voice | Their lines aren't recorded yet, or a line changed (another nickname, your own activity) | **Activities** → **Activity voices** → **Record activity voices in the ChatGPT voice**. `journalctl --user-unit littlebot \| grep "speech in"` shows which voice each line used |
 | Activity voices: some lines "didn't come out right" | The voice said something else (its transcript didn't match the line) | Press the button again: only those lines are asked again. A sound word it keeps saying differently stays in the robot voice |
 | After a voice chat starts an activity, its first sound is cut off | The speaker was still being let go by the call | LittleBot now waits for the speaker (up to 3 s) before starting; if it still happens, the journal says "speaker still not back" |
 | "LittleBot is busy with something else. Stop it first." | A video or another parent action holds the speaker | Stop it, then start live voice |
 | "The speaker or microphone could not be opened." | The USB devices are missing or in use by another program | **Audio & devices**: check both devices. See [TROUBLESHOOTING.md](TROUBLESHOOTING.md#no-sound--sound-from-the-wrong-device) |
 | It hears itself, echoes or answers itself | Its own voice reaches the microphone after the gate opens | Lower the volume, move the microphone away from the speaker, raise `chatgpt.live_echo_tail_ms` (for example to 700). Keep `live_half_duplex: true`. With echo cancelling: `scripts/setup_echo_cancel.sh --check` |
 | It doesn't react when you talk | It was still talking (without echo cancelling the microphone is shut then), or your voice is too quiet | Wait until it stops, speak closer. Raise `audio.microphone.input_gain` (for example 1.5) |
-| It doesn't stop when I talk over it | Echo cancelling isn't set up (the journal says "audio: echo cancelling off (...)" and "one at a time"), your voice is too quiet next to its voice, or it is high (above `live_barge_in_max_pitch_hz`, 260 Hz, counts as a child) | `scripts/setup_echo_cancel.sh --check` (see [Talking over it](#talking-over-it-barge-in)); speak closer or louder; lower the volume; lower `chatgpt.live_barge_in_over_echo_db` (for example 6); for a high voice raise `chatgpt.live_barge_in_max_pitch_hz` (for example 300). `journalctl --user -u littlebot \| grep "interrupted by"` shows each time it did stop |
+| It doesn't stop when I talk over it | Echo cancelling isn't set up (the journal says "audio: echo cancelling off (...)" and "one at a time"), your voice is too quiet next to its voice, or it is high (above `live_barge_in_max_pitch_hz`, 260 Hz, counts as a child) | `scripts/setup_echo_cancel.sh --check` (see [Talking over it](#talking-over-it-barge-in)); speak closer or louder; lower the volume; lower `chatgpt.live_barge_in_over_echo_db` (for example 6); for a high voice raise `chatgpt.live_barge_in_max_pitch_hz` (for example 300). `journalctl --user-unit littlebot \| grep "interrupted by"` shows each time it did stop |
 | It stops by itself in the middle of a sentence | Something loud and voice-like (a TV, another grown-up nearby) or its own echo, when echo cancelling works poorly | The journal says "false alarm (...), the voice carried on" when nobody's words followed. Raise `chatgpt.live_barge_in_over_echo_db` (for example 14) or `live_barge_in_speech_ms` (600); lower the volume; or `chatgpt.live_barge_in: off` for one at a time |
 | Too quiet or too loud | The speaker volume | **Audio & devices** → volume (capped at `audio.speaker.max_volume`). Or set `chatgpt.live_volume` for live voice only |
 | "hung up after 90 s of quiet" | Nobody talked | Normal. Change `chatgpt.live_idle_hangup_seconds` if it's too short |
