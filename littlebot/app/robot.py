@@ -58,6 +58,7 @@ class LittleBot:
         self._started = False
         self._stopped = False
         self.started_at = time.time()
+        self.stall_watch: Any = None
 
     # ------------------------------------------------------------------ build
     @classmethod
@@ -109,6 +110,13 @@ class LittleBot:
         if self._started:
             return
         self.runtime.start()
+        try:
+            from littlebot.core.stall_watch import StallWatch
+
+            self.stall_watch = StallWatch(self.runtime)  # logs when the robot stops responding, and why
+            self.stall_watch.start()
+        except Exception:  # noqa: BLE001 - only a diagnostic
+            log.exception("stall watch unavailable")
         self.runtime.run(self._start_async(), timeout=60)
         self._started = True
         self.ctx.bus.publish(Topics.SYSTEM_STARTED, {"mode": self.ctx.config.mode.value, "version": __version__})
@@ -138,6 +146,8 @@ class LittleBot:
         log.info("shutting down (%s)", reason)
         self.ctx.bus.publish(Topics.SYSTEM_SHUTDOWN, {"reason": reason})
         self.shutdown_event.set()
+        if self.stall_watch is not None:
+            self.stall_watch.stop()
         if self.runtime.running:
             try:
                 self.runtime.run(self._stop_async(), timeout=15)

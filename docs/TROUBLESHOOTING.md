@@ -21,8 +21,17 @@ Hardware-specific advice is **UNVERIFIED** until the robot has been built.
 | Kernel (USB, under-voltage, camera, touch) | `journalctl -k -b` or `dmesg` (may need `sudo`) |
 | Previous boot (after a crash/reset) | `journalctl --user -u littlebot -b -1`, `journalctl -k -b -1` |
 | Pretty-print the JSON log | `tail -20 data/logs/littlebot.log \| python3 -m json.tool --json-lines` |
+| **What happened lately, readable** (gaps marked, warnings, the Pi's memory and temperature now) | `python3 scripts/log_timeline.py` (`--minutes 90`, `--since 21:40`, `--all`) |
 
 More detail: set `logging.level: DEBUG` in `config/local.yaml` or start with `--debug`.
+
+**It stops responding for a while.** `littlebot/core/stall_watch.py` asks the main loop to answer
+every second. When it doesn't within 2 s the log says `the main loop has been stuck for N s; it is
+busy in: <file:line function ...>` (and `answered again after N s` when it recovers): that names the
+code to fix. `LittleBot as a whole stood still` means the whole Pi froze (usually out of memory and
+swapping, or a power dip). Memory low, swapping, heat and under-voltage are warned about as they
+start, and a `health:` line every 5 minutes gives memory, swap, temperature, load and LittleBot's
+own memory and CPU. `scripts/log_timeline.py` shows all of this in order.
 
 ## No picture on the screen
 

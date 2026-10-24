@@ -1549,3 +1549,13 @@ def test_who_questions_are_whole_sentences_about_who_is_here():
     for text in ("Who is this song by?", "Who is the president?", "Who sings Baby Shark?", "I am Ali.",
                  "Who wants a snack?", "Do you know what time it is?"):
         assert not asks(text), text
+
+
+async def test_a_still_on_line_every_little_while_says_which_way_the_sound_went(live, caplog, monkeypatch):
+    svc, server, audio, _provider, _alerts = live
+    monkeypatch.setattr(live_mod, "PULSE_EVERY_S", 0.15)
+    caplog.set_level(logging.INFO, logger="littlebot.chatgpt.live")
+    await connect(svc, server)
+    await wait_for(lambda: "live voice: still on (" in caplog.text)
+    line = next(r.getMessage() for r in caplog.records if r.getMessage().startswith("live voice: still on ("))
+    assert "frames sent" in line and "voice" in line and "since anything happened" in line

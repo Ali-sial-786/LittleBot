@@ -80,6 +80,9 @@ class LiveAudio:
         self._mouth: tuple[float, str] = (0.0, "closed")
         self.mic_level = 0.0
         self.device_names = ("", "")
+        # For the call's "still on" log line (littlebot/chatgpt/live.py, LiveCall._pulse): counts only, never sound.
+        self.frames_in = self.frames_gated = self.frames_out = 0  # mic frames sent (of them silenced), voice frames
+        self.peak_in = 0.0  # the loudest mic block since the last line
 
     # ------------------------------------------------------------ lifecycle
     def open(self, loop: Any) -> None:
@@ -239,13 +242,19 @@ class LiveAudio:
         out, self._pcm = self._pcm[:FRAME], self._pcm[FRAME:]
         if len(self._pcm) > RATE // 5:  # never let the microphone lag behind
             self._pcm = self._pcm[-FRAME:]
-        return out if self.mic_open else np.zeros(FRAME, dtype=np.int16)
+        self.frames_in += 1
+        self.peak_in = max(self.peak_in, self.mic_level)
+        if not self.mic_open:
+            self.frames_gated += 1
+            return np.zeros(FRAME, dtype=np.int16)
+        return out
 
     # ------------------------------------------------------------ speaker
     def play_frame(self, frame: Any) -> None:
         """Queue one decoded frame of the model's voice (an av.AudioFrame from the remote track)."""
         if self._muted:
             return
+        self.frames_out += 1
         for f in self._out_resampler.resample(frame):
             pcm = f.to_ndarray().reshape(-1).astype(np.float32) / 32768.0
             with self._lock:

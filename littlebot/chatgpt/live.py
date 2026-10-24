@@ -243,6 +243,7 @@ STILL_WORKING = ("LittleBot is still working on that. Say, in a few words, that 
                  "tell them in a moment, then wait: the answer comes next.")
 # "remember: Ali is Amara's dad" / "forget: ..." from the voice (VOICE_INSTRUCTIONS); not a question about the past.
 REMEMBER_ASK = re.compile(r"^\s*(?:please\s+)?(remember|forget)\b\s*(?::|that\b)?\s*([^?]+?)[\s.!]*$", re.I)
+PULSE_EVERY_S = 20.0  # a "still on" line of counts in the log during a call (_pulse)
 FACES_WAIT_S = 1.0  # from the call's start: how long connecting waits for the first face check (see _instructions)
 TALKS_FROM_MONTHS = 24  # younger: whoever talks to LittleBot in sentences is a grown-up, not the child
 LATE_ANSWER = "Here is the answer to what they asked a moment ago: {answer} Tell them now, in your own words."
@@ -673,6 +674,7 @@ class LiveCall:
         self._rule_noted: set[str] = set()  # RULE_NOTES the voice was given this turn
         self._recent_face: tuple[str, float] | None = None  # (name, when) the latest face played
         self._sent: collections.deque[tuple[float, str, int]] = collections.deque(maxlen=4)  # (when, what, chars)
+        self._pulse_counts: tuple[int, int, int, int] | None = None  # for _pulse
         self._voice_face_this_turn = False
         self._seen_types: set[str] = set()
         # A video / activity / sleep the tools queued (RobotToolbox): runs once the voice said its line.
@@ -1766,13 +1768,35 @@ class LiveCall:
         return _speakable(text, self.ctx.config.ai.relaxed_rules) or NOT_SURE
 
     # ------------------------------------------------------------ watch
+    def _pulse(self, now: float) -> None:
+        """Every PULSE_EVERY_S of a call, one INFO line of counts: when the robot "stops responding" during a
+        chat, it shows which way the sound stopped (nothing heard, all silenced, no voice coming back)."""
+        a = self.audio
+        last = self._pulse_counts
+        counts = (int(getattr(a, "frames_in", 0)), int(getattr(a, "frames_gated", 0)),
+                  int(getattr(a, "frames_out", 0)), self._user_turns)
+        if last is not None:
+            mic, gated, voice, turns = (c - p for c, p in zip(counts, last))
+            held = " The voice's sound is held back (a look or game)." if self._hush_job is not None else ""
+            log.info("live voice: still on (%s): mic %d frames sent (%d silenced while it spoke, loudest %.3f), "
+                     "voice %d frames, %d new turn(s) of theirs, %d hand-off(s) open, %.0f s since anything "
+                     "happened.%s", self.phase, mic, gated, float(getattr(a, "peak_in", 0.0)), voice, turns,
+                     self._delegations, now - self._last_activity, held)
+        self._pulse_counts = counts
+        if hasattr(a, "peak_in"):
+            a.peak_in = 0.0
+
     async def _watch(self) -> None:
         limit = self.cfg.live_session_minutes * 60
         idle = self.cfg.live_idle_hangup_seconds
         last_mouth: tuple[float, str] | None = None
         mouth_sent = 0.0
+        next_pulse = self.svc._now()
         while not self._ended.is_set():
             now = self.svc._now()
+            if now >= next_pulse:
+                next_pulse = now + PULSE_EVERY_S
+                self._pulse(now)
             speaking = bool(self.audio.speaking)
             if speaking:
                 self._last_activity = now

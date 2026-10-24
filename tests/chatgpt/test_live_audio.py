@@ -130,6 +130,8 @@ async def test_half_duplex_mutes_the_mic_while_the_voice_plays(setup):
         assert not (await asyncio.wait_for(audio.read_frame(), 1)).any()  # silence goes to OpenAI, not the echo
         clock.t += 0.5  # echo tail over
         assert (await asyncio.wait_for(audio.read_frame(), 1)).any()
+        # the call's "still on" log line counts these (littlebot/chatgpt/live.py, _pulse)
+        assert (audio.frames_in, audio.frames_gated, audio.frames_out) == (2, 1, 1) and audio.peak_in > 0.3
     finally:
         audio.close()
 
