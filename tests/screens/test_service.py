@@ -366,7 +366,10 @@ async def test_host_sounds_are_throttled(svc, sctx, clock):
 
 
 def test_host_pictures(svc, sctx, monkeypatch):
+    import littlebot.screens as screens_pkg
+
     host = svc.make_host()
+    monkeypatch.delattr(screens_pkg, "images", raising=False)  # else `from littlebot.screens import images` finds it
     monkeypatch.setitem(sys.modules, "littlebot.screens.images", None)  # images.py not there: no picture
     pic = host.picture("a red panda")
     assert pic.ready and pic.surface is None
