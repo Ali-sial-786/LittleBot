@@ -33,6 +33,10 @@ Safety, enforced here in code (docs/AI_SAFETY.md, "Live voice"):
   most one per question; when looking isn't allowed the voice is told why instead of guessing;
 * nothing is recorded; captions live in memory during the call only and are cleared at the end.
 
+With a screen service (``ctx.screens``), a ``ScreenDirector`` (littlebot/screens/director.py) puts info cards on
+the screen for what was asked while the voice talks; cards' news (``SCREEN_NEWS``) reaches the voice as notes.
+``CALL_STARTED`` / ``CALL_ENDED`` tell the rest of the robot when a call is on.
+
 UNDOCUMENTED endpoint, as in WatchGPT ("a spike to see whether it works, not a contract").
 Tested here against a local WebRTC peer standing in for OpenAI, not against OpenAI itself.
 """
@@ -362,6 +366,18 @@ still working on something, say you are thinking and wait; the answer comes soon
 while you keep talking, and LittleBot runs it: never play it out loud or make your own move (in Rock Paper \
 Scissors LittleBot picks on the screen); the client tells you what happened, then you say it."""
 
+# Added to VOICE_INSTRUCTIONS when the call has a screen director (littlebot/screens/director.py).
+SCREEN_INSTRUCTIONS = """
+Your screen also shows info cards. When something you are asked is worth seeing (the weather, a word's meaning, \
+the key points of an answer, a recipe step, a timer, a sum), LittleBot puts a card on it by itself while you talk, \
+and a note tells you what is on it. Never read the card out or describe it word for word: say the answer in your \
+own words, and you may point to it ("look!"). You don't need to ask for cards. If they ask to change or close what is \
+on the screen ("next step", "close it"), just say okay in a few words: LittleBot does it."""
+SCREEN_NEWS = "screen.news"  # {text}: a card wants the voice to say something ("the egg timer is done")
+# Published by live voice for whoever needs to know a call is on (the screen service: a card's presenter talks).
+CALL_STARTED = "live.call_started"  # {} the call is connected: the voice can talk now
+CALL_ENDED = "live.call_ended"  # {reason} the call is over (also when it never connected)
+
 LOOKUP_NOTE = f"""
 You are answering a question that LittleBot's voice will say out loud to a family with a very young child; \
 usually a grown-up asked it. Answer it properly in plain spoken sentences: two to four for a grown-up, one or \
@@ -453,6 +469,8 @@ class LiveVoiceService(Service):
         self._transport = transport
         self._audio_factory = audio_factory or self._default_audio
         self._provider = provider
+        self._provider_given = provider is not None
+        self._screen_provider: BaseProvider | None = None
         self.call_url = call_url
         self._now = now
         self._call: LiveCall | None = None
@@ -469,6 +487,7 @@ class LiveVoiceService(Service):
             bus.subscribe(Topics.STOP_ALL, lambda e: self._end_threadsafe("stopped (STOP ALL)")),
             bus.subscribe(Topics.PRIVACY_CHANGED, self._on_privacy),
             bus.subscribe("game.news", self._on_game_news),  # littlebot.games.service.GAME_NEWS
+            bus.subscribe(SCREEN_NEWS, self._on_screen_news),
         ]
         err = aiortc_error()
         if err:
@@ -483,6 +502,8 @@ class LiveVoiceService(Service):
         await self.stop_session("service stop")
         if self._provider is not None:
             await self._provider.aclose()
+        if self._screen_provider is not None and self._screen_provider is not self._provider:
+            await self._screen_provider.aclose()
         self.set_status(ServiceStatus.STOPPED)
 
     def _on_privacy(self, event: Event) -> None:
@@ -492,11 +513,18 @@ class LiveVoiceService(Service):
 
     def _on_game_news(self, event: Event) -> None:
         """A game says what happened ("they picked rock, you picked paper: you win"): the voice says it."""
-        call, loop, text = self._call, self._loop, str(event.get("text") or "")
+        self._to_call("game_news", str(event.get("text") or ""))
+
+    def _on_screen_news(self, event: Event) -> None:
+        """A card on the screen has news ("the egg timer is done"): the voice says it."""
+        self._to_call("screen_news", str(event.get("text") or ""))
+
+    def _to_call(self, method: str, text: str) -> None:
+        call, loop = self._call, self._loop
         if call is None or loop is None or loop.is_closed() or not text:
             return
         try:
-            loop.call_soon_threadsafe(call.game_news, text)
+            loop.call_soon_threadsafe(getattr(call, method), text)
         except RuntimeError:
             pass
 
@@ -542,6 +570,19 @@ class LiveVoiceService(Service):
             self._provider = ChatGPTProvider(self.auth, models=list(self.cfg.models), effort=self.cfg.reasoning_effort,
                                              transport=self._transport)
         return self._provider
+
+    def screen_provider(self) -> BaseProvider:
+        """The text model for the screen director: the camera looks' fast models first, on its own connection
+        (a slow hand-off answer never holds a card up). A provider given to this service is used as it is."""
+        if self._provider_given:
+            return self.provider()
+        if self._screen_provider is None:
+            from littlebot.chatgpt.responses import ChatGPTProvider  # noqa: PLC0415
+
+            models = list(dict.fromkeys([*getattr(self.cfg, "look_models", []), *self.cfg.models]))
+            self._screen_provider = ChatGPTProvider(self.auth, models=models, effort=self.cfg.reasoning_effort,
+                                                    transport=self._transport)
+        return self._screen_provider
 
     def blocked_reason(self, parent_present: bool = True) -> str | None:
         ctx = self.ctx
@@ -694,6 +735,7 @@ class LiveCall:
         self._handover_was_quiet = False
         self._handover_quiet_since: float | None = None
         self._faces: Any = None  # who is in front of the camera (littlebot/vision/faces.py), while warm
+        self._director: Any = None  # what the screen shows for what was asked (littlebot/screens/director.py)
 
     # ------------------------------------------------------------ views
     def snapshot(self) -> dict[str, Any]:
@@ -745,6 +787,7 @@ class LiveCall:
     async def run(self) -> None:
         try:
             self._warm_camera(True)  # while connecting: the camera keeps a photo ready, ChatGPT's line opens
+            self._director = self._make_director()
             await self._connect()
             if not self._ended.is_set():
                 await self._watch()
@@ -826,6 +869,24 @@ class LiveCall:
         self.connect_ms = int((self._connected_at - t0) * 1000)
         self.phase, self.detail = "listening", "Connected. Just talk."
         log.info("live voice: connected in %d ms (voice %s)", self.connect_ms, self.voice)
+        self._publish(CALL_STARTED, {})
+        if self._director is not None:
+            self._spawn(self._director.warm())  # the screen's first decision doesn't wait for a connection
+
+    def _make_director(self) -> Any:
+        """The screen director for this call, when there is a screen service and its cards are switched on."""
+        screens = getattr(self.ctx, "screens", None)
+        try:
+            if screens is None or not self.ctx.settings.get("screens.enabled", True):
+                return None
+            from littlebot.screens import director  # noqa: PLC0415
+
+            return director.ScreenDirector(self.ctx, self.svc.screen_provider, note=self._note, spawn=self._spawn,
+                                           effort=getattr(self.cfg, "look_effort", None) or director.FAST_EFFORT,
+                                           now=self.svc._now)
+        except Exception:  # noqa: BLE001 - no cards is fine; the call goes on
+            log.warning("live voice: the screen director couldn't start", exc_info=True)
+            return None
 
     def _instructions(self) -> str:
         from littlebot.brain.prompts import age_description  # noqa: PLC0415
@@ -857,6 +918,8 @@ class LiveCall:
         seen = self._faces.intro() if self._faces is not None else ""  # "In front of your camera now: Ali (dad)."
         if seen:
             text += "\n" + seen
+        if self._director is not None:
+            text += SCREEN_INSTRUCTIONS
         now = _dt.datetime.now()
         return f"{text}\nAt the start of this call it is {now:%A}, {now:%H:%M} local time."
 
@@ -996,6 +1059,8 @@ class LiveCall:
                 text, self._assistant_turn = event.text, ""
                 self._caption("robot", text)
                 self._check_names(text)
+                if self._director is not None:
+                    self._director.said(text)
             else:
                 self._assistant_turn = (self._assistant_turn + event.text)[-2000:]
                 text = self._assistant_turn
@@ -1035,13 +1100,17 @@ class LiveCall:
                                                         "detail": concern.category})
                 # The person's own words: only when clearly about the face, so everyday talk
                 # ("that makes me sad", "give me a hug") doesn't change it.
-                if not (self._video_words(event.text) or self._game_words(event.text)):
+                handled = self._video_words(event.text) or self._game_words(event.text)
+                if not handled:
                     action = _face_request(event.text) if USER_FACE_CUE.search(event.text) \
                         and not self._is_control(event.text) else None  # "start the peekaboo activity": tools
+                    handled = action is not None
                     if action is None:
                         self._look_if_asked(event.text)
                     elif self._play_face(action, "user"):
                         self._note(f"LittleBot is showing {action.name.replace('_', ' ')} on its face now.")
+                if self._director is not None:  # worrying words get no card: the voice sends them to a grown-up
+                    self._director.heard(event.text, handled=handled or concern is not None)
                 self._words_began_at = None  # the next words are a new turn
         elif isinstance(event, wire.Delegation):
             self._spawn(self._answer(event))
@@ -1165,6 +1234,11 @@ class LiveCall:
             return
         self._note(f"{text} Say it now, in a few words.")
         self._release_game_hold()
+
+    def screen_news(self, text: str) -> None:
+        """What a card on the screen wants said (``SCREEN_NEWS``: "the egg timer is done")."""
+        if not self._ended.is_set():
+            self._note(f"{' '.join(text.split())[:300]} Tell them now, in a few words.")
 
     def _release_game_hold(self) -> None:
         hold, self._game_hold = self._game_hold, None
@@ -1387,7 +1461,8 @@ class LiveCall:
         from littlebot.brain.face_actions import extract_tags  # noqa: PLC0415
         from littlebot.chatgpt.tools import RobotToolbox  # noqa: PLC0415
 
-        box = RobotToolbox(self.ctx, mode="live", defer=True)
+        box = RobotToolbox(self.ctx, mode="live", defer=True,
+                           screen=self._director.show_spec if self._director is not None else None)
         policy = self.ctx.age_policy()
         system = build_system_prompt(robot_name=self.ctx.config.robot_name, age_months=policy.age_months,
                                      max_words=LOOKUP_MAX_WORDS, tools=True) + LOOKUP_NOTE + LIVE_TOOLS_NOTE \
@@ -1947,6 +2022,8 @@ class LiveCall:
         if self.audio is not None:
             self.audio.mute()
         self._warm_camera(False)  # the warm photo is dropped now
+        if self._director is not None:
+            self._director.close()
         for t in list(self._tasks):
             t.cancel()
         if self._tasks:
@@ -1977,6 +2054,7 @@ class LiveCall:
         self.phase = "ended"
         self.end_reason = self.end_reason or ("failed" if self.error else "ended")
         self._publish(Topics.BRAIN_STATUS, {"provider": "live", "status": "live_ended", "detail": self.end_reason[:60]})
+        self._publish(CALL_ENDED, {"reason": self.end_reason[:60]})
 
 
 _GREETING = r"(?:hi|hello|hey|oh|okay|ok|yes|yeah|well|wow|aw+|sure|thanks|thank you|good morning|good night|" \
