@@ -1,7 +1,7 @@
 """The weather for LittleBot's tools and the dashboard: Open-Meteo (https://open-meteo.com), free, no key.
 
     forecast  GET https://api.open-meteo.com/v1/forecast?latitude=..&longitude=..&current=..&hourly=..
-                  &daily=..&forecast_days=7&forecast_hours=13&timezone=auto&temperature_unit=..&wind_speed_unit=..
+                  &daily=..&forecast_days=7&forecast_hours=168&timezone=auto&temperature_unit=..&wind_speed_unit=..
     places    GET https://geocoding-api.open-meteo.com/v1/search?name=Paris&count=10&language=en&format=json
 
 Home is, in order: the place the parent chose on the dashboard (Settings, "Weather & time", stored
@@ -49,6 +49,8 @@ IP_RETRY_S = 120.0  # after every IP service failed, don't ask again for this lo
 IP_KEY = "info:ip_location"  # database key/value store
 MAX_DAYS = 7
 NEXT_HOURS = 4  # three-hour blocks after the current hour in the report
+HOURS_AHEAD = MAX_DAYS * 24  # hourly data from the current hour on (the report's next hours, a screen card's days)
+DAY_HOURS = (6, 9, 12, 15, 18, 21)  # the hours across a day in ``outlook()`` (the weather card)
 
 CURRENT_VARS = ("temperature_2m", "apparent_temperature", "relative_humidity_2m", "precipitation", "weather_code",
                 "wind_speed_10m", "wind_gusts_10m", "is_day")
@@ -279,6 +281,12 @@ class WeatherService:
         days = max(1, min(MAX_DAYS, int(days)))
         return await self._bounded(self._report(str(place or "").strip()[:100] or None, days))
 
+    async def outlook(self, place: str | None = None) -> dict[str, Any]:
+        """``report(place, days=7)`` for the screen's weather card (littlebot/screens/cards/weather.py): each
+        forecast day also has ``"hours"``, a few hours across it (today: the next ones), each with its
+        ``time``, ``temperature``, ``conditions`` and ``chance_of_rain_or_snow_percent``. Raises WeatherError."""
+        return await self._bounded(self._report(str(place or "").strip()[:100] or None, MAX_DAYS, hours=True))
+
     async def find(self, query: str) -> Place:
         """The best match for a place name ("Paris", "Springfield, Illinois") or "lat, lon"."""
         query = " ".join(str(query or "").split())[:100]
@@ -311,7 +319,7 @@ class WeatherService:
             log.info("weather: no answer within %.1f s (it carries on for next time)", self.cfg.timeout_seconds)
             raise WeatherError("timeout") from None
 
-    async def _report(self, place: str | None, days: int) -> dict[str, Any]:
+    async def _report(self, place: str | None, days: int, *, hours: bool = False) -> dict[str, Any]:
         t0 = self._now()
         if place:
             source = "asked"
@@ -327,7 +335,7 @@ class WeatherService:
         units = temperature_units(self._units_choice(), home.country_code if home else None)
         wind = wind_units(units, home.country_code if home else None)
         data = await self._forecast(where, units, wind)
-        out = summarize(data, where, units=units, wind=wind, days=days)
+        out = summarize(data, where, units=units, wind=wind, days=days, day_hours=hours)
         out["location_from"] = ("the place asked for" if source == "asked" else
                                 f"home, {SOURCE_DETAIL.get(source, source)}")
         log.info("weather: answered in %d ms (%s)", int((self._now() - t0) * 1000), source)
@@ -466,7 +474,7 @@ class WeatherService:
         data = await self._get_json(FORECAST_URL, {
             "latitude": f"{place.latitude:.4f}", "longitude": f"{place.longitude:.4f}",
             "current": ",".join(CURRENT_VARS), "hourly": ",".join(HOURLY_VARS), "daily": ",".join(DAILY_VARS),
-            "forecast_days": MAX_DAYS, "forecast_hours": 1 + 3 * NEXT_HOURS, "timezone": "auto",
+            "forecast_days": MAX_DAYS, "forecast_hours": HOURS_AHEAD, "timezone": "auto",
             "temperature_unit": units, "wind_speed_unit": wind, "precipitation_unit": "mm"})
         if not isinstance(data.get("current"), dict) or not isinstance(data.get("daily"), dict):
             raise WeatherError("bad_response")
@@ -568,8 +576,10 @@ IP_SERVICES: tuple[tuple[str, Callable[[dict[str, Any]], Place | None]], ...] = 
 
 
 # ---------------------------------------------------------------- the report
-def summarize(data: dict[str, Any], place: Place, *, units: str, wind: str, days: int = 2) -> dict[str, Any]:
-    """Open-Meteo's answer as a short report for the model (rounded numbers, plain words)."""
+def summarize(data: dict[str, Any], place: Place, *, units: str, wind: str, days: int = 2,
+              day_hours: bool = False) -> dict[str, Any]:
+    """Open-Meteo's answer as a short report for the model (rounded numbers, plain words); ``day_hours``
+    adds a few hours across each forecast day (``outlook()``)."""
     cur = data.get("current") if isinstance(data.get("current"), dict) else {}
     daytime = cur.get("is_day") != 0
     now: dict[str, Any] = {
@@ -588,7 +598,7 @@ def summarize(data: dict[str, Any], place: Place, *, units: str, wind: str, days
         "local_time": _clock(cur.get("time")),
         "units": {"temperature": "°F" if units == "fahrenheit" else "°C", "wind": "mph" if wind == "mph" else "km/h"},
         "now": {k: v for k, v in now.items() if v is not None},
-        "forecast": _days(data.get("daily"), days),
+        "forecast": _days(data.get("daily"), days, data.get("hourly") if day_hours else None),
         "next_hours": _hours(data.get("hourly")),
         "source": SOURCE,
     }
@@ -616,7 +626,7 @@ def summary_text(report: dict[str, Any]) -> str:
     return "".join(parts)
 
 
-def _days(daily: Any, days: int) -> list[dict[str, Any]]:
+def _days(daily: Any, days: int, hourly: Any = None) -> list[dict[str, Any]]:
     if not isinstance(daily, dict):
         return []
     dates = daily.get("time") if isinstance(daily.get("time"), list) else []
@@ -641,7 +651,44 @@ def _days(daily: Any, days: int) -> list[dict[str, Any]]:
             "uv_index_max": round(uv, 1) if uv is not None else None,
             "sunrise": _clock(at("sunrise")), "sunset": _clock(at("sunset")),
         }
+        if hourly is not None:
+            day["hours"] = _day_hours(hourly, d, first=i == 0)
         out.append({k: v for k, v in day.items() if v is not None})
+    return out
+
+
+def _day_hours(hourly: Any, date: _dt.date, *, first: bool) -> list[dict[str, Any]]:
+    """A few hours across ``date`` (DAY_HOURS); the first day: every third hour from the next one on."""
+    if not isinstance(hourly, dict) or not isinstance(hourly.get("time"), list):
+        return []
+
+    def at(key: str, i: int) -> Any:
+        values = hourly.get(key)
+        return values[i] if isinstance(values, list) and i < len(values) else None
+
+    picked: list[tuple[int, str]] = []
+    for i, stamp in enumerate(hourly["time"]):
+        try:
+            t = _dt.datetime.fromisoformat(str(stamp))
+        except ValueError:
+            continue
+        if first:
+            if i >= 1 and (i - 1) % 3 == 0:
+                picked.append((i, f"{t:%H:%M}"))
+        elif t.date() == date and t.minute == 0 and t.hour in DAY_HOURS:
+            picked.append((i, f"{t:%H:%M}"))
+        if len(picked) >= len(DAY_HOURS):
+            break
+    out = []
+    for i, clock in picked:
+        code = at("weather_code", i)
+        hour = {
+            "time": clock, "temperature": _round(at("temperature_2m", i)),
+            "conditions": conditions(code, day=at("is_day", i) != 0) if code is not None else None,
+            "chance_of_rain_or_snow_percent": _round(at("precipitation_probability", i)),
+        }
+        if hour["temperature"] is not None:
+            out.append({k: v for k, v in hour.items() if v is not None})
     return out
 
 
