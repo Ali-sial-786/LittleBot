@@ -159,6 +159,19 @@ cached by the quantised shape.
 * Touch: when not in simulator mode (the robot's own screen), tapping the face makes
   LittleBot look at the finger, smile, bounce and giggle (`audio.play_sound("giggle")`),
   with a 1.5 s cooldown. Disable with `TAP_REACTION_ENABLED = False` in `face/display.py`.
+* Edge swipes (MX Player style, `face/edge_controls.py`), on the idle face only (not over a game,
+  an info card, the setup banner, a hidden face or a video holding the screen lease): press in the
+  outer 14 % of the width and slide up / down (past a 12 px slop, mostly vertical). The right edge
+  sets the speaker volume (`audio.set_volume`, 0..`audio.speaker.max_volume`, applied ~10 times a
+  second off the display thread, with a soft `blip` at most every 0.25 s while the speaker is free),
+  the left edge the brightness (setting `display.brightness`, 0.15..1). A sweep of 70 % of the
+  height covers the whole range, relative to where the finger started. A rounded bar with the
+  icon and percentage shows while sliding and 3 s after, then fades; it also shows when the volume
+  changes elsewhere (dashboard, voice). A press at the edge that doesn't slide is the usual tap
+  (its giggle waits for the release, or 0.3 s of a resting finger) or long press. Brightness uses
+  a real backlight (`/sys/class/backlight/*`, only if writable without root, only fullscreen
+  without the sim panel) and otherwise dims in software: one cached black veil over the face,
+  re-made only when the level changes. Each swipe logs one INFO line (`touch: volume 45% -> 70%`).
 * Camera sign: while a parent watches the camera live on the dashboard (`vision.live_view`
   with `active: true`; read from `vision.status()` when the window opens), a small rounded
   camera with a dot sits in the face's top-right corner (30x22 px at 480x320, scaled with the
@@ -186,6 +199,8 @@ cached by the quantised shape.
 | W | wave gesture (`motion.run_gesture("wave")`) |
 | X | STOP everything (`robot.stop_all("keyboard")`) |
 | E | motion emergency stop (also: click the E-STOP pill in the panel) |
+| - / = | speaker volume down / up (10 %), with the bar |
+| [ / ] | screen brightness down / up (10 %), with the bar |
 | G | debug overlay: fps/target, frame + render ms, robot/face state, expression, gaze, leases, animations |
 | F or F11 | toggle fullscreen |
 | F12 | screenshot to `artifacts/face/screenshot-*.png` |

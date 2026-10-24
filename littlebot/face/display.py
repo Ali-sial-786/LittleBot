@@ -18,15 +18,19 @@ the error is logged clearly and the function falls back to waiting on
 
 from __future__ import annotations
 
+import asyncio
 import collections
 import logging
 import os
 import re
 import shutil
 import subprocess
+import threading
 import time
 from pathlib import Path
 from typing import Any, Callable, Coroutine
+
+from littlebot.face import edge_controls as EC
 
 log = logging.getLogger("littlebot.face.display")
 
@@ -39,6 +43,10 @@ TAP_COOLDOWN_SECONDS = 1.5
 # A plain tap still giggles: babies tap the face all the time, a deliberate hold is a grown-up's.
 LONG_PRESS_SECONDS = 1.0
 LONG_PRESS_SLOP = 0.04  # of the face width: a finger that wanders further is not holding still
+# MX Player-style edge swipes on the idle face (littlebot/face/edge_controls.py): slide up / down on the right
+# edge for the speaker volume, on the left edge for the screen brightness. A soft blip makes the volume audible.
+VOLUME_BLIP = "blip"
+VOLUME_BLIP_LEVEL = 0.8  # relative to the volume being set (play_sound never goes louder than it)
 
 PANEL_WIDTH = 300
 PANEL_MIN_HEIGHT = 460
@@ -72,6 +80,9 @@ HELP_LINES: tuple[tuple[str, str], ...] = (
     ("Esc (game)", "stop the on-screen game (taps, 1-9, space play it)"),
     ("Esc (card)", "close the info card (a tap on its little eyes too)"),
     ("hold click", "hold 1 s on the face: the games menu"),
+    ("edge drag", "slide up / down on the face's right edge: volume; left edge: brightness"),
+    ("- / =", "speaker volume down / up"),
+    ("[ / ]", "screen brightness down / up"),
     ("click", "simulated camera face there (right-click: no face)"),
     ("Shift+click", "tap reaction (giggle)"),
     ("G / H", "debug overlay / this help"),
@@ -241,6 +252,16 @@ class DisplayLoop:
         self._game_t: float | None = None  # last frame time while an on-screen game runs
         self._card_t: float | None = None  # last frame time while an info card shows
         self._press: tuple[float, float, float] | None = None  # (nx, ny, when) a finger held on the idle face
+        # Edge swipes: volume (right) and brightness (left). A press in an edge zone holds back its usual
+        # reaction (giggle / simulated face) until the finger lifts or rests: it may become a slide instead.
+        self.brightness = self._make_brightness()
+        self.edges = self._make_edges()
+        self._edge_tap: tuple[float, Callable[[], None]] | None = None
+        self._level_news: collections.deque[tuple[str, Any]] = collections.deque(maxlen=16)
+        self._levels_sub: Any = None
+        self._off_lock = threading.Lock()
+        self._off_pending: dict[str, tuple[Callable[[Any], Any], Any]] = {}
+        self._off_running: set[str] = set()
 
     # ------------------------------------------------------------------ setup
     def open(self) -> None:
@@ -265,6 +286,7 @@ class DisplayLoop:
             attach()
         self._watch_setup_code()
         self._watch_live_view()
+        self._watch_levels()
         self._opened = True
         log.info("face display open: %dx%d%s (driver %s)", *self.window.get_size(),
                  " fullscreen" if self.fullscreen else "", pygame.display.get_driver())
@@ -276,6 +298,9 @@ class DisplayLoop:
         if self._live_sub is not None:
             self._live_sub.cancel()
             self._live_sub = None
+        if self._levels_sub is not None:
+            self._levels_sub.cancel()
+            self._levels_sub = None
         detach = getattr(self.face, "detach_display", None)
         if callable(detach):
             try:
@@ -373,6 +398,7 @@ class DisplayLoop:
                 if not self._handle_events():
                     return "quit"
                 self.check_long_press(now)
+                self.check_edges(now)
                 t0 = time.perf_counter()
                 self._run_timers(now)
                 if self.demo is not None:
@@ -410,7 +436,7 @@ class DisplayLoop:
             fps = max(fps, int(self.cfg.idle_fps))
         if self.show_panel and self._motion and self._motion.get("moving"):
             fps = max(fps, int(self.cfg.fps))
-        if self._games() is not None:
+        if self._games() is not None or self.edges.active or self.edges.bar() is not None:
             fps = max(fps, int(self.cfg.fps))
         else:
             screens = self._screens()
@@ -469,6 +495,11 @@ class DisplayLoop:
             self._draw_debug(win)
         if self.show_help:
             self._draw_help(win)
+        self.brightness.apply(win, self.face_rect)  # software dimming (a no-op with a backlight or at 100 %)
+        bar = self.edges.bar(now)
+        if bar is not None and not self.face_hidden():  # over the dimming: readable, only half as dimmed
+            shade = 1.0 if self.brightness.backlight is not None else 0.5 + 0.5 * self.brightness.level
+            EC.draw_bar(win, self.face_rect, bar, shade)
 
     def face_hidden(self) -> bool:
         try:
@@ -729,6 +760,7 @@ class DisplayLoop:
             return False
         self._press = None
         screens = getattr(self.ctx, "screens", None)
+        self.edges.cancel()
         if screens is None or self._games() is not None or self._screens() is not None or self.face_hidden():
             return False
         log.info("long press on the face: games menu")
@@ -736,6 +768,8 @@ class DisplayLoop:
         return True
 
     def _pointer_moved(self, pos: tuple[int, int], buttons: tuple[int, ...]) -> None:
+        if self.edges.tracking and self._edge_moved(pos):
+            return
         if buttons and buttons[0]:
             self._card_pointer("drag", pos)
         press = self._press
@@ -755,6 +789,184 @@ class DisplayLoop:
             log.exception("card key failed")
             return False
 
+    # ------------------------------------------------------------------ edge swipes
+    # On the idle face only: slide on the right edge for the speaker volume, on the left for the brightness
+    # (littlebot/face/edge_controls.py). A press there that doesn't slide is the usual tap / long press.
+    def _make_brightness(self) -> EC.Brightness:
+        settings = self.ctx.settings
+        try:
+            settings.register_validator("display.brightness", EC.Brightness.clamp)
+            level = settings.get("display.brightness", 1.0)
+        except Exception:  # noqa: BLE001
+            level = 1.0
+        # A real backlight only on the robot's own screen: a desktop simulator must not dim the laptop.
+        sysfs = EC.BACKLIGHT_DIR if self.fullscreen and not self.sim_mode else None
+        return EC.Brightness(level, sysfs=sysfs)
+
+    def _make_edges(self) -> EC.EdgeControls:
+        ctx = self.ctx
+        speaker = ctx.config.audio.speaker
+
+        def volume() -> float:
+            return float(ctx.settings.get("audio.volume", speaker.volume))
+
+        vol = EC.Level("volume", volume, self._set_volume, 0.0, max(0.0, min(1.0, float(speaker.max_volume))),
+                       feedback=self._volume_blip)
+        bright = EC.Level("brightness", lambda: self.brightness.level, self.brightness.set, EC.BRIGHTNESS_FLOOR, 1.0)
+        return EC.EdgeControls(left=bright, right=vol)
+
+    def edges_allowed(self) -> bool:
+        """Only the default face: no game, info card, setup banner, hidden face or full-screen activity (video)."""
+        if self._games() is not None or self._screens() is not None or self.setup_banner is not None:
+            return False
+        if self.face_hidden():
+            return False
+        try:
+            return not self.ctx.arbiter.snapshot().get("screen")
+        except Exception:  # noqa: BLE001
+            return True
+
+    def _edge_moved(self, pos: tuple[int, int]) -> bool:
+        """Feed a move to the edge gesture. True while it slides a level (the move is used up)."""
+        r = self.face_rect
+        state = self.edges.move((pos[0] - r.x) / max(1, r.w), (pos[1] - r.y) / max(1, r.h))
+        if state == "active":
+            self._press = None  # no long press...
+            self._edge_tap = None  # ...and no giggle while sliding
+            return True
+        if state == "rejected":
+            self._fire_edge_tap()  # sideways: a plain touch after all
+        return False
+
+    def _edge_release(self, pos: tuple[int, int]) -> None:
+        if not self.edges.tracking:
+            self._fire_edge_tap()
+            return
+        r = self.face_rect
+        swipe = self.edges.release((pos[0] - r.x) / max(1, r.w), (pos[1] - r.y) / max(1, r.h))
+        if swipe is None:
+            self._fire_edge_tap()  # it didn't slide: a tap
+        else:
+            self._level_done(swipe, "touch")
+
+    def _fire_edge_tap(self) -> None:
+        tap, self._edge_tap = self._edge_tap, None
+        if tap is not None:
+            tap[1]()
+
+    def check_edges(self, now: float) -> None:
+        """Per frame: rate-limited levels, a resting finger's held-back tap, levels changed elsewhere."""
+        edges = self.edges
+        if edges.tracking and (self._games() is not None or self._screens() is not None):
+            swipe = edges.cancel()  # something else took the screen
+            if swipe is not None:
+                self._level_done(swipe, "touch")
+        edges.tick()
+        tap = self._edge_tap
+        if tap is not None and now - tap[0] >= EC.STILL_SECONDS:
+            self._fire_edge_tap()
+        while self._level_news:
+            key, value = self._level_news.popleft()
+            if key == "audio.volume":
+                edges.show("volume", value)
+            elif key == "display.brightness":
+                level = EC.Brightness.clamp(value)
+                if not (edges.active and edges.side == "left") and abs(level - self.brightness.level) > 0.004:
+                    self.brightness.set(level)
+                edges.show("brightness", level)
+
+    def nudge_level(self, name: str, sign: int) -> None:
+        """Keyboard (desktop simulator): one step of the volume or the brightness, with the bar."""
+        swipe = self.edges.nudge(name, sign * EC.KEY_STEP)
+        if swipe is not None:
+            self._level_done(swipe, "keys")
+
+    def _level_done(self, swipe: Any, how: str) -> None:
+        extra = ""
+        if swipe.name == "brightness":
+            extra = f" ({self.brightness.mode})"
+            settings = self.ctx.settings
+            self._offload("brightness", lambda v: settings.set("display.brightness", v, source="display"), swipe.end)
+        log.info("%s: %s %d%% -> %d%%%s", how, swipe.name, round(swipe.start * 100), round(swipe.end * 100), extra)
+
+    def _set_volume(self, value: float) -> None:
+        audio = self.ctx.audio
+        if audio is not None and hasattr(audio, "set_volume"):
+            fn: Callable[[Any], Any] = audio.set_volume  # clamps to the safe maximum, persists audio.volume
+        else:  # the live voice reads the setting too
+            settings = self.ctx.settings
+
+            def fn(v: Any) -> Any:
+                return settings.set("audio.volume", v, source="display")
+        self._offload("volume", fn, value)
+
+    def _volume_blip(self, value: float, final: bool) -> None:
+        """A soft blip at the new level, only while the speaker is free (it never queues behind speech)."""
+        audio = self.ctx.audio
+        if audio is None or value <= 0.0 or not self._speaker_idle(audio):
+            return
+        self._submit(lambda: audio.play_sound(VOLUME_BLIP, wait=False, volume=VOLUME_BLIP_LEVEL), "volume blip")
+
+    @staticmethod
+    def _speaker_idle(audio: Any) -> bool:
+        try:
+            st = audio.status()
+        except Exception:  # noqa: BLE001
+            return False
+        return not any(st.get(k) for k in ("speaking", "playing", "queued", "listening", "lent_to"))
+
+    def _offload(self, key: str, fn: Callable[[Any], Any], value: Any) -> None:
+        """Run ``fn(value)`` off the display thread (it writes SQLite); only the latest value per ``key``."""
+        runtime = getattr(self.robot, "runtime", None)
+        with self._off_lock:
+            self._off_pending[key] = (fn, value)
+            if key in self._off_running:
+                return  # the running worker picks the newest value up
+            self._off_running.add(key)
+
+        async def worker() -> None:
+            while True:
+                with self._off_lock:
+                    item = self._off_pending.pop(key, None)
+                    if item is None:
+                        self._off_running.discard(key)
+                        return
+                try:
+                    await asyncio.to_thread(item[0], item[1])
+                except Exception:  # noqa: BLE001
+                    log.warning("could not set %s", key, exc_info=True)
+
+        submitted = False
+        if runtime is not None:
+            coro = worker()
+            try:
+                runtime.submit(coro)
+                submitted = True
+            except Exception:  # noqa: BLE001 - runtime not started / shutting down
+                coro.close()
+        if not submitted:  # no async runtime: apply here
+            with self._off_lock:
+                item = self._off_pending.pop(key, None)
+                self._off_running.discard(key)
+            if item is not None:
+                try:
+                    item[0](item[1])
+                except Exception:  # noqa: BLE001
+                    log.warning("could not set %s", key, exc_info=True)
+
+    def _watch_levels(self) -> None:
+        from littlebot.core.events import Topics
+
+        if self.brightness.backlight is not None:  # restore the saved level on the real backlight
+            self.brightness.set(self.brightness.level)
+        self._levels_sub = self.ctx.bus.subscribe(Topics.SETTINGS_CHANGED, self._on_level_setting)
+
+    def _on_level_setting(self, event: Any) -> None:
+        """Bus thread: just note it; the display loop shows the bar (dashboard, voice, another source)."""
+        key = event.get("key")
+        if key in ("audio.volume", "display.brightness"):
+            self._level_news.append((key, event.get("value")))
+
     # ------------------------------------------------------------------ input
     def _handle_events(self) -> bool:
         pg = self._pg
@@ -772,6 +984,7 @@ class DisplayLoop:
             elif ev.type == pg.MOUSEBUTTONUP:
                 self._press = None
                 if ev.button == 1:
+                    self._edge_release(ev.pos)
                     self._card_pointer("release", ev.pos)
         return True
 
@@ -800,6 +1013,11 @@ class DisplayLoop:
                   pg.K_F5: "sleeping", pg.K_F6: "error", pg.K_F7: "hidden"}
         if key in states:
             face.set_state(states[key])
+            return True
+        nudges = {pg.K_MINUS: ("volume", -1), pg.K_EQUALS: ("volume", 1), pg.K_LEFTBRACKET: ("brightness", -1),
+                  pg.K_RIGHTBRACKET: ("brightness", 1)}
+        if key in nudges:
+            self.nudge_level(*nudges[key])
             return True
         if key in (pg.K_q, pg.K_ESCAPE):
             if key == pg.K_ESCAPE and self.show_help:
@@ -886,6 +1104,15 @@ class DisplayLoop:
             return
         if button != 1:
             return
+        if self.edges_allowed() and self.edges.press(nx, ny):
+            self._edge_tap = (time.monotonic(), lambda: self._face_press(nx, ny, shift))
+            return  # maybe a slide: the usual reaction waits for the release (or a resting finger)
+        self.edges.cancel()
+        self._face_press(nx, ny, shift)
+
+    def _face_press(self, nx: float, ny: float, shift: bool) -> None:
+        """A finger (or click) on the face: a simulated camera face in sim mode, else the giggle."""
+        vision = self.ctx.vision
         if self.sim_mode and not shift:
             if vision is not None:
                 # (nx, ny) is where the pretend person is on LittleBot's screen, i.e. where the eyes

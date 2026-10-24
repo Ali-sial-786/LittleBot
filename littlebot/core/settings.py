@@ -67,6 +67,8 @@ def build_defaults(cfg: LittleBotConfig) -> dict[str, Any]:
         "motion.physical_armed": False,  # never persisted as True across restarts (see Settings.load)
         # face
         "face.expression_default": "neutral",
+        # screen brightness 0.15..1 (a left-edge swipe on the face; littlebot/face/edge_controls.py)
+        "display.brightness": 1.0,
         # system
         "system.sleep_after_idle_minutes": cfg.system.sleep_after_idle_minutes,
         # live information (littlebot/info): the weather's home place as the parent chose it on the
