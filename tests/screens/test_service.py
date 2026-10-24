@@ -409,3 +409,30 @@ async def test_lifecycle(svc):
     svc.show_card(DummyCard({"title": "x"}))
     await svc.stop()
     assert not svc.active and svc.service_status.value == "stopped"
+
+
+async def test_a_second_timer_joins_the_timer_card_already_showing(svc, sctx):
+    shown, closed = events(sctx, S.CARD_SHOWN), events(sctx, S.CARD_CLOSED)
+    assert (await svc.show({"card": "timer", "seconds": 600, "label": "pasta"}))["ok"]
+    card = svc.current
+    assert (await svc.show({"card": "timer", "seconds": 180, "label": "sauce"}))["ok"]
+    assert svc.current is card and len(card.timers) == 2  # the same card, not closed and shown again
+    assert len(shown) == 1 and closed == []
+    assert "Pasta" in svc.describe() and "Sauce" in svc.describe()
+
+
+async def test_a_swipe_turns_the_weather_day(svc, sctx):
+    from littlebot.screens.cards import weather
+
+    report = weather.SAMPLES[0]["report"]
+    assert (await svc.show({"card": "weather", "view": "day", "day": "today", "report": report}))["ok"]
+    card = svc.current
+    day = card.day
+    svc.handle_press(0.8, 0.6)
+    for nx in (0.7, 0.6, 0.5, 0.4):  # the finger moves left: the next day
+        svc.handle_drag(nx, 0.6)
+    svc.handle_release(0.4, 0.6)
+    assert card.day == day + 1
+    svc.handle_press(0.8, 0.6)  # a tap without moving: the right side, the next day too
+    svc.handle_release(0.8, 0.6)
+    assert card.day == day + 2

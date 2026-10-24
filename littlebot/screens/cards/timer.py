@@ -348,8 +348,9 @@ async def build(spec: dict[str, Any], ctx: Any, host: CardHost) -> TimerCard | N
     seconds = _seconds(spec)
     if seconds is None:
         return None
-    for card in list(_live) if ctx is not None else ():
-        if card.ctx is ctx and card.shown and len(card.timers) < MAX_TIMERS:
+    current = getattr(getattr(ctx, "screens", None), "current", None)  # the card the screen service shows now
+    for card in ([current] if isinstance(current, TimerCard) else []) + (list(_live) if ctx is not None else []):
+        if card.ctx is ctx and not card.done and (card is current or card.shown) and len(card.timers) < MAX_TIMERS:
             card.add_timer(seconds, spec.get("label"))
             return card
     return TimerCard(spec, host, ctx)

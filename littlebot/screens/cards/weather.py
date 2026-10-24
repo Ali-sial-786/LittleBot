@@ -38,6 +38,7 @@ from littlebot.screens.cards import candy
 log = logging.getLogger("littlebot.screens.weather")
 
 VIEWS = ("now", "day", "week", "hours")
+SWIPE_PX = 60  # a sideways drag this long is a swipe
 WEEKDAYS = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
 WINDY = {"km/h": 40, "mph": 25}  # from this wind speed a dry day shows the wind icon
 SLIDE_PX = 120  # how far the content slides when the day changes
@@ -420,6 +421,15 @@ class WeatherCard(Card):
         if self.view == "now":
             return self.set_day(1, view="day") if x >= W / 2 else False
         return self.set_day(self.day + (1 if x >= W / 2 else -1))
+
+    # A swipe turns the day (the service sends drags to a card that has drag(); a press without moving is a tap).
+    def drag(self, dx: float, dy: float) -> None:
+        self._swipe = getattr(self, "_swipe", 0.0) + dx
+
+    def drag_end(self) -> None:
+        swipe, self._swipe = getattr(self, "_swipe", 0.0), 0.0
+        if abs(swipe) >= SWIPE_PX:
+            self.key("right" if swipe < 0 else "left")  # finger to the left: the next day
 
     def key(self, name: str) -> bool:
         if name in ("right", "left"):

@@ -304,6 +304,13 @@ class ScreenService(Service):
         err = self._blocked()
         if err is not None:
             return self._result(False, err)
+        with self._lock:
+            same = self._session if self._session is not None and self._session.card is card \
+                and not self._session.ended else None
+        if same is not None:  # the card on screen took the new spec in (another timer): keep showing it
+            self._touched(same)
+            self._check(same, force=True)
+            return self._result(True, None)
         host = card.host if isinstance(card.host, _Host) and card.host.svc is self else self.make_host()
         card.host = host
         now = self._clock()
