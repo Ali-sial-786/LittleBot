@@ -85,9 +85,9 @@ PREROLL_MAX_S = 0.8  # the microphone kept for the pre-roll (in memory, the last
 PREROLL_LEAD_S = 0.1  # the pre-roll starts this long before their speech did
 QUIET_LEVEL = 0.0105  # RMS below which a frame of the pre-roll is a pause (as in littlebot/audio/carry.py)
 FADE_S = 0.05  # the voice fades out (and back in) over this long
-HOLD_MAX_S = 1.5  # the voice is held (not dropped) up to this long while deciding
+HOLD_MAX_S = 4.0  # the voice is held (not dropped) up to this long while deciding (FALSE_ALARM_MAX_S)
 STILL_TALKING_S = 0.3  # loud this recently: they are still talking (a false alarm waits for them)
-FALSE_ALARM_MAX_S = 2.5  # but no longer than this
+FALSE_ALARM_MAX_S = 4.0  # but no longer than this
 DROP_GAP_S = 0.25  # the turn they cut into has ended: the voice was quiet this long ...
 USER_DONE_S = 0.25  # ... and they stopped talking this long ago (or their words are final)
 DROP_MAX_S = 15.0  # never drop the voice longer than this
@@ -103,10 +103,10 @@ class BargeInSettings:
 
     mode: str = "auto"  # auto: only with echo cancelling | on | off
     speech_s: float = 0.3  # voiced grown-up speech needed
-    over_echo_db: float = 10.0  # louder than what is left of the voice (and the room's noise) by this much
+    over_echo_db: float = 8.0  # louder than what is left of the voice (and the room's noise) by this much
     min_level: float = 0.008  # and at least this loud (RMS, full scale 1.0)
     max_pitch_hz: float = 260.0  # voiced above this: a child (doesn't interrupt)
-    false_alarm_s: float = 1.2  # no words from ChatGPT by then: the voice carries on
+    false_alarm_s: float = 2.5  # no words from ChatGPT by then: the voice carries on
 
     @classmethod
     def from_config(cls, cfg: Any) -> BargeInSettings:
@@ -239,6 +239,7 @@ class BargeInDetector:
                     run.child += 1
         elif run is not None and now - run.last_loud > GAP_S:
             self.run = None
+            self._missed(run)
             return False
         if run is None or run.vetoed or self.voice_s < WARMUP_S:
             return False
@@ -249,6 +250,22 @@ class BargeInDetector:
             self.fired, self.run = run, None
             return True
         return False
+
+    def _missed(self, run: _Run) -> None:
+        """A grown-up-sounding run that ended without interrupting: say why in the log (the baby's babble and
+        short noises aren't worth a line)."""
+        speech = run.last_loud - run.onset
+        if speech < 0.12 or run.adult < 3 or run.adult <= run.child:
+            return
+        frames = max(1, round(speech / FRAME_S))
+        if run.vetoed:
+            why = "voice recognition says it was a child"
+        elif speech + 1e-6 < (FAST_SPEECH_S if run.grown_up else self.s.speech_s):
+            why = f"too short: a pause longer than {GAP_S:.2f} s ended it"
+        else:
+            why = f"only {run.adult} of {frames} frames voiced at a grown-up's pitch"
+        log.info("live voice: someone talked over the voice for %.2f s (pitch %d Hz) but it didn't stop: %s",
+                 speech, round(self.pitch_of(run)), why)
 
     def _learn(self, level: float, echo_ref: float, voice_on: bool) -> None:
         """Measure the echo (while only the voice plays) and the room's noise (while nothing does)."""

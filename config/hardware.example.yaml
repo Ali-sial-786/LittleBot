@@ -118,10 +118,10 @@ motion:
 #   live_barge_in: auto            # a grown-up talking over the voice stops it: auto = only with echo
 #                                  # cancelling (scripts/setup_echo_cancel.sh, untested on the Pi) | on | off
 #   live_barge_in_speech_ms: 300   # this much grown-up speech interrupts it
-#   live_barge_in_over_echo_db: 10.0  # ...louder than what is left of its own voice by this much
+#   live_barge_in_over_echo_db: 8.0  # ...louder than what is left of its own voice by this much
 #   live_barge_in_min_level: 0.008    # ...and at least this loud (mic RMS)
 #   live_barge_in_max_pitch_hz: 260.0 # voiced above this = a child: doesn't interrupt
-#   live_barge_in_false_alarm_ms: 1200  # no words of theirs by then: the voice carries on
+#   live_barge_in_false_alarm_ms: 2500  # no words of theirs by then: the voice carries on
 #   live_volume: null              # null = the speaker volume; always capped at audio.speaker.max_volume
 #   look_models: []                # camera looks: models tried first (e.g. a faster one), then `models`
 #   look_effort: null              # simple looks ("what colour is this?"): null = none

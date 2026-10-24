@@ -132,6 +132,15 @@ def test_voice_recognition_makes_a_grown_up_quicker_and_a_child_never():
     assert first_fire(adult, prepare=known(False)) is None  # a child with a low voice: still no
 
 
+def test_a_grown_up_who_didnt_get_through_is_logged_with_why(caplog):
+    caplog.set_level(logging.INFO, logger="littlebot.chatgpt.live")
+    assert first_fire(ECHO + NOISE + at(voiced(130, 0.2, 0.05))) is None  # "mm": too short
+    assert "someone talked over the voice for 0.2" in caplog.text and "too short" in caplog.text
+    caplog.clear()
+    assert first_fire(ECHO + NOISE + at(voiced(450, 1.2, 0.08, vibrato=0.1, syll=3))) is None  # the baby
+    assert "talked over the voice" not in caplog.text
+
+
 def test_settings_change_what_counts():
     adult = ECHO + NOISE + at(voiced(120, 1.0, 0.05))
     slow = first_fire(adult, BargeInSettings(speech_s=0.8))
@@ -392,11 +401,11 @@ async def test_a_false_alarm_lets_the_held_voice_play_on(call, caplog):
         k = SPEECH_START + 1 + cut
         while "carried_on" not in c.events:
             await c.tick()  # no words from ChatGPT
-            assert len(c.sent) - k < 100, "never carried on"
+            assert len(c.sent) - k < 250, "never carried on"
         held = len(c.sent) - k
-        assert 0.9 * 1.2 / FRAME_S <= held <= 1.6 / FRAME_S  # live_barge_in_false_alarm_ms
+        assert 0.9 * 2.5 / FRAME_S <= held <= 2.9 / FRAME_S  # live_barge_in_false_alarm_ms
         assert c.events == ["interrupted", "carried_on"] and audio.false_alarms == 1
-        assert "false alarm (no words within 1." in caplog.text and "the voice carried on" in caplog.text
+        assert "false alarm (no words within 2." in caplog.text and "the voice carried on" in caplog.text
         assert not audio.interrupted and audio.speaking
         for _ in range(8):
             await c.tick()

@@ -608,7 +608,7 @@ chatgpt:
   live_volume: null               # null = the speaker volume setting; 0..1 (always capped at max_volume)
   live_barge_in: auto             # talking over the voice: auto = only with echo cancelling | on | off
   live_barge_in_speech_ms: 300    # this much grown-up speech interrupts it
-  live_barge_in_over_echo_db: 10  # and it must be this much louder than what is left of its voice
+  live_barge_in_over_echo_db: 8   # and it must be this much louder than what is left of its voice
 audio:
   echo_cancel: auto               # use PipeWire's echo-cancelled devices when they exist | on | off
 ```
@@ -641,7 +641,7 @@ All keys and defaults are listed in the [technical section](#configuration).
 | "The speaker or microphone could not be opened." | The USB devices are missing or in use by another program | **Audio & devices**: check both devices. See [TROUBLESHOOTING.md](TROUBLESHOOTING.md#no-sound--sound-from-the-wrong-device) |
 | It hears itself, echoes or answers itself | Its own voice reaches the microphone after the gate opens | Lower the volume, move the microphone away from the speaker, raise `chatgpt.live_echo_tail_ms` (for example to 700). Keep `live_half_duplex: true`. With echo cancelling: `scripts/setup_echo_cancel.sh --check` |
 | It doesn't react when you talk | It was still talking (without echo cancelling the microphone is shut then), or your voice is too quiet | Wait until it stops, speak closer. Raise `audio.microphone.input_gain` (for example 1.5) |
-| It doesn't stop when I talk over it | Echo cancelling isn't set up (the journal says "audio: echo cancelling off (...)" and "one at a time"), your voice is too quiet next to its voice, or it is high (above `live_barge_in_max_pitch_hz`, 260 Hz, counts as a child) | `scripts/setup_echo_cancel.sh --check` (see [Talking over it](#talking-over-it-barge-in)); speak closer or louder; lower the volume; lower `chatgpt.live_barge_in_over_echo_db` (for example 6); for a high voice raise `chatgpt.live_barge_in_max_pitch_hz` (for example 300). `journalctl --user-unit littlebot \| grep "interrupted by"` shows each time it did stop |
+| It doesn't stop when I talk over it | Echo cancelling isn't set up (the journal says "audio: echo cancelling off (...)" and "one at a time"), your voice is too quiet next to its voice, or it is high (above `live_barge_in_max_pitch_hz`, 260 Hz, counts as a child) | `scripts/setup_echo_cancel.sh --check` (see [Talking over it](#talking-over-it-barge-in)); speak closer or louder; lower the volume; lower `chatgpt.live_barge_in_over_echo_db` (for example 6); for a high voice raise `chatgpt.live_barge_in_max_pitch_hz` (for example 300). `journalctl --user-unit littlebot \| grep "interrupted by"` shows each time it did stop, and "but it didn't stop" each time it heard a grown-up and why it didn't |
 | It stops by itself in the middle of a sentence | Something loud and voice-like (a TV, another grown-up nearby) or its own echo, when echo cancelling works poorly | The journal says "false alarm (...), the voice carried on" when nobody's words followed. Raise `chatgpt.live_barge_in_over_echo_db` (for example 14) or `live_barge_in_speech_ms` (600); lower the volume; or `chatgpt.live_barge_in: off` for one at a time |
 | Too quiet or too loud | The speaker volume | **Audio & devices** → volume (capped at `audio.speaker.max_volume`). Or set `chatgpt.live_volume` for live voice only |
 | "hung up after 90 s of quiet" | Nobody talked | Normal. Change `chatgpt.live_idle_hangup_seconds` if it's too short |
@@ -762,7 +762,7 @@ cancelling), `off` keeps half-duplex. It needs `live_half_duplex: true` (the gat
 voice is audible:
 
 * *Loud enough:* the frame's RMS must be at least `live_barge_in_min_level` (0.008), 10 dB above the
-  room's noise floor (measured while the voice is quiet) and `live_barge_in_over_echo_db` (10 dB)
+  room's noise floor (measured while the voice is quiet) and `live_barge_in_over_echo_db` (8 dB)
   above the residual echo. The residual echo is `coupling` x the loudest the speaker played in the
   last 0.3 s; `coupling` (microphone level / speaker level) is measured all the time while only the
   voice plays, tracked near the top of its spread (up quickly in capped steps, down slowly) and
@@ -800,12 +800,12 @@ and state go to listening (`LiveCall._barge_in_changed`). Then either:
   instructions also say: "If someone talks while you are speaking, stop and listen to them. If all
   they say is something like "oops, go ahead" or "sorry, carry on", carry on from where you stopped,
   without starting over." (only when barge-in is on).
-* **No words within `live_barge_in_false_alarm_ms`** (1.2 s; longer while they are still making
-  sound, at most 2.5 s): a false alarm. The gate shuts and the held voice fades back in where it
+* **No words within `live_barge_in_false_alarm_ms`** (2.5 s; longer while they are still making
+  sound, at most 4 s): a false alarm. The gate shuts and the held voice fades back in where it
   stopped (a little late for the rest of that turn).
 
 One INFO line each time, never any sound: "live voice: interrupted by a grown-up after 0.3 s of
-speech (pitch 120 Hz, voice Ali)", "live voice: false alarm (no words within 1.2 s), the voice
+speech (pitch 120 Hz, voice Ali)", "live voice: false alarm (no words within 2.5 s), the voice
 carried on", "live voice: they didn't mean to interrupt ("go ahead"); the voice carries on".
 
 Known limits: a TV or a radio voice louder than the threshold interrupts like a person; after a
@@ -859,10 +859,10 @@ back to text-to-speech; the index is re-read when the file changes. Dashboard: `
 | `live_echo_tail_ms` | `450` | how long the microphone stays shut after the voice stops |
 | `live_barge_in` | `auto` | a grown-up talking over the voice stops it ([Barge-in](#barge-in-echo-cancelling)): `auto` = only when both devices are PipeWire's echo-cancelled ones (`scripts/setup_echo_cancel.sh`), `on` = always (a headset or hardware echo cancelling), `off` = one at a time |
 | `live_barge_in_speech_ms` | `300` | (150-2000) this much voiced grown-up speech interrupts it. A known grown-up (voice recognition) needs 200 ms |
-| `live_barge_in_over_echo_db` | `10.0` | how much louder than what is left of its own voice (and than the room's noise) speech must be |
+| `live_barge_in_over_echo_db` | `8.0` | how much louder than what is left of its own voice (and than the room's noise) speech must be |
 | `live_barge_in_min_level` | `0.008` | and at least this loud (microphone RMS, full scale 1.0) |
 | `live_barge_in_max_pitch_hz` | `260.0` | (150-400) voiced above this counts as a child and doesn't interrupt |
-| `live_barge_in_false_alarm_ms` | `1200` | (300-5000) no words of theirs from ChatGPT by then: the voice carries on |
+| `live_barge_in_false_alarm_ms` | `2500` | (300-5000) no words of theirs from ChatGPT by then: the voice carries on |
 | `live_voice_level` | `0.012` | speaker RMS (0..1) above which the voice counts as speaking |
 | `live_volume` | `null` | `null` = the speaker volume setting. Always capped at `audio.speaker.max_volume` |
 | `tools_enabled` | `true` | ChatGPT may control LittleBot when asked: typed chat, push to talk and live-voice hand-offs ([section 5](#5-asking-littlebot-to-do-things)) |
