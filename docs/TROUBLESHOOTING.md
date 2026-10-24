@@ -22,6 +22,7 @@ Hardware-specific advice is **UNVERIFIED** until the robot has been built.
 | Kernel (USB, under-voltage, camera, touch) | `journalctl -k -b` or `dmesg` (may need `sudo`) |
 | Previous boot (after a crash/reset) | `journalctl --user-unit littlebot -b -1`, `journalctl -k -b -1` |
 | Pretty-print the JSON log | `tail -20 data/logs/littlebot.log \| python3 -m json.tool --json-lines` |
+| Microphone "dead" with echo cancelling on, no errors | `nohup python3 scripts/watch_mic.py >> ~/mic_watch.log 2>&1 &`: a line each time the USB microphone heard someone but the echo-cancelled one LittleBot listens to stayed nearly silent |
 | **What happened lately, readable** (gaps marked, warnings, the Pi's memory and temperature now) | `python3 scripts/log_timeline.py` (`--minutes 90`, `--since 21:40`, `--all`) |
 
 More detail: set `logging.level: DEBUG` in `config/local.yaml` or start with `--debug`.
