@@ -244,6 +244,22 @@ scripted replies meant for older children.
 * Files: `data/voice_lines/<hash>.wav` and `data/voice_lines/index.json` (each line's text, hash,
   voice and date). Updates never touch `data/`. Delete the folder to go back to the robot voice.
 
+### Info cards on the screen
+
+With the screen's info cards on (`screens.enabled`), LittleBot shows a card while the voice answers a
+grown-up's question that has something worth seeing: the weather ("and tomorrow?" changes it), a
+word's meaning, a recipe one step at a time ("next step", "go back"), a timer ("stop the timer"), a sum,
+a fact, the games menu ("what games do you have?"). "Close it" or "show me your face" takes it away.
+Most turns (chit-chat, songs, the baby's babble) show nothing. How it decides
+(`littlebot/screens/director.py`): common phrases are matched on the robot at once; other questions
+get one small request to the ChatGPT text model (the camera looks' fast model and effort, `chatgpt.look_models`,
+`look_effort`) with the last few caption lines (personal details removed) and the cards it can show.
+Every word of a card passes the same safety rules as the voice's words. A turn voice recognition says was
+the child's, or one of fewer than three real words from someone it doesn't know, gets no card. The voice is
+told what is on the screen and never reads it out. Bus topics: `live.call_started` `{}` and
+`live.call_ended` `{reason}` around each call; a card's `screen.news` `{text}` ("the egg timer is done")
+is passed to the voice as a note.
+
 ### Wake word: "Hey LittleBot"
 
 Say **"Hey LittleBot"** (or **"Hey Bot"**) near the robot: its face starts listening, it plays a
@@ -755,7 +771,8 @@ YouTube search (`media:` section, `MediaConfig`): `allow_search` (`true`: any vi
 | `littlebot/chatgpt/wire.py` | GPT-Live data-channel events |
 | `littlebot/chatgpt/live.py` | `LiveVoiceService` (`ctx.live`): gates, safety checks, limits, delegations, clean-up |
 | `littlebot/chatgpt/live_audio.py` | microphone / speaker bridge with the half-duplex gate |
-| `littlebot/chatgpt/tools.py` | `RobotToolbox`: the tools ChatGPT may use (status, volume, faces, videos, activities, games, sleep, camera, weather, time; web search) |
+| `littlebot/chatgpt/tools.py` | `RobotToolbox`: the tools ChatGPT may use (status, volume, faces, videos, activities, games, sleep, camera, weather, time, info cards; web search) |
+| `littlebot/screens/director.py` | `ScreenDirector`: which info card the screen shows during a live call |
 | `littlebot/info/weather.py`, `littlebot/info/clock.py` | the weather (Open-Meteo, place search, home from the dashboard / config / IP address, cache) and the time |
 | `littlebot/dashboard/routes/info_routes.py`, `static/js/pages/settings.js` | the "Weather & time" card on the Settings page |
 | `littlebot/media/search.py` | YouTube search through yt-dlp (no API key); `MediaController.search` / `play_video` play the results |

@@ -17,6 +17,11 @@ runs itself; ``chatgpt.web_search``) for news, scores, opening hours and other f
 ``instructions()`` is the note callers add to the system prompt so the model uses them rather than
 guessing.
 
+The screen (littlebot/screens): ``show_on_screen`` puts an info card up while the answer is said (offered only
+while ``ctx.screens`` can show cards, with the card kinds in its description), and ``get_weather`` shows a
+weather card too. Both are checked like the screen director's own cards (``director.clean_spec``); in a live
+call they go through its ``show_spec`` (``screen=``), so a card is shown once and the voice is told.
+
 Take-overs: starting a video or an activity, carrying on with a video paused for a chat ("Hey LittleBot"
 while it played: ``MediaController.hold``), and going to sleep, need the screen and the speaker
 that the conversation itself is using (starting them mid-turn would cut the answer off).
@@ -137,8 +142,13 @@ TOOLS: tuple[_Tool, ...] = (
           "for 'what time is it?', 'what day is it?', 'what's the date?' or how long until something, instead of "
           "guessing.", _obj({"place": {**_STR, "description": "a city, for the time somewhere else; leave out for "
                                                             "here"}})),
+    _Tool("show_on_screen", "Show an info card on LittleBot's screen while your answer is said: the gist (a forecast, "
+          "a word's meaning, key points, a recipe, a timer, a sum, a list), not the words. Cards (* required):",
+          _obj({"card": {**_STR, "description": "the card's kind"},
+                "fields": {"type": "object", "description": "that card's fields"}}, ("card",))),
 )
 TOOL_NAMES = frozenset(t.name for t in TOOLS)
+SCREEN_TOOL = "show_on_screen"  # offered only while the screen can show cards (RobotToolbox.specs)
 
 # OpenAI's own web search, run on OpenAI's side (a hosted tool, not a function: RobotToolbox never runs
 # it). ``responses.ChatGPTProvider`` sends it as {"type": "web_search"}; "name" is for logs and fakes.
@@ -173,8 +183,12 @@ def _norm(text: Any) -> str:
 class RobotToolbox:
     """The tools for one turn (chat) or one hand-off (live voice)."""
 
-    def __init__(self, ctx: Any, *, mode: str = "chat", defer: bool = True) -> None:
+    def __init__(self, ctx: Any, *, mode: str = "chat", defer: bool = True,
+                 screen: Callable[..., Awaitable[dict[str, Any]]] | None = None) -> None:
         self.ctx = ctx
+        # Shows a card: the live call's screen director (ScreenDirector.show_spec: checked, shown once, the voice
+        # told), else ctx.screens.show after the same checks.
+        self.screen = screen
         self.mode = mode if mode in ("chat", "live") else "chat"
         self.defer = bool(defer)
         self.calls: list[str] = []  # tool names in the order they ran (never their arguments)
@@ -186,8 +200,16 @@ class RobotToolbox:
     def specs(self) -> list[dict[str, Any]]:
         """Tool specs for ``ChatGPTProvider.reply(tools=...)``: LittleBot's functions, then OpenAI's web
         search (``WEB_SEARCH``) when ``chatgpt.web_search`` is on."""
-        out: list[dict[str, Any]] = [{"name": t.name, "description": t.description, "parameters": t.parameters}
-                                     for t in TOOLS if self.mode in t.modes]
+        out: list[dict[str, Any]] = []
+        for t in TOOLS:
+            if self.mode not in t.modes:
+                continue
+            if t.name == SCREEN_TOOL:  # with the cards there are, only while the screen can show them
+                cards = self._card_menu()
+                if cards:
+                    out.append({"name": t.name, "description": f"{t.description} {cards}.", "parameters": t.parameters})
+                continue
+            out.append({"name": t.name, "description": t.description, "parameters": t.parameters})
         if self.web_search:
             out.append(dict(WEB_SEARCH))
         return out
@@ -852,7 +874,8 @@ class RobotToolbox:
             report = await get_weather(self.ctx).report(place, days=days)
         except WeatherError as e:
             return _err(f"{e}. Say so briefly; don't guess the weather.")
-        return _json(report)
+        shown = await self._weather_card(place, days)
+        return _json({**report, "on_screen": shown} if shown else report)
 
     async def _get_time(self, args: dict[str, Any]) -> str:
         from littlebot.info.clock import now_info  # noqa: PLC0415
@@ -878,6 +901,91 @@ class RobotToolbox:
             log.warning("info.timezone %r is not a known time zone; using the robot's own", str(tz)[:60])
             out = now_info(None)
         return _json({**({"place": where} if where else {}), **out})
+
+    # ------------------------------------------------------------ the screen's info cards (littlebot/screens)
+    def _screens(self) -> Any:
+        """``ctx.screens`` while its cards are switched on (``screens.enabled``), else None."""
+        screens = getattr(self.ctx, "screens", None)
+        try:
+            return screens if screens is not None and self.ctx.settings.get("screens.enabled", True) else None
+        except Exception:  # noqa: BLE001
+            return None
+
+    def _card_types(self) -> dict[str, Any]:
+        if self._screens() is None:
+            return {}
+        try:
+            from littlebot.screens.base import card_types  # noqa: PLC0415
+
+            return card_types()
+        except Exception:  # noqa: BLE001 - no cards is fine
+            log.debug("no card types", exc_info=True)
+            return {}
+
+    def _card_menu(self) -> str:
+        """The cards for show_on_screen's description: "recipe (title*, steps*); weather (place, day)"."""
+        parts = []
+        for kind, ct in sorted(self._card_types().items()):
+            names = [f"{n}*" if n in ct.required else n for n in (ct.fields or {})][:8]
+            parts.append(f"{kind} ({', '.join(names)})" if names else kind)
+        return "; ".join(parts)
+
+    async def _show_card(self, spec: dict[str, Any]) -> dict[str, Any]:
+        """Show a card (through the call's screen director when there is one); never raises."""
+        try:
+            if self.screen is not None:
+                return await self.screen(spec, source="tool")
+            from littlebot.screens import director  # noqa: PLC0415
+
+            screens = self._screens()
+            if screens is None:
+                return {"ok": False, "error": "disabled"}
+            relaxed = getattr(self.ctx.config.ai, "relaxed_rules", ())
+            clean, why = director.clean_spec(spec, self._card_types(), relaxed)
+            if clean is None:
+                return {"ok": False, "error": "invalid", "detail": why}
+            shown = _maybe_await(screens.show(clean, source="tool"))
+            result = await asyncio.wait_for(shown, director.SHOW_TIMEOUT_S)
+            return result if isinstance(result, dict) else {"ok": bool(result)}
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - a card that can't be shown is simply not shown
+            log.warning("showing a card failed", exc_info=True)
+            return {"ok": False, "error": "failed"}
+
+    async def _show_on_screen(self, args: dict[str, Any]) -> str:
+        if not self._card_types():
+            return _err("LittleBot's screen can't show cards right now; just say the answer")
+        fields = args.get("fields") if isinstance(args.get("fields"), dict) else {}
+        spec = {**fields, **{k: v for k, v in args.items() if k != "fields"}}
+        result = await self._show_card(spec)
+        if result.get("ok"):
+            showing = str(result.get("showing") or spec.get("card"))[:200]
+            self.done.append(f"the screen shows {showing}")
+            return _ok(f"on the screen now: {showing}. Don't read it all out; say the gist.")
+        error = result.get("error")
+        if error == "busy":
+            return _err("the screen is busy (a game or a video); just say the answer")
+        if error == "invalid":
+            return _err(f"that card couldn't be made ({str(result.get('detail') or 'unusable')[:120]})")
+        return _err("no card could be shown; just say the answer")
+
+    async def _weather_card(self, place: str | None, days: int) -> str | None:
+        """The weather asked about goes on the screen too, when there is a weather card; what it shows, or None."""
+        ct = self._card_types().get("weather")
+        if ct is None:
+            return None
+        fields = ct.fields or {}
+        spec: dict[str, Any] = {"card": "weather"}
+        if place:
+            key = next((k for k in ("place", "city", "location") if k in fields), None)
+            if key is None:
+                return None  # this card shows home only, not the place they asked about
+            spec[key] = place
+        if "days" in fields:
+            spec["days"] = days
+        result = await self._show_card(spec)
+        return str(result.get("showing") or "the weather")[:200] if result.get("ok") else None
 
 
 # ---------------------------------------------------------------- helpers
