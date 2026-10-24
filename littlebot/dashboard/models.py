@@ -421,6 +421,20 @@ class PowerBody(Body):
     confirm: bool = False
 
 
+# ----------------------------------------------------------------- the battery (littlebot/power)
+class PowerSettingsBody(Body):
+    low_percent: int | None = Field(default=None, ge=5, le=50)  # "please charge me" at or below this
+    critical_percent: int | None = Field(default=None, ge=2, le=20)  # goodbye and a clean shutdown
+    announce_low: bool | None = None  # LittleBot says it out loud (else only the dashboard banner)
+    shutdown_when_empty: bool | None = None
+
+
+class PowerSimBody(Body):
+    percent: float | None = Field(default=None, ge=0, le=100)
+    charging: bool | None = None
+    temperature_c: float | None = Field(default=None, ge=-30, le=100)
+
+
 # ----------------------------------------------------------------- live voice
 class LiveStartBody(Body):
     # The parent confirms they are with the child for the whole conversation.

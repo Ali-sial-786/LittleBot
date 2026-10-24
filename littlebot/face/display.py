@@ -31,6 +31,7 @@ from pathlib import Path
 from typing import Any, Callable, Coroutine
 
 from littlebot.face import edge_controls as EC
+from littlebot.face.battery_badge import BatteryBadge, draw_badge
 
 log = logging.getLogger("littlebot.face.display")
 
@@ -262,6 +263,9 @@ class DisplayLoop:
         self._off_lock = threading.Lock()
         self._off_pending: dict[str, tuple[Callable[[Any], Any], Any]] = {}
         self._off_running: set[str] = set()
+        # The battery sign in the top-left corner (littlebot/power publishes power.show: plugged in, asked, low on waking).
+        self.battery = BatteryBadge()
+        self._power_sub: Any = None
 
     # ------------------------------------------------------------------ setup
     def open(self) -> None:
@@ -287,6 +291,7 @@ class DisplayLoop:
         self._watch_setup_code()
         self._watch_live_view()
         self._watch_levels()
+        self._watch_power()
         self._opened = True
         log.info("face display open: %dx%d%s (driver %s)", *self.window.get_size(),
                  " fullscreen" if self.fullscreen else "", pygame.display.get_driver())
@@ -301,6 +306,9 @@ class DisplayLoop:
         if self._levels_sub is not None:
             self._levels_sub.cancel()
             self._levels_sub = None
+        if self._power_sub is not None:
+            self._power_sub.cancel()
+            self._power_sub = None
         detach = getattr(self.face, "detach_display", None)
         if callable(detach):
             try:
@@ -338,6 +346,11 @@ class DisplayLoop:
         except Exception:  # noqa: BLE001
             self.live_viewers = 0
         self._live_sub = self.ctx.bus.subscribe(Topics.VISION_LIVE_VIEW, self._on_live_view)
+
+    def _watch_power(self) -> None:
+        from littlebot.core.events import Topics
+
+        self._power_sub = self.ctx.bus.subscribe(Topics.POWER_SHOW, self.battery.on_event)
 
     def _on_live_view(self, event: Any) -> None:
         try:
@@ -446,6 +459,8 @@ class DisplayLoop:
                 except Exception:  # noqa: BLE001
                     busy = True
                 fps = max(fps, int(self.cfg.fps if busy else self.cfg.idle_fps))
+        if self.battery.visible:  # the battery sign fades in and out
+            fps = max(fps, int(self.cfg.idle_fps))
         return max(1, fps)
 
     @property
@@ -500,6 +515,10 @@ class DisplayLoop:
         if bar is not None and not self.face_hidden():  # over the dimming: readable, only half as dimmed
             shade = 1.0 if self.brightness.backlight is not None else 0.5 + 0.5 * self.brightness.level
             EC.draw_bar(win, self.face_rect, bar, shade)
+        badge = self.battery.current(now)
+        if badge is not None and not self.face_hidden():
+            draw_badge(win, self.face_rect, badge, 1.0 if self.brightness.backlight is not None
+                       else 0.5 + 0.5 * self.brightness.level)
 
     def face_hidden(self) -> bool:
         try:

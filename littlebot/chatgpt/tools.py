@@ -90,6 +90,10 @@ TOOLS: tuple[_Tool, ...] = (
           "memory, how long it has been running, Wi-Fi, which devices work (camera, microphone, speaker, screen, "
           "motors), volume, the ChatGPT plan, live voice on or off, any video / activity / game running, and the "
           "privacy switches. Use it for questions like 'how hot are you?' or 'are you connected?'.", _obj()),
+    _Tool("battery", "LittleBot's battery right now: percent left, charging or not, about how long it lasts (or how "
+          "long until it is full), its temperature and any warning. Use it for 'how much battery do you have?', 'do you "
+          "need charging?' or 'how long can you keep going?'. It also shows the battery on LittleBot's screen for a "
+          "moment.", _obj()),
     _Tool("describe_yourself", "What LittleBot is and everything it can do (faces, camera, activities, videos, "
           "games, volume, sleep...). Use it for 'what can you do?' or 'tell me about yourself'.", _obj()),
     _Tool("list_activities", "The activities LittleBot can run (songs, stories, games, movement...), suitable "
@@ -169,6 +173,7 @@ TOOLS: tuple[_Tool, ...] = (
 TOOL_NAMES = frozenset(t.name for t in TOOLS)
 SCREEN_TOOL = "show_on_screen"  # offered only while the screen can show cards (RobotToolbox.specs)
 BROWSER_TOOLS = frozenset({"search_in_browser", "browser"})  # offered only while ctx.browser can open
+BATTERY_TOOL = "battery"  # offered only while a battery monitor is fitted (littlebot/power)
 
 # OpenAI's own web search, run on OpenAI's side (a hosted tool, not a function: RobotToolbox never runs
 # it). ``responses.ChatGPTProvider`` sends it as {"type": "web_search"}; "name" is for logs and fakes.
@@ -230,6 +235,8 @@ class RobotToolbox:
                     out.append({"name": t.name, "description": f"{t.description} {cards}.", "parameters": t.parameters})
                 continue
             if t.name in BROWSER_TOOLS and self._browser_view() is None:
+                continue
+            if t.name == BATTERY_TOOL and self._power() is None:
                 continue
             out.append({"name": t.name, "description": t.description, "parameters": t.parameters})
         if self.web_search:
@@ -368,6 +375,9 @@ class RobotToolbox:
         browser = getattr(ctx, "browser", None)
         if browser is not None:
             out["browser"] = _safe(browser.describe) or "closed"  # what it shows ("Google results for ...")
+        power = self._power()
+        if power is not None:
+            out["battery"] = _safe(power.describe)  # only on a robot with a battery monitor
         out["privacy"] = {k: v for k, v in (_safe(ctx.privacy.snapshot) or {}).items()
                           if k in ("camera_enabled", "microphone_enabled", "cloud_enabled", "ai_camera_enabled")}
         return _json(out)
@@ -401,6 +411,24 @@ class RobotToolbox:
         from littlebot.chatgpt import get_auth  # noqa: PLC0415
 
         return get_auth(self.ctx).status()
+
+    # ------------------------------------------------------------ the battery (littlebot/power)
+    def _power(self) -> Any:
+        """``ctx.power`` while a battery monitor is fitted, else None (mains power: no battery tool)."""
+        power = getattr(self.ctx, "power", None)
+        return power if power is not None and getattr(power, "fitted", False) is True else None
+
+    async def _battery(self, args: dict[str, Any]) -> str:
+        power = self._power()
+        if power is None:
+            return _err("LittleBot has no battery: it runs on mains power")
+        info = _safe(power.describe)
+        if not info:
+            return _err("the battery can't be read right now")
+        _safe(power.show)  # the battery sign on the screen for a moment
+        if info.get("percent") is None:
+            info["note"] = "the battery level isn't known right now"
+        return _json(info)
 
     async def _describe_yourself(self, args: dict[str, Any]) -> str:
         ctx = self.ctx
@@ -439,6 +467,7 @@ class RobotToolbox:
                else "."),
             *(["When a grown-up asks me to google something, I show Google (SafeSearch on) on my screen."]
               if self._browser_view() is not None else []),
+            *(["I run on a battery and can tell you how much is left."] if self._power() is not None else []),
             "I am a robot, not a person.",
         ]
         return " ".join(lines)

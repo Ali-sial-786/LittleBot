@@ -274,6 +274,7 @@ def make_test_config(**overrides: Any) -> LittleBotConfig:
         "media": {"player": "none"},
         "activities": {"time_scale": 0.0},
         "logging": {"level": "WARNING"},
+        "power": {"monitor": "none"},  # never a battery monitor plugged into the test machine
     }
     from littlebot.core.config import deep_merge
 

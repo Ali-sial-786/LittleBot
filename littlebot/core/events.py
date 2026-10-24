@@ -46,6 +46,7 @@ class Topics:
     FACE_BLINK = "face.blink"  # {double}
     FACE_GAZE = "face.gaze"  # {x, y}  (0..1 screen coords, 0.5,0.5 = centre)
     FACE_VISIBLE = "face.visible"  # {visible} False while video owns the screen (published by the face only)
+    FACE_DOZE = "face.doze"  # {dozing, reason} the idle face started / stopped dozing (littlebot/face/doze.py)
 
     # --- vision ---
     VISION_FACES = "vision.faces"  # {faces: [{x, y, w, h, gaze_x, gaze_y, score, primary}], frame_w, frame_h, simulated}
@@ -99,6 +100,22 @@ class Topics:
     MOTION_GESTURE_STARTED = "motion.gesture_started"  # {gesture}
     MOTION_GESTURE_FINISHED = "motion.gesture_finished"  # {gesture, cancelled}
     MOTION_ESTOP = "motion.estop"  # {active: bool, source}
+
+    # --- power (littlebot/power: the battery monitor; nothing is published while none is fitted) ---
+    # {fitted, connected, percent, voltage, cells, temperature_c, charging, charged, plugged_in,
+    #  time_left_minutes, time_to_full_minutes, health: [...]} at most every power.publish_seconds, and on changes
+    POWER_BATTERY = "power.battery"
+    POWER_LOW = "power.low"  # {percent} low (power.low_percent, 20 %) and not charging: once
+    POWER_CRITICAL = "power.critical"  # {percent, reason} empty (or a cell < 3.3 V) for 20 s: goodbye + shutdown
+    POWER_CHARGING = "power.charging"  # {percent} the charger started charging
+    POWER_CHARGED = "power.charged"  # {percent} the charger says it is full
+    POWER_UNPLUGGED = "power.unplugged"  # {percent} the charger was unplugged (or stopped)
+    POWER_HOT = "power.hot"  # {temperature_c, level: "warm"|"shutdown"} the pack is hot (50 °C) / too hot (60 °C)
+    POWER_COLD = "power.cold"  # {temperature_c} charging below 0 °C
+    POWER_MONITOR = "power.monitor"  # {connected, kind} the battery monitor was found / lost
+    POWER_SHOW = "power.show"  # {percent, charging, seconds} the face shows its battery sign for a moment
+    POWER_NOTE = "power.note"  # {text, goodbye} a quiet note for a live voice chat (goodbye: then it ends)
+    POWER_SHUTDOWN = "power.shutdown"  # {reason, poweroff} battery empty / too hot: the clean shutdown starts
 
     # --- dashboard ---
     DASHBOARD_SETUP = "dashboard.setup"  # {active, code, url} first-run setup code (shown on the robot's screen)

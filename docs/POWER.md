@@ -193,3 +193,124 @@ receives SIGTERM from systemd); holding it down forces power off - emergencies o
 - Do not charge the bank inside a closed enclosure or unattended.
 - Strain-relieve all cables so a pull cannot yank a connector or tip the robot over;
   no loose cables a child can reach, wrap around a neck, or chew.
+
+## 8. Running on the battery
+
+The cordless build: a **2S1P 21700 pack** (7.2 V nominal, 8.4 V full, about 36 Wh) with its
+own BMS, a 2S USB-C charger board, and a **Pololu 5 V / 5 A step-down regulator** feeding
+the Pi's 5 V. The Pi cannot measure the battery, so a **Waveshare RP2040-Zero** on one of its
+USB ports does that and sends one JSON line per second. The robot's side is `littlebot/power/`
+(`ctx.power`). Without the monitor, LittleBot behaves exactly as on mains: no battery card
+values, no battery tool, no events, nothing said.
+
+### 8.1 Tell the Pi it has a 5 A supply (`PSU_MAX_CURRENT`)
+
+The regulator feeds the Pi's 5 V directly, so there is no USB-PD conversation and the Pi 5
+assumes a weak supply: **all USB devices together are limited to 600 mA**. That is not enough
+for the camera, microphone, speaker *and* the battery monitor (section 2). With the 5 A
+regulator fitted, tell the firmware the supply gives 5 A:
+
+```bash
+sudo rpi-eeprom-config --edit
+# add (or change) this line, save and exit:
+PSU_MAX_CURRENT=5000
+sudo reboot
+```
+
+The USB ports may then draw up to **1.6 A** in total instead of 600 mA. **Only do this with the
+5 A regulator fitted**: the setting does not make a supply stronger (see "caveats" in
+section 1). It has to be done by hand on the robot; LittleBot never changes system settings.
+
+Then check on the battery, under the full robot load (video playing, speaker loud):
+
+```bash
+vcgencmd get_config usb_max_current_enable   # 1 = the USB limit is lifted
+vcgencmd pmic_read_adc EXT5V_V               # the 5 V rail: want >= ~4.9 V, also with a nearly empty pack
+vcgencmd get_throttled                       # want 0x0 (decode it with the table in section 1)
+```
+
+Repeat the `EXT5V_V` / `get_throttled` checks near the end of a charge (below about 20 %), when
+the regulator has the least headroom.
+
+### 8.2 Flash the battery monitor
+
+Full details, the pin table and what `null` means are in
+[firmware/battery_monitor/README.md](../firmware/battery_monitor/README.md). In short:
+
+1. Hold **BOOT** on the RP2040-Zero while plugging it into a computer; the `RPI-RP2` drive appears.
+2. Copy the MicroPython `.uf2` for the Raspberry Pi Pico onto it (it reboots into MicroPython).
+3. `mpremote cp firmware/battery_monitor/main.py :main.py`, then `mpremote reset`.
+
+The ratios of the voltage dividers (100k/33k for the pack, 100k/47k for the midpoint) are
+constants at the top of `main.py`; change them there if a resistor changes. It runs with
+nothing attached and reports what isn't connected as `null`.
+
+### 8.3 Check it from the robot
+
+Stop LittleBot first (`systemctl --user stop littlebot`): two programs reading one serial port
+each get only some of the lines.
+
+```bash
+.venv/bin/python scripts/check_battery.py              # find the monitor, print readings until Ctrl-C
+.venv/bin/python scripts/check_battery.py --seconds 20 # ... for 20 s
+.venv/bin/python scripts/check_battery.py --list       # the serial ports it would look at (opens none)
+.venv/bin/python scripts/check_battery.py --raw        # also the JSON lines as they arrive
+.venv/bin/python scripts/check_battery.py --simulate --percent 15   # no hardware: the simulated pack
+```
+
+It exits 0 with readings, 1 when the monitor stopped sending, 2 when no monitor was found. The robot finds the
+monitor itself (the `/dev/serial/by-id/` names of RP2040 / MicroPython boards, and `/dev/ttyACM*`
+ports with the Raspberry Pi USB vendor id `2e8a`) and accepts only a port whose lines say `"dev":"littlebot-battery"`;
+other USB serial devices are left alone. It never writes to the port. Unplugged and plugged
+back in, it reconnects by itself (the dashboard shows "Battery monitor disconnected" meanwhile).
+
+The dashboard's **Home** page has a **Battery** card: percent, charging or not, voltage (and each
+cell), temperature, time left (once the level has fallen steadily for about 10 minutes), a
+"Show on LittleBot" button and the battery settings. On mains it says "Not fitted".
+`GET /api/power` (parent login) returns the same.
+
+To preview it all on a desktop without hardware:
+`LITTLEBOT__POWER__MONITOR=simulated .venv/bin/python -m littlebot`, then the simulator page
+has a "Battery (simulated)" card to set the level, the charger and the temperature.
+
+### 8.4 What LittleBot does
+
+| When | What happens |
+|---|---|
+| Charger plugged in | The battery sign (a battery with a bolt) shows in the face's top-left corner for a few seconds. `power.charging`, later `power.charged`; unplugging: `power.unplugged` |
+| Asked ("how much battery?") | The voice uses the `battery` tool: it answers and shows the sign |
+| Waking from a doze below 30 % | The sign shows for a moment |
+| **Low** (20 % for 5 s) | Says once, gently: "I'm getting a little sleepy. Can a grown-up charge my battery, please?" (only when idle, never while asleep, not if already charging). In a live voice chat: a quiet note to the voice instead, and the chat goes on. Dashboard banner. `power.low` |
+| **Empty** (7 %, or one cell below 3.30 V, for 20 s) | Ends a live chat politely (the voice says goodbye), stops video and activities, says "My battery is empty, so I'm going to sleep now. Night night!" (silently if asleep), exits cleanly and switches the Pi off. **Never while the charger is in**; plugging it in during the goodbye cancels it. `power.critical` |
+| **Hot** (50 °C for 10 s) | Dashboard warning, `power.hot` (`level: warm`) |
+| **Too hot** (60 °C for 10 s) | Says "I'm a bit too warm, so I'm going to have a rest now", stops everything and shuts down cleanly, *also while charging*. `power.hot` (`level: shutdown`) |
+| Charging below 0 °C | Dashboard alert (Li-ion must not be charged below freezing). `power.cold` |
+
+The 20 s for "empty" is so a short voltage dip (the speaker at full volume) doesn't count. The
+percentage comes from a 2S Li-ion table (the weaker cell decides), smoothed; it only goes down
+on battery and only goes up while charging, so it doesn't jump around.
+
+The parent can change the low level (5-50 %), the shutdown level (2-20 %), whether the low
+battery is said out loud and whether it shuts down when empty, in the Battery card's settings
+(`power.low_percent`, `power.critical_percent`, `power.announce_low`,
+`power.shutdown_when_empty`); they apply at once. Everything else is in the `power:` section
+of the config (`littlebot/core/config.py`, `PowerConfig`).
+
+### 8.5 The power-off
+
+There was no power-off in LittleBot before (the dashboard's Shutdown only stops the app, and
+`scripts/safe_shutdown.sh` uses sudo). When the battery is empty or too hot, LittleBot first
+exits exactly like a normal stop (subsystems stopped, servos safe, database closed) and only
+then runs `systemctl --no-ask-password poweroff`, logged at CRITICAL level. No sudo.
+
+- It only does this when `power.allow_poweroff` allows it. The default (empty) means: on the
+  Raspberry Pi (`mode: pi`) yes, in the desktop simulation never (there it only logs and goes
+  to sleep). Set `power.allow_poweroff: false` to never switch the Pi off.
+- `systemctl poweroff` without sudo works for the user logged in on the robot's own screen
+  (the normal autostart as a user service: polkit allows the active local session). From the
+  headless system service, or a session that isn't "active", polkit refuses: the log says
+  "power-off was refused", and the BMS cuts the power when the pack is really empty. To allow
+  it there, a polkit rule for the robot's user is needed (`org.freedesktop.login1.power-off`);
+  that is a system setting to add by hand.
+- After it has switched off, wait for the green LED to stop before unplugging anything
+  (section 6). Switch it back on with the Pi's power button once the pack is charged.

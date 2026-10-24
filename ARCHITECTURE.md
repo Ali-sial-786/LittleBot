@@ -56,6 +56,7 @@ and reported as degraded — the robot keeps running (only the face is mandatory
 | `media/` | `MediaAPI` | Parent allowlist of YouTube items, official IFrame Player API page driven through a token-protected bridge, kiosk/desktop browser backends, age gate and time limits. |
 | `brain/` | `BrainAPI` | Conversation turns (listen → think → speak), providers (mock / Anthropic / OpenAI via httpx), code-enforced safety validation, rate + budget limits. |
 | `motion/` | `MotionAPI` | Servo joints with hard limits, eased interpolation, gestures, latched emergency stop, register-level PCA9685 mock; real driver gated behind config + calibration + parent arming. |
+| `power/` | — | `ctx.power`: the battery, read from an RP2040-Zero monitor's JSON lines on a USB serial port (stdlib termios, no pyserial; `firmware/battery_monitor/`). Percent, charging, temperature, time left; low / empty / hot alarms, the gentle low-battery line, the goodbye and clean power-off. Quiet and "not fitted" without a monitor. See docs/POWER.md section 8. |
 | `dashboard/` | — | FastAPI + vanilla JS parent dashboard; setup-code first run, scrypt passwords, server-side sessions, CSRF tokens, localhost-only by default. |
 | `safety/` | — | `AgePolicy` (video/cloud gates, reply length), `PrivacyManager`, AI content validation. |
 | `app/behaviours.py` | — | Reactive glue in one place: state → face, faces → gaze, person arrives → greeting / wake, idle → sleepy → sleep. |

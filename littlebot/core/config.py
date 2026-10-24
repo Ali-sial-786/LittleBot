@@ -360,6 +360,47 @@ class BrowserConfig(_Section):
     extra_args: list[str] = Field(default_factory=list)  # more Chromium switches (e.g. --renderer-process-limit=2)
 
 
+class PowerConfig(_Section):
+    """Running on the battery (littlebot/power, docs/POWER.md "Running on the battery").
+
+    A battery monitor (an RP2040-Zero on a USB port, firmware/battery_monitor) measures the 2S pack. Without one
+    (mains power) nothing changes: ``ctx.power`` reports "not fitted" and stays quiet. The parent's settings
+    (``power.low_percent``, ``power.critical_percent``, ``power.announce_low``, ``power.shutdown_when_empty``) start
+    from the values here."""
+
+    # auto = look for the monitor on the serial ports (and keep looking); simulated = a pretend pack (desktop
+    # preview, the dashboard's Simulator); none = no battery, never look.
+    monitor: Literal["auto", "simulated", "none"] = "auto"
+    port: str | None = None  # a fixed port (e.g. /dev/serial/by-id/usb-MicroPython...); None = search port_globs
+    port_globs: list[str] = Field(default_factory=lambda: ["/dev/serial/by-id/*", "/dev/ttyACM*"])
+    probe_any_port: bool = False  # also try serial ports that don't look like an RP2040 (another USB vendor id)
+    scan_seconds: float = Field(default=10.0, ge=1.0, le=600.0)  # no monitor: look again this often
+    probe_seconds: float = Field(default=3.0, ge=1.0, le=30.0)  # a port must send a monitor line by then
+    stale_seconds: float = Field(default=5.0, ge=2.0, le=120.0)  # no reading this long: reconnect
+    # --- when to warn and act (percentages are the smoothed state of charge)
+    low_percent: int = Field(default=20, ge=5, le=50)  # "I'm getting sleepy, please charge me" (once)
+    critical_percent: int = Field(default=7, ge=2, le=20)  # goodbye and a clean shutdown
+    critical_cell_volts: float = Field(default=3.3, ge=2.8, le=3.6)  # ...or a cell this low under load
+    critical_sustain_seconds: float = Field(default=20.0, ge=0.0, le=300.0)  # held this long (not a load spike)
+    low_sustain_seconds: float = Field(default=5.0, ge=0.0, le=300.0)
+    hot_celsius: float = Field(default=50.0, ge=30.0, le=70.0)  # pack temperature: warn
+    shutdown_celsius: float = Field(default=60.0, ge=35.0, le=80.0)  # ...and shut down cleanly
+    hot_sustain_seconds: float = Field(default=10.0, ge=0.0, le=300.0)
+    cold_charge_celsius: float = Field(default=0.0, ge=-10.0, le=10.0)  # charging below this: alert
+    # --- the face's battery sign
+    show_seconds: float = Field(default=4.0, ge=1.0, le=30.0)  # how long it shows (plugged in, asked)
+    show_on_wake_below_percent: int = Field(default=30, ge=0, le=100)  # shown on waking from a doze below this
+    publish_seconds: float = Field(default=5.0, ge=1.0, le=300.0)  # power.battery at most this often (+ changes)
+    # --- shutting down: the Raspberry Pi is switched off only when allowed (None = on the Pi, never in the
+    # desktop simulation); otherwise LittleBot says goodbye, goes to sleep and logs it loudly.
+    allow_poweroff: bool | None = None
+    poweroff_command: list[str] = Field(default_factory=lambda: ["systemctl", "--no-ask-password", "poweroff"])
+    goodbye_wait_seconds: float = Field(default=15.0, ge=0.0, le=60.0)  # a live voice chat says goodbye first
+    # --- the simulated pack (monitor: simulated)
+    simulated_percent: float = Field(default=80.0, ge=0.0, le=100.0)
+    simulated_drain_per_hour: float = Field(default=20.0, ge=0.0, le=1000.0)
+
+
 class MediaConfig(_Section):
     # auto: Pi -> kiosk (if Chromium is installed), desktop -> browser, headless/offline -> none
     player: Literal["auto", "browser", "kiosk", "none"] = "auto"
@@ -490,6 +531,7 @@ class LittleBotConfig(BaseModel):
     info: InfoConfig = Field(default_factory=InfoConfig)
     screens: ScreensConfig = Field(default_factory=ScreensConfig)
     browser: BrowserConfig = Field(default_factory=BrowserConfig)
+    power: PowerConfig = Field(default_factory=PowerConfig)
     media: MediaConfig = Field(default_factory=MediaConfig)
     motion: MotionConfig = Field(default_factory=MotionConfig)
     dashboard: DashboardConfig = Field(default_factory=DashboardConfig)

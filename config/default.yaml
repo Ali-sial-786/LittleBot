@@ -115,6 +115,15 @@ browser:
   mobile_layout: true      # ask sites for their phone layout
   kiosk: null              # null = full screen on the robot only (a 720x480 window on a desktop)
 
+power:
+  # The battery (docs/POWER.md section 8): an RP2040-Zero battery monitor on a USB port. Without one
+  # LittleBot behaves exactly as on mains power. Low / shutdown levels are dashboard settings.
+  monitor: auto            # auto (look on the USB serial ports) | simulated (desktop preview) | none
+  port: null               # null = find it; or e.g. /dev/serial/by-id/usb-MicroPython_Board_...
+  allow_poweroff: null     # switch the Pi off when empty / too hot. null = on the Pi only, never in the simulation
+  hot_celsius: 50          # dashboard warning
+  shutdown_celsius: 60     # clean shutdown
+
 media:
   player: auto           # auto | browser | kiosk | none  (auto: Pi -> kiosk Chromium, desktop -> browser)
   browser_command: null  # null = autodetect chromium-browser / chromium

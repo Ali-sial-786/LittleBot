@@ -65,7 +65,8 @@ def test_all_subsystems_build_and_report_status(robot: LittleBot):
     assert st["motion"]["simulation_only"] is True
     assert st["state"]["state"] == "IDLE"
     healthy = lambda: all(h["status"] in ("running", "degraded")  # noqa: E731
-                          for h in robot.status()["services"].values())
+                          or (name == "power" and h["status"] == "disabled")  # tests never look for a battery
+                          for name, h in robot.status()["services"].items())
     assert wait_until(healthy, 5), robot.status()["services"]
 
 
