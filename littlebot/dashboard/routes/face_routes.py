@@ -1,16 +1,41 @@
-"""Face controls: expressions, blinks, gaze, animations and a short demo sequence."""
+"""Face controls: expressions, blinks, gaze, animations, a short demo sequence, and dozing / sleep settings."""
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 
 from littlebot.core.interfaces import EXPRESSIONS, FACE_ANIMATIONS, FACE_STATES
 from littlebot.dashboard.deps import DashState, get_dash
-from littlebot.dashboard.models import AnimationBody, BlinkBody, ExpressionBody, GazeBody
+from littlebot.dashboard.models import (
+    AnimationBody,
+    BlinkBody,
+    ExpressionBody,
+    FaceSleepBody,
+    GazeBody,
+)
+
+log = logging.getLogger("littlebot.dashboard")
 
 router = APIRouter(prefix="/api/face", tags=["face"])
+
+# FaceSleepBody field -> setting key
+SLEEP_SETTINGS = {
+    "doze_enabled": "face.doze_enabled",
+    "doze_after_seconds": "face.doze_after_seconds",
+    "awake_on_arrival_seconds": "face.awake_on_arrival_seconds",
+    "sleep_after_idle_minutes": "system.sleep_after_idle_minutes",
+}
+
+
+def _sleep_view(dash: DashState) -> dict[str, Any]:
+    settings = dash.ctx.settings
+    out: dict[str, Any] = {field: settings.get(key) for field, key in SLEEP_SETTINGS.items()}
+    face = dash.ctx.face
+    out["dozing"] = bool(getattr(face, "dozing", False) is True)
+    return out
 
 # (seconds to wait after the step, action, args). Kept short and gentle (~15 s at normal speed).
 DEMO_SEQUENCE: tuple[tuple[float, str, tuple[Any, ...]], ...] = (
@@ -63,7 +88,20 @@ async def face_info(dash: DashState = Depends(get_dash)) -> dict[str, Any]:
         "animations": list(FACE_ANIMATIONS),
         "states": list(FACE_STATES),
         "demo_running": "face_demo" in dash.named_tasks,
+        "sleep": _sleep_view(dash),
     }
+
+
+@router.put("/sleep")
+async def sleep_settings(body: FaceSleepBody, dash: DashState = Depends(get_dash)) -> dict[str, Any]:
+    """Dozing when nothing is happening (a look only) and the deeper sleep after a long quiet spell."""
+    changes = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
+    if not changes:
+        raise HTTPException(status_code=422, detail="Nothing to change.")
+    for field, value in changes.items():
+        dash.ctx.settings.set(SLEEP_SETTINGS[field], value, source="dashboard")
+    log.info("doze / sleep settings changed from dashboard: %s", changes)
+    return {"ok": True, "sleep": _sleep_view(dash)}
 
 
 @router.post("/expression")

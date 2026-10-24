@@ -16,6 +16,17 @@ Threading model
 * With no display (headless runs, tests) ``start()`` runs a ~10 Hz ticker
   thread so blinks, holds and status keep working. The display loop calls
   :meth:`attach_display` to take over driving ``update()`` itself.
+
+Dozing
+------
+When nothing is happening the idle face dozes (droopy eyes slowly closing, a
+floating "zzz"); it is only a look, the robot stays IDLE and everything keeps
+listening. :class:`~littlebot.face.doze.DozeTimer` decides, fed by bus events
+(see ``_DOZE_HOLDS`` / ``_DOZE_ENDS`` / ``_DOZE_POKES``: a voice chat, speech,
+sounds, cards, games, activities, videos, a busy robot state, someone walking
+in or moving) and by the face's own commands (an expression, animation or look
+someone asked for). ``update()`` applies its decision. Settings:
+``face.doze_enabled``, ``face.doze_after_seconds``, ``face.awake_on_arrival_seconds``.
 """
 
 from __future__ import annotations
@@ -30,12 +41,20 @@ from littlebot.core.events import Event, Subscription, Topics
 from littlebot.core.interfaces import FACE_ANIMATIONS, FACE_STATES
 from littlebot.core.service import Service, ServiceStatus
 from littlebot.face.animator import FaceAnimator
+from littlebot.face.doze import (
+    AWAKE_ON_ARRIVAL_S,
+    DOZE_AFTER_S,
+    MAX_SECONDS,
+    MIN_DOZE_AFTER_S,
+    DozeTimer,
+)
 from littlebot.face.expressions import EXPRESSION_PARAMS
 from littlebot.face.frame import FaceFrame
 from littlebot.face.mouth import VISEMES
 
 if TYPE_CHECKING:  # pragma: no cover
     import random
+    from collections.abc import Callable
 
     import pygame
 
@@ -44,6 +63,7 @@ if TYPE_CHECKING:  # pragma: no cover
 
 TICK_HZ = 10.0  # headless update rate
 HIDDEN_FPS = 5  # frame rate while a video owns the screen
+DOZE_FPS = 10  # frame rate while dozing (the lids and the "zzz" move slowly)
 MAX_COMMANDS = 512
 
 _BUS_TOPICS = (
@@ -54,6 +74,58 @@ _BUS_TOPICS = (
     Topics.AUDIO_LISTENING_STOPPED,
 )
 
+# ---- dozing: what keeps the face awake (topics owned by other subsystems are named as they publish them)
+DOZE_SETTINGS = ("face.doze_enabled", "face.doze_after_seconds", "face.awake_on_arrival_seconds")
+GLANCE_S = 5.0  # an expression / animation / look someone asked for keeps the face awake at least this long
+QUIET_EXPRESSIONS = frozenset({"neutral", "sleepy"})  # a calm reset (STOP ALL) or a yawn doesn't wake it
+MOVE_THRESHOLD = 0.15  # the tracked face moved this far (0..1 of the view): someone moved
+NEW_FACE_GAP = 10.0  # s: one more face than any time in this long counts as someone new
+MAX_FACES_COUNTED = 8
+SHORT_HOLD_S = 600.0  # safety limit if a "finished" event never comes (speech, sounds, listening)
+LONG_HOLD_S = 7200.0  # ... (a chat, a game, an activity)
+SLEEP_REASON = "LittleBot went to sleep"
+
+# topic -> (hold key, why it keeps the face awake, safety limit in seconds or None)
+_DOZE_HOLDS: dict[str, tuple[str, str, float | None]] = {
+    "live.call_started": ("chat", "a voice chat", LONG_HOLD_S),  # littlebot/chatgpt/live.py
+    Topics.AUDIO_LISTENING_STARTED: ("listening", "listening", SHORT_HOLD_S),
+    Topics.AUDIO_SPEECH_STARTED: ("speech", "LittleBot is talking", SHORT_HOLD_S),
+    Topics.AUDIO_SOUND_STARTED: ("sound", "a sound is playing", SHORT_HOLD_S),
+    Topics.ACTIVITY_STARTED: ("activity", "an activity", LONG_HOLD_S),
+    "game.started": ("game", "a game", LONG_HOLD_S),  # littlebot/games/service.py
+    Topics.MEDIA_STARTED: ("media", "a video", None),
+    Topics.MEDIA_RESUMED: ("media", "a video", None),
+    "screen.card_shown": ("card", "a card on the screen", None),  # littlebot/screens/service.py
+    "screen.keep_awake": ("card", "a card on the screen", None),  # a running timer card, every minute
+}
+_DOZE_ENDS: dict[str, str] = {
+    "live.call_ended": "chat",
+    Topics.AUDIO_LISTENING_STOPPED: "listening",
+    Topics.AUDIO_SPEECH_FINISHED: "speech",
+    Topics.AUDIO_SOUND_FINISHED: "sound",
+    Topics.ACTIVITY_FINISHED: "activity",
+    "game.finished": "game",
+    Topics.MEDIA_STOPPED: "media",
+    Topics.MEDIA_ERROR: "media",
+    "screen.card_closed": "card",
+}
+_DOZE_POKES: dict[str, str] = {
+    "audio.wake_word": "the wake word",  # littlebot/audio/wakeword.py
+    Topics.AUDIO_UTTERANCE: "someone spoke",
+    Topics.BRAIN_REPLY: "a reply",
+    Topics.CAREGIVER_RESPONSE: "a grown-up answered",
+    Topics.ACTIVITY_STEP: "an activity",
+}
+# robot state -> why it keeps the face awake (IDLE is the only state the face can doze in)
+_BUSY_STATES = {
+    "LISTENING": "listening", "THINKING": "thinking", "SPEAKING": "talking", "PLAYING_ACTIVITY": "an activity",
+    "PLAYING_MEDIA": "a video", "SLEEPING": SLEEP_REASON, "ERROR": "an error",
+}
+_DOZE_TOPICS = tuple(dict.fromkeys((
+    *_DOZE_HOLDS, *_DOZE_ENDS, *_DOZE_POKES, Topics.STATE_CHANGED, Topics.STOP_ALL, Topics.SETTINGS_CHANGED,
+    Topics.VISION_PERSON_PRESENT, Topics.VISION_FACES, Topics.VISION_GESTURE,
+)))
+
 
 def _finite(*values: Any) -> bool:
     try:
@@ -62,12 +134,22 @@ def _finite(*values: Any) -> bool:
         return False
 
 
+def _seconds_validator(key: str, lo: int, hi: int) -> Callable[[Any], int]:
+    """Settings validator: whole seconds clamped into ``lo..hi``."""
+    def check(value: Any) -> int:
+        if isinstance(value, bool) or not _finite(value):
+            raise ValueError(f"{key}: expected a number of seconds")
+        return max(lo, min(hi, round(float(value))))
+    return check
+
+
 class FaceController(Service):
     """Animated face service. See module docstring for the threading model."""
 
     name = "face"
 
-    def __init__(self, ctx: "RobotContext", *, rng: "random.Random | None" = None, seed: int | None = None) -> None:
+    def __init__(self, ctx: "RobotContext", *, rng: "random.Random | None" = None, seed: int | None = None,
+                 clock: Callable[[], float] | None = None) -> None:
         super().__init__()
         # core.service.Service keeps lifecycle state in ``self.status``, which would shadow the
         # FaceAPI ``status()`` method: keep it in ``service_status`` (same pattern as audio/media).
@@ -90,6 +172,17 @@ class FaceController(Service):
         self._render_times: collections.deque[float] = collections.deque(maxlen=90)
         self._render_ms: collections.deque[float] = collections.deque(maxlen=90)
         self._update_errors = 0
+        # dozing (see the module docstring); the timer has its own small lock (bus callbacks feed it)
+        self._clock: Callable[[], float] = clock or time.monotonic
+        self._doze_lock = threading.Lock()
+        self.doze = DozeTimer(now=self._clock())
+        self._face_anchor: tuple[float, float] | None = None  # where the tracked face was (movement)
+        self._faces_seen = 0
+        self._faces_seen_at: dict[int, float] = {}  # number of faces -> when last seen (someone new)
+        self._load_doze_settings(first=True)
+        state = getattr(ctx, "state", None)
+        if state is not None and getattr(state, "state", None) is not None:
+            self._doze_state(str(state.state.value), self._clock())
         self._subscribe()
 
     # ================================================================ FaceAPI
@@ -100,6 +193,8 @@ class FaceController(Service):
         if hold is not None and not _finite(hold):
             self.log.warning("invalid hold %r for expression %s ignored", hold, name)
             hold = None
+        if name not in QUIET_EXPRESSIONS:
+            self._glance(hold)
         self._enqueue("set_expression", name, None if hold is None else float(hold))
 
     def look_at(self, x: float, y: float, *, hold: float | None = None) -> None:
@@ -108,6 +203,7 @@ class FaceController(Service):
             return
         if hold is not None and not _finite(hold):
             hold = None
+        self._glance(hold)
         self._enqueue("look_at", float(x), float(y), None if hold is None else float(hold))
 
     def track_gaze(self, x: float, y: float) -> None:
@@ -120,9 +216,11 @@ class FaceController(Service):
         self._enqueue("clear_gaze")
 
     def blink(self, double: bool = False) -> None:
+        self._glance(None)
         self._enqueue("blink", bool(double))
 
     def close_eyes(self) -> None:
+        self._glance(None)
         self._enqueue("close_eyes")
 
     def open_eyes(self) -> None:
@@ -138,6 +236,8 @@ class FaceController(Service):
         if name not in FACE_ANIMATIONS:
             self.log.warning("unknown face animation %r ignored", name)
             return
+        if name != "zzz":
+            self._glance(None)
         self._enqueue("play_animation", name)
 
     def status(self) -> dict[str, Any]:
@@ -149,7 +249,8 @@ class FaceController(Service):
                 "expression": a.expression,
                 "state": a.state,
                 "gaze": {"x": round(gx, 3), "y": round(gy, 3)},
-                "eyes_closed": bool(a.eyes_closed or a.state == "sleeping"),
+                "eyes_closed": bool(a.eyes_closed or a.state == "sleeping" or a.doze_lid >= 0.9),
+                "dozing": bool(a.dozing),
                 "fps": self.fps,
                 "visible": a.visible,
                 "talking": a.talking,
@@ -169,6 +270,7 @@ class FaceController(Service):
             self.animator.update(dt)
             events = self.animator.pop_events()
         self._publish(events)
+        self._check_doze()
 
     def frame(self) -> FaceFrame:
         """Snapshot of the current face as plain data."""
@@ -200,13 +302,23 @@ class FaceController(Service):
             return self.animator.is_animating()
 
     def target_fps(self) -> int:
-        """Frame rate the display should use right now (drops when calm / hidden)."""
+        """Frame rate the display should use right now (drops when calm / hidden / dozing)."""
         with self._lock:
             a = self.animator
             if a.state == "hidden" and a.hidden_amount >= 1.0:
                 return min(HIDDEN_FPS, self.display_config.idle_fps)
             animating = a.is_animating()
-        return int(self.display_config.fps if animating else self.display_config.idle_fps)
+            dozed_off = a.dozing and a.doze_amount >= 1.0
+        if animating:
+            return int(self.display_config.fps)
+        if dozed_off:
+            return int(min(DOZE_FPS, self.display_config.idle_fps))
+        return int(self.display_config.idle_fps)
+
+    @property
+    def dozing(self) -> bool:
+        """True while the idle face dozes (a look only: the robot is still IDLE and listening)."""
+        return bool(self.animator.dozing)
 
     @property
     def fps(self) -> float:
@@ -274,6 +386,8 @@ class FaceController(Service):
         h = {"name": self.name, "status": self.service_status.value, "detail": self.status_detail}
         h.update({"display": self._display_attached, "fps": self.fps, "ticker": self.ticker_running,
                   "render_ms": self.render_ms, "dropped_commands": self.dropped_commands})
+        with self._doze_lock:
+            h["doze"] = self.doze.status(self._clock())
         return h
 
     # ================================================================ internals
@@ -327,6 +441,7 @@ class FaceController(Service):
         if self._subs:
             return
         self._subs = [self.bus.subscribe(t, self._on_bus_event) for t in _BUS_TOPICS]
+        self._subs += [self.bus.subscribe(t, self._on_doze_event) for t in _DOZE_TOPICS]
 
     def _unsubscribe(self) -> None:
         for s in self._subs:
@@ -349,3 +464,112 @@ class FaceController(Service):
             self._enqueue("listening_started")
         elif topic == Topics.AUDIO_LISTENING_STOPPED:
             self._enqueue("listening_stopped")
+
+    # ================================================================ dozing
+    def _check_doze(self) -> None:
+        """Apply the doze timer's decision (called after every update)."""
+        with self._doze_lock:
+            change = self.doze.update(self._clock())
+        if change is None:
+            return
+        what, why = change
+        with self._lock:
+            self.animator.set_doze(what == "doze")
+        if what == "doze":
+            self.log.info("face: dozing (%s)", why)
+        elif why == SLEEP_REASON:
+            self.log.info("face: no longer dozing (%s)", why)
+        else:
+            self.log.info("face: awake (%s)", why)
+
+    def _glance(self, hold: float | None) -> None:
+        """Someone asked the face to show something: awake at least while it plays."""
+        seconds = max(GLANCE_S, float(hold) if hold is not None and _finite(hold) else 0.0)
+        with self._doze_lock:
+            self.doze.glance(self._clock(), seconds, "the face was asked to show something")
+
+    def _load_doze_settings(self, *, first: bool = False) -> None:
+        settings = getattr(self.ctx, "settings", None)
+        if settings is None:
+            return
+        try:
+            if first:
+                for key, lo in (("face.doze_after_seconds", int(MIN_DOZE_AFTER_S)),
+                                ("face.awake_on_arrival_seconds", 0)):
+                    settings.register_validator(key, _seconds_validator(key, lo, int(MAX_SECONDS)))
+            enabled = settings.get("face.doze_enabled", True)
+            after = settings.get("face.doze_after_seconds", DOZE_AFTER_S)
+            arrival = settings.get("face.awake_on_arrival_seconds", AWAKE_ON_ARRIVAL_S)
+        except Exception:  # noqa: BLE001 - settings trouble must never break the face
+            self.log.debug("reading the doze settings failed", exc_info=True)
+            return
+        with self._doze_lock:
+            self.doze.configure(enabled=enabled is not False, doze_after=after, awake_on_arrival=arrival)
+
+    def _doze_state(self, new: str, now: float) -> None:
+        why = _BUSY_STATES.get(new)
+        if why is None:  # IDLE: the quiet wait starts now
+            self.doze.end("state", now)
+        else:
+            self.doze.begin("state", now, why)
+
+    def _on_doze_event(self, event: Event) -> None:
+        """Bus events that keep the face awake (tiny: runs in the publisher's thread)."""
+        topic = event.topic
+        if topic == Topics.VISION_FACES:
+            self._doze_faces(event.get("faces") or [])
+            return
+        if topic == Topics.SETTINGS_CHANGED:
+            if event.get("key") in DOZE_SETTINGS:
+                self._load_doze_settings()
+            return
+        now = self._clock()
+        with self._doze_lock:
+            d = self.doze
+            if topic in _DOZE_HOLDS:
+                key, why, limit = _DOZE_HOLDS[topic]
+                d.begin(key, now, why, limit)
+            elif topic in _DOZE_ENDS:
+                d.end(_DOZE_ENDS[topic], now)
+            elif topic in _DOZE_POKES:
+                d.activity(now, _DOZE_POKES[topic])
+            elif topic == Topics.STATE_CHANGED:
+                self._doze_state(str(event.get("new", "")), now)
+            elif topic == Topics.STOP_ALL:
+                d.clear(now)
+                d.activity(now, "everything was stopped")
+            elif topic == Topics.VISION_PERSON_PRESENT:
+                d.arrival(now, "someone walked in")
+            elif topic == Topics.VISION_GESTURE:
+                d.arrival(now, "someone waved" if event.get("gesture") == "wave" else "someone moved")
+
+    def _doze_faces(self, faces: list[Any]) -> None:
+        """Camera faces: a new face (one more than lately) or the tracked face moving wakes the face up."""
+        if not faces:
+            self._face_anchor = None
+            self._faces_seen = 0
+            return
+        now = self._clock()
+        n = min(len(faces), MAX_FACES_COUNTED)
+        confirmed = min(n, self._faces_seen)  # seen in two detections running: not a one-frame false face
+        self._faces_seen = n
+        why = None
+        if confirmed >= 2 and now - self._faces_seen_at.get(confirmed, -1e9) > NEW_FACE_GAP:
+            why = "someone new walked in"
+        for k in range(1, confirmed + 1):
+            self._faces_seen_at[k] = now
+        try:
+            face = next((f for f in faces if f.get("primary")), faces[0])
+            pos = (float(face.get("gaze_x", 0.5)), float(face.get("gaze_y", 0.5)))
+        except (AttributeError, TypeError, ValueError):
+            pos = None
+        if pos is not None and _finite(*pos):
+            anchor = self._face_anchor
+            if anchor is None:
+                self._face_anchor = pos
+            elif math.hypot(pos[0] - anchor[0], pos[1] - anchor[1]) > MOVE_THRESHOLD:
+                self._face_anchor = pos
+                why = why or "someone moved"
+        if why is not None:
+            with self._doze_lock:
+                self.doze.arrival(now, why)

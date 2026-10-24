@@ -93,6 +93,15 @@ class AnimationBody(Body):
         return v
 
 
+class FaceSleepBody(Body):
+    """Dozing (an idle look, littlebot/face/doze.py) and the deeper sleep after a long quiet spell."""
+
+    doze_enabled: bool | None = None
+    doze_after_seconds: int | None = Field(default=None, ge=5, le=3600)
+    awake_on_arrival_seconds: int | None = Field(default=None, ge=0, le=3600)
+    sleep_after_idle_minutes: float | None = Field(default=None, ge=0, le=720)  # 0: never
+
+
 # ----------------------------------------------------------------- activities
 ACTIVITY_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.\-]{0,63}$")
 

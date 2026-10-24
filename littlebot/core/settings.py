@@ -67,6 +67,11 @@ def build_defaults(cfg: LittleBotConfig) -> dict[str, Any]:
         "motion.physical_armed": False,  # never persisted as True across restarts (see Settings.load)
         # face
         "face.expression_default": "neutral",
+        # the idle face dozes (droopy eyes, a "zzz") when nothing is happening; only a look, the robot stays
+        # awake and listening (littlebot/face/doze.py). Someone walking in wakes it for a while.
+        "face.doze_enabled": True,
+        "face.doze_after_seconds": 30,
+        "face.awake_on_arrival_seconds": 20,
         # system
         "system.sleep_after_idle_minutes": cfg.system.sleep_after_idle_minutes,
         # live information (littlebot/info): the weather's home place as the parent chose it on the

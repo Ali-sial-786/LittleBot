@@ -138,6 +138,24 @@ async def test_face_blink_gaze_animation(authed, dctx):
     assert info["available"] and "happy" in info["expressions"] and "bounce" in info["animations"]
 
 
+async def test_face_doze_and_sleep_settings(authed, dctx):
+    info = (await authed.get("/api/face")).json()
+    assert info["sleep"] == {"doze_enabled": True, "doze_after_seconds": 30, "awake_on_arrival_seconds": 20,
+                             "sleep_after_idle_minutes": dctx.settings.get("system.sleep_after_idle_minutes"),
+                             "dozing": False}
+    r = await authed.put("/api/face/sleep", json={"doze_enabled": False, "doze_after_seconds": 45,
+                                                  "awake_on_arrival_seconds": 25, "sleep_after_idle_minutes": 15})
+    assert r.status_code == 200
+    assert r.json()["sleep"]["doze_after_seconds"] == 45
+    assert dctx.settings.get("face.doze_enabled") is False
+    assert dctx.settings.get("face.awake_on_arrival_seconds") == 25
+    assert dctx.settings.get("system.sleep_after_idle_minutes") == 15
+    assert (await authed.put("/api/face/sleep", json={})).status_code == 422
+    assert (await authed.put("/api/face/sleep", json={"doze_after_seconds": 2})).status_code == 422
+    assert (await authed.put("/api/face/sleep", json={"awake_on_arrival_seconds": 99999})).status_code == 422
+    assert (await authed.put("/api/face/sleep", json={"doze": True})).status_code == 422
+
+
 async def test_face_demo_runs_scripted_sequence(authed, dctx, app):
     r = await authed.post("/api/face/demo")
     assert r.status_code == 200 and r.json()["started"]
