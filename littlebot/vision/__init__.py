@@ -1,4 +1,7 @@
-"""Vision subsystem: camera devices, face detection (no recognition), tracking, presence events.
+"""Vision subsystem: camera devices, face detection, tracking, presence events.
+
+The service only detects faces. Recognising the family members a parent added is separate and
+opt-in (``littlebot.vision.faces``, ``privacy.face_recognition_enabled``).
 
 ``create_service(ctx)`` returns a ``VisionService`` implementing ``core.interfaces.VisionAPI``.
 OpenCV is optional: without it the service runs with the mock camera (simulation)

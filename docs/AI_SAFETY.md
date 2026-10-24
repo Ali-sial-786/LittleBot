@@ -237,7 +237,8 @@ LittleBot is talking). Audio **cannot be scrubbed** of personal information the 
 is: names, places and anyone talking in the room reach OpenAI. The call's instructions also
 carry the robot's name, the child's approximate age ("a baby about 10 months old") and the day
 and time, but not the nickname or interests. Look-ups send the scrubbed question plus the last
-few caption lines to the text model.
+few caption lines to the text model. With **Recognise family members** on (§4), the names and
+roles of the people LittleBot recognises in front of its camera go too (never photos or face data).
 
 **What stays on LittleBot.** Nothing is recorded: no audio, no transcripts. The last few
 captions are held in memory only for the dashboard during the call and are cleared when it
@@ -289,6 +290,31 @@ the main safeguard; the code checks are a backstop.**
   saved, logged or sent to the dashboard (the browser gets only the answer text and a count of
   photos sent today). OpenAI does receive the photo, including anyone in view. See
   [CHATGPT.md §4](CHATGPT.md#4-letting-the-ai-see-camera).
+* **Recognising family members** is another switch, **off by default**
+  (`privacy.face_recognition_enabled`, "Recognise family members"; `littlebot/vision/faces.py`). A
+  parent adds people under **Who's who** on the Profile page (a name and a few words: "Ali", "dad")
+  and takes about 5 samples of each with the robot's camera. It only runs while this switch and the
+  camera switch are on, checked before every photo; offline mode doesn't stop it (nothing is sent).
+  * **What is stored, where:** in LittleBot's database on the robot (`data/littlebot.db`, owner-only
+    file), tables `face_people` (name, role, when added) and `face_samples` (per sample: 128 numbers
+    from OpenCV's SFace model that describe the face, 512 bytes, and when it was taken; at most 10
+    per person, the oldest goes first). **No photo is ever stored**: the table only accepts 512-byte
+    rows. A sample's photo, and the one-a-few-seconds photos during a voice chat, are looked at in
+    memory and dropped. Taking a sample or pressing "Who's in view?" shows the parent one small
+    preview of that photo on the dashboard; it is not kept.
+  * **What leaves the robot:** never a photo or the numbers (they are never logged or shown either;
+    logs say counts only). During a voice chat, only the **names and roles** of the people in view
+    go to the voice (OpenAI): a line in the chat's instructions ("In front of your camera now: Ali
+    (dad).") and a quiet note when that changes, and with a camera look ("who is this?"), so ChatGPT
+    can use the names. A face that isn't clearly one of the samples is "someone LittleBot doesn't
+    know", never a guess (match threshold `vision.face_match_threshold`, 0.45, plus a margin over the
+    next person). With `ai.share_child_name` off, the child's nickname in them becomes "the little one".
+  * **How to delete it:** Profile → Who's who: the bin next to a person deletes them and their
+    samples, the arrows delete only their samples, and **Forget all faces** deletes everyone.
+    Deleted rows are overwritten in the database file (`secure_delete`). Switching the setting off
+    stops recognising and unloads the model, but keeps the samples until you delete them.
+    "Forget profile" does not delete them. Babies' faces change fast, so the card asks for new
+    samples after a month.
 * Cloud providers process requests under their own terms and may retain data for a
   period for abuse monitoring — check the provider's data-retention policy before
   enabling cloud conversation.

@@ -626,6 +626,7 @@ class LiveCall:
         self._handover_spoke = False
         self._handover_was_quiet = False
         self._handover_quiet_since: float | None = None
+        self._faces: Any = None  # who is in front of the camera (littlebot/vision/faces.py), while warm
 
     # ------------------------------------------------------------ views
     def snapshot(self) -> dict[str, Any]:
@@ -771,6 +772,9 @@ class LiveCall:
         notes = self._notes(nickname)
         if notes:
             text += "\nWhat the family asked you to remember: " + "; ".join(notes) + "."
+        seen = self._faces.intro() if self._faces is not None else ""  # "In front of your camera now: Ali (dad)."
+        if seen:
+            text += "\n" + seen
         now = _dt.datetime.now()
         return f"{text}\nAt the start of this call it is {now:%A}, {now:%H:%M} local time."
 
@@ -1465,6 +1469,30 @@ class LiveCall:
                 keep(on, owner=OWNER)
         except Exception:  # noqa: BLE001 - getting ready must never stop the call
             log.debug("live voice: keeping the camera warm failed", exc_info=True)
+        self._watch_faces(on)
+
+    def _watch_faces(self, on: bool) -> None:
+        """Who is in front of the camera during the call (opt-in, recognised on the robot: littlebot/vision/faces.py)."""
+        try:
+            from littlebot.vision import faces  # noqa: PLC0415
+
+            if on and self._faces is None:
+                self._faces = faces.CallFaces(faces.get_faces(self.ctx), tell=self._tell_faces,
+                                              hide=faces.hidden_child_name(self.ctx), now=self.svc._now)
+                self._spawn(self._faces.run())
+            elif not on and self._faces is not None:
+                self._faces.close()
+        except Exception:  # noqa: BLE001 - knowing who is there must never stop the call
+            log.debug("live voice: face recognition failed", exc_info=True)
+
+    def _tell_faces(self, text: str) -> bool:
+        """A note about who is in view, only at a quiet moment (nobody talking, no hand-off or look under way)."""
+        if self.channel is None or self.channel.readyState != "open" or self._ended.is_set() or self._delegations \
+                or getattr(self.audio, "speaking", False) or self._heard_partial or self._hush_job is not None:
+            return False
+        self._caption("note", text)
+        self._note(text)
+        return True
 
     async def _look(self, job: "_LookJob", question: str) -> None:
         """One photo, answered by the ChatGPT text model (validated there); never kept.
@@ -1481,7 +1509,8 @@ class LiveCall:
             job.text, job.blocked, job.outcome = CANT_LOOK.get(reason, CANT_SEE), reason, f"blocked:{reason}"
             return
         self._caption("note", "LittleBot is taking a photo to answer (not kept)")
-        result = await _ask_camera(look, question, job, self.svc._now)
+        who = self._faces.for_look() if self._faces is not None else None  # names LittleBot recognised, if any
+        result = await _ask_camera(look, question, job, self.svc._now, who=who)
         answer = str(result.get("answer") or "").strip()
         if result.get("ok") and answer:
             self.photos += 1
@@ -1653,9 +1682,10 @@ def _sentences(text: str, *, partial: bool) -> list[str]:
     return [s for s in (_FILLERS.sub("", _normalised(p).strip()).strip() for p in parts) if s]
 
 
-async def _ask_camera(look: Any, question: str, job: "_LookJob", now: Callable[[], float]) -> dict[str, Any]:
+async def _ask_camera(look: Any, question: str, job: "_LookJob", now: Callable[[], float],
+                      who: str | None = None) -> dict[str, Any]:
     """``look.look`` for the live voice, passing each answer's first sentence on to ``job`` as it arrives
-    (and its ``timing`` to ``job.timing``, for the log)."""
+    (and its ``timing`` to ``job.timing``, for the log). ``who``: the names LittleBot recognised."""
     import inspect  # noqa: PLC0415
 
     def first(text: str) -> None:
@@ -1664,13 +1694,14 @@ async def _ask_camera(look: Any, question: str, job: "_LookJob", now: Callable[[
             job.ready(now())  # a waiting hand-off or note can go ahead with this sentence
 
     try:
-        streams = "on_first" in inspect.signature(look.look).parameters
+        params = inspect.signature(look.look).parameters
     except (TypeError, ValueError):
-        streams = False
-    if streams:
-        result = await look.look(question, asked_by="live", on_first=first)
+        params = {}
+    extra = {"context": who} if who and "context" in params else {}
+    if "on_first" in params:
+        result = await look.look(question, asked_by="live", on_first=first, **extra)
     else:
-        result = await look.look(question, asked_by="live")
+        result = await look.look(question, asked_by="live", **extra)
     if isinstance(result.get("timing"), dict):
         job.timing = result["timing"]
     return result

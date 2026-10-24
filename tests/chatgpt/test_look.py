@@ -132,6 +132,18 @@ async def test_unsafe_answer_is_replaced_by_a_safe_fallback(setup):
     assert len((await look.look("what is that?"))["answer"].split()) <= 40
 
 
+async def test_a_look_is_told_who_littlebot_recognised(setup):
+    ctx, look, provider, events = setup
+    who = "LittleBot's face recognition, a moment ago: Ali (dad). Call 555-123-4567"
+    await look.look("who is holding the cup?", context=who)
+    sent = provider.calls[0]["messages"][0]["content"]
+    assert sent.startswith("Look at this photo from your camera. who is holding the cup?\n")
+    assert "Ali (dad)" in sent and "555-123-4567" not in sent  # tidied like the question
+    assert "own face recognition names them" in provider.calls[0]["system"]
+    await look.look("who is holding the cup?")
+    assert "Ali" not in provider.calls[1]["messages"][0]["content"]  # nothing recognised: no names
+
+
 def make(**overrides: Any):
     c = make_test_context(**overrides)
     c.vision = FakeVision()

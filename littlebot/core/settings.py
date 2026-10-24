@@ -36,6 +36,9 @@ def build_defaults(cfg: LittleBotConfig) -> dict[str, Any]:
         # Let ChatGPT see one still photo when someone asks a question that needs it. Off until a
         # parent opts in; also needs the camera and cloud switches (never in offline mode).
         "privacy.ai_camera_enabled": False,
+        # Recognise the family members a parent added (littlebot/vision/faces.py), on the robot. Off until a
+        # parent opts in; also needs the camera switch.
+        "privacy.face_recognition_enabled": False,
         # audio
         "audio.volume": cfg.audio.speaker.volume,
         "audio.tts_rate": cfg.audio.tts.rate,

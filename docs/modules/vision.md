@@ -1,9 +1,11 @@
 # Module: vision (camera, face detection, tracking, presence)
 
 `littlebot/vision/` lets LittleBot notice that someone is there, look at them, and (experimentally)
-notice a wave. It does **face detection only**: where faces are in the current frame. There is no
-recognition, identification, age/emotion estimation or any other biometric profiling, and frames
-are never stored or sent anywhere.
+notice a wave. The vision service does **face detection only**: where faces are in the current
+frame. There is no age/emotion estimation or any other biometric profiling, and frames are never
+stored or sent anywhere. The one exception is opt-in and separate: `faces.py` recognises the
+family members a parent added, on the robot, only while the parent's "Recognise family members"
+switch is on ([Recognising family members](#recognising-family-members-opt-in) below).
 
 ```
 littlebot/vision/
@@ -14,8 +16,10 @@ littlebot/vision/
   tracker.py      FaceTracker + GazeMapper: primary face, smoothing, mirroring, presence hysteresis (pure logic)
   gestures.py     GestureDetector: EXPERIMENTAL frame-differencing motion / wave heuristics
   imaging.py      optional-cv2 helpers, resize/grey, RateMeter, numpy-only synthetic drawing
+  hands.py        local finger counting for camera looks (optional models)
+  faces.py        OPT-IN family recognition: YuNet + SFace, people/samples store, matching, live-call watcher
 scripts/check_camera.py      list devices, open one, negotiated format, capture fps, detector timings
-scripts/download_models.py   YuNet ONNX / Haar XML into models/ (git-ignored), SHA-256 pinned
+scripts/download_models.py   YuNet ONNX / Haar XML / hand models / SFace into models/ (git-ignored), SHA-256 pinned
 tests/vision/                87 tests (mocks, fake cv2 driver, fixtures, threads)
 ```
 
@@ -204,7 +208,8 @@ including `none` and privacy off, because it is not camera data.
   downscaling. No queue, no ring buffer, no disk writes, no network. The only image ever kept
   is the gesture analyser's previous 80x60 grey frame (for differencing), cleared on release.
 * Detection only. YuNet's facial landmarks are discarded immediately; no embeddings, no
-  identity, no age/emotion/attribute estimation, no face recognition models.
+  identity, no age/emotion/attribute estimation. (Opt-in family recognition lives in `faces.py`
+  and only uses the photos `capture_photo` / `latest_photo` hand out, below.)
 * `check_camera.py` writes an image only with `--save PATH`, exactly one frame, and says so.
 * Status and events contain only box coordinates, counts and rates.
 
@@ -232,6 +237,40 @@ swinging toys and light flicker. Expect misses from babies' typical "waves" (ope
 a hand, two-arm flapping). It needs a detected face. Use it only for playful, low-stakes
 reactions.
 
+## Recognising family members (opt-in)
+
+`faces.py`, off until a parent switches on **Recognise family members**
+(`privacy.face_recognition_enabled`) in Privacy; it also needs the camera switch, checked before
+every photo. The parent adds people under **Who's who** on the Profile page and takes about 5
+samples each (dashboard `/api/people`). Then live voice knows who is in front of the camera
+(`CallFaces`): a line in the call's instructions, a quiet note when that changes, and the names
+with a camera look ([AI_SAFETY.md §4](../AI_SAFETY.md#4-privacy) has the privacy details).
+
+* **Models:** YuNet (`cv2.FaceDetectorYN`, its landmarks this time: they line the face up) and SFace
+  (`cv2.FaceRecognizerSF`, `vision.sface_model`, `scripts/download_models.py faces`; Apache-2.0,
+  39 MB). Loaded on first use (~0.2 s on an x86 VM) and ~110 MB of RAM; unloaded when switched off
+  or after 10 minutes unused. Missing models or an old OpenCV are reported ("The face models aren't
+  downloaded yet ..."), never a crash.
+* **Matching:** each sample is 128 numbers (unit length). A person is the average of their samples
+  (made unit length again); a face is theirs when the cosine similarity to it is at least
+  `vision.face_match_threshold` (0.45; SFace's own suggestion is 0.363) **and** at least 0.08 more
+  than to anyone else. Otherwise: someone LittleBot doesn't know. One person is at most one face per
+  photo. Faces under 48 px wide (in a 640 px photo) or with a YuNet score under 0.8 aren't
+  compared; samples need 72 px and 0.9, exactly one face, and are refused when they look more like
+  someone else already enrolled.
+* **During a call:** one check every 3 s (the call's warm photo, else one still; ~30-60 ms per photo
+  with one face on an x86 VM, expect a few times that on the Pi). Someone arrives after 2 sightings
+  within 10 s (the call's first check counts at once) and leaves 12 s after they were last seen;
+  the voice is told only on a change, at most every 15 s, at a quiet moment.
+* **Store:** tables `face_people` and `face_samples` in `ctx.db` (`features BLOB CHECK (length = 512)`),
+  at most 12 people and 10 samples each (oldest first out), `secure_delete` on.
+
+On OpenCV's public sample photos (not committed) with the real models: variants of `lena.jpg`
+(darker, smaller, turned 12 degrees, re-compressed) scored 0.69-0.96 against the original, and an
+enlarged `messi5.jpg` face 0.09-0.13, so 0.45 sits well between. Variants of one photo flatter the
+same-person scores. **Unverified:** real family faces on the robot's camera, babies (SFace was trained
+on adults), the Pi's timing and memory.
+
 ## Configuration (all keys)
 
 `camera`: `backend`, `device`, `capture_width/height/fps`, `fourcc`, `process_width`, `detect_fps`,
@@ -239,8 +278,9 @@ reactions.
 `vision`: `detector`, `min_face_fraction`, `present_after_seconds`, `left_after_seconds`,
 `gaze_smoothing`, `gestures_enabled`, `yunet_model`, `yunet_score_threshold`, `haar_cascade`,
 `haar_min_neighbors`, `haar_scale_factor`, `opencv_threads`, `gaze_vertical_offset`,
-`simulated_face_seconds`, `gesture_fps`, `pause_during_media`, `sleep_detect_fps`. Parent settings: `vision.gestures_enabled` (live toggle),
-`vision.follow_faces` (used by `app/behaviours.py`).
+`simulated_face_seconds`, `gesture_fps`, `pause_during_media`, `sleep_detect_fps`, `sface_model`,
+`face_match_threshold`. Parent settings: `vision.gestures_enabled` (live toggle),
+`vision.follow_faces` (used by `app/behaviours.py`), `privacy.face_recognition_enabled`.
 
 ## Tools
 

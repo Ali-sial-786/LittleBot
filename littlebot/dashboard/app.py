@@ -46,6 +46,7 @@ FIELD_LABELS = {
     "interests": "Interests", "remembered": "Things LittleBot remembers", "password": "Password", "new_password": "New password",
     "current_password": "Current password", "setup_code": "Setup code", "volume": "Volume",
     "tts_rate": "Speaking speed", "text": "Text", "angle": "Angle", "name": "Name", "seconds": "Seconds",
+    "role": "Role",
 }
 
 
