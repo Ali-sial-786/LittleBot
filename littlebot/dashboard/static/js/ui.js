@@ -101,6 +101,8 @@ const ICONS = {
   link: [['path', { d: 'M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1 M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1' }]],
   crosshair: [['circle', { cx: 12, cy: 12, r: 8 }], ['path', { d: 'M12 2v4 M12 18v4 M2 12h4 M18 12h4' }]],
   zap: [['path', { d: 'M13 2.5 4.5 13.5H12l-1 8 8.5-11H12z' }]],
+  battery: [['rect', { x: 2.5, y: 7, width: 17, height: 10, rx: 2.5 }], ['path', { d: 'M22 10.5v3' }]],
+  batteryCharging: [['rect', { x: 2.5, y: 7, width: 17, height: 10, rx: 2.5 }], ['path', { d: 'M22 10.5v3 M12 8.8 9.2 12.5h3.6L10 15.2' }]],
 };
 
 export function icon(name, cls) {

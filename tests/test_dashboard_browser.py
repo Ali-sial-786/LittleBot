@@ -445,3 +445,43 @@ def test_activity_voices_card_records_in_the_chatgpt_voice_with_the_parents_ok_f
         phone.api("PUT", "/privacy", {"cloud_enabled": False})
         ctx.extras["chatgpt_auth"] = signed_out
         phone.api("PUT", "/profile", {"nickname": "", "age_months": None, "birth_month": ""})
+
+
+def test_home_battery_card_on_mains_power_says_not_fitted(desktop):
+    page = desktop.open("home")
+    card = page.locator("section.card", has=page.get_by_role("heading", name="Battery"))
+    expect(card).to_contain_text("Not fitted: LittleBot runs on mains power.")
+    expect(card.get_by_role("button", name="Show on LittleBot")).to_be_hidden()
+    assert "null" not in card.inner_text()
+
+
+def test_home_battery_card_with_a_battery_fitted(phone):
+    """The robot here has no battery monitor, so the status is rewritten to look like a fitted, low pack."""
+    import json
+
+    fitted = {"fitted": True, "connected": True, "status": "running", "detail": "ok", "kind": "serial",
+              "percent": 18, "voltage": 7.43, "cells": [3.72, 3.71], "temperature_c": 31.5, "charging": False,
+              "charged": False, "plugged_in": False, "time_left_minutes": 95, "time_to_full_minutes": None,
+              "health": ["low"], "settings": {"low_percent": 20, "critical_percent": 7, "announce_low": True,
+                                              "shutdown_when_empty": True, "poweroff_allowed": False}}
+
+    def with_battery(route):
+        resp = route.fetch()
+        st = resp.json()
+        st["power"] = fitted
+        route.fulfill(response=resp, body=json.dumps(st))
+
+    page = phone.open("home")
+    page.route("**/api/status", with_battery)
+    page.reload()
+    card = page.locator("section.card", has=page.get_by_role("heading", name="Battery"))
+    expect(card.locator(".battery-big")).to_have_text("18%")
+    expect(card).to_contain_text("On battery")
+    expect(card).to_contain_text("7.43 V (3.72 + 3.71)")
+    expect(card).to_contain_text("31.5 °C")
+    expect(card).to_contain_text("left")
+    expect(card.locator(".banner", has_text="Battery low")).to_be_visible()
+    expect(card.get_by_role("button", name="Show on LittleBot")).to_be_visible()
+    card.locator("summary", has_text="Battery settings").click()
+    expect(card.get_by_label("Low battery warning at")).to_have_value("20")
+    assert "null" not in card.inner_text() and "undefined" not in card.inner_text()

@@ -68,6 +68,18 @@ export default {
     });
     cam.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); place(0.5, 0.5); } });
 
+    // battery (only with power.monitor: simulated)
+    const batText = h('p', { class: 'muted' });
+    const sim = (body, msg) => app.act(() => post('/power/simulate', body), msg);
+    const batCard = h('section', { class: 'card span-2', hidden: true }, h('div', { class: 'card-head' }, h('h2', {}, icon('battery'), 'Battery (simulated)')),
+      h('div', { class: 'stack-sm' }, batText,
+        h('div', { class: 'btn-row' }, [80, 25, 18, 5].map((v) => button(`${v}%`, { kind: 'soft small', onClick: () => sim({ percent: v }) }))),
+        h('div', { class: 'btn-row' },
+          button('Plug the charger in', { kind: 'soft small', iconName: 'batteryCharging', onClick: () => sim({ charging: true }) }),
+          button('Unplug', { kind: 'soft small', iconName: 'battery', onClick: () => sim({ charging: false }) })),
+        h('div', { class: 'btn-row' }, [[24, 'Normal'], [55, 'Hot (55 °C)'], [62, 'Too hot (62 °C)'], [-3, 'Cold (−3 °C)']].map(([t, label]) => button(label, { kind: 'soft small', iconName: 'thermo', onClick: () => sim({ temperature_c: t }) }))),
+        h('p', { class: 'muted', text: 'LittleBot reacts like on the real battery: a gentle “please charge me” at the low level, and at the empty level a goodbye, then (on the robot only) a clean shutdown.' })));
+
     // caregiver
     const promptText = h('p', { class: 'muted', text: 'No question waiting right now.' });
     const promptBtns = h('div', { class: 'btn-row' });
@@ -84,10 +96,14 @@ export default {
               button('Person left', { kind: 'soft', iconName: 'logout', onClick: async () => { mark.hidden = true; await app.act(() => post('/sim/camera', { event: 'person_left' }), 'Face removed - LittleBot notices the person has left after about 3 seconds.'); } })),
             h('p', { class: 'muted', text: '“Person left” removes the pretend face; like with a real camera, LittleBot waits about 3 seconds before deciding nobody is there.' }))),
         h('section', { class: 'card span-2' }, h('div', { class: 'card-head' }, h('h2', {}, icon('person'), 'Caregiver answers')),
-          h('div', { class: 'stack-sm' }, promptText, promptBtns))));
+          h('div', { class: 'stack-sm' }, promptText, promptBtns)),
+        batCard));
 
     return {
       update(s) {
+        const pw = s.power || {};
+        batCard.hidden = pw.kind !== 'simulated';
+        if (!batCard.hidden) setText(batText, `${pw.percent ?? '–'}%${pw.charging ? ', charging' : pw.charged ? ', charged' : ''}${pw.temperature_c != null ? `, ${pw.temperature_c} °C` : ''}`);
         const p = s.activities?.prompt;
         const key = p ? `${p.prompt_id}|${p.text}` : '';
         if (key === pk) return;

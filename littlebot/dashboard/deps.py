@@ -76,6 +76,7 @@ class DashState:
             self._subs = [
                 self.ctx.bus.subscribe(Topics.BRAIN_STATUS, self._on_brain_status),
                 self.ctx.bus.subscribe(Topics.SYSTEM_ERROR, self._on_system_error),
+                self.ctx.bus.subscribe("power.*", self._on_power),  # the battery (only with a monitor fitted)
             ]
 
     def close(self) -> None:
@@ -118,6 +119,37 @@ class DashState:
     def _on_system_error(self, event: Event) -> None:
         module = str(event.get("module") or "system")[:40]
         self._add_alert("error", f"Problem with {module}", str(event.get("error") or "unknown error"), f"error:{module}")
+
+    def _on_power(self, event: Event) -> None:
+        """Battery alarms (littlebot/power) become banners: low, empty, hot, charging in the cold, monitor lost."""
+        topic = event.topic
+        t = event.get("temperature_c")
+        temp = f"{t:.0f} °C" if isinstance(t, (int, float)) else "very warm"
+        pct = event.get("percent")
+        level = f"{pct}%" if isinstance(pct, int) else "low"
+        if topic == Topics.POWER_LOW:
+            self._add_alert("power", "Battery low",
+                            f"LittleBot's battery is at {level}. Please plug the charger in soon.", "power:low")
+        elif topic == Topics.POWER_CRITICAL:
+            self._add_alert("attention", "Battery empty",
+                            "LittleBot's battery is empty: it said goodbye and is shutting down cleanly. "
+                            "Plug the charger in.", "power:critical")
+        elif topic == Topics.POWER_HOT and event.get("level") == "shutdown":
+            self._add_alert("attention", "Battery too hot",
+                            f"The battery is {temp}: LittleBot is shutting down to cool off. Unplug the charger, "
+                            "move LittleBot somewhere cooler and let it cool down before using it again.", "power:too_hot")
+        elif topic == Topics.POWER_HOT:
+            self._add_alert("power", "Battery is hot",
+                            f"The battery is {temp}. Check that LittleBot isn't covered or in the sun; it shuts down "
+                            "by itself at 60 °C.", "power:hot")
+        elif topic == Topics.POWER_COLD:
+            self._add_alert("attention", "Charging in the cold",
+                            f"The battery is {temp} while charging: Li-ion batteries must not be charged below 0 °C. "
+                            "Unplug the charger and let LittleBot warm up first.", "power:cold")
+        elif topic == Topics.POWER_MONITOR and event.get("connected") is False:
+            self._add_alert("power", "Battery monitor disconnected",
+                            "LittleBot can't read its battery any more (the battery monitor's USB plug?). It keeps "
+                            "looking for it.", "power:monitor")
 
     def alerts(self) -> list[dict[str, Any]]:
         cutoff = time.time() - ALERT_TTL_SECONDS
@@ -223,6 +255,10 @@ class DashState:
             "motion_armed": settings.get("motion.physical_armed"),
         }
         out["dashboard"] = {"lan_access": ctx.config.dashboard.lan_access, "port": self.port or ctx.config.dashboard.port}
+        if not isinstance(out.get("power"), dict):
+            from littlebot.dashboard.routes.power_routes import power_view  # noqa: PLC0415
+
+            out["power"] = power_view(ctx)
         out["alerts"] = self.alerts()
         out["server_time"] = time.time()
         return out

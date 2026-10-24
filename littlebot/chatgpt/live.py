@@ -387,6 +387,7 @@ delegate it to the client as "show on the screen: <what, with the details>" (for
 show things on your screen. If they ask to change or close what is on the screen ("next step", "tomorrow", "by \
 the hour", "close it"), just say okay in a few words: LittleBot does it."""
 SCREEN_NEWS = "screen.news"  # {text}: a card wants the voice to say something ("the egg timer is done")
+POWER_NOTE = Topics.POWER_NOTE  # {text, goodbye}: the battery is low (a note) or empty / too hot (goodbye, then end)
 # Published by live voice for whoever needs to know a call is on (the screen service: a card's presenter talks).
 CALL_STARTED = "live.call_started"  # {} the call is connected: the voice can talk now
 CALL_ENDED = "live.call_ended"  # {reason} the call is over (also when it never connected)
@@ -507,6 +508,7 @@ class LiveVoiceService(Service):
             bus.subscribe(Topics.PRIVACY_CHANGED, self._on_privacy),
             bus.subscribe("game.news", self._on_game_news),  # littlebot.games.service.GAME_NEWS
             bus.subscribe(SCREEN_NEWS, self._on_screen_news),
+            bus.subscribe(POWER_NOTE, self._on_power_note),
         ]
         err = aiortc_error()
         if err:
@@ -537,6 +539,10 @@ class LiveVoiceService(Service):
     def _on_screen_news(self, event: Event) -> None:
         """A card on the screen has news ("the egg timer is done"): the voice says it."""
         self._to_call("screen_news", str(event.get("text") or ""))
+
+    def _on_power_note(self, event: Event) -> None:
+        """The battery (littlebot/power) is low, or empty / too hot: a quiet note (then goodbye and the end)."""
+        self._to_call("power_goodbye" if event.get("goodbye") else "power_news", str(event.get("text") or ""))
 
     def _to_call(self, method: str, text: str) -> None:
         call, loop = self._call, self._loop
@@ -712,6 +718,7 @@ class LiveCall:
         self._last_activity = self._started
         self._heard_user = False
         self._goodbye_at: float | None = None
+        self._goodbye_reason: str | None = None  # why the voice is saying goodbye (None: the time limit)
         self._quiet_since: float | None = None
         self._our_state: RobotState | None = None
         self._suspended_audio = False
@@ -948,12 +955,19 @@ class LiveCall:
         if heard:
             text += "\n" + heard
         text += self._browser_instructions()
+        text += self._power_instructions()
         now = _dt.datetime.now()
         return f"{text}\nAt the start of this call it is {now:%A}, {now:%H:%M} local time."
 
     def _browser_instructions(self) -> str:
         """The browser view (littlebot/browser): when to hand "google it" to LittleBot ("" without one)."""
         from littlebot.browser import voice_instructions  # noqa: PLC0415
+
+        return voice_instructions(self.ctx)
+
+    def _power_instructions(self) -> str:
+        """The battery (littlebot/power): "how much battery?" is handed to LittleBot ("" on mains power)."""
+        from littlebot.power import voice_instructions  # noqa: PLC0415
 
         return voice_instructions(self.ctx)
 
@@ -1305,6 +1319,21 @@ class LiveCall:
         """What a card on the screen wants said (``SCREEN_NEWS``: "the egg timer is done")."""
         if not self._ended.is_set():
             self._note(f"{' '.join(text.split())[:300]} Tell them now, in a few words.")
+
+    def power_news(self, text: str) -> None:
+        """The battery is low (``POWER_NOTE``): the voice mentions it gently, then carries on."""
+        if not self._ended.is_set():
+            self._note(" ".join(text.split())[:300])
+
+    def power_goodbye(self, text: str) -> None:
+        """The battery is empty or too hot: the voice says goodbye, then the call ends (like the time limit)."""
+        if self._ended.is_set():
+            return
+        self._note(" ".join(text.split())[:300])
+        if self._goodbye_at is None:
+            self._goodbye_at = self.svc._now()
+            self._goodbye_reason = "battery"
+            self.detail = "The battery needs a rest: saying goodbye."
 
     def _release_game_hold(self) -> None:
         hold, self._game_hold = self._game_hold, None
@@ -2122,7 +2151,7 @@ class LiveCall:
                 said_it = now - self._goodbye_at > 1.5 and self._quiet_since is not None \
                     and now - self._quiet_since >= GOODBYE_QUIET_S
                 if said_it or now - self._goodbye_at >= GOODBYE_MAX_S:
-                    self.end("time limit reached")
+                    self.end(self._goodbye_reason or "time limit reached")
                     break
             if self._handover_at is not None and self._handover_due(now, speaking):
                 self.end(HANDOVER_REASON)  # LiveVoiceService._run then starts the video / activity / sleep

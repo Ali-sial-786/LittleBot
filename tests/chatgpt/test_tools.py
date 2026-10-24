@@ -166,8 +166,8 @@ def test_specs_are_json_schema_functions_and_live_has_no_camera_tool(ctx):
     live = RobotToolbox(ctx, mode="live").specs()
     functions = [s for s in chat if s.get("type", "function") == "function"]
     names = {s["name"] for s in functions}
-    # this robot has no screen service and no browser view: no cards to show, no browser tools
-    assert names == TOOL_NAMES - {"show_on_screen"} - BROWSER_TOOLS
+    # this robot has no screen service, no browser view and no battery: no cards, no browser or battery tools
+    assert names == TOOL_NAMES - {"show_on_screen", "battery"} - BROWSER_TOOLS
     assert {"get_robot_status", "describe_yourself", "start_activity", "set_volume", "volume_up", "set_face",
             "go_to_sleep", "wake_up", "stop_everything", "search_youtube", "play_youtube", "stop_video",
             "start_game", "look_through_camera", "get_weather", "get_time"} <= names

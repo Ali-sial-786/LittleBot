@@ -1,10 +1,21 @@
-// Home: live status, STOP, sleep/wake, caregiver prompt, current activity and video, devices, system.
+// Home: live status, STOP, sleep/wake, caregiver prompt, current activity and video, battery, devices, system.
 
-import { get, post } from '../api.js';
+import { get, post, put } from '../api.js';
 import {
-  append, button, cameraState, clear, deviceState, fmtAge, fmtDuration, h, heldText, icon, miniFace, setText, stateLabel,
-  titleCase,
+  append, banner, button, cameraState, clear, deviceState, fmtAge, fmtDuration, h, heldText, icon, miniFace, setText,
+  stateLabel, switchRow, titleCase,
 } from '../ui.js';
+
+// The battery card's warnings (littlebot/power health flags), most serious first.
+const BATTERY_WARNINGS = [
+  ['too_hot', 'danger', 'Battery too hot', 'LittleBot is shutting down to cool off. Unplug the charger and let it cool down.'],
+  ['critical', 'danger', 'Battery empty', 'LittleBot says goodbye and shuts down cleanly. Plug the charger in.'],
+  ['cold', 'danger', 'Charging in the cold', 'The battery is below 0 °C: unplug the charger and let LittleBot warm up first.'],
+  ['hot', 'warn', 'Battery is hot', 'Check that LittleBot is not covered or in the sun. It shuts down by itself at 60 °C.'],
+  ['low', 'warn', 'Battery low', 'Please plug the charger in soon.'],
+  ['monitor_lost', 'warn', 'Battery monitor not answering', 'Check the battery monitor’s USB plug. LittleBot keeps looking for it.'],
+  ['cell_imbalance', 'warn', 'Cells out of balance', 'The two cells differ by more than 0.15 V. Charge fully; if it stays, check the pack.'],
+];
 
 function stat(label, iconName) {
   const value = h('div', { class: 'value', text: '–' });
@@ -61,6 +72,14 @@ export default {
     const mediaCard = h('section', { class: 'card' }, h('div', { class: 'card-head' }, h('h2', {}, icon('film'), 'Video')), mediaBody);
     let mediaKey = '';
 
+    // ---------- battery
+    const batBody = h('div', { class: 'stack-sm' });
+    const batShow = button('Show on LittleBot', { kind: 'soft small', iconName: 'eye', onClick: () => app.act(() => post('/power/show'), 'LittleBot shows its battery for a moment.') });
+    batShow.hidden = true;
+    const batCard = h('section', { class: 'card battery-card' }, h('div', { class: 'card-head' }, h('h2', {}, icon('battery'), 'Battery'), batShow), batBody);
+    let batKey = '';
+    let batSettings = null;
+
     // ---------- devices
     const dev = {
       camera: device('Camera', 'camera'), mic: device('Microphone', 'mic'), speaker: device('Speaker', 'speaker'),
@@ -78,7 +97,7 @@ export default {
     const sysCard = h('section', { class: 'card' }, h('div', { class: 'card-head' }, h('h2', {}, icon('cpu'), 'System')),
       h('div', { class: 'stats' }, Object.values(st).map((x) => x.el)));
 
-    view.append(h('div', { class: 'grid two' }, promptCard, hero, stopCard, actCard, mediaCard, devCard, sysCard));
+    view.append(h('div', { class: 'grid two' }, promptCard, hero, stopCard, actCard, mediaCard, batCard, devCard, sysCard));
 
     get(`/activities`).then((res) => { suggestions = res; actKey = ''; if (app.status) renderActivity(app.status); }).catch(() => { suggestions = { items: [] }; });
 
@@ -175,6 +194,77 @@ export default {
       mediaBody.append(h('a', { href: '#/media', class: 'btn soft' }, 'Videos & limits', icon('chevron')));
     }
 
+    function batterySettings() {
+      const low = h('select', { id: 'battery-low', 'aria-label': 'Low battery warning at' }, [10, 15, 20, 25, 30, 40].map((v) => h('option', { value: v, text: `${v}%` })));
+      const crit = h('select', { id: 'battery-critical', 'aria-label': 'Shut down at' }, [3, 5, 7, 10, 15].map((v) => h('option', { value: v, text: `${v}%` })));
+      const save = async (body) => !!(await app.act(() => put('/power/settings', body), 'Battery settings saved.'));
+      low.addEventListener('change', () => save({ low_percent: Number(low.value) }));
+      crit.addEventListener('change', () => save({ critical_percent: Number(crit.value) }));
+      const say = switchRow({ title: 'Say when the battery is low', text: 'Once, gently (“I’m getting sleepy…”). Never while LittleBot is asleep.', onChange: (v) => save({ announce_low: v }) });
+      const off = switchRow({ title: 'Shut down when empty', text: 'Says goodbye, then shuts down cleanly (never while charging) so the SD card is safe.', onChange: (v) => save({ shutdown_when_empty: v }) });
+      const el = h('details', { class: 'disclosure' }, h('summary', { text: 'Battery settings' }),
+        h('div', { class: 'stack-sm mt-1' },
+          h('div', { class: 'form-grid two' },
+            h('div', { class: 'field' }, h('label', { for: 'battery-low', text: 'Low battery warning at' }), low),
+            h('div', { class: 'field' }, h('label', { for: 'battery-critical', text: 'Goodbye and shut down at' }), crit)),
+          say.el, off.el));
+      return {
+        el,
+        set(st) {
+          const pick = (sel, v) => { if (document.activeElement !== sel && v != null) { if (![...sel.options].some((o) => Number(o.value) === v)) sel.append(h('option', { value: v, text: `${v}%` })); sel.value = String(v); } };
+          pick(low, st.low_percent);
+          pick(crit, st.critical_percent);
+          say.set(st.announce_low);
+          off.set(st.shutdown_when_empty);
+        },
+      };
+    }
+
+    function renderBattery(s) {
+      const p = s.power || {};
+      const fitted = !!p.fitted;
+      const st = p.settings || {};
+      const key = fitted
+        ? `${p.connected}|${p.percent}|${p.charging}|${p.charged}|${p.voltage}|${p.temperature_c}|${p.time_left_minutes}|${p.time_to_full_minutes}|${(p.health || []).join(',')}|${JSON.stringify(st)}`
+        : `nf|${p.kind}`;
+      if (key === batKey) return;
+      batKey = key;
+      batShow.hidden = !(fitted && p.connected);
+      if (!fitted) {
+        clear(batBody);
+        batSettings = null;
+        batBody.append(h('p', { class: 'muted', text: p.kind === 'none' || p.status === 'unavailable' ? 'Not fitted: LittleBot runs on mains power.' : 'Not fitted: LittleBot runs on mains power. (It keeps looking for a battery monitor on its USB ports.)' }));
+        return;
+      }
+      clear(batBody);
+      const health = p.health || [];
+      for (const [flag, kind, title, text] of BATTERY_WARNINGS) {
+        if (health.includes(flag)) batBody.append(banner(kind, 'alert', title, text));
+      }
+      const pct = p.percent;
+      const bar = h('span');
+      bar.style.width = pct != null ? `${Math.max(0, Math.min(100, pct))}%` : '0%';
+      const low = pct != null && pct <= (st.low_percent ?? 20) && !p.plugged_in;
+      const state = p.charged ? 'Charged' : p.charging ? 'Charging' : p.connected ? 'On battery' : 'Monitor not answering';
+      let when = '';
+      if (p.charging && p.time_to_full_minutes != null) when = `Full in about ${fmtDuration(p.time_to_full_minutes * 60)}`;
+      else if (!p.plugged_in && p.time_left_minutes != null) when = `About ${fmtDuration(p.time_left_minutes * 60)} left`;
+      else if (!p.plugged_in) when = 'Time left: working it out…';
+      const cells = Array.isArray(p.cells) ? ` (${p.cells.map((c) => c.toFixed(2)).join(' + ')})` : '';
+      append(batBody, [
+        h('div', { class: 'row between' },
+          h('div', { class: 'battery-big tnum', text: pct != null ? `${pct}%` : '–' }),
+          h('span', { class: `badge ${p.charging || p.charged ? 'ok' : low ? 'warn' : ''}` }, icon(p.charging ? 'batteryCharging' : 'battery'), state)),
+        h('div', { class: `progress ${low ? 'warn' : ''}`, role: 'progressbar', 'aria-label': 'Battery level', 'aria-valuemin': 0, 'aria-valuemax': 100, 'aria-valuenow': pct ?? 0 }, bar),
+        when ? h('p', { class: 'muted', text: when }) : null,
+        h('dl', { class: 'kv' },
+          h('dt', { text: 'Voltage' }), h('dd', { class: 'tnum', text: p.voltage != null ? `${p.voltage.toFixed(2)} V${cells}` : 'Unknown' }),
+          h('dt', { text: 'Temperature' }), h('dd', { class: 'tnum', text: p.temperature_c != null ? `${p.temperature_c.toFixed(1)} °C` : 'Unknown' }))]);
+      if (!batSettings) batSettings = batterySettings();
+      batSettings.set(st);
+      batBody.append(batSettings.el);  // the same element each time: an open disclosure stays open
+    }
+
     function renderDevices(s) {
       const priv = s.privacy || {};
       const cam = s.vision || {};
@@ -220,6 +310,7 @@ export default {
         renderPrompt(s);
         renderActivity(s);
         renderMedia(s);
+        renderBattery(s);
         renderDevices(s);
         renderSystem(s);
       },

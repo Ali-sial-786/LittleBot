@@ -475,6 +475,7 @@ class FaceController(Service):
         what, why = change
         with self._lock:
             self.animator.set_doze(what == "doze")
+        self._publish([(Topics.FACE_DOZE, {"dozing": what == "doze", "reason": why})])  # e.g. the battery sign on waking
         if what == "doze":
             self.log.info("face: dozing (%s)", why)
         elif why == SLEEP_REASON:

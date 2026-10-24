@@ -42,6 +42,7 @@ SUBSYSTEMS: tuple[tuple[str, str], ...] = (
     ("browser", "littlebot.browser"),  # Google on the screen when a grown-up asks (one Chromium with the videos)
     ("live", "littlebot.chatgpt"),
     ("wake", "littlebot.audio.wakeword"),  # after audio + live: it shares the mic and starts live voice
+    ("power", "littlebot.power"),  # the battery monitor (quiet, "not fitted", on mains power); uses the rest when empty
 )
 
 
@@ -58,6 +59,7 @@ class LittleBot:
         self.behaviours: Any = None
         self.shutdown_event = threading.Event()
         self.restart_requested = False
+        self.poweroff_requested = False  # the battery is empty / too hot: switch the Pi off after the clean exit
         self._started = False
         self._stopped = False
         self.started_at = time.time()
@@ -193,6 +195,15 @@ class LittleBot:
         log.info("%s requested: %s", "restart" if restart else "shutdown", reason)
         self.restart_requested = self.restart_requested or restart
         self.shutdown_event.set()
+
+    def request_poweroff(self, reason: str) -> None:
+        """Exit cleanly, then switch the Raspberry Pi off (``littlebot.app.main`` runs the power-off once every
+        subsystem has stopped and the database is closed). Used by the battery (littlebot/power) only when
+        ``power.allow_poweroff`` allows it; safe from any thread."""
+        log.critical("power-off requested: %s", reason)
+        self.poweroff_requested = True
+        self.restart_requested = False
+        self.request_shutdown(reason)
 
     # ------------------------------------------------------------ parent ops
     async def stop_all(self, source: str = "parent") -> dict[str, Any]:

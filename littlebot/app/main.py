@@ -118,6 +118,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         exit_code = 1
     finally:
         robot.shutdown("exit")
+    if getattr(robot, "poweroff_requested", False):
+        # The battery is empty or too hot (littlebot/power): everything has stopped and the database is
+        # closed, so switching the Pi off now is as safe as the power button.
+        from littlebot.power.shutdown import power_off_system
+
+        power_off_system(cfg.power.poweroff_command)
+        return exit_code
     if exit_code == 0 and robot.restart_requested:
         from littlebot.app.robot import RESTART_EXIT_CODE
 

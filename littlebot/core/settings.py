@@ -89,6 +89,12 @@ def build_defaults(cfg: LittleBotConfig) -> dict[str, Any]:
         "screens.web_pictures": True,
         # the browser view: Google (SafeSearch on) on the screen when a grown-up explicitly asks (littlebot/browser)
         "browser.enabled": True,
+        # the battery (littlebot/power; only used while a battery monitor is fitted): when LittleBot says it needs
+        # charging (and whether it says it out loud), and when it says goodbye and shuts down cleanly
+        "power.low_percent": cfg.power.low_percent,
+        "power.critical_percent": cfg.power.critical_percent,
+        "power.announce_low": True,
+        "power.shutdown_when_empty": True,
         # child profile (minimum necessary information; all optional)
         "profile": {
             "nickname": "",

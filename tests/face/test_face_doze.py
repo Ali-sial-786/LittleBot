@@ -197,6 +197,16 @@ def test_controller_dozes_and_wakes_with_plain_log_lines(dozer, clock, face_ctx,
     assert dozer.dozing
 
 
+def test_dozing_and_waking_are_published_for_the_battery_sign(dozer, clock, face_ctx):
+    seen: list[dict] = []
+    face_ctx.bus.subscribe(Topics.FACE_DOZE, lambda e: seen.append(dict(e.data)))
+    advance(dozer, clock, 31.0)
+    assert seen == [{"dozing": True, "reason": "nothing happening for 30 s"}]
+    face_ctx.bus.publish(Topics.VISION_PERSON_PRESENT, {"gaze_x": 0.5, "gaze_y": 0.5})
+    advance(dozer, clock, 0.25)
+    assert seen[-1] == {"dozing": False, "reason": "someone walked in"} and len(seen) == 2
+
+
 def test_a_voice_chat_keeps_the_face_awake(dozer, clock, face_ctx):
     bus = face_ctx.bus
     bus.publish("audio.wake_word", {"phrase": "hey littlebot"})
