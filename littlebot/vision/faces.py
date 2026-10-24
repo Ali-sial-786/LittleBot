@@ -849,6 +849,13 @@ class CallFaces:
             return None
         return look_context(s, self.hide)
 
+    def grown_up(self) -> str | None:
+        """The one grown-up in view now ("Ali (dad)"), when there is exactly one; else None."""
+        child = (self.child or "").lower()
+        grown = [p for p in self.presence.here.values()
+                 if not (_CHILD_ROLE.search(p.role) or (child and p.name.lower() == child))]
+        return describe(grown, self.hide) if len(grown) == 1 else None
+
     async def answer_now(self) -> str:
         """A fresh check for "who am I?", also kept as the latest (the voice then knows who is here)."""
         try:

@@ -842,3 +842,13 @@ def test_who_answer_names_the_grown_up_and_never_takes_the_baby_for_the_one_aski
     assert "Nobody has been added" in F.who_answer(None)
     hidden = F.who_answer(_who((2, "Amara", "the baby")), hide="Amara", child="Amara")
     assert "Amara" not in hidden and "the little one" in hidden
+
+
+async def test_the_one_grown_up_in_view(call):
+    c = call
+    c.cf.child = "Amara"
+    await c.check_at(100.0, sighting(AMARA, ALI))
+    assert c.cf.grown_up() == "Ali (dad)"  # the baby in view isn't the one talking
+    await c.check_at(103.0, sighting(AMARA, ALI, MUM))
+    await c.check_at(106.0, sighting(AMARA, ALI, MUM))
+    assert c.cf.grown_up() is None  # two grown-ups: can't tell which one is talking

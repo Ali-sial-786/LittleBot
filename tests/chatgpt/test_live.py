@@ -1197,8 +1197,9 @@ async def test_a_baby_cant_talk_so_whoever_speaks_is_a_grown_up(live, ctx):
     ctx.settings.set("profile", {"nickname": "Amara", "age_months": 10})
     await connect(svc, server)
     text = server.requests[-1]["body"]["session"]["instructions"]
-    assert "whoever talks to you in words is one of Amara's grown-ups, never Amara" in text
-    assert "don't call them Amara" in text
+    assert "is one of Amara's grown-ups, never Amara" in text and "never call them Amara" in text
+    assert "including whoever said \"Hey LittleBot\"" in text and "never greet them as Amara" in text
+    assert "when you talk to or about Amara" not in text  # "talk to Amara" made it greet the grown-up as Amara
     await svc.stop_session()
     ctx.settings.set("profile", {"nickname": "Amara", "age_months": 40})  # a talker: just don't assume
     await connect(svc, server)
@@ -1661,3 +1662,42 @@ async def test_the_call_ends_when_the_microphones_sound_is_no_longer_sent(stoppi
     await wait_for(lambda: not svc.status()["active"])
     assert svc.status()["last_call"]["ended_reason"] == "the microphone stopped"
     assert "stopped reaching ChatGPT" in svc.status()["last_call"]["error"]
+
+
+def test_talking_to_the_child_by_name_is_told_apart_from_talking_about_her():
+    from littlebot.chatgpt.live import _addresses
+
+    for text in ("Hi Amara! The weather is sunny.", "Sure, Amara.", "Okay Amara, here it is.", "Good job, Amara!",
+                 "That's a great question, Amara?", "Hello there, Amara!", "Of course, my little one!"):
+        assert _addresses(text, "Amara") or _addresses(text, "little one"), text
+    for text in ("Amara is having a nap.", "Tell Amara I said hi.", "Is Amara awake?", "Amara's dad is here.",
+                 "I can sing a song for Amara when she wakes."):
+        assert not _addresses(text, "Amara"), text
+
+
+async def test_calling_the_grown_up_by_the_childs_name_is_put_right(live, ctx, caplog):
+    svc, server, _audio, _provider, _alerts = live
+    caplog.set_level(logging.INFO, logger="littlebot.chatgpt.live")
+    ctx.settings.set("profile", {"nickname": "Amara", "age_months": 10})
+    await connect(svc, server)
+    hear(server, "What is the weather like today?")
+    server.send({"type": "turn.done", "turn": {"role": "assistant", "transcript": "Hi Amara! It's sunny today."}})
+    await wait_for(lambda: any(n.startswith("Careful: you just talked") for n in notes(server)))
+    note = next(n for n in notes(server) if n.startswith("Careful"))
+    assert "They are a grown-up, not Amara" in note
+    assert "called the grown-up by the child's name" in caplog.text
+    server.send({"type": "turn.done", "turn": {"role": "assistant", "transcript": "Amara is lucky to have you."}})
+    hear(server, "ba ba")  # babbling: Amara herself
+    server.send({"type": "turn.done", "turn": {"role": "assistant", "transcript": "Hello Amara!"}})
+    await asyncio.sleep(0.2)
+    assert sum(n.startswith("Careful") for n in notes(server)) == 1
+
+
+async def test_a_child_who_talks_may_be_called_by_name(live, ctx):
+    svc, server, _audio, _provider, _alerts = live
+    ctx.settings.set("profile", {"nickname": "Amara", "age_months": 40})
+    await connect(svc, server)
+    hear(server, "Can we play a game now?")
+    server.send({"type": "turn.done", "turn": {"role": "assistant", "transcript": "Sure, Amara! Let's play."}})
+    await asyncio.sleep(0.3)
+    assert not any(n.startswith("Careful") for n in notes(server))

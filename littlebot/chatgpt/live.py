@@ -248,6 +248,9 @@ AUDIO_REOPENS = 2  # a microphone or speaker that stopped is opened again at mos
 SENT_STALL_S = 8.0  # the microphone gives sound but none of it is read (sending stopped): the call ends
 FACES_WAIT_S = 1.0  # from the call's start: how long connecting waits for the first face check (see _instructions)
 TALKS_FROM_MONTHS = 24  # younger: whoever talks to LittleBot in sentences is a grown-up, not the child
+NAMING_MIN_WORDS = 3  # their turn had this many words: a grown-up talking (babbling is shorter)
+NAMING_WINDOW_S = 20.0  # the voice's reply this soon after it counts as talking to that grown-up
+NAME_FIXES = 3  # at most this many "you called the grown-up by the child's name" notes a call
 LATE_ANSWER = "Here is the answer to what they asked a moment ago: {answer} Tell them now, in your own words."
 LATE_FAILED = "What they asked a moment ago didn't work out this time. Say so briefly; they can ask again."
 # Hand-offs that ask LittleBot to do something with the robot or the app, not to make a face or to look
@@ -676,6 +679,8 @@ class LiveCall:
         self._rule_noted: set[str] = set()  # RULE_NOTES the voice was given this turn
         self._recent_face: tuple[str, float] | None = None  # (name, when) the latest face played
         self._sent: collections.deque[tuple[float, str, int]] = collections.deque(maxlen=4)  # (when, what, chars)
+        self._grown_up_spoke_at: float | None = None  # their latest turn in words (a grown-up, while the child can't talk)
+        self._name_fixes = 0  # times the voice was told it called a grown-up by the child's name
         self._pulse_counts: tuple[int, int, int, int] | None = None  # for _pulse
         self._reopens = 0  # times a stopped microphone / speaker was opened again (_check_audio)
         self._reopen_job: asyncio.Future[Any] | None = None
@@ -829,16 +834,21 @@ class LiveCall:
         text = VOICE_INSTRUCTIONS.format(name=self.ctx.config.robot_name, child=age_description(age),
                                          faces=_face_menu())
         nickname = self._child_name()
-        if nickname:
-            text += (f"\nThe little one's name is {nickname}. Say it warmly now and then when you talk to or about "
-                     f"{nickname} (not in every sentence).")
         who = nickname or "the little one"
         if age is not None and age < TALKS_FROM_MONTHS:
-            text += (f"\n{who[0].upper() + who[1:]} is too young to talk in sentences: whoever talks to you in words "
-                     f"is one of {who}'s grown-ups, never {who}, so don't call them {who}. Babbling, cooing and baby "
-                     f"sounds are {who}. If a grown-up tells you who they are, use their name; if you don't know which grown-up is "
-                     f"talking, use no name for them.")
+            if nickname:
+                text += (f"\nThe little one's name is {nickname}. Use it when you talk about {nickname}, or answer "
+                         f"{nickname}'s babbling (not in every sentence).")
+            text += (f"\nWHO IS TALKING: {who[0].upper() + who[1:]} is too young to talk in words. Whoever talks to "
+                     f"you in words, including whoever said \"Hey LittleBot\", is one of {who}'s grown-ups, never "
+                     f"{who}: never call them {who}, never greet them as {who}, and never talk to them as if they "
+                     f"were a baby. Babbling, cooing and baby sounds are {who}. If a grown-up tells you who they are, "
+                     f"use their name for the rest of the chat; if you don't know which grown-up is talking, use no "
+                     f"name for them.")
         else:
+            if nickname:
+                text += (f"\nThe little one's name is {nickname}. Say it warmly now and then when you talk to or "
+                         f"about {nickname} (not in every sentence).")
             text += (f"\nGrown-ups talk to you too: only call someone {who} when it's clearly the child. If a "
                      f"grown-up tells you who they are, use their name.")
         notes = self._notes(nickname)
@@ -985,6 +995,7 @@ class LiveCall:
             if event.final:
                 text, self._assistant_turn = event.text, ""
                 self._caption("robot", text)
+                self._check_names(text)
             else:
                 self._assistant_turn = (self._assistant_turn + event.text)[-2000:]
                 text = self._assistant_turn
@@ -1004,6 +1015,9 @@ class LiveCall:
             else:
                 self._heard_partial = ""
                 self._caption("heard", event.text)
+                if event.text.strip():  # in words: a grown-up; babbling: the little one (the voice may use her name)
+                    self._grown_up_spoke_at = now if len(_plain_words(event.text).split()) >= NAMING_MIN_WORDS \
+                        else None
                 if event.text.strip():
                     self._user_turns += 1
                     self._turn_ended_at = now
@@ -1189,6 +1203,30 @@ class LiveCall:
         text = " ".join(str(text).split())[:300]
         if text:
             self._captions.append({"who": who, "text": text})
+
+    def _check_names(self, text: str) -> None:
+        """The voice called the grown-up who just spoke by the child's name ("Hi Amara!"): put it right, quietly.
+
+        Only while the child is too young to talk (then whoever talks in words is a grown-up), only right after
+        such words, at most NAME_FIXES times a call."""
+        spoke = self._grown_up_spoke_at
+        if spoke is None or self._name_fixes >= NAME_FIXES or self.svc._now() - spoke > NAMING_WINDOW_S:
+            return
+        age = self.ctx.settings.child_age_months()
+        if age is None or age >= TALKS_FROM_MONTHS:
+            return
+        names = [n for n in (self._nickname(), "little one") if n]
+        if not any(_addresses(text, n) for n in names):
+            return
+        self._name_fixes += 1
+        self._grown_up_spoke_at = None  # once for what they said
+        nick = self._child_name() or "the little one"
+        known = self._faces.grown_up() if self._faces is not None else None
+        them = f"a grown-up ({known}, LittleBot's face recognition says)" if known else "a grown-up"
+        log.info("live voice: the voice called the grown-up by the child's name; it was told")
+        self._note(f"Careful: you just talked to the person speaking as if they were {nick}. They are {them}, not "
+                   f"{nick}, who is too young to talk. Don't call them {nick}; carry on naturally, no need to "
+                   "apologise at length.")
 
     def _check_reply(self, text: str, final: bool) -> None:
         """What the voice is saying, checked while it says it."""
@@ -1939,6 +1977,17 @@ class LiveCall:
         self.phase = "ended"
         self.end_reason = self.end_reason or ("failed" if self.error else "ended")
         self._publish(Topics.BRAIN_STATUS, {"provider": "live", "status": "live_ended", "detail": self.end_reason[:60]})
+
+
+_GREETING = r"(?:hi|hello|hey|oh|okay|ok|yes|yeah|well|wow|aw+|sure|thanks|thank you|good morning|good night|" \
+            r"great job|good job|well done|of course|you got it|alright|all right)"
+
+
+def _addresses(text: str, name: str) -> bool:
+    """``text`` talks to ``name`` ("Hi Amara!", "Sure, Amara.", "..., Amara?"), not about her ("Amara is asleep")."""
+    n = re.escape(name)
+    return bool(re.search(rf"(?:^|[.!?]\s+){_GREETING}?[,\s]*(?:there,?\s+|my\s+)?{n}\s*[,!?.]", text, re.I)
+                or re.search(rf",\s*(?:my\s+)?{n}\s*[!?.]", text, re.I))
 
 
 def _face_menu() -> str:
