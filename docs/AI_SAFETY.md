@@ -239,10 +239,13 @@ carry the robot's name, the child's approximate age ("a baby about 10 months old
 and time, but not the nickname or interests. Look-ups send the scrubbed question plus the last
 few caption lines to the text model. With **Recognise family members** on (§4), the names and
 roles of the people LittleBot recognises in front of its camera go too (never photos or face data).
+With **Recognise family voices** on (§4), so do the name and role of the grown-up LittleBot
+recognises by voice as talking (never sound or voiceprints).
 
 **What stays on LittleBot.** Nothing is recorded: no audio, no transcripts. The last few
 captions are held in memory only for the dashboard during the call and are cleared when it
-ends. Logs and alerts carry end reasons, HTTP statuses and categories, never words.
+ends. With Recognise family voices on, the wake phrase and the sound of the current turn (at most
+20 s) are held in memory to tell who is talking, then dropped; never written anywhere. Logs and alerts carry end reasons, HTTP statuses and categories, never words.
 
 **Known limits.** The checks read OpenAI's captions, not the sound. Words heard before a
 caption is checked can't be taken back, and a caption that doesn't match the audio, or a
@@ -310,11 +313,34 @@ the main safeguard; the code checks are a backstop.**
     know", never a guess (match threshold `vision.face_match_threshold`, 0.45, plus a margin over the
     next person). With `ai.share_child_name` off, the child's nickname in them becomes "the little one".
   * **How to delete it:** Profile → Who's who: the bin next to a person deletes them and their
-    samples, the arrows delete only their samples, and **Forget all faces** deletes everyone.
+    samples (and voiceprints), the arrows delete only their face samples, and **Forget all faces**
+    deletes everyone, with their voiceprints.
     Deleted rows are overwritten in the database file (`secure_delete`). Switching the setting off
     stops recognising and unloads the model, but keeps the samples until you delete them.
     "Forget profile" does not delete them. Babies' faces change fast, so the card asks for new
     samples after a month.
+* **Recognising family voices** is another switch, **off by default**
+  (`privacy.voice_recognition_enabled`, "Recognise family voices"; `littlebot/voices/`,
+  [VOICES.md](VOICES.md)). The same people as Who's who; a parent presses **Record voice** and the
+  person reads three sentences to the robot's microphone (about 20 s), and a grown-up saying who
+  they are in a voice chat ("I'm Ali") teaches it too. It only runs while this switch and the
+  microphone switch are on, checked before any sound is looked at; switched off, the wake word keeps
+  no copy, a call buffers nothing and no voiceprint is computed.
+  * **What is stored, where:** table `voice_samples` in the same database: per sample, 192 numbers
+    from the speaker model (768 bytes), which model made them, whether recorded or learned in a chat,
+    and when; at most 8 recorded and 8 learned per person, the oldest go first. **No recording is
+    ever stored**: the table only accepts rows of at most 2 KB. The dashboard's recording, the wake
+    phrase and the call's copy of a turn are looked at in memory and dropped.
+  * **What leaves the robot:** never sound or the numbers (never logged or shown either; logs say
+    counts and scores, never names). During a voice chat only the **name and role** of who is
+    talking go to the voice: a line in the instructions ("The grown-up who woke you sounds like Ali
+    (dad), by voice.") and one quiet note when the speaker changes. A voice that isn't clearly one
+    person's is never named (threshold `voices.match_threshold`, 0.5, plus a margin), and the little
+    one's voice is never a note. With `ai.share_child_name` off, the nickname becomes "the little one".
+    Other parts of LittleBot get a `voice.speaker` event with the same name and role, on the robot.
+  * **How to delete it:** Profile → Who's who: **Forget voice** next to a person, the bin (the person
+    and everything about them) or **Forget all faces** (everyone). Switching the setting off stops it
+    and unloads the model but keeps the voiceprints until you delete them.
 * Cloud providers process requests under their own terms and may retain data for a
   period for abuse monitoring — check the provider's data-retention policy before
   enabling cloud conversation.

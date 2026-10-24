@@ -129,9 +129,10 @@ export default {
   },
 };
 
-// Who's who: the people LittleBot may recognise on its camera (littlebot/vision/faces.py, opt-in in Privacy).
-// Only names, roles and sample counts come from the robot. Taking a sample or checking who is in view
-// shows one small preview of what the camera saw; it is not kept anywhere.
+// Who's who: the people LittleBot may recognise on its camera (littlebot/vision/faces.py, opt-in in Privacy)
+// and by voice (littlebot/voices/, opt-in in Privacy). Only names, roles and sample counts come from the
+// robot. Taking a sample or checking who is in view shows one small preview of what the camera saw; it is
+// not kept anywhere. "Record voice" records ~20 s with LittleBot's own microphone; only voiceprints are kept.
 function whosWho(app) {
   const status = h('div');
   const list = h('div', { class: 'media-list' });
@@ -147,6 +148,45 @@ function whosWho(app) {
     h('div', { class: 'field' }, h('label', { for: 'ww-role', text: 'Who they are' }), role, h('span', { class: 'hint', text: 'A few words, for example "dad", "the baby" or "Amara\'s grandma".' })),
     h('div', {}, addBtn));
   let state = { people: [], suggested_samples: 5, retake_days: 30 };
+  const voiceBox = h('div', { class: 'card info mt-2', hidden: true });
+  let recording = false;
+
+  const voiceText = (p) => {
+    if (!p.voice_samples) return 'Voice: not set up.';
+    const learned = p.voice_learned ? `, ${p.voice_learned} learned in chats` : '';
+    return `Voice: set up (${p.voice_samples} sample${p.voice_samples === 1 ? '' : 's'}${learned}).`;
+  };
+
+  async function recordVoice(p) {
+    const v = state.voices || {};
+    const secs = Math.round(v.record_seconds || 20);
+    const left = h('strong', { text: `${secs} s` });
+    clear(voiceBox).append(
+      h('h3', { text: `Recording ${p.name}'s voice` }),
+      h('p', { class: 'muted', text: `${p.name}: read these three sentences out loud, in your normal voice, about an arm's length from LittleBot. Only you should talk.` }),
+      h('ol', { class: 'stack-sm' }, (v.sentences || []).map((t) => h('li', { text: t }))),
+      h('p', { class: 'mt-1' }, 'Listening… ', left, ' left'));
+    voiceBox.hidden = false;
+    recording = true;
+    const started = Date.now();
+    const timer = setInterval(() => setText(left, `${Math.max(0, secs - Math.round((Date.now() - started) / 1000))} s`), 500);
+    let res = null;
+    try {
+      res = await app.act(() => post(`/people/${p.id}/voice`, { seconds: secs }, { timeout: (secs + 25) * 1000 }));
+    } finally {
+      clearInterval(timer);
+      recording = false;
+    }
+    if (!res) { voiceBox.hidden = true; return; }
+    fill(res);
+    if (res.ok) {
+      toast(`${p.name}'s voice is set up (${res.samples} sample${res.samples === 1 ? '' : 's'}).`, 'ok');
+      clear(voiceBox).append(h('p', { text: `Done. LittleBot kept ${p.name}'s voiceprint (numbers only); the recording itself was not kept.` }));
+    } else {
+      toast(res.detail || 'That recording was not kept.', 'error');
+      clear(voiceBox).append(h('p', { text: res.detail || 'That recording was not kept. Try again.' }));
+    }
+  }
 
   const showShot = (res, text) => {
     shotBox.hidden = !res?.preview;
@@ -199,19 +239,34 @@ function whosWho(app) {
     const remove = button('', {
       kind: 'danger-outline', small: true, iconName: 'trash', title: 'Remove', ariaLabel: `Remove ${p.name}`,
       onClick: async () => {
-        if (await confirmDialog({ title: `Remove ${p.name}?`, body: 'LittleBot forgets their name and face samples.', confirm: 'Remove', danger: true })) {
+        if (await confirmDialog({ title: `Remove ${p.name}?`, body: 'LittleBot forgets their name, face samples and voiceprints.', confirm: 'Remove', danger: true })) {
           const res = await app.act(() => del(`/people/${p.id}`), `${p.name} removed.`);
           if (res) fill(res);
         }
       },
     });
+    const record = button('Record voice', {
+      kind: 'soft', small: true, iconName: 'mic', ariaLabel: `Record ${p.name}'s voice`,
+      onClick: () => (recording ? null : recordVoice(p)),
+    });
+    const forgetVoice = button('', {
+      kind: 'ghost', small: true, iconName: 'x', title: 'Forget voice', ariaLabel: `Forget ${p.name}'s voice`,
+      onClick: async () => {
+        if (await confirmDialog({ title: `Forget ${p.name}'s voice?`, body: 'This deletes their voiceprints. LittleBot no longer recognises their voice until you record it again (or they say who they are in a voice chat).', confirm: 'Forget voice', danger: true })) {
+          const res = await app.act(() => del(`/people/${p.id}/voice`), 'Voice forgotten.');
+          if (res) fill(res);
+        }
+      },
+    });
+    forgetVoice.hidden = !p.voice_samples;
     return h('div', { class: 'media-item' },
       h('div', { class: 'thumb' }, icon('person')),
       h('div', { class: 'info' },
         h('div', { class: 'title', text: label(p) }),
         h('div', { class: 'muted', text: samplesText(p) }),
+        h('div', { class: 'muted', text: voiceText(p) }),
         p.needs_new_samples ? h('span', { class: 'badge warn mt-1' }, icon('clock'), 'Time for new samples') : null),
-      h('div', { class: 'actions' }, take, again, remove));
+      h('div', { class: 'actions' }, take, again, record, forgetVoice, remove));
   }
 
   function fill(res) {
@@ -219,6 +274,9 @@ function whosWho(app) {
     const banners = [];
     if (res.blocked === 'off') banners.push(banner('info', 'info', 'Recognising family members is off', 'Turn on "Recognise family members" on the Privacy page to take samples and let LittleBot use these names.'));
     else if (res.blocked) banners.push(banner('warn', 'alert', 'LittleBot can\'t recognise faces right now', res.blocked_detail || ''));
+    const v = res.voices;
+    if (v && v.blocked === 'off') banners.push(banner('info', 'info', 'Recognising family voices is off', 'Turn on "Recognise family voices" on the Privacy page to record voices and let the voice chat know who is talking.'));
+    else if (v && v.blocked) banners.push(banner('warn', 'alert', 'LittleBot can\'t recognise voices right now', v.blocked_detail || ''));
     clear(status).append(...banners);
     clear(list).append(...(res.people || []).map(row));
     if (!(res.people || []).length) list.append(h('p', { class: 'muted', text: 'Nobody added yet.' }));
@@ -238,7 +296,7 @@ function whosWho(app) {
   const forget = button('Forget all faces', {
     kind: 'danger-outline', iconName: 'trash',
     onClick: async () => {
-      if (await confirmDialog({ title: 'Forget every face?', body: 'This deletes everyone on this list and all their face samples. It cannot be undone.', confirm: 'Forget all faces', danger: true })) {
+      if (await confirmDialog({ title: 'Forget every face and voice?', body: 'This deletes everyone on this list, all their face samples and all their voiceprints. It cannot be undone.', confirm: 'Forget all faces', danger: true })) {
         const res = await app.act(() => post('/people/forget-all'), 'All faces forgotten.');
         if (res) { fill(res); showShot(null); }
       }
@@ -249,7 +307,8 @@ function whosWho(app) {
     h('div', { class: 'card-head' }, h('h2', {}, icon('person'), 'Who\'s who')),
     h('p', { class: 'muted', text: 'LittleBot can learn to recognise the family on its camera, so the voice chat knows who is in front of it and uses their names. Add each person, then take about 5 samples with only them in front of the camera, about an arm\'s length away, facing it, in good light (turn the head a little between samples). Babies\' faces change fast: take new samples every month or so.' }),
     h('p', { class: 'muted mt-1', text: 'Kept on the robot only: the names and, for each sample, 128 numbers that describe the face. Never the photos. The voice chat is told only the names of the people in view.' }),
-    status, addForm, h('div', { class: 'mt-2' }, list), shotBox,
+    h('p', { class: 'muted mt-1', text: 'Voices: press Record voice and read three short sentences to LittleBot (about 20 seconds), so the voice chat knows which grown-up is talking, from "Hey LittleBot" on. LittleBot also learns a voice when someone says who they are in a voice chat ("I\'m Ali"), and gets better each time it is sure. Only voiceprints (192 numbers per sample) are kept on the robot, never recordings.' }),
+    status, addForm, h('div', { class: 'mt-2' }, list), voiceBox, shotBox,
     h('div', { class: 'btn-row mt-2' }, check, forget));
 
   return {

@@ -735,12 +735,21 @@ class WakeWordService(Service):
         words = dict(self._phrases).get(phrase) or tuple(phrase.split())
         end, after = wake_phrase_end(result, words, self.cfg.min_confidence)
         cut = None if end is None else max(0, int((end - WAKE_CUT_MARGIN) * rate))
-        carry = SpeechCarry(rate, phrase=phrase, quiet_level=self._quiet_level(), kept_talking=after > 0)
+        carry = SpeechCarry(rate, phrase=phrase, quiet_level=self._quiet_level(), kept_talking=after > 0,
+                            keep_voice=self._voices_on())
+        carry.keep_wake_phrase(heard.before(cut))  # who said it (littlebot/voices/call.py); only with keep_voice
         for block in heard.since(cut):
             carry.add(block)
         heard.clear()
         carry.lead_s = carry.seconds
         return carry
+
+    def _voices_on(self) -> bool:
+        """"Recognise family voices" is on: the carry also keeps the wake phrase, to tell who said it."""
+        try:
+            return bool(getattr(self.ctx.privacy, "voice_recognition_enabled", False))
+        except Exception:  # noqa: BLE001 - fail closed
+            return False
 
     def _carry_on(self, inp: Any, rate: int, carry: SpeechCarry) -> None:
         """After the wake phrase: keep what they say for the call until live voice takes the microphone

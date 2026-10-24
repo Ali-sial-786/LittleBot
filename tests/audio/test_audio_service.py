@@ -611,6 +611,28 @@ async def test_real_backends_through_fake_portaudio(fake_sd):
         ctx.db.close()
 
 
+async def test_recording_a_voice_clip_is_in_memory_and_needs_a_real_microphone(fake_sd, actx, make_service):
+    """The dashboard's "Record voice" (littlebot/voices/): sound handed back, the stream closed, nothing kept."""
+    ctx = make_test_context(fakes=False, audio={"speaker": {"backend": "auto", "device": "usb"},
+                                                "microphone": {"backend": "auto"}})
+    svc = AudioService(ctx, tts=MockTTS(), stt=MockSTT())
+    try:
+        await svc.start()
+        clip = await svc.record_clip(1.0)
+        assert clip["ok"] is True and clip["rate"] == svc._inp.sample_rate
+        assert len(clip["samples"]) >= clip["rate"] * 0.9 and clip["samples"].dtype == np.float32
+        assert not svc._inp.is_open and fake_sd.in_streams[-1].closed
+        ctx.privacy.set(microphone_enabled=False)
+        off = await svc.record_clip(1.0)
+        assert off["ok"] is False and off["samples"] is None and "turned off in Privacy" in off["detail"]
+    finally:
+        await svc.stop()
+        ctx.db.close()
+    mock = make_service(actx)  # a simulated microphone: no recording
+    res = await mock.record_clip(1.0)
+    assert res["ok"] is False and "No real microphone" in res["detail"]
+
+
 async def test_unplugged_usb_speaker_mid_speech(fake_sd):
     ctx = make_test_context(fakes=False, audio={"speaker": {"backend": "sounddevice"}})
     svc = AudioService(ctx, input=MockInput(), tts=MockTTS(), stt=MockSTT())

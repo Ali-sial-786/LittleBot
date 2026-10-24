@@ -327,6 +327,8 @@ class PrivacyBody(Body):
     ai_camera_enabled: bool | None = None
     # Lets LittleBot recognise the family members a parent added, on the robot (off by default).
     face_recognition_enabled: bool | None = None
+    # Lets LittleBot recognise the family's voices, on the robot (off by default; voiceprints only, never recordings).
+    voice_recognition_enabled: bool | None = None
 
 
 # ----------------------------------------------------------------- audio

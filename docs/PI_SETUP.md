@@ -299,6 +299,23 @@ In the journal (`journalctl --user -u littlebot -f`), look for `face recognition
 view at the start` and `live voice: told who is in view (N known)`. `face recognition can't run
 (no_models)` means step 1 is missing. Names and face numbers are never logged.
 
+### Recognising family voices (optional)
+
+So the voice chat knows which grown-up is talking, from "Hey LittleBot" on. Runs on the robot; only
+voiceprints (192 numbers per sample) are kept, never recordings ([VOICES.md](VOICES.md)). Off by
+default.
+
+1. Once: `.venv/bin/python -m pip install -e '.[voices]'` (sherpa-onnx, prebuilt for the Pi) and
+   `.venv/bin/python scripts/download_models.py voices` (26 MB, SHA-256 checked), then
+   `systemctl --user restart littlebot`.
+2. Dashboard **Privacy** → switch on **Recognise family voices** (the microphone must be on too).
+3. Dashboard **Profile** → **Who's who** → **Record voice** next to each grown-up: they read the three
+   sentences on the screen to the robot (about 20 s), alone, in a quiet room.
+
+In the journal, look for `voice recognition: model loaded in ... ms`, `voice recognition: recording
+kept (...)` and, in a voice chat, `live voice: the wake phrase was recognised by voice in ... ms` and
+`live voice: told who is talking, by voice`. Names and voiceprints are never logged.
+
 ## 9. Use the dashboard from your phone (LAN opt-in)
 
 By default the dashboard listens on `127.0.0.1` only, so nothing on the network can
