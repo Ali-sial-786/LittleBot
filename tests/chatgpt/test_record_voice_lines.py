@@ -101,6 +101,7 @@ async def test_only_takes_names_and_groups_and_says_which_exist(rctx, fake_recor
 
 
 async def test_the_childs_name_only_with_the_parents_ok(rctx, fake_recording, capsys):
+    rctx.settings.set("ai.share_child_name", False)  # on by default
     await rvl.main_async(args(dry_run=True, only=["peekaboo"]), rctx)
     out = capsys.readouterr().out
     assert "Hi Amara" not in out and "2 lines with Amara's name are left out" in out and "--with-name" in out

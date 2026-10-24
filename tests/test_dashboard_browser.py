@@ -415,6 +415,7 @@ def test_activity_voices_card_records_in_the_chatgpt_voice_with_the_parents_ok_f
     ctx = phone.bot.ctx
     page = phone.open("activities")
     phone.api("PUT", "/profile", {"nickname": "Amara", "age_months": 10})
+    ctx.settings.set("ai.share_child_name", False)  # on by default
     page.reload()
     card = page.get_by_role("region", name="Activity voices")
     expect(card).to_contain_text("lines LittleBot says in activities, games and chats are recorded in its ChatGPT voice")

@@ -54,6 +54,7 @@ async def wait_for(cond: Any, timeout: float = 5.0) -> None:
 
 
 async def test_status_says_what_is_needed_first(authed, dctx, store):
+    dctx.settings.set("ai.share_child_name", False)  # on by default
     r = await authed.get("/api/voice-lines")
     assert r.status_code == 200
     d = r.json()
