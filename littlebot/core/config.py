@@ -321,6 +321,24 @@ class ScreensConfig(_Section):
     presenter_backing: bool = True  # the presenter's eyes sit on a little patch of LittleBot's pink face
 
 
+class BrowserConfig(_Section):
+    """The browser view: Google (SafeSearch on) on LittleBot's screen when a grown-up asks for it
+    (littlebot/browser, docs/BROWSER.md). Uses the same Chromium as the videos (``media.browser_command``).
+
+    The parent's switch (dashboard Privacy page: ``browser.enabled``) can turn it off; ``enabled: false`` here
+    switches the feature off whatever the parent chose."""
+
+    enabled: bool = True
+    # After the voice chat ends the browser stays this long with nobody touching the page.
+    idle_seconds: float = Field(default=120.0, ge=10.0, le=1800.0)
+    zoom: float = Field(default=1.4, ge=0.75, le=2.5)  # pages are this much bigger (720x480 screen: 514x343 px)
+    mobile_layout: bool = True  # ask sites for their phone layout (fits the small screen)
+    kiosk: bool | None = None  # full screen; None = on the robot (Raspberry Pi) only, a 720x480 window elsewhere
+    start_timeout_seconds: float = Field(default=20.0, ge=2.0, le=120.0)  # Chromium's DevTools must answer by then
+    read_chars: int = Field(default=3000, ge=200, le=10000)  # page text handed to the voice ("what does it say?")
+    extra_args: list[str] = Field(default_factory=list)  # more Chromium switches (e.g. --renderer-process-limit=2)
+
+
 class MediaConfig(_Section):
     # auto: Pi -> kiosk (if Chromium is installed), desktop -> browser, headless/offline -> none
     player: Literal["auto", "browser", "kiosk", "none"] = "auto"
@@ -449,6 +467,7 @@ class LittleBotConfig(BaseModel):
     chatgpt: ChatGPTConfig = Field(default_factory=ChatGPTConfig)
     info: InfoConfig = Field(default_factory=InfoConfig)
     screens: ScreensConfig = Field(default_factory=ScreensConfig)
+    browser: BrowserConfig = Field(default_factory=BrowserConfig)
     media: MediaConfig = Field(default_factory=MediaConfig)
     motion: MotionConfig = Field(default_factory=MotionConfig)
     dashboard: DashboardConfig = Field(default_factory=DashboardConfig)

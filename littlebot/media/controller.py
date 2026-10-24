@@ -411,6 +411,7 @@ class MediaController(Service):
         sess.queue = list(queue or [])
         self._cancel_close_task()
         self._load(sess, item)
+        await self._close_browser_view()
         if not self._player_alive():  # kiosk not running / desktop tab not polling
             try:
                 await self.backend.open(self.player_url())
@@ -547,6 +548,7 @@ class MediaController(Service):
             if sess.queue:
                 sess.queue.pop(0)
             self._load(sess, nxt)
+            await self._close_browser_view()
             if not self._player_alive():
                 try:
                     await self.backend.open(self.player_url())
@@ -1045,6 +1047,7 @@ class MediaController(Service):
         item = self._resume_item(sess, hold)
         self._cancel_close_task()
         self._load(sess, item, count=False)
+        await self._close_browser_view()
         if not self._player_alive():
             try:
                 await self.backend.open(self.player_url())
@@ -1060,6 +1063,17 @@ class MediaController(Service):
         self._ensure_watchdog()
         log.info("media: carrying on after the chat (item %s at %ss)", item["id"], item["start_seconds"])
         return True
+
+    async def _close_browser_view(self) -> None:
+        """The browser view (littlebot/browser) and a video never run at once: our lease already took the screen
+        from it; wait until its Chromium has exited before the player's opens (one Chromium at a time)."""
+        browser = getattr(self.ctx, "browser", None)
+        if browser is None or not hasattr(browser, "aclose"):
+            return
+        try:
+            await browser.aclose("a video started")
+        except Exception:  # noqa: BLE001 - the video still plays
+            log.exception("closing the browser view failed")
 
     def _chat_active(self) -> bool:
         live = getattr(self.ctx, "live", None)

@@ -920,8 +920,15 @@ class LiveCall:
             text += "\n" + seen
         if self._director is not None:
             text += SCREEN_INSTRUCTIONS
+        text += self._browser_instructions()
         now = _dt.datetime.now()
         return f"{text}\nAt the start of this call it is {now:%A}, {now:%H:%M} local time."
+
+    def _browser_instructions(self) -> str:
+        """The browser view (littlebot/browser): when to hand "google it" to LittleBot ("" without one)."""
+        from littlebot.browser import voice_instructions  # noqa: PLC0415
+
+        return voice_instructions(self.ctx)
 
     def _notes(self, nickname: str | None) -> list[str]:
         """The family's notes (littlebot/brain/remembered.py); the child's name left out unless it may be shared."""

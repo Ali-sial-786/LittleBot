@@ -179,12 +179,14 @@ def find_browser(preferred: str | None = None, which: Callable[[str], str | None
 
 def build_kiosk_command(
     browser: str, url: str, *, user_data_dir: str | Path, width: int = 480, height: int = 320,
-    extra_args: Sequence[str] = (),
+    extra_args: Sequence[str] = (), kiosk: bool = True,
 ) -> list[str]:
-    """Chromium command line for a locked-down, full-screen player window."""
+    """Chromium command line for a locked-down, full-screen player window (``kiosk=False``: an app window of
+    ``width`` x ``height`` instead, for the desktop simulator's browser view). Later switches in ``extra_args``
+    override earlier ones."""
     return [
         browser,
-        "--kiosk",
+        *(["--kiosk"] if kiosk else []),
         f"--app={url}",
         f"--window-size={int(width)},{int(height)}",
         "--window-position=0,0",
@@ -226,9 +228,13 @@ class BrowserKioskBackend(DisplayBackend):
         extra_args: Sequence[str] = (),
         launcher: Launcher | None = None,
         terminate_timeout: float = 2.0,  # SIGTERM -> wait -> SIGKILL -> wait 1 s: < 5 s shutdown budget
+        kiosk: bool = True,
+        label: str = "player kiosk",  # for the log ("browser view" for littlebot/browser)
     ) -> None:
         super().__init__()
         self.browser = browser
+        self.kiosk = kiosk
+        self.label = label
         self.user_data_dir = Path(user_data_dir)
         self.width, self.height = width, height
         self.extra_args = list(extra_args)
@@ -247,7 +253,7 @@ class BrowserKioskBackend(DisplayBackend):
         if self.browser is None:
             raise PlayerBackendError("Chromium is not installed, so videos can't be shown on LittleBot's screen")
         return build_kiosk_command(self.browser, url, user_data_dir=self.user_data_dir, width=self.width,
-                                   height=self.height, extra_args=self.extra_args)
+                                   height=self.height, extra_args=self.extra_args, kiosk=self.kiosk)
 
     def is_running(self) -> bool | None:
         return self._proc is not None and self._proc.returncode is None
@@ -269,7 +275,7 @@ class BrowserKioskBackend(DisplayBackend):
                 self._proc = None
                 raise PlayerBackendError(f"could not start the player browser: {e}") from e
             _LIVE_KIOSKS.add(self)
-            log.info("player kiosk started (pid %s)", getattr(self._proc, "pid", "?"))
+            log.info("%s started (pid %s)", self.label, getattr(self._proc, "pid", "?"))
 
     def terminate_now(self) -> None:
         """Synchronous best-effort SIGTERM (no event loop needed; used at interpreter exit)."""
@@ -290,13 +296,13 @@ class BrowserKioskBackend(DisplayBackend):
             try:
                 await asyncio.wait_for(proc.wait(), self._terminate_timeout)
             except asyncio.TimeoutError:
-                log.warning("player kiosk did not exit after SIGTERM; killing it")
+                log.warning("%s did not exit after SIGTERM; killing it", self.label)
                 proc.kill()
                 try:
                     await asyncio.wait_for(proc.wait(), 1.0)
                 except asyncio.TimeoutError:
-                    log.error("player kiosk process %s did not exit", getattr(proc, "pid", "?"))
-            log.info("player kiosk closed")
+                    log.error("%s process %s did not exit", self.label, getattr(proc, "pid", "?"))
+            log.info("%s closed", self.label)
 
     def status(self) -> dict[str, Any]:
         out = super().status()

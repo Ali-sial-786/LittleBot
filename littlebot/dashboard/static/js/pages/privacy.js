@@ -48,6 +48,21 @@ export default {
       kind: 'soft', iconName: 'x',
       onClick: async () => { const r = await app.act(() => post('/screens/close'), 'Card closed.'); if (r) fillScreens(r); },
     });
+    // The browser view (littlebot/browser): Google on the screen when a grown-up explicitly asks for it.
+    const browser = switchRow({
+      title: 'Allow the browser view (Google with SafeSearch, grown-ups only)',
+      text: 'When a grown-up says “google it”, “look it up online” or “search that in the browser”, LittleBot shows Google on its screen - with SafeSearch always on, no address bar, and its own little eyes and a big × in the corner. Ordinary questions still get info cards. Only the search words go to Google; nothing is kept (each time is a fresh browser that is deleted afterwards). Needs Cloud communication on. It closes on the ×, “close it”, a video or game, or two minutes after the chat with nobody touching it. On by default.',
+      onChange: async (v) => {
+        const r = await app.act(() => put('/browser/settings', { enabled: v }), v ? 'The browser view is on.' : 'The browser view is off.');
+        if (r) fillBrowser(r);
+        return r !== null;
+      },
+    });
+    const browserShowing = h('p', { class: 'muted' });
+    const browserClose = button('Close the browser', {
+      kind: 'soft', iconName: 'x',
+      onClick: async () => { const r = await app.act(() => post('/browser/close'), 'Browser closed.'); if (r) fillBrowser(r); },
+    });
 
     view.append(
       pageHead('Privacy', 'You decide what LittleBot can see, hear and share.'),
@@ -63,7 +78,8 @@ export default {
           h('div', { class: 'stack' },
             h('section', { class: 'card' },
               h('div', { class: 'card-head' }, h('h2', {}, icon('face'), 'LittleBot\'s screen')),
-              cards.el, pictures.el, showing, h('div', { class: 'mt-2' }, closeBtn)),
+              cards.el, pictures.el, showing, h('div', { class: 'mt-2' }, closeBtn),
+              browser.el, browserShowing, h('div', { class: 'mt-2' }, browserClose)),
             h('section', { class: 'card' },
               h('div', { class: 'card-head' }, h('h2', {}, icon('history'), 'Clear history')),
               h('p', { class: 'muted', text: 'Removes any stored activity history and conversation memory from the robot.' }),
@@ -99,11 +115,21 @@ export default {
       closeBtn.disabled = !d.active;
     }
 
+    function fillBrowser(d) {
+      browser.set(d.enabled !== false);
+      if (d.active) browserShowing.textContent = `The browser shows: ${d.showing || 'a web page'}.`;
+      else if (d.available === false) browserShowing.textContent = `The browser view isn't available here${d.detail ? ` (${d.detail})` : ''}.`;
+      else browserShowing.textContent = 'The browser is closed.';
+      browserClose.disabled = !d.active;
+    }
+
     get('/screens').then(fillScreens).catch(() => { showing.textContent = 'Info card status is unavailable.'; });
+    get('/browser').then(fillBrowser).catch(() => { browserShowing.textContent = 'Browser status is unavailable.'; });
     get('/privacy').then(fill).catch((e) => offlineNote.replaceChildren(banner('danger', 'alert', 'Could not load privacy settings', e.message)));
     return {
       update(s) {
         if (s.privacy) fill(s.privacy);
+        if (s.browser && s.browser.status !== 'unavailable') fillBrowser(s.browser);
       },
     };
   },

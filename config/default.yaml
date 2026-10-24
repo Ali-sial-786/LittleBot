@@ -105,6 +105,16 @@ screens:
   linger_seconds: 30       # a card stays this long after the voice chat ends (a running timer stays until done)
   presenter_backing: true  # the presenter's small eyes sit on a patch of LittleBot's pink face
 
+browser:
+  # Google (SafeSearch on) on LittleBot's screen when a grown-up says "google it" or "look it up online"
+  # (docs/BROWSER.md). Same Chromium as the videos (media.browser_command); never at the same time as a video.
+  # The parent can switch it off on the dashboard's Privacy page; it also needs Cloud communication on.
+  enabled: true
+  idle_seconds: 120        # closes this long after the voice chat ended with nobody touching the page
+  zoom: 1.4                # pages are this much bigger on the small screen ("zoom in" / "zoom out" change it)
+  mobile_layout: true      # ask sites for their phone layout
+  kiosk: null              # null = full screen on the robot only (a 720x480 window on a desktop)
+
 media:
   player: auto           # auto | browser | kiosk | none  (auto: Pi -> kiosk Chromium, desktop -> browser)
   browser_command: null  # null = autodetect chromium-browser / chromium

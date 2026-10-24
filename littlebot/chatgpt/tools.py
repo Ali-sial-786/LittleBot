@@ -22,6 +22,10 @@ while ``ctx.screens`` can show cards, with the card kinds in its description), a
 weather card too. Both are checked like the screen director's own cards (``director.clean_spec``); in a live
 call they go through its ``show_spec`` (``screen=``), so a card is shown once and the voice is told.
 
+The browser view (littlebot/browser): ``search_in_browser`` and ``browser`` (scroll, open a result, back, read,
+close ...) are offered only while ``ctx.browser`` can open, and are meant only for explicit requests ("google
+it", "look it up online"); ordinary questions get cards. They run at once (the browser takes only the screen).
+
 Take-overs: starting a video or an activity, carrying on with a video paused for a chat ("Hey LittleBot"
 while it played: ``MediaController.hold``), and going to sleep, need the screen and the speaker
 that the conversation itself is using (starting them mid-turn would cut the answer off).
@@ -108,8 +112,8 @@ TOOLS: tuple[_Tool, ...] = (
           "spin_eyes, peekaboo, hearts, confetti.", _obj({"face": _STR}, ("face",))),
     _Tool("go_to_sleep", "Put LittleBot to sleep (sleepy face, quiet) once you have said good night.", _obj()),
     _Tool("wake_up", "Wake LittleBot up from sleep.", _obj()),
-    _Tool("stop_everything", "Stop any video, activity or game that is running (the conversation carries on).",
-          _obj()),
+    _Tool("stop_everything", "Stop any video, activity, game or browser that is running (the conversation carries "
+          "on).", _obj()),
     _Tool("search_youtube", "Search YouTube for videos. Returns video ids, titles, channels and lengths.",
           _obj({"query": {**_STR, "description": "what to look for, e.g. 'baby shark song'"},
                 "limit": {"type": "integer", "minimum": 1, "maximum": 10}}, ("query",))),
@@ -146,9 +150,25 @@ TOOLS: tuple[_Tool, ...] = (
           "a word's meaning, key points, a recipe, a timer, a sum, a list), not the words. Cards (* required):",
           _obj({"card": {**_STR, "description": "the card's kind"},
                 "fields": {"type": "object", "description": "that card's fields"}}, ("card",))),
+    _Tool("search_in_browser", "Open Google (SafeSearch on) in the browser on LittleBot's screen, showing the results "
+          "for the query. Use it ONLY when the grown-up explicitly asks for it: to google something, to look it up "
+          "online or on the internet, to search or check in the browser or on the web, or to see the web page. Never "
+          "for ordinary questions: answer those yourself (info cards show on the screen by themselves).",
+          _obj({"query": {**_STR, "description": "what to search Google for, in a few words"}}, ("query",))),
+    _Tool("browser", "Steer the browser on LittleBot's screen while it shows a page, ONLY when the grown-up asks: "
+          "scroll (direction down, up, top or bottom; amount page, half or little), open_result (n: the n-th search "
+          "result, 1 = the first), back, forward, reload, zoom (level: in, out, reset or a factor like 1.5), read "
+          "(what the page says, to sum up in a few words; never read it out), close.",
+          _obj({"action": {"type": "string", "enum": ["scroll", "open_result", "back", "forward", "reload", "zoom",
+                                                      "read", "close"]},
+                "direction": {"type": "string", "enum": ["down", "up", "top", "bottom"]},
+                "amount": {"type": "string", "enum": ["page", "half", "little"]},
+                "n": {"type": "integer", "minimum": 1, "maximum": 20},
+                "level": {"type": "string", "description": "in, out, reset, or a factor like 1.5"}}, ("action",))),
 )
 TOOL_NAMES = frozenset(t.name for t in TOOLS)
 SCREEN_TOOL = "show_on_screen"  # offered only while the screen can show cards (RobotToolbox.specs)
+BROWSER_TOOLS = frozenset({"search_in_browser", "browser"})  # offered only while ctx.browser can open
 
 # OpenAI's own web search, run on OpenAI's side (a hosted tool, not a function: RobotToolbox never runs
 # it). ``responses.ChatGPTProvider`` sends it as {"type": "web_search"}; "name" is for logs and fakes.
@@ -208,6 +228,8 @@ class RobotToolbox:
                 cards = self._card_menu()
                 if cards:
                     out.append({"name": t.name, "description": f"{t.description} {cards}.", "parameters": t.parameters})
+                continue
+            if t.name in BROWSER_TOOLS and self._browser_view() is None:
                 continue
             out.append({"name": t.name, "description": t.description, "parameters": t.parameters})
         if self.web_search:
@@ -343,6 +365,9 @@ class RobotToolbox:
         games = self._games()
         if games is not None:
             out["game"] = _safe(games.status)
+        browser = getattr(ctx, "browser", None)
+        if browser is not None:
+            out["browser"] = _safe(browser.describe) or "closed"  # what it shows ("Google results for ...")
         out["privacy"] = {k: v for k, v in (_safe(ctx.privacy.snapshot) or {}).items()
                           if k in ("camera_enabled", "microphone_enabled", "cloud_enabled", "ai_camera_enabled")}
         return _json(out)
@@ -412,6 +437,8 @@ class RobotToolbox:
             "I can tell you the weather here or anywhere, today or in the next days, and the time and date"
             + (", and find out things that change, like news, sports scores or opening hours." if self.web_search
                else "."),
+            *(["When a grown-up asks me to google something, I show Google (SafeSearch on) on my screen."]
+              if self._browser_view() is not None else []),
             "I am a robot, not a person.",
         ]
         return " ".join(lines)
@@ -624,6 +651,9 @@ class RobotToolbox:
         if games is not None and _running(_safe(games.status)):
             await _maybe_await(games.stop())
             stopped.append("the game")
+        browser = getattr(ctx, "browser", None)
+        if browser is not None and getattr(browser, "active", False) and browser.close("asked to stop everything"):
+            stopped.append("the browser")
         if ctx.motion is not None:
             _safe(ctx.motion.cancel)
         if not stopped:
@@ -986,6 +1016,77 @@ class RobotToolbox:
             spec["days"] = days
         result = await self._show_card(spec)
         return str(result.get("showing") or "the weather")[:200] if result.get("ok") else None
+
+    # ------------------------------------------------------------ the browser view (littlebot/browser)
+    def _browser_view(self) -> Any:
+        """``ctx.browser`` while it can be offered (it exists and the parent's switch is on), else None."""
+        browser = getattr(self.ctx, "browser", None)
+        try:
+            return browser if browser is not None and browser.offered() else None
+        except Exception:  # noqa: BLE001
+            return None
+
+    async def _search_in_browser(self, args: dict[str, Any]) -> str:
+        browser = self._browser_view()
+        if browser is None:
+            return _err("the browser isn't available on this robot; just answer")
+        query = " ".join(str(args.get("query") or "").split())[:200]
+        if not query:
+            return _err("say what to search for")
+        result = await browser.open(query, source="tool")
+        if not result.get("ok"):
+            return _err(_browser_error(result))
+        showing = str(result.get("showing") or "Google")[:200]
+        self.done.append("the browser shows Google")
+        if result.get("already"):
+            return _ok(f"the browser is showing {showing} already (LittleBot opened it when they asked). Say so in "
+                       "a few words.")
+        return _ok(f"the browser on LittleBot's screen shows {showing}. Don't read the page out; say briefly that "
+                   "it's on the screen. They can say scroll down, open the first one, go back or close it.")
+
+    async def _browser(self, args: dict[str, Any]) -> str:
+        browser = self._browser_view()
+        if browser is None:
+            return _err("the browser isn't available on this robot")
+        action = str(args.get("action") or "").strip().lower()
+        if not getattr(browser, "active", False):
+            return _err("the browser isn't open; use search_in_browser if they asked to google something")
+        extra = {k: args[k] for k in ("direction", "amount", "n", "level") if args.get(k) is not None}
+        result = await browser.control(action, extra, source="tool")
+        if not result.get("ok"):
+            return _err(_browser_error(result))
+        if action == "read":
+            text = str(result.get("text") or "").strip()
+            if not text:
+                return _ok("the page shows no text to read")
+            title = str(result.get("title") or result.get("host") or "the page")[:120]
+            return _ok(f"the page ({title}) says: {text} -- Sum it up in a few plain words; never read it out.")
+        if action == "close":
+            self.done.append("the browser closed")
+            return _ok("the browser is closed; LittleBot's face is back")
+        if result.get("already"):
+            return _ok("done already (LittleBot did it when they asked)")
+        moved = result.get("moved", True)
+        what = {"scroll": "scrolled", "back": "went back" if moved else "there is no page before this one",
+                "forward": "went forward" if moved else "there is no page after this one",
+                "reload": "reloaded the page", "zoom": f"the zoom is {result.get('zoom')}",
+                "open_result": f"opened result {result.get('n')}: {result.get('opened') or 'a page'}"}.get(action, "done")
+        if action == "scroll" and result.get("at_bottom"):
+            what += " (that is the bottom of the page)"
+        return _ok(f"{what}. The screen shows {str(result.get('showing') or 'the page')[:200]}.")
+
+
+def _browser_error(result: dict[str, Any]) -> str:
+    """What the model is told when the browser refused (a polite refusal for a blocked search)."""
+    code = str(result.get("error") or "")
+    if code == "blocked":
+        return "LittleBot won't search for that. Say kindly, in a few words, that you can't look that up"
+    if code == "child":
+        return "only a grown-up can open the browser. Say so kindly"
+    if code == "no_result":
+        return "there is no such result on the page"
+    detail = str(result.get("detail") or "the browser didn't work this time")[:200]
+    return f"{detail} Say so briefly"
 
 
 # ---------------------------------------------------------------- helpers
