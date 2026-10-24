@@ -1344,12 +1344,37 @@ class LiveCall:
         return now - self._handover_at >= HANDOVER_MAX_S
 
     async def run_handover(self) -> list[str]:
-        """After the call: start what the voice promised, unless the call ended for another reason."""
+        """After the call: start what the voice promised, unless the call ended for another reason.
+
+        Only once the speaker is LittleBot's again (``_speaker_back``), so its first line or sound is heard."""
         box, self._handover = self._handover, None
         promised = self._handover_at is not None and self.end_reason == "time limit reached"
         if box is None or not (self.end_reason == HANDOVER_REASON or promised):
             return []
+        await self._speaker_back()
         return await box.run_pending()
+
+    async def _speaker_back(self) -> None:
+        """Wait until the speaker plays again before the video / activity / sleep starts.
+
+        The cleanup gave it back (``resume``), but the call's own stream on the same USB device was
+        closed only a moment ago: a sound started right then can be cut off after a few ms, and the
+        speaker is then taken for unplugged (silence for a few seconds). ``AudioService.speaker_back``
+        opens it and plays a little silence until that works."""
+        audio = self.ctx.audio
+        if self._suspended_audio and getattr(audio, "suspended", None) == "live voice":
+            audio.resume("live voice")  # the cleanup didn't get that far
+        back = getattr(audio, "speaker_back", None)
+        if back is None:
+            return
+        t0 = self.svc._now()
+        try:
+            ok = await back()
+        except Exception:  # noqa: BLE001 - never keep what was promised from starting
+            log.debug("live voice: speaker check failed", exc_info=True)
+            return
+        log.info("live voice: speaker back for the hand-over in %d ms%s", int((self.svc._now() - t0) * 1000),
+                 "" if ok else " (still not playing: starting anyway)")
 
     def _play_face(self, action: Any, source: str) -> bool:
         """Play a face now, unless the same one just played (words and a hand-off often both ask)."""

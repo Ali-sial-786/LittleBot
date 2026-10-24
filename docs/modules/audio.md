@@ -26,6 +26,7 @@ scripts/check_audio.py    device diagnostics for the Pi / desktop
 | `say(text, rate=None)` | Cleans text (no emoji/control chars, max 300 chars), synthesises **off the loop** (`asyncio.to_thread`), queues it, waits. Publishes `audio.speech_started {text, duration_estimate}` -> `audio.level {level}` at ~16 Hz from the audio envelope -> `audio.speech_finished {text, interrupted}`. Returns `False` if interrupted, the speaker is disabled/unavailable, or synthesis failed everywhere. `rate` replaces the `audio.tts_rate` setting for that call (clamped 0.5..1.6). |
 | `play_sound(name, wait, volume)` | A name from `SOUND_NAMES` or a relative `.wav` path under `assets/sounds/` (no `../` escapes). `volume` is **relative** (0..1 x master volume) so it can never be louder than the parent's setting. Publishes `audio.sound_started/finished {name, interrupted}`. |
 | `play_melody(notes, tempo_bpm, wait)` | `[("C4", 1), ("F#4", .5), ("R", 1), ("Bb3", 2)]`. Invalid input -> logged, returns `False` (never raises). Same sound events with `name: "melody"`. |
+| `speaker_back(timeout=3)` | After a hand-back (`resume`): opens the speaker and plays 0.2 s of silence, retrying every 0.1 s while the device still fails (the borrower's stream on the same USB device has only just closed), then releases it. No events. `True` once it plays (or on a simulated speaker); `False` while still lent or if it never came back (then marked `disconnected`). Live voice waits for it before a video / activity / sleep starts. |
 | `stop_output()` | Drops the queue and interrupts the current item within one chunk (~50 ms); also cancels speech that is still being synthesised. Speech publishes `speech_finished {interrupted: true}`. |
 | `listen(timeout)` | Half-duplex (below). `timeout` = seconds to wait for speech to **start** (default `microphone.max_record_seconds`). Publishes `audio.listening_started/stopped`, then `audio.utterance {text, confidence, source: "stt"|"simulated"}`. `None` if nothing heard, mic disabled/unavailable, cancelled (`STOP_ALL`, privacy) or a second concurrent `listen()`. |
 | `inject_utterance(text)` | Simulated mic input: satisfies the pending or next `listen()` (expires after 120 s, max 5 queued). Dropped while the microphone is disabled. |
@@ -33,7 +34,7 @@ scripts/check_audio.py    device diagnostics for the Pi / desktop
 | `list_devices()` | `{inputs, outputs: [{index, name, default, channels, default_samplerate, hostapi}], portaudio, detail, selected}` |
 | `test_speaker()` | Plays `chime`; `{ok, backend, device, status, volume, detail}`. On a simulated/missing speaker `ok=False` with a hint. Rescans devices first if none was found. Never raises. |
 | `test_microphone(seconds)` | Records in memory only, keeps just peak/RMS: `{ok, backend, device, peak, rms, seconds, detail}`. Never raises. |
-| `status()` | `{speaker: {backend, device, status, detail}, microphone: {...}, volume, max_volume, speaking, playing, queued, listening, mic_muted, half_duplex, tts_provider, stt_provider, tts_rate, last_error}` |
+| `status()` | `{speaker: {backend, device, status, detail}, microphone: {...}, volume, max_volume, speaking, playing, queued, listening, mic_muted, half_duplex, lent_to, tts_provider, stt_provider, tts_rate, recorded_lines, last_error}` |
 
 Device `status` values: `ok`, `simulated` (mock), `disconnected` (failed mid-use, retried every 5 s),
 `unavailable` (not found), `disabled` (config `none` or privacy). Every change is published as
@@ -113,6 +114,14 @@ LittleBot never listens to itself:
 | `espeak` | `espeak-ng --stdout --stdin -v en-us+f3 -p 65 -s 160*rate -g 2` (text via stdin: no option injection), gently low-passed and normalised. `auto` uses it when installed |
 | `piper` | `piper --model <audio.tts.piper_model> --output_raw` (binary must be on `PATH`); one process per phrase (~0.5-1.5 s model load on a Pi 5, UNVERIFIED) |
 | `openai` | `POST /v1/audio/speech` (`gpt-4o-mini-tts`, voice `shimmer`, WAV, soft-voice instructions), 15 s timeout, cloud + age + `ai.enabled` gated, nickname removed without `ai.share_child_name`, falls back to local |
+
+**Recorded lines first.** `say()` plays a line recorded in the ChatGPT voice when
+`data/voice_lines/index.json` has one for exactly that line (case, punctuation and spacing ignored;
+`littlebot/audio/voice_lines.py`, recorded by `scripts/record_voice_lines.py` or the Activities page,
+see [CHATGPT.md](../CHATGPT.md#activities-in-the-chatgpt-voice)); otherwise the providers above. Same
+queue, volume, mouth frames and stop either way; the rate setting doesn't change a recording. The
+journal says once per line which voice spoke it (`speech in the recorded ChatGPT voice (...)` /
+`speech in text-to-speech (espeak; not recorded)`, the nickname shown as `<child>`).
 
 STT: `mock` (returns queued text), `vosk` (`pip install vosk` + `audio.stt.vosk_model_path`, small
 English model ~40 MB, loaded lazily), `openai` (`/v1/audio/transcriptions`, multipart WAV built in

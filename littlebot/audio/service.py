@@ -9,6 +9,9 @@ Output
     ``audio.speech_started`` -> ``audio.level`` (``{level, shape}``: loudness and
     mouth shape of the 20 ms being heard, sent in step with the speaker; drives the
     face's mouth/eyes) -> ``audio.speech_finished``.
+    A line recorded in the ChatGPT voice (``audio.voice_lines``: data/voice_lines, made by
+    scripts/record_voice_lines.py) is played instead of text-to-speech when one exists for
+    exactly that (normalised) line; everything else about it (volume, mouth, stop) is the same.
     Digital gain = volume (clamped to ``audio.speaker.max_volume``) and is
     re-read every chunk, so volume changes apply immediately.
 
@@ -68,6 +71,7 @@ from littlebot.audio.sfx import SoundBank, render_melody
 from littlebot.audio.stt import STTProvider, STTResult, build_stt
 from littlebot.audio.tts import MockTTS, TTSProvider, build_tts, clamp_rate, clean_text, local_tts, scrub_names
 from littlebot.audio.vad import EnergyVAD, VADState
+from littlebot.audio.voice_lines import VoiceLineStore, default_folder, get_store, line_hash
 from littlebot.core.events import Event, Subscription, Topics
 from littlebot.core.service import Service, ServiceStatus
 
@@ -81,12 +85,22 @@ OUTPUT_WAIT_LIMIT = 30.0  # listen() waits at most this long for output to finis
 IDLE_RELEASE_SECONDS = 3.0  # close the speaker stream after this much silence
 INJECT_TTL_SECONDS = 120.0  # injected utterances expire
 MIN_INPUT_GAIN, MAX_INPUT_GAIN = 0.1, 8.0
+HANDBACK_WAIT_S = 3.0  # speaker_back(): how long to keep trying to open the speaker after a hand-back
+HANDBACK_RETRY_S = 0.1
+HANDBACK_CHECK_S = 0.2  # ...by playing this much silence (a sound's first blocks are what fail)
 
 SPEAKER_HINT = ("Plug in a USB speaker (the Raspberry Pi 5 has no 3.5 mm audio jack), check `aplay -l`, "
                 "then run `python scripts/check_audio.py --play`.")
 MIC_HINT = ("Plug in a USB microphone, check `arecord -l`, then run `python scripts/check_audio.py --record 3`.")
 
 _CAPTURE_FAILED = object()
+
+
+def _voice_line_store(ctx: Any) -> VoiceLineStore:
+    try:
+        return get_store(ctx)
+    except Exception:  # noqa: BLE001 - a context without extras (some tests): a private store
+        return VoiceLineStore(default_folder(ctx.config.data_path))
 
 
 def _resolve(fut: "concurrent.futures.Future[bool]", value: bool) -> None:
@@ -97,11 +111,12 @@ def _resolve(fut: "concurrent.futures.Future[bool]", value: bool) -> None:
 
 @dataclasses.dataclass(eq=False)
 class _Item:
-    kind: str  # "speech" | "sound" | "melody"
+    kind: str  # "speech" | "sound" | "melody" | "check" (speaker_back: silent, no events)
     label: str  # text (speech) or sound name
     samples: np.ndarray
     sample_rate: int
     volume: float = 1.0  # relative to the master volume (never louder)
+    wait: float = 0.0  # "check" items: how long to keep trying to open the speaker
     stop: threading.Event = dataclasses.field(default_factory=threading.Event)
     future: "concurrent.futures.Future[bool]" = dataclasses.field(default_factory=concurrent.futures.Future)
 
@@ -132,7 +147,7 @@ class AudioService(Service):
 
     def __init__(self, ctx: Any, *, output: OutputBackend | None = None, input: InputBackend | None = None,  # noqa: A002
                  tts: TTSProvider | None = None, stt: STTProvider | None = None,
-                 sound_bank: SoundBank | None = None) -> None:
+                 sound_bank: SoundBank | None = None, voice_lines: VoiceLineStore | None = None) -> None:
         super().__init__()  # lifecycle state lives in ``service_status`` / ``health()``
         self.ctx = ctx
         self.cfg = ctx.config.audio
@@ -168,6 +183,9 @@ class AudioService(Service):
         self.last_tts_error = ""
         self.last_stt_error = ""
         self._bank = sound_bank or SoundBank(user_dir=Path(ctx.config.data_path) / "sounds")
+        # Lines recorded in the ChatGPT voice (data/voice_lines); each line's voice is logged once.
+        self._voice_lines = voice_lines if voice_lines is not None else _voice_line_store(ctx)
+        self._voice_noted: set[str] = set()
 
         # --- devices (resolved lazily / in start(); probing PortAudio can be slow) ---
         self._out: OutputBackend | None = output
@@ -647,6 +665,8 @@ class AudioService(Service):
         out = self._out
         if out is None or isinstance(out, NullOutput):
             return False
+        if item.kind == "check":
+            return self._check_output(out, item)
         audible = self._output_ready(out)
         if not audible:
             # Speaker missing / unplugged: keep the timing and events (face animation, activity
@@ -694,6 +714,58 @@ class AudioService(Service):
             else:
                 self._publish(Topics.AUDIO_SOUND_FINISHED, {"name": item.label, "interrupted": not completed})
         return completed and audible
+
+    def _check_output(self, out: OutputBackend, item: _Item) -> bool:
+        """speaker_back(): open the speaker and play a moment of silence until that works (output thread).
+
+        No events, nothing audible. Afterwards the device is let go again: what was handed over (a
+        video in the browser, say) may need it, and the next sound opens it again at once."""
+        if not out.real:
+            return True  # a simulated speaker has nothing to wait for
+        deadline = time.monotonic() + max(0.0, item.wait)
+        tries, error = 0, ""
+        while not item.stop.is_set() and not self._suspended:
+            tries += 1
+            try:
+                if out.status != dev.STATUS_OK:
+                    out.open()
+                if out.play(item.samples, item.sample_rate, PlaybackControl(item.stop, gain=lambda: 0.0,
+                                                                            label="speaker check")):
+                    if tries > 1:
+                        log.info("speaker back after %d tries (it was still busy: %s)", tries, error)
+                        self._publish_device("speaker")
+                    with contextlib.suppress(Exception):
+                        out.release()
+                    return True
+            except Exception as e:  # noqa: BLE001 - AudioDeviceError, PortAudio errors: try again shortly
+                error = str(e)[:120]
+            if time.monotonic() + HANDBACK_RETRY_S > deadline:
+                break
+            item.stop.wait(HANDBACK_RETRY_S)
+        if error:
+            log.warning("speaker still not back after %.1f s (%s)", item.wait, error)
+            self._on_output_failure(out, AudioDeviceError(error))
+        return False
+
+    async def speaker_back(self, timeout: float = HANDBACK_WAIT_S) -> bool:
+        """After a hand-back (``resume``): return once the speaker really plays again.
+
+        The borrower (live voice) has only just closed its own stream on the same, often exclusive
+        (ALSA ``hw:``), USB device. A sound started at that moment can fail part-way: it is cut off,
+        and the speaker is then taken for unplugged, so everything for ``reconnect_seconds`` plays on
+        the simulated speaker (silence). So whoever takes over after a hand-back (an activity's first
+        line or sound) waits for this: it opens the speaker and plays a moment of silence, retrying
+        until that works or ``timeout`` passes, and lets the device go again. True when the speaker
+        plays (or there is no real speaker to wait for); False while it is still lent or never came back.
+        """
+        if self._suspended:
+            return False
+        self._ensure_ready()
+        if isinstance(self._out, NullOutput):
+            return True
+        silence = np.zeros(int(HANDBACK_CHECK_S * SFX_RATE), dtype=np.float32)
+        return await self._enqueue(_Item("check", "speaker check", silence, SFX_RATE, volume=0.0, wait=timeout),
+                                   wait=True)
 
     def _on_output_failure(self, out: OutputBackend, e: Exception) -> None:
         log.warning("speaker failed during playback (%s); will retry in %.0fs", e, self.reconnect_seconds)
@@ -751,7 +823,8 @@ class AudioService(Service):
             return self._tts_local
         return self._tts
 
-    def _synthesize(self, text: str, rate: float) -> tuple[np.ndarray, int]:
+    def _synthesize(self, text: str, rate: float) -> tuple[np.ndarray, int, str]:
+        """(samples, sample rate, name of the voice that spoke) from the first text-to-speech that works."""
         chain: list[TTSProvider] = []
         for p in (self._active_tts(), self._tts_local, self._mock_tts):
             if p not in chain:
@@ -765,7 +838,7 @@ class AudioService(Service):
                 samples, sr = provider.synthesize(spoken, rate)
                 if len(samples) == 0:
                     raise ValueError("no audio produced")
-                return samples, sr
+                return samples, sr, provider.name
             except Exception as e:  # noqa: BLE001 - TTSError, CloudNotAllowed, crashes: try the next voice
                 last = e
                 self.last_tts_error = f"{provider.name}: {e}"
@@ -781,14 +854,51 @@ class AudioService(Service):
             return False
         marker = self._stop_counter
         r = clamp_rate(rate if rate is not None else self._tts_rate, self._tts_rate)
-        try:
-            samples, sr = await asyncio.to_thread(self._synthesize, clean, r)
-        except Exception as e:  # noqa: BLE001
-            log.warning("could not speak %r: %s", clean[:40], e)
-            return False
+        voice = await asyncio.to_thread(self._recorded_line, clean)  # the ChatGPT voice, if this line was recorded
+        if voice is None:
+            try:
+                voice = await asyncio.to_thread(self._synthesize, clean, r)
+            except Exception as e:  # noqa: BLE001
+                log.warning("could not speak %r: %s", clean[:40], e)
+                return False
+        samples, sr, used = voice
+        self._note_voice(clean, used)
         if self._stop_counter != marker:
             return False  # stop_output() was pressed while the voice was being prepared
         return await self._enqueue(_Item("speech", clean, samples, sr), wait=True)
+
+    def _recorded_line(self, text: str) -> tuple[np.ndarray, int, str] | None:
+        """The recording of ``text`` in the ChatGPT voice (data/voice_lines), padded like spoken text."""
+        hit = self._voice_lines.get(text) if self._voice_lines is not None else None
+        if hit is None:
+            return None
+        samples, sr, entry = hit
+        voice = str(entry.get("voice") or "ChatGPT")
+        return dsp.pad(dsp.as_mono_float(samples), sr, before=0.02, after=0.08), sr, f"recorded:{voice}"
+
+    def _note_voice(self, text: str, used: str) -> None:
+        """Log once per line which voice says it: the recorded ChatGPT voice or text-to-speech."""
+        key = line_hash(text)
+        if key in self._voice_noted:
+            return
+        if len(self._voice_noted) >= 4096:
+            self._voice_noted.clear()
+        self._voice_noted.add(key)
+        if used.startswith("recorded:"):
+            how = f"the recorded ChatGPT voice ({used.split(':', 1)[1]})"
+        else:
+            how = f"text-to-speech ({used}; not recorded)"
+        log.info("speech in %s: %r [%s]", how, self._loggable(text), key)
+
+    def _loggable(self, text: str) -> str:
+        """A line as logged: the child's nickname replaced, at most 60 characters."""
+        try:
+            profile = self.ctx.settings.get("profile") or {}
+            nickname = str(profile.get("nickname") or "") if isinstance(profile, dict) else ""
+        except Exception:  # noqa: BLE001
+            nickname = ""
+        out = scrub_names(text, [nickname], "<child>") if nickname.strip() else text
+        return out if len(out) <= 60 else out[:57] + "..."
 
     async def play_sound(self, name: str, *, wait: bool = True, volume: float | None = None) -> bool:
         if not isinstance(name, str) or not name.strip():
@@ -1252,5 +1362,13 @@ class AudioService(Service):
             "tts_provider": self._provider_label(self._active_tts(), self._tts),
             "stt_provider": self._provider_label(self._active_stt(), self._stt),
             "tts_rate": self._tts_rate,
+            "recorded_lines": self._recorded_count(),
             "last_error": self.last_tts_error or self.last_stt_error or "",
         }
+
+    def _recorded_count(self) -> int:
+        """How many lines are recorded in the ChatGPT voice (data/voice_lines)."""
+        try:
+            return len(self._voice_lines) if self._voice_lines is not None else 0
+        except Exception:  # noqa: BLE001 - status never raises
+            return 0

@@ -18,8 +18,9 @@ from littlebot.dashboard.routes.privacy_routes import router as privacy
 from littlebot.dashboard.routes.profile_routes import router as profile
 from littlebot.dashboard.routes.robot_routes import router as robot
 from littlebot.dashboard.routes.sim_routes import router as sim
+from littlebot.dashboard.routes.voice_routes import router as voice_lines
 
 ROUTERS = (auth, robot, face, camera, activities, games, media, profile, people, ai, chatgpt, info, privacy, devices,
-           motion, sim)
+           motion, sim, voice_lines)
 
 __all__ = ["ROUTERS"]

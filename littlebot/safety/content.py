@@ -59,7 +59,7 @@ __all__ = [
     "ValidationResult", "InputConcern", "validate_reply", "clean_text", "truncate_words",
     "find_blocked", "sanitize_user_text", "sanitize_user_text_report", "classify_child_input",
     "normalise", "safe_fallback", "word_count", "CONCERN_CATEGORIES", "GROWNUP_FALLBACK", "SHORT_GROWNUP_FALLBACK",
-    "grownup_fallback", "directs_to_grownup", "DOSE_FALLBACK", "DEFAULT_MAX_WORDS",
+    "grownup_fallback", "directs_to_grownup", "DOSE_FALLBACK", "DEFAULT_MAX_WORDS", "fixed_lines",
 ]
 
 DEFAULT_MAX_WORDS = 60  # ai.max_words: room for a home-assistant answer of two to four sentences
@@ -1287,6 +1287,14 @@ class InputConcern:
 
 
 _MAX_CLASSIFY_CHARS = 2000
+
+
+def fixed_lines() -> list[str]:
+    """The fixed lines a blocked reply or worrying words are answered with (recorded once in the
+    ChatGPT voice by scripts/record_voice_lines.py)."""
+    lines = [line for pair in _CONCERN_REPLIES.values() for line in pair]
+    lines += [*SAFE_FALLBACKS, *SHORT_SAFE_FALLBACKS, GROWNUP_FALLBACK, SHORT_GROWNUP_FALLBACK, DOSE_FALLBACK]
+    return list(dict.fromkeys(lines))
 
 
 def classify_child_input(text: str) -> InputConcern | None:

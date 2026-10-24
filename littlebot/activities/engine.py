@@ -604,19 +604,7 @@ class ActivityEngine(Service):
 
     # ------------------------------------------------------------ text
     def _initial_values(self, activity: Activity) -> dict[str, Any]:
-        profile = self._profile()
-        nickname = _clean_text(profile.get("nickname"))
-        animals = [_clean_text(a) for a in profile.get("favourite_animals") or [] if _clean_text(a)]
-        songs = [_clean_text(s) for s in profile.get("favourite_songs") or [] if _clean_text(s)]
-        # Empty strings fall back at render time ("friend", "puppy" ... or an inline {name|fallback}).
-        values: dict[str, Any] = {
-            "child_name": nickname,
-            "child_initial": nickname[0].upper() if nickname[:1].isalpha() else "",
-            "favourite_animal": animals[0] if animals else "",
-            "favourite_song": songs[0] if songs else "",
-            "robot_name": _clean_text(getattr(self.ctx.config, "robot_name", "")) or "LittleBot",
-            "round": 1,
-        }
+        values = profile_values(self._profile(), getattr(self.ctx.config, "robot_name", ""))
         for k, v in activity.variables.items():
             values[k] = v
         return values
@@ -1121,6 +1109,23 @@ def _sort_key(a: Activity, age: int | None, prefs: dict[str, dict[str, Any]]) ->
         gap = a.min_age_months - age if age < a.min_age_months else age - a.max_age_months + 1
         distance = 2 + gap / 12
     return (not fav, round(distance, 3), a.name.lower())
+
+
+def profile_values(profile: dict[str, Any], robot_name: Any = "") -> dict[str, Any]:
+    """The built-in placeholders' values for a run, from the parent's profile.
+
+    Empty strings fall back at render time ("friend", "puppy" ... or an inline {name|fallback})."""
+    nickname = _clean_text(profile.get("nickname"))
+    animals = [_clean_text(a) for a in profile.get("favourite_animals") or [] if _clean_text(a)]
+    songs = [_clean_text(s) for s in profile.get("favourite_songs") or [] if _clean_text(s)]
+    return {
+        "child_name": nickname,
+        "child_initial": nickname[0].upper() if nickname[:1].isalpha() else "",
+        "favourite_animal": animals[0] if animals else "",
+        "favourite_song": songs[0] if songs else "",
+        "robot_name": _clean_text(robot_name) or "LittleBot",
+        "round": 1,
+    }
 
 
 def _clean_text(value: Any, max_len: int = 32) -> str:

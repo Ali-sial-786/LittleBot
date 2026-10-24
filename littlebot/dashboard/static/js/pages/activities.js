@@ -1,7 +1,7 @@
 // Activities: filter by age group / category, start / pause / stop, favourites, caregiver prompts.
 
 import { get, post, put } from '../api.js';
-import { append, button, clear, fmtAge, fmtDuration, h, icon, pageHead, setText, titleCase } from '../ui.js';
+import { append, banner, button, clear, fmtAge, fmtDuration, h, icon, pageHead, setText, titleCase } from '../ui.js';
 
 const STEP_KIND = { note: 'Tip for you', song: 'Sing along', sing: 'Sing along', say: 'LittleBot says', prompt: 'Your turn', wait: 'Waiting' };
 
@@ -22,12 +22,17 @@ export default {
     const favChip = h('button', { type: 'button', class: 'chip', 'aria-pressed': 'false' }, icon('star'), 'Favourites');
     const list = h('div', { class: 'act-grid', 'aria-live': 'polite' });
     const countEl = h('p', { class: 'muted' });
+    // "Record activity voices in the ChatGPT voice" (littlebot/dashboard/routes/voice_routes.py).
+    const voices = h('section', { class: 'card', hidden: true, 'aria-label': 'Activity voices', 'aria-live': 'polite' });
+    let voiceTimer = null;
+    let withName = null;
 
     view.append(
       pageHead('Activities', 'Short, gentle games. LittleBot leads with sounds, eyes and movement - you join in and help.'),
       h('div', { class: 'stack' },
         running,
         suggest,
+        voices,
         h('div', { class: 'stack-sm' }, groupChips, h('div', { class: 'row' }, h('div', { class: 'grow' }, catSelect), favChip)),
         countEl,
         list));
@@ -192,8 +197,79 @@ export default {
       }
     }
 
+    async function loadVoices() {
+      clearTimeout(voiceTimer);
+      let v;
+      try { v = await get('/voice-lines'); } catch { voices.hidden = true; return; }
+      renderVoices(v);
+    }
+
+    function plural(n, word) { return `${n} ${word}${n === 1 ? '' : 's'}`; }
+
+    function renderVoices(v) {
+      clearTimeout(voiceTimer);
+      clear(voices);
+      voices.hidden = !v || !v.total;
+      if (voices.hidden) return;
+      const job = v.job;
+      const who = v.nickname || 'your child';
+      const all = v.recorded >= v.total;
+      const summary = all
+        ? `All ${v.total} lines LittleBot says in activities, games and chats are recorded in its ChatGPT voice.`
+        : `${v.recorded} of ${v.total} lines LittleBot says in activities, games and chats are recorded in its ChatGPT voice. The others use the robot voice.`;
+      append(voices, [
+        h('div', { class: 'card-head' }, h('h2', {}, icon('speaker'), 'Activity voices')),
+        h('p', { class: 'muted', text: summary })]);
+      if (job && job.running) {
+        const bar = h('span');
+        bar.style.width = `${job.total ? Math.round((100 * job.done) / job.total) : 0}%`;
+        const stopIt = async () => {
+          const r = await app.act(() => post('/voice-lines/stop'), 'Stopping after this line. What is recorded is kept.');
+          if (r) loadVoices();
+        };
+        voices.append(h('div', { class: 'stack-sm' },
+          h('div', { class: 'row between' },
+            h('strong', { text: job.phase === 'connecting' ? 'Calling the ChatGPT voice…' : `Recording ${job.done} of ${job.total}` }),
+            h('span', { class: 'muted tnum', text: `${job.saved} saved${job.failed_count ? ` · ${job.failed_count} to try again` : ''}` })),
+          h('div', { class: 'progress' }, bar),
+          job.current ? h('p', { class: 'muted', text: `Now: “${job.current}”` }) : null,
+          h('p', { class: 'muted', text: 'LittleBot can keep playing meanwhile: the recording does not use its speaker. New recordings are used straight away.' }),
+          h('div', { class: 'btn-row' }, button('Stop recording', { kind: 'danger-outline small', iconName: 'square', onClick: stopIt }))));
+        voiceTimer = setTimeout(loadVoices, 3000);
+        return;
+      }
+      if (job) {
+        const failed = job.phase === 'failed';
+        const done = job.error || `${job.saved} of ${job.total} lines recorded${job.phase === 'stopped' ? ' before you stopped it' : ''}.`;
+        const retry = job.failed_count ? ` ${plural(job.failed_count, 'line')} didn't come out right and keep the robot voice: press the button again to try them once more.` : '';
+        voices.append(banner(failed ? 'warn' : 'ok', failed ? 'alert' : 'check', 'Last recording', done + retry));
+      }
+      if (v.blocked) {
+        voices.append(banner('info', 'info', 'Recording needs ChatGPT', v.blocked_detail));
+        return;
+      }
+      if (all) return;
+      if (withName === null) withName = !!v.share_name;
+      const nameBox = h('input', { type: 'checkbox', checked: withName });
+      nameBox.addEventListener('change', () => { withName = nameBox.checked; renderVoices(v); });
+      const missing = withName ? v.missing : v.missing - v.named_missing;
+      const minutes = Math.max(1, Math.round(withName ? v.minutes : v.minutes_without_name));
+      const record = async () => {
+        const r = await app.act(() => post('/voice-lines/record', { with_name: withName }), 'Recording started.');
+        if (r) renderVoices(r);
+      };
+      append(voices, [
+        v.named_missing
+          ? h('label', { class: 'check-row' }, nameBox,
+            h('span', { text: `Also record the ${plural(v.named_missing, 'line')} with ${who}'s name (this sends the name to ChatGPT)` }))
+          : null,
+        h('p', { text: `${plural(missing, 'line')} to record: about ${plural(minutes, 'minute')}. The activities for ${who}'s age come first. You can stop any time and carry on later.` }),
+        h('div', { class: 'btn-row' }, button('Record activity voices in the ChatGPT voice', { kind: 'primary', iconName: 'mic', onClick: record }))]);
+    }
+
     load();
     loadSuggested();
-    return { update: renderRunning };
+    loadVoices();
+    return { update: renderRunning, destroy: () => clearTimeout(voiceTimer) };
   },
 };

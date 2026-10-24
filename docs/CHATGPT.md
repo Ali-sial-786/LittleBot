@@ -196,6 +196,54 @@ to download, nothing to compile). `scripts/install_pi.sh` installs it by default
 skips it). Without it, the card says **Not installed on this robot yet**, and everything else,
 including ChatGPT text answers, still works.
 
+### Activities in the ChatGPT voice
+
+The GPT-Live voice only speaks inside a call: there is no "read this text" service for it. So
+LittleBot **records its fixed lines once** in that voice and plays the recordings: the
+activities' lines, the screen games' animal noises, the scripted chat replies and greetings,
+and the fallback / safety lines. Everything else (the AI's answers, what the child said) keeps
+the built-in text-to-speech voice.
+
+**Activities** page → **Activity voices** → **Record activity voices in the ChatGPT voice**.
+It uses this robot's ChatGPT sign-in and needs **Cloud communication** on. The card shows how
+many lines are recorded, a progress bar and a **Stop** button. The first time it is about
+1,000 lines and takes roughly 1½ hours; the activities that suit your child's age come first
+(about half an hour for a baby). You can stop and carry on later: each line is saved, and used,
+as soon as it is done. LittleBot keeps playing meanwhile (the recording doesn't use its speaker
+or microphone); not during a voice chat, though.
+
+Or on the robot's terminal (the same recording, with progress printed line by line):
+
+```bash
+cd ~/LittleBot
+.venv/bin/python scripts/record_voice_lines.py --dry-run       # the lines and how long; records nothing
+.venv/bin/python scripts/record_voice_lines.py --missing       # record what isn't recorded yet
+.venv/bin/python scripts/record_voice_lines.py --only peekaboo --only "Again! Again!"
+.venv/bin/python scripts/record_voice_lines.py --for-age       # only the activities for your child's age now
+.venv/bin/python scripts/record_voice_lines.py --with-name     # also the lines with the child's nickname
+```
+
+Without `--missing` every line is recorded again (replacing the old recording). `--retries N`
+(default 2) and `--lines-per-call N` (default 40) tune the recording; `--all-ages` adds the
+scripted replies meant for older children.
+
+* **The child's nickname** ("Hi Amara! Let's play peekaboo!") is sent to ChatGPT only with your
+  OK: the card's *Also record the lines with …'s name* box, `--with-name`, or the AI page's switch
+  to share the child's name. Otherwise those few lines keep the robot voice.
+* **Checked line by line.** Each take's transcript must match the line (ignoring case,
+  punctuation, spelling of numbers and "Moooo" vs "Moo"). A mismatch is asked again twice; a
+  line that never matched is listed (the card, or the end of the command's output) and isn't
+  saved. Press the button again (or use `--missing`) to try those once more.
+* **Played instead of text-to-speech** whenever LittleBot says exactly that line (case,
+  punctuation and spacing don't matter), with the same volume, mouth movement, STOP and pause.
+  The journal says once per line which voice was used:
+  `journalctl --user -u littlebot | grep "speech in"` ("the recorded ChatGPT voice (bubbie)" or
+  "text-to-speech (espeak; not recorded)"). The speech-rate setting doesn't change a recording.
+* **Re-record** after changing the nickname or favourites in the profile, or adding your own
+  activity: the new lines are simply missing, the button records them.
+* Files: `data/voice_lines/<hash>.wav` and `data/voice_lines/index.json` (each line's text, hash,
+  voice and date). Updates never touch `data/`. Delete the folder to go back to the robot voice.
+
 ### Wake word: "Hey LittleBot"
 
 Say **"Hey LittleBot"** (or **"Hey Bot"**) near the robot: it plays a short "listening" sound (two
@@ -365,6 +413,9 @@ in typed chat, with **Push to talk**, or during a **live voice** call. ChatGPT p
 the conversation is using, so it starts **after** LittleBot has said its answer. In a **live voice
 call** that also ends the call: the voice says a short goodbye, LittleBot hangs up (at most 15 s
 later), then the video or activity starts. The call's microphone would otherwise hear the video.
+It starts once LittleBot's own speaker plays again (it checks, for up to 3 s): the call's sound
+stream on the same USB speaker has only just closed, and a sound started at that moment could be
+cut off after a moment, so the activity's first line or sound is heard in full.
 The last call then shows "handed over". The red **STOP** before that cancels it. Games share the
 speaker with a conversation, so they start at once and the call carries on.
 
@@ -515,6 +566,9 @@ All keys and defaults are listed in the [technical section](#configuration).
 | **Not installed on this robot yet** (Live voice card) | The `live` extra (aiortc) is missing | On the robot: `cd ~/LittleBot && .venv/bin/python -m pip install --prefer-binary -e '.[live]'` (or re-run `scripts/install_pi.sh --yes`), then restart LittleBot: `systemctl --user restart littlebot` |
 | "Could not reach OpenAI…" / "Could not connect to ChatGPT live voice…" / "The connection to ChatGPT was lost." | Internet problem (or OpenAI is down) | Check the robot's Wi-Fi. A network that blocks outgoing UDP can stop the call's audio |
 | "ChatGPT ended the call." | OpenAI closed the call | Start a new one |
+| Activities still speak with the robot voice | Their lines aren't recorded yet, or a line changed (another nickname, your own activity) | **Activities** → **Activity voices** → **Record activity voices in the ChatGPT voice**. `journalctl --user -u littlebot \| grep "speech in"` shows which voice each line used |
+| Activity voices: some lines "didn't come out right" | The voice said something else (its transcript didn't match the line) | Press the button again: only those lines are asked again. A sound word it keeps saying differently stays in the robot voice |
+| After a voice chat starts an activity, its first sound is cut off | The speaker was still being let go by the call | LittleBot now waits for the speaker (up to 3 s) before starting; if it still happens, the journal says "speaker still not back" |
 | "LittleBot is busy with something else. Stop it first." | A video or another parent action holds the speaker | Stop it, then start live voice |
 | "The speaker or microphone could not be opened." | The USB devices are missing or in use by another program | **Audio & devices**: check both devices. See [TROUBLESHOOTING.md](TROUBLESHOOTING.md#no-sound--sound-from-the-wrong-device) |
 | It hears itself, echoes or answers itself | Its own voice reaches the microphone after the gate opens | Lower the volume, move the microphone away from the speaker, raise `chatgpt.live_echo_tail_ms` (for example to 700). Keep `live_half_duplex: true` |
@@ -577,7 +631,11 @@ runs after the reply is spoken (`ConversationEngine._after_turn`). In live voice
 for something ("start the peekaboo activity", "show me a video", "go to sleep"; `CONTROL_WORDS`)
 go to the tool-enabled text model instead of the face / camera paths, and the queued take-over runs
 after the call ends with "handed over" (`LiveCall._handover_due`: the voice spoke and went quiet, or
-`HANDOVER_MAX_S`). Hand-off timing: `HANDOFF_INTERIM_S` (5 s) then `STILL_WORKING`, the answer later
+`HANDOVER_MAX_S`). `LiveCall.run_handover` runs it after the call's clean-up (`AudioService.resume`)
+and `AudioService.speaker_back()`: that opens the speaker and plays 0.2 s of silence, retrying every
+0.1 s for up to 3 s while the device still fails, then lets it go again (a video may need it). Without
+it, a first sound that hit the just-released device failed part-way, and the failure marked the speaker
+as unplugged, so everything for the next `reconnect_seconds` (5 s) played silently. Hand-off timing: `HANDOFF_INTERIM_S` (5 s) then `STILL_WORKING`, the answer later
 as a `session.context.append` note, `HANDOFF_TIMEOUT_S` (25 s) in all.
 
 | HTTP / stream error | Provider error `kind` |
@@ -613,6 +671,26 @@ Dashboard API (parent session + CSRF, like every route): `GET /api/chatgpt`,
 `POST /api/chatgpt/sign-in`, `/sign-in/cancel`, `/sign-out`,
 `/live/start {"parent_present": true}`, `/live/stop`. Responses contain only the masked e-mail, the
 plan, the one-time code and the live status, never tokens.
+
+**Recorded voice lines** (`littlebot/chatgpt/voice_record.py`, `littlebot/app/spoken_lines.py`,
+`littlebot/activities/lines.py`, `littlebot/audio/voice_lines.py`). `spoken_lines.collect` gathers
+the fixed lines: the activities' `say` texts and sung words, placeholders filled the way the engine
+fills them (profile values; every item of the `pick` / `for_each` data lists; `set` values; `{round}`;
+at most 40 combinations per sentence), the peekaboo game's `host.say` noises, the offline provider's
+scripted replies for the child's age (`MockProvider.scripted_lines`), the conversation's fallbacks and
+the safety lines (`safety.content.fixed_lines`). `record_lines` makes a call with the same offer and
+voice fall-backs as live voice (`open_call`, shared with `scripts/record_giggle.py`, as are the call's
+silent microphone `mic_track` and `tidy`). For each line it sends the note "Say exactly, word for word,
+nothing else: <line>" (`session.context.append`), keeps the voice's audio until its `turn.done` and
+then 1 s of quiet, trims and levels it (22.05 kHz), and compares the transcript with the line
+(`similarity` ≥ 0.8 on letters only, numbers as words, repeated letters once). No sound for 6 s: the
+line is asked out loud too (espeak-ng through the call's microphone). A new call every 40 lines; a
+dropped call is called again (3 failures in a row end the recording). `VoiceLineJob` saves each
+match through `VoiceLineStore.save` (atomic writes, an index lock file shared with other processes).
+`AudioService.say` looks the line up first (`line_hash` = SHA-1 of the normalised text) and falls
+back to text-to-speech; the index is re-read when the file changes. Dashboard: `GET /api/voice-lines`
+(counts, minutes, why it can't start, the job's progress), `POST /api/voice-lines/record
+{"with_name": bool|null, "again": false}`, `POST /api/voice-lines/stop`.
 
 ### Configuration
 
@@ -675,6 +753,10 @@ YouTube search (`media:` section, `MediaConfig`): `allow_search` (`true`: any vi
 | `littlebot/chatgpt/look.py` | `CameraLook`: one photo + question to ChatGPT, with the privacy gates (section 4) |
 | `littlebot/audio/wakeword.py` | `WakeWordService` (`ctx.wake`): "Hey LittleBot" heard offline with Vosk, then `ctx.live.start_session`; shares the microphone with `AudioService` (`attach_background_listener`) |
 | `littlebot/dashboard/routes/chatgpt_routes.py`, `static/js/pages/ai.js` | the "ChatGPT account", "Live voice (GPT-Live)" and "Ask what LittleBot sees" cards (`POST /api/chatgpt/look` returns the answer text only, never the photo) |
+| `littlebot/chatgpt/voice_record.py`, `littlebot/app/spoken_lines.py`, `littlebot/activities/lines.py` | recording the fixed lines in the GPT-Live voice, and working out which lines those are |
+| `littlebot/audio/voice_lines.py` | `VoiceLineStore`: the recordings `AudioService.say` plays instead of text-to-speech |
+| `scripts/record_voice_lines.py`, `dashboard/routes/voice_routes.py`, `static/js/pages/activities.js` | the command and the Activities page's "Activity voices" card |
+| `data/voice_lines/` | the recorded lines (`<hash>.wav` + `index.json`) |
 | `data/chatgpt_auth.json` | the sign-in (secret; not in the backups listed in PI_SETUP.md: just sign in again) |
 
 ### Testing status
@@ -728,5 +810,19 @@ YouTube search (`media:` section, `MediaConfig`): `allow_search` (`true`: any vi
   can't start or nobody talks, the 2-minute stop after the chat, the duck. Over a video's sound the
   real Vosk recogniser was measured with synthetic voices and music only
   ([YOUTUBE_ON_PI.md section 10](YOUTUBE_ON_PI.md#what-was-measured-and-what-wasnt)).
+* **Recorded voice lines** (`tests/chatgpt/test_voice_record.py`, `test_record_voice_lines.py`,
+  `tests/activities/test_activity_lines.py`, `tests/audio/test_voice_lines.py`,
+  `tests/dashboard/test_dashboard_voice_lines.py`): many lines in one call against the local WebRTC
+  peer (the note per line, only the voice's own sound kept, a mismatch asked again, a line that never
+  matched reported and not saved, a new call every N lines, stop, a refused call); the lines worked out
+  from every built-in activity, checked against what the real engine says when it runs each one with
+  random answers; the store; `say()` playing a recording with volume, mouth, events and stop, and text-
+  to-speech for the rest; the command's flags and the dashboard routes. **Not tested against OpenAI's
+  real voice**: whether it says each line word for word, how long its turns take (the time estimate is
+  a guess) and how its transcripts spell things.
+* **The hand-over to an activity** (`tests/audio/test_live_handover.py`): the whole robot with the
+  real `AudioService` on a fake PortAudio whose USB speaker fails a sound started in the first 0.5 s
+  after the call let it go; the activity's first line used to be cut off (and the speaker taken for
+  unplugged), now it plays in full. Whether the Pi's real USB speaker behaves like that is not known.
 * **Not yet tested:** OpenAI's real service (sign-in, text, live voice or photos), the Pi's real
   microphone, speaker and camera, echo in a real room, latency, and real plan limits.
