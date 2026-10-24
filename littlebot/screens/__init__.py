@@ -9,3 +9,19 @@
 
 See docs/SCREENS.md.
 """
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:  # pragma: no cover
+    from littlebot.screens.service import ScreenService
+
+__all__ = ["create_service"]
+
+
+def create_service(ctx: Any) -> ScreenService:
+    """Factory used by ``app/robot.py``."""
+    from littlebot.screens.service import ScreenService  # noqa: PLC0415
+
+    return ScreenService(ctx)

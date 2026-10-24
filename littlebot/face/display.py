@@ -35,6 +35,10 @@ log = logging.getLogger("littlebot.face.display")
 TAP_REACTION_ENABLED = True
 TAP_REACTION_SOUND = "giggle"
 TAP_COOLDOWN_SECONDS = 1.5
+# Holding a finger on the idle face this long opens the games menu (littlebot/screens/cards/games.py).
+# A plain tap still giggles: babies tap the face all the time, a deliberate hold is a grown-up's.
+LONG_PRESS_SECONDS = 1.0
+LONG_PRESS_SLOP = 0.04  # of the face width: a finger that wanders further is not holding still
 
 PANEL_WIDTH = 300
 PANEL_MIN_HEIGHT = 460
@@ -66,6 +70,8 @@ HELP_LINES: tuple[tuple[str, str], ...] = (
     ("W", "wave gesture"),
     ("X / E", "STOP everything / motion emergency stop"),
     ("Esc (game)", "stop the on-screen game (taps, 1-9, space play it)"),
+    ("Esc (card)", "close the info card (a tap on its little eyes too)"),
+    ("hold click", "hold 1 s on the face: the games menu"),
     ("click", "simulated camera face there (right-click: no face)"),
     ("Shift+click", "tap reaction (giggle)"),
     ("G / H", "debug overlay / this help"),
@@ -233,6 +239,8 @@ class DisplayLoop:
         self._live_sub: Any = None
         self._badges: dict[int, Any] = {}
         self._game_t: float | None = None  # last frame time while an on-screen game runs
+        self._card_t: float | None = None  # last frame time while an info card shows
+        self._press: tuple[float, float, float] | None = None  # (nx, ny, when) a finger held on the idle face
 
     # ------------------------------------------------------------------ setup
     def open(self) -> None:
@@ -364,6 +372,7 @@ class DisplayLoop:
             try:
                 if not self._handle_events():
                     return "quit"
+                self.check_long_press(now)
                 t0 = time.perf_counter()
                 self._run_timers(now)
                 if self.demo is not None:
@@ -403,6 +412,14 @@ class DisplayLoop:
             fps = max(fps, int(self.cfg.fps))
         if self._games() is not None:
             fps = max(fps, int(self.cfg.fps))
+        else:
+            screens = self._screens()
+            if screens is not None:
+                try:
+                    busy = bool(screens.animating)
+                except Exception:  # noqa: BLE001
+                    busy = True
+                fps = max(fps, int(self.cfg.fps if busy else self.cfg.idle_fps))
         return max(1, fps)
 
     @property
@@ -436,7 +453,7 @@ class DisplayLoop:
         win = self.window
         if self.face_rect.size != win.get_size():
             win.fill((0, 0, 0))
-        if not self._draw_game(win, now):
+        if not self._draw_game(win, now) and not self._draw_card(win, now):
             self.face.render(win, self.face_rect)
         if self.show_panel and self.panel is not None and self.panel_rect is not None:
             self._poll(now)
@@ -657,6 +674,87 @@ class DisplayLoop:
             log.exception("game key failed")
             return False
 
+    # ------------------------------------------------------------------ info cards
+    # While ``ctx.screens`` (littlebot.screens) shows a card - and no game runs: a game wins - the card is
+    # drawn instead of the face (LittleBot's small eyes present it) and gets taps and keys (Esc closes it).
+    def _screens(self) -> Any:
+        screens = getattr(self.ctx, "screens", None)
+        try:
+            return screens if screens is not None and screens.active else None
+        except Exception:  # noqa: BLE001
+            return None
+
+    def _draw_card(self, win: Any, now: float) -> bool:
+        screens = self._screens()
+        if screens is None:
+            self._card_t = None
+            return False
+        dt = 0.0 if self._card_t is None else now - self._card_t
+        self._card_t = now
+        try:
+            return bool(screens.render(win, self.face_rect, dt))
+        except Exception:  # noqa: BLE001 - fall back to the face
+            log.exception("card frame failed")
+            return False
+
+    def _card_tap(self, nx: float, ny: float) -> bool:
+        """The finger went down on a card (a card that scrolls waits for the release to call it a tap)."""
+        screens = self._screens()
+        if screens is None or self._games() is not None:
+            return False
+        try:
+            press = getattr(screens, "handle_press", None) or screens.handle_tap
+            return bool(press(nx, ny))
+        except Exception:  # noqa: BLE001
+            log.exception("card tap failed")
+            return False
+
+    def _card_pointer(self, what: str, pos: tuple[int, int]) -> bool:
+        """The finger moved ("drag") or came up ("release") on a card."""
+        screens = self._screens()
+        fn = getattr(screens, "handle_" + what, None) if screens is not None else None
+        if fn is None or self._games() is not None:
+            return False
+        r = self.face_rect
+        try:
+            return bool(fn((pos[0] - r.x) / max(1, r.w), (pos[1] - r.y) / max(1, r.h)))
+        except Exception:  # noqa: BLE001
+            log.exception("card %s failed", what)
+            return False
+
+    # A long press on the idle face opens the games menu (a plain tap keeps its giggle).
+    def check_long_press(self, now: float) -> bool:
+        press = self._press
+        if press is None or now - press[2] < LONG_PRESS_SECONDS:
+            return False
+        self._press = None
+        screens = getattr(self.ctx, "screens", None)
+        if screens is None or self._games() is not None or self._screens() is not None or self.face_hidden():
+            return False
+        log.info("long press on the face: games menu")
+        self._submit(lambda: screens.show({"card": "games"}, source="touch"), "games menu")
+        return True
+
+    def _pointer_moved(self, pos: tuple[int, int], buttons: tuple[int, ...]) -> None:
+        if buttons and buttons[0]:
+            self._card_pointer("drag", pos)
+        press = self._press
+        if press is not None:
+            r = self.face_rect
+            nx, ny = (pos[0] - r.x) / max(1, r.w), (pos[1] - r.y) / max(1, r.h)
+            if abs(nx - press[0]) > LONG_PRESS_SLOP or abs(ny - press[1]) > LONG_PRESS_SLOP * 1.5:
+                self._press = None
+
+    def _card_key(self, key: int) -> bool:
+        screens = self._screens()
+        if screens is None or self._games() is not None:
+            return False
+        try:
+            return bool(screens.handle_key(self._pg.key.name(key)))
+        except Exception:  # noqa: BLE001
+            log.exception("card key failed")
+            return False
+
     # ------------------------------------------------------------------ input
     def _handle_events(self) -> bool:
         pg = self._pg
@@ -669,12 +767,18 @@ class DisplayLoop:
                     return False
             elif ev.type == pg.MOUSEBUTTONDOWN:
                 self.handle_click(ev.pos, ev.button, getattr(ev, "mod", None))
+            elif ev.type == pg.MOUSEMOTION:
+                self._pointer_moved(ev.pos, tuple(getattr(ev, "buttons", ()) or ()))
+            elif ev.type == pg.MOUSEBUTTONUP:
+                self._press = None
+                if ev.button == 1:
+                    self._card_pointer("release", ev.pos)
         return True
 
     def handle_key(self, key: int, mod: int = 0) -> bool:
         """Apply one key press. Returns False when the user asked to quit."""
         pg = self._pg
-        if self._game_key(key):
+        if self._game_key(key) or self._card_key(key):
             return True
         face = self.face
         ctx = self.ctx
@@ -766,8 +870,10 @@ class DisplayLoop:
             return
         nx = (pos[0] - self.face_rect.x) / max(1, self.face_rect.w)
         ny = (pos[1] - self.face_rect.y) / max(1, self.face_rect.h)
-        if button == 1 and self._game_tap(nx, ny):
+        if button == 1 and (self._game_tap(nx, ny) or self._card_tap(nx, ny)):
             return
+        if button == 1:
+            self._press = (nx, ny, time.monotonic())  # held still for a second: the games menu
         if mod is None:
             mod = pg.key.get_mods()
         shift = bool(mod & pg.KMOD_SHIFT)

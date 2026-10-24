@@ -44,6 +44,7 @@ class Behaviours:
             bus.subscribe(Topics.VISION_PERSON_LEFT, self._on_person_left),
             bus.subscribe("activity.*", self._touch),
             bus.subscribe("media.*", self._touch),
+            bus.subscribe("screen.*", self._touch),  # info cards (a running timer keeps LittleBot awake)
             bus.subscribe(Topics.AUDIO_UTTERANCE, self._touch),
             bus.subscribe(Topics.CAREGIVER_RESPONSE, self._touch),
         ]

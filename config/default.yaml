@@ -98,6 +98,13 @@ ai:
   # price_per_mtok:          # optional overrides of the built-in price estimates (USD per 1M tokens)
   #   claude-haiku-5-5: [0.10, 0.50]
 
+screens:
+  # Info cards on LittleBot's screen while it talks (weather, a word, a recipe step, a timer).
+  # The parent can switch them, and pictures from the internet, off on the dashboard's Privacy page.
+  enabled: true
+  linger_seconds: 30       # a card stays this long after the voice chat ends (a running timer stays until done)
+  presenter_backing: true  # the presenter's small eyes sit on a patch of LittleBot's pink face
+
 media:
   player: auto           # auto | browser | kiosk | none  (auto: Pi -> kiosk Chromium, desktop -> browser)
   browser_command: null  # null = autodetect chromium-browser / chromium
