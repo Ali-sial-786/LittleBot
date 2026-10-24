@@ -280,6 +280,30 @@ async def test_listening_again_after_the_live_call(rig):
     assert r.mic.conflicts == 0
 
 
+async def test_a_wake_phrase_heard_but_not_sure_enough_is_logged(rig, caplog):
+    caplog.set_level(logging.INFO, logger="littlebot.wake")
+    r = await rig()
+    await _listening(r)
+    r.rec.say("hey bot", conf=0.3)
+    await until(lambda: "not sure enough" in caplog.text, what="the unsure line")
+    assert ("wake word: heard 'hey bot' but not sure enough (word confidence 0.30, wake.min_confidence 0.50)"
+            in caplog.text)
+    assert r.live.calls == []
+
+
+async def test_a_microphone_giving_only_silence_is_logged(rig, caplog, monkeypatch):
+    from littlebot.audio import wakeword
+
+    monkeypatch.setattr(wakeword, "SILENT_NOTE_SECONDS", 0.3)
+    caplog.set_level(logging.INFO, logger="littlebot.wake")
+    r = await rig()
+    await _listening(r)
+    await asyncio.sleep(0.5)
+    assert "has given only silence" not in caplog.text  # the mock microphone's noise floor: a real room
+    r.mic.set_level(0.0)
+    await until(lambda: "has given only silence for" in caplog.text, what="the silence line")
+
+
 async def test_live_voice_blocked_plays_uhoh_and_does_not_loop(rig, caplog):
     caplog.set_level(logging.INFO, logger="littlebot.wake")
     r = await rig(error="not_signed_in")

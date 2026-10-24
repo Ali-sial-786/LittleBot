@@ -88,6 +88,9 @@ WAKE_TOPIC = "audio.wake_word"  # {phrase} published when a wake phrase was hear
 READ_SECONDS = 0.1  # microphone read timeout
 FEED_SAMPLES = 1600  # hand the recogniser 0.1 s at a time (16 kHz)
 GATE_POLL_SECONDS = 0.5  # re-check "should I listen?" this often
+MUTED_NOTE_SECONDS = 20.0  # ignoring the microphone (LittleBot making sound) this long: say so in the log
+SILENT_NOTE_SECONDS = 30.0  # the microphone giving only silence this long: say so in the log
+SILENT_LEVEL = 1e-4  # RMS below this is silence (a real room is louder, even through noise suppression)
 RELEASE_TIMEOUT = 2.0  # release_mic() waits at most this long for the stream to close
 RETRY_SECONDS = 5.0  # after a microphone error
 AVAILABILITY_RECHECK = 10.0  # look for a newly downloaded model this often
@@ -616,6 +619,8 @@ class WakeWordService(Service):
         pending: list[np.ndarray] = []
         pending_n = 0
         muted = False
+        muted_since: float | None = None  # ignoring the microphone since (LittleBot making sound)
+        sound_at = time.monotonic()  # the microphone last gave more than silence
         self._last_partial = ""
         heard = PreRoll(rec.sample_rate, PREROLL_MAX_SECONDS)  # the sentence being recognised (see _carry_from)
         next_gate = time.monotonic() + GATE_POLL_SECONDS
@@ -641,8 +646,19 @@ class WakeWordService(Service):
                         rec.reset()
                         pending, pending_n, muted = [], 0, True
                         heard.clear()
+                        muted_since = now
+                    elif muted_since is not None and now - muted_since >= MUTED_NOTE_SECONDS:
+                        log.info("wake word: not listening for %.0f s: LittleBot counts as making sound (%s)",
+                                 now - muted_since, self._output_note())
+                        muted_since = None  # once per stretch
                     continue
-                muted = False
+                muted, muted_since = False, None
+                if float(np.sqrt(np.mean(np.square(chunk, dtype=np.float64)))) >= SILENT_LEVEL:
+                    sound_at = now
+                elif now - sound_at >= SILENT_NOTE_SECONDS:
+                    log.info("wake word: the microphone (%s) has given only silence for %.0f s",
+                             getattr(inp, "device_name", None) or getattr(inp, "name", "?"), now - sound_at)
+                    sound_at = now  # again after as long
                 pending.append(chunk)
                 pending_n += len(chunk)
                 if pending_n < FEED_SAMPLES:
@@ -664,6 +680,8 @@ class WakeWordService(Service):
                     continue
                 self._last_partial = ""
                 phrase = self._match(result, video)
+                if phrase is None and not video:
+                    self._note_unsure(result)
                 if phrase is not None and not self._audio_busy and not self._stop.is_set():
                     # Not during a video: its soundtrack reaches the microphone and would be sent as their words.
                     carry = None if video else self._carry_from(heard, result, phrase, rec.sample_rate)
@@ -694,6 +712,23 @@ class WakeWordService(Service):
                        else f"word confidence below wake.video_min_confidence {self.cfg.video_min_confidence:g}")
                 log.info("wake word: '%s' ignored while a video plays (%s)", heard, why)
         return phrase
+
+    def _output_note(self) -> str:
+        fn = getattr(self.ctx.audio, "output_note", None)
+        try:
+            return str(fn()) if fn is not None else "the speaker is busy"
+        except Exception:  # noqa: BLE001 - only for the log
+            return "the speaker is busy"
+
+    def _note_unsure(self, result: dict[str, Any]) -> None:
+        """A wake phrase heard, but a word of it below ``wake.min_confidence``: say so in the log (else silent)."""
+        heard = match_wake_phrase(result, self._phrases, 0.0)
+        if heard is None:
+            return
+        words = [w for w in result.get("result") or [] if isinstance(w, dict)]
+        confs = [float(w.get("conf", 1.0)) for w in words if str(w.get("word", "")).lower() in heard.split()]
+        log.info("wake word: heard '%s' but not sure enough (word confidence %.2f, wake.min_confidence %.2f)",
+                 heard, min(confs, default=0.0), self.cfg.min_confidence)
 
     def _maybe_duck(self, rec: KeywordRecognizer) -> None:
         """``wake.video_duck``: the words so far end in "hey": turn the video down while the rest is said."""

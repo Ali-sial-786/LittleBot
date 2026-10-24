@@ -554,6 +554,14 @@ class AudioService(Service):
         """True while (and just after) LittleBot makes sound: the microphone hears itself (half-duplex)."""
         return self._mic_muted()
 
+    def output_note(self) -> str:
+        """What keeps the microphone muted, for the log: what is playing or queued."""
+        with self._cv:
+            cur, queued = self._current, len(self._pending)
+        if cur is not None:
+            return f"playing {cur.kind} {cur.label[:40]!r}" + (f", {queued} more queued" if queued else "")
+        return f"{queued} sound(s) queued" if queued else "just finished playing"
+
     @property
     def input_gain(self) -> float:
         return self._input_gain
