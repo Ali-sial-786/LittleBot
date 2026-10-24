@@ -133,7 +133,7 @@ Optional and **untested on a real Pi** ([PI_SETUP.md](PI_SETUP.md#echo-cancellin
   (a missing `libspa-0.2-modules` / `libpipewire-0.3-modules`, or the USB devices weren't found:
   `--mic NAME` / `--speaker NAME`).
 - They are in `wpctl status` but not in `arecord -L` / `scripts/check_audio.py --list`: the ALSA
-  plugin is missing (`sudo apt install pipewire-alsa`) or `~/.asoundrc` lost LittleBot's block (run the
+  plugin is missing (`sudo apt install pipewire-alsa`) or `~/.config/alsa/asoundrc` lost LittleBot's block (run the
   script again).
 - No sound, or the voice sounds odd, through it: `scripts/setup_echo_cancel.sh --remove` puts
   everything back as before (USB devices as the defaults).

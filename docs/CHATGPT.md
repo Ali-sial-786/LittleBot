@@ -749,7 +749,7 @@ again when it is done.
 USB speaker. It makes two PipeWire nodes, the source `littlebot_ec_mic` and the sink
 `littlebot_ec_speaker`, and makes them PipeWire's defaults, so Chromium's YouTube sound goes
 through the canceller too (the wake word then hears less of the video). PortAudio has no PipeWire
-host API, so `~/.asoundrc` gets two ALSA PCMs of the same names (`type pipewire`, from the
+host API, so `~/.config/alsa/asoundrc` gets two ALSA PCMs of the same names (`type pipewire`, from the
 `pipewire-alsa` package) that PortAudio lists like any ALSA device. Details and undo:
 [PI_SETUP.md](PI_SETUP.md#echo-cancelling). `littlebot/audio/devices.py` (`audio.echo_cancel: auto`)
 picks the pair for an automatic device (`audio.speaker.device` / `audio.microphone.device` not set or

@@ -36,9 +36,11 @@ from __future__ import annotations
 import collections
 import dataclasses
 import logging
+import os
 import re
 import threading
 import time
+from pathlib import Path
 from typing import Any, Callable
 
 import numpy as np
@@ -186,7 +188,7 @@ def is_hdmi_device(d: dict[str, Any]) -> bool:
 
 
 # ------------------------------------------------------------ echo cancelling (PipeWire)
-# The ALSA PCM names scripts/setup_echo_cancel.sh writes to ~/.asoundrc (one per PipeWire node of the same
+# The ALSA PCM names scripts/setup_echo_cancel.sh writes to ~/.config/alsa/asoundrc (one per PipeWire node of the same
 # name). PortAudio's ALSA host API lists every top-level ``pcm.<name>`` of the ALSA configuration by that name.
 EC_MIC = "littlebot_ec_mic"
 EC_SPEAKER = "littlebot_ec_speaker"
@@ -234,6 +236,10 @@ def echo_cancel_note() -> str:
     if echo_cancel_devices() is not None:
         return (f"PipeWire's {EC_MIC} / {EC_SPEAKER} exist, but another device was chosen: leave "
                 "audio.microphone.device and audio.speaker.device empty (null) to use them")
+    conf = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
+    if (conf / "pipewire" / "pipewire.conf.d" / "60-littlebot-echo-cancel.conf").exists():
+        return (f"PipeWire's echo canceller is set up, but its ALSA devices ({EC_MIC}, {EC_SPEAKER}) are missing: "
+                "run scripts/setup_echo_cancel.sh again (check: scripts/setup_echo_cancel.sh --check)")
     return "not set up on this robot: scripts/setup_echo_cancel.sh"
 
 

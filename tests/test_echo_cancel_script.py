@@ -39,6 +39,7 @@ EC_NODES = [
     (83, "littlebot_ec_playback", "Stream/Output/Audio", "LittleBot echo canceller", 0),
 ]
 CONF = Path(".config/pipewire/pipewire.conf.d/60-littlebot-echo-cancel.conf")
+ALSA_RC = Path(".config/alsa/asoundrc")
 
 _PW_DUMP = r'''
 import json, os, pathlib
@@ -96,11 +97,13 @@ if args[:2] == ["--user", "restart"] and "pipewire" in args:
         marker.unlink()
 '''
 
-# arecord / aplay: -L lists the pcm.<name> entries of ~/.asoundrc (as ALSA would); recording "works".
+# arecord / aplay: -L lists the pcm.<name> entries of ~/.asoundrc and ~/.config/alsa/asoundrc (as ALSA
+# would); recording "works".
 _ALSA = r'''
 import os, pathlib, re, sys
-rc = pathlib.Path(os.environ["HOME"]) / ".asoundrc"
-names = re.findall(r"^pcm\.(\w+)", rc.read_text(), re.M) if rc.exists() else []
+home = pathlib.Path(os.environ["HOME"])
+names = [n for rc in (home / ".asoundrc", home / ".config" / "alsa" / "asoundrc") if rc.exists()
+         for n in re.findall(r"^pcm\.(\w+)", rc.read_text(), re.M)]
 if "-L" in sys.argv[1:]:
     print("null\n    Discard all samples")
     for n in names:
@@ -182,7 +185,7 @@ def test_dry_run_prints_the_config_it_would_write_and_changes_nothing(fake_pw) -
         assert want in conf, want
     assert USB_SPK_MIC not in conf
     assert conf.count("{") == conf.count("}") and conf.count("[") == conf.count("]")
-    assert f"[dry-run] write {home / '.asoundrc'}:" in out
+    assert f"[dry-run] write {home / ALSA_RC}:" in out
     for want in ("pcm.littlebot_ec_mic {", "pcm.littlebot_ec_speaker {", "type pipewire",
                  'capture_node "littlebot_ec_mic"', 'playback_node "littlebot_ec_speaker"', "show on"):
         assert want in out, want
@@ -212,8 +215,8 @@ def test_setup_is_idempotent_checks_and_removes_cleanly(fake_pw) -> None:
     assert _changes(calls) == ["systemctl --user restart pipewire pipewire-pulse wireplumber",
                                "wpctl set-default 80", "wpctl set-default 81"]
     assert (home / CONF).is_file()
-    rc = (home / ".asoundrc").read_text()
-    assert rc.startswith(original.rstrip("\n")) and "pcm.littlebot_ec_mic {" in rc  # their settings are kept
+    assert (home / ".asoundrc").read_text() == original  # their own file is left alone
+    assert "pcm.littlebot_ec_mic {" in (home / ALSA_RC).read_text()
     assert "Echo cancelling looks set up" in res.stdout  # it runs the check at the end
     assert "FAIL" not in res.stdout
     assert "LittleBot's service is not running" in res.stdout
@@ -249,7 +252,23 @@ def test_an_asoundrc_of_our_own_is_deleted_on_remove(fake_pw) -> None:
     assert res.returncode == 0, res.stdout + res.stderr
     assert "WARN  default speaker is" in res.stdout  # --no-default: a video's sound isn't cancelled
     res, _, _ = fake_pw("--remove", "--wait", "1")
-    assert res.returncode == 0 and not (home / ".asoundrc").exists()
+    assert res.returncode == 0 and not (home / ALSA_RC).exists()
+
+
+def test_a_block_left_in_the_old_asoundrc_is_moved(fake_pw) -> None:
+    """Earlier versions wrote ~/.asoundrc, which something on the robot deleted at boot."""
+    res, _, home = fake_pw("--wait", "2")
+    assert res.returncode == 0, res.stdout + res.stderr
+    block = (home / ALSA_RC).read_text()
+    (home / ".asoundrc").write_text("# mine\n\n" + block)
+    res, _, _ = fake_pw("--check")
+    assert "WARN  LittleBot's block is in" in res.stdout
+    res, _, _ = fake_pw("--wait", "2")
+    assert res.returncode == 0, res.stdout + res.stderr
+    assert (home / ".asoundrc").read_text().strip() == "# mine" and "pcm.littlebot_ec_mic {" in (home / ALSA_RC).read_text()
+    (home / ".asoundrc").unlink()  # deleted at boot: nothing is lost
+    res, _, _ = fake_pw("--check")
+    assert res.returncode == 0 and "FAIL" not in res.stdout, res.stdout
 
 
 def test_check_reports_missing_plugins(fake_pw, tmp_path: Path) -> None:

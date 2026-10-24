@@ -192,7 +192,8 @@ What it does (all user-level, nothing in `/etc`):
   `pw-dump` (`--mic NAME` / `--speaker NAME` to pick others). It makes a microphone
   `littlebot_ec_mic` and a speaker `littlebot_ec_speaker` ("LittleBot microphone / speaker (echo
   cancelled)" in `wpctl status`);
-* adds a marked block to `~/.asoundrc` (the rest of the file is kept) with two ALSA devices of the
+* adds a marked block to `~/.config/alsa/asoundrc` (ALSA reads it as well as `~/.asoundrc`, which
+  something on Raspberry Pi OS deleted at boot; the rest of the file is kept) with two ALSA devices of the
   same names, `type pipewire` (package `pipewire-alsa`), so PortAudio, and so LittleBot, can open them;
 * restarts PipeWire (`systemctl --user restart pipewire pipewire-pulse wireplumber`; sound stops for a
   moment), makes the two the default sound devices (`wpctl set-default`, so Chromium's YouTube sound
@@ -208,7 +209,7 @@ Check by hand: `wpctl status` (the two under *Sinks* and *Sources*, marked `*` a
 `pw-cli ls Node | grep littlebot_ec`, `arecord -L | grep -A1 littlebot_ec`, `aplay -L | grep -A1 littlebot_ec`,
 `.venv/bin/python scripts/check_audio.py --list`.
 
-Undo: `scripts/setup_echo_cancel.sh --remove` (removes the file and the `~/.asoundrc` block,
+Undo: `scripts/setup_echo_cancel.sh --remove` (removes the file and the `~/.config/alsa/asoundrc` block,
 restarts PipeWire and makes the USB devices the defaults again with `scripts/set_default_speaker.sh`).
 To keep it set up but not use it: `audio.echo_cancel: off` or only `chatgpt.live_barge_in: off`.
 

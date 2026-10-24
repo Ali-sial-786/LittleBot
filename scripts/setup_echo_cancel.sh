@@ -15,7 +15,9 @@
 #      USB microphone and the USB speaker. It makes two devices with stable names:
 #        littlebot_ec_speaker  (Audio/Sink)   plays on the USB speaker; the canceller knows what it played
 #        littlebot_ec_mic      (Audio/Source) the USB microphone with that sound taken out
-#   2. A marked block in ~/.asoundrc: one ALSA PCM per device, through the pipewire ALSA plugin
+#   2. A marked block in ~/.config/alsa/asoundrc (ALSA reads it as well as ~/.asoundrc; on the robot
+#      something deleted ~/.asoundrc at boot, so the block lives here and is taken out of ~/.asoundrc,
+#      where earlier versions put it): one ALSA PCM per device, through the pipewire ALSA plugin
 #      (pipewire-alsa: `type pipewire` with `capture_node` / `playback_node`), with a hint so that
 #      `arecord -L` / `aplay -L` list them. PortAudio (LittleBot uses it through sounddevice) lists
 #      every pcm.<name> of the ALSA configuration under that name, so LittleBot finds them
@@ -68,7 +70,7 @@ Usage: scripts/setup_echo_cancel.sh [options]
 
 Sets up PipeWire's echo canceller (WebRTC) for the USB microphone and speaker: an echo-cancelled
 microphone "littlebot_ec_mic" and speaker "littlebot_ec_speaker", reachable from ALSA / PortAudio
-(LittleBot) through ~/.asoundrc, and makes them the default sound devices. Run it as the desktop
+(LittleBot) through ~/.config/alsa/asoundrc, and makes them the default sound devices. Run it as the desktop
 user (no sudo). Untested on a real Raspberry Pi: run --check afterwards.
 
 Options:
@@ -148,7 +150,8 @@ fi
 
 CONF_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"
 PW_CONF="$CONF_HOME/pipewire/pipewire.conf.d/$CONF_NAME"
-ASOUNDRC="$HOME/.asoundrc"
+ASOUNDRC="$CONF_HOME/alsa/asoundrc"  # LittleBot's block (ALSA's alsa.conf loads it after ~/.asoundrc)
+OLD_ASOUNDRC="$HOME/.asoundrc"  # where earlier versions put it
 
 # ---------------------------------------------------------------------------
 # Reading the PipeWire graph: `pw-dump` JSON (stdin) -> KEY<TAB>VALUE lines.
@@ -338,13 +341,29 @@ $BLOCK_END
 EOF
 }
 
-# ~/.asoundrc without LittleBot's block (the rest is kept as it is).
+# An ALSA file ($1, default $ASOUNDRC) without LittleBot's block (the rest is kept as it is).
 asound_without_block() {
-    [[ -f "$ASOUNDRC" ]] || return 0
-    awk -v b="$BLOCK_BEGIN" -v e="$BLOCK_END" '$0 == b {skip = 1; next} $0 == e {skip = 0; next} !skip' "$ASOUNDRC"
+    local f="${1:-$ASOUNDRC}"
+    [[ -f "$f" ]] || return 0
+    awk -v b="$BLOCK_BEGIN" -v e="$BLOCK_END" '$0 == b {skip = 1; next} $0 == e {skip = 0; next} !skip' "$f"
 }
 
-asound_has_block() { [[ -f "$ASOUNDRC" ]] && grep -qxF "$BLOCK_BEGIN" "$ASOUNDRC"; }
+asound_has_block() { local f="${1:-$ASOUNDRC}"; [[ -f "$f" ]] && grep -qxF "$BLOCK_BEGIN" "$f"; }
+
+# Take LittleBot's block out of $1 (the file goes when nothing else is in it). Returns 1 if it had none.
+strip_block() {
+    local f="$1" rest
+    asound_has_block "$f" || return 1
+    rest="$(asound_without_block "$f")"
+    if [[ -z "${rest//[[:space:]]/}" ]]; then
+        run rm -f "$f"
+    elif ((DRY_RUN)); then
+        info "[dry-run] remove LittleBot's block from $f (the rest stays)"
+    else
+        printf '%s\n' "$rest" >"$f"
+        info "removed LittleBot's block from $f (the rest stays)"
+    fi
+}
 
 # Write stdin to $1 unless it already has that content. Returns 0 if (it would be) changed.
 write_if_changed() {
@@ -442,6 +461,7 @@ do_check() {
     fi
     if [[ -f "$PW_CONF" ]]; then pass "config: $PW_CONF"; else fail "not set up: $PW_CONF is missing (run scripts/setup_echo_cancel.sh)"; fi
     if asound_has_block; then pass "ALSA devices: LittleBot's block in $ASOUNDRC"; else fail "no LittleBot block in $ASOUNDRC (run scripts/setup_echo_cancel.sh)"; fi
+    if asound_has_block "$OLD_ASOUNDRC"; then cwarn "LittleBot's block is in $OLD_ASOUNDRC too (an earlier version put it there; run scripts/setup_echo_cancel.sh to move it)"; fi
     if ((pw_ok)) && discover; then
         if [[ -n "$P_EC_SINK_ID" && -n "$P_EC_SOURCE_ID" ]]; then
             pass "PipeWire has $EC_SINK (id $P_EC_SINK_ID) and $EC_SOURCE (id $P_EC_SOURCE_ID)"
@@ -466,7 +486,7 @@ do_check() {
         else cwarn "default microphone is ${def:-unknown}, not $EC_SOURCE"; fi
     fi
     if have arecord && have aplay; then
-        if arecord -L 2>/dev/null | grep -qx "$EC_SOURCE"; then pass "arecord -L lists $EC_SOURCE"; else fail "arecord -L doesn't list $EC_SOURCE (~/.asoundrc not read?)"; fi
+        if arecord -L 2>/dev/null | grep -qx "$EC_SOURCE"; then pass "arecord -L lists $EC_SOURCE"; else fail "arecord -L doesn't list $EC_SOURCE ($ASOUNDRC not read?)"; fi
         if aplay -L 2>/dev/null | grep -qx "$EC_SINK"; then pass "aplay -L lists $EC_SINK"; else fail "aplay -L doesn't list $EC_SINK"; fi
         # Opens the microphone for 1 s; the sound goes to /dev/null (nothing is kept).
         if timeout 5 arecord -q -D "$EC_SOURCE" -d 1 -f S16_LE -r 48000 -c 1 /dev/null 2>/dev/null; then
@@ -541,20 +561,9 @@ if ((REMOVE)); then
     else
         info "no $PW_CONF"
     fi
-    if asound_has_block; then
-        rest="$(asound_without_block)"
-        if [[ -z "${rest//[[:space:]]/}" ]]; then
-            run rm -f "$ASOUNDRC"
-        elif ((DRY_RUN)); then
-            info "[dry-run] remove LittleBot's block from $ASOUNDRC (the rest stays)"
-        else
-            printf '%s\n' "$rest" >"$ASOUNDRC"
-            info "removed LittleBot's block from $ASOUNDRC (the rest stays)"
-        fi
-        CHANGED=1
-    else
-        info "no LittleBot block in $ASOUNDRC"
-    fi
+    for f in "$ASOUNDRC" "$OLD_ASOUNDRC"; do
+        if strip_block "$f"; then CHANGED=1; else info "no LittleBot block in $f"; fi
+    done
     if ((CHANGED)) && ((PW_OK)); then
         step "Restarting PipeWire"
         restart_pipewire || true
@@ -603,7 +612,7 @@ step "PipeWire echo canceller"
 CHANGED=0
 if pipewire_conf | write_if_changed "$PW_CONF"; then CHANGED=1; fi
 
-step "ALSA devices for LittleBot (~/.asoundrc)"
+step "ALSA devices for LittleBot ($ASOUNDRC)"
 NEW_ASOUND="$(asound_without_block)"
 if [[ -n "${NEW_ASOUND//[[:space:]]/}" ]]; then
     NEW_ASOUND="$NEW_ASOUND"$'\n\n'"$(asound_block)"
@@ -611,6 +620,7 @@ else
     NEW_ASOUND="$(asound_block)"
 fi
 if printf '%s\n' "$NEW_ASOUND" | write_if_changed "$ASOUNDRC"; then CHANGED=1; fi
+if strip_block "$OLD_ASOUNDRC"; then CHANGED=1; fi  # moved from where earlier versions put it
 
 if ((PW_OK == 0)); then  # only reachable with --dry-run
     run systemctl --user restart pipewire pipewire-pulse wireplumber
