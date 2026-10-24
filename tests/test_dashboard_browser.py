@@ -279,6 +279,28 @@ def test_ask_what_littlebot_sees_card_and_privacy_switch(phone):
     expect(row.get_by_role("switch")).not_to_be_checked()  # off by default
 
 
+def test_whos_who_on_the_profile_page_and_its_privacy_switch(phone):
+    page = phone.open("profile")
+    card = page.locator("section.card", has=page.get_by_role("heading", name="Who's who"))
+    card.scroll_into_view_if_needed()
+    expect(card.locator(".banner", has_text="Recognising family members is off")).to_be_visible()  # off by default
+    expect(card.get_by_text("Nobody added yet.")).to_be_visible()
+    expect(card.get_by_text("Never the photos.", exact=False)).to_be_visible()
+    card.get_by_label("Name", exact=True).fill("Ali")
+    card.get_by_label("Who they are").fill("dad")
+    card.get_by_role("button", name="Add person").click()
+    expect(card.get_by_text("Ali (dad)")).to_be_visible()
+    expect(card.get_by_role("button", name="Take a sample")).to_be_visible()
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")  # no sideways scroll
+    (ali,) = phone.api("GET", "/people")["people"]
+    assert ali["name"] == "Ali" and ali["samples"] == 0
+    phone.api("DELETE", f"/people/{ali['id']}")  # leave the shared robot as it was
+    page = phone.open("privacy")
+    row = page.locator(".switch-row", has_text="Recognise family members")
+    expect(row).to_be_visible()
+    expect(row.get_by_role("switch")).not_to_be_checked()
+
+
 def test_settings_show_where_the_weather_is_for_and_let_the_parent_change_it(phone):
     page = phone.open("settings")
     card = page.locator("section.card", has=page.get_by_role("heading", name="Weather & time"))

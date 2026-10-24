@@ -133,6 +133,19 @@ def test_download_models_hands_fetches_both_hand_models(dl, tmp_path, monkeypatc
     assert (palm.name, hand.name) == tuple(fetched)  # where the counter looks for them
 
 
+def test_download_models_faces_fetches_both_face_models(dl, tmp_path, monkeypatch, ctx):
+    fetched: list[str] = []
+    monkeypatch.setattr(dl, "download", lambda m, dest, **kw: fetched.append(m.filename) or True)
+    assert dl.main(["faces", "--dest", str(tmp_path)]) == 0
+    assert fetched == ["face_detection_yunet_2023mar.onnx", "face_recognition_sface_2021dec.onnx"]
+    assert dl.MODELS["sface"].size > 30_000_000 and "Apache" in dl.MODELS["sface"].license
+    from littlebot.vision import faces
+
+    det, rec = faces.FaceRecognition(ctx).model_paths()
+    assert (det.name, rec.name) == tuple(fetched)  # where face recognition looks for them
+    assert Path(faces.SFACE_MODEL).name == fetched[1] == Path(ctx.config.vision.sface_model).name
+
+
 def test_synthetic_fixture_helpers_are_deterministic():
     a = blank_frame(64, 48)
     draw_cartoon_face(a, 32, 24, 20)

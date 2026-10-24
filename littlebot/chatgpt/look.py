@@ -134,8 +134,9 @@ friendly words the robot can say out loud.
 box, a label, a sign).
 - If the photo is too dark or blurry, or the thing asked about isn't in the picture, say so (for example \
 "I can't see your hand, hold it up in front of me") instead of guessing.
-- Never say who a person is, and never guess anyone's name, age or location. Don't read out private details \
-such as addresses, phone numbers or card numbers.
+- Never say who a person is, and never guess anyone's name, age or location, unless LittleBot's own face \
+recognition names them after the question: then use only those names. Don't read out private details such as \
+addresses, phone numbers or card numbers.
 - No lists, emoji or links."""
 
 QUESTION = "Look at this photo from your camera. {question}"
@@ -319,7 +320,7 @@ class CameraLook:
 
     # ------------------------------------------------------------ look
     async def look(self, question: str, *, asked_by: str = "parent",
-                   on_first: Callable[[str], Any] | None = None) -> dict[str, Any]:
+                   on_first: Callable[[str], Any] | None = None, context: str | None = None) -> dict[str, Any]:
         """Answer ``question`` from one photo:
         ``{ok, answer, error, detail, latency_ms, source, sent, first, rest, timing}``.
 
@@ -328,7 +329,8 @@ class CameraLook:
         ``first`` is that sentence and ``rest`` the checked remainder (or None): the two together say
         what ``answer`` says. ``source``: "robot" (counted here) or "chatgpt"; ``sent``: whether the
         photo went to ChatGPT. ``timing``: where the time went (labels and milliseconds only, also
-        logged; ``timing_text`` makes it one line)."""
+        logged; ``timing_text`` makes it one line). ``context``: who LittleBot recognised in front of the
+        camera (names only, littlebot/vision/faces.py), sent after the question."""
         t0 = time.monotonic()
         asked_by = asked_by if isinstance(asked_by, str) and _ASKED_BY.fullmatch(asked_by) else "other"
         timing: dict[str, Any] = {}
@@ -399,7 +401,8 @@ class CameraLook:
 
             stream = _FirstSentence(first_sentence if counting is not None and on_first is not None else on_first,
                                     t0, timing)
-            asking = asyncio.ensure_future(self._ask(photo, width, text, detail, detailed, stream, timing, asked_by))
+            asking = asyncio.ensure_future(self._ask(photo, width, text, detail, detailed, stream, timing, asked_by,
+                                                     context))
             extra["sent"], photo = True, None  # the request holds the image now, and drops it when done
             if counting is not None:  # the robot is still counting: the first sure answer wins
                 await asyncio.wait({counting, asking}, return_when=asyncio.FIRST_COMPLETED)
@@ -440,7 +443,7 @@ class CameraLook:
                 self._log_timing(t0, timing)
 
     async def _ask(self, photo: bytes, width: int, text: str, detail: str, detailed: bool, stream: "_FirstSentence",
-                   timing: dict[str, Any], asked_by: str) -> Any:
+                   timing: dict[str, Any], asked_by: str, context: str | None = None) -> Any:
         """The ChatGPT request for one look (a ``width`` px photo, made smaller first when ChatGPT only looks
         at 512 px)."""
         kwargs = self._request_options(detail=detail, effort=self.count_effort if detailed else self.effort,
@@ -465,10 +468,14 @@ class CameraLook:
                     stream.feed(piece)
             return feed
 
+        content = QUESTION.format(question=text)
+        if context:  # who LittleBot recognised (names only)
+            content += "\n" + sanitize_user_text(context, max_chars=400)
+
         def request(provider: BaseProvider, name: str) -> "asyncio.Task[Any]":
             opts = {**kwargs, "on_delta": feed_for(name)} if "on_delta" in kwargs else kwargs
             task = asyncio.ensure_future(provider.reply(
-                [{"role": "user", "content": QUESTION.format(question=text)}], system=self._system_prompt(),
+                [{"role": "user", "content": content}], system=self._system_prompt(),
                 max_tokens=200, timeout=REPLY_TIMEOUT_S, images=[photo], **opts))
             task.add_done_callback(lambda t: t.cancelled() or t.exception())  # a loser's error is not news
             return task

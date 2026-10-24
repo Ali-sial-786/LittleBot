@@ -1,6 +1,6 @@
 // Child profile: minimal, optional information. Stored only on the robot.
 
-import { get, post, put } from '../api.js';
+import { del, get, post, put } from '../api.js';
 import { banner, button, clear, confirmDialog, fmtAge, h, icon, pageHead, setText, tagInput, toast } from '../ui.js';
 
 export default {
@@ -35,6 +35,7 @@ export default {
     const songs = tagInput({ label: 'Favourite songs', placeholder: 'e.g. Twinkle Twinkle' });
     const interests = tagInput({ label: 'Interests', placeholder: 'e.g. balls, bubbles' });
     const remembered = tagInput({ label: 'Things LittleBot remembers', max: 20, maxLen: 100, placeholder: "e.g. Ali is Amara's dad" });
+    const who = whosWho(app);
 
     const saveBtn = h('button', { type: 'submit', class: 'btn primary big' }, icon('check'), h('span', { text: 'Save profile' }));
     const form = h('form', { class: 'stack', novalidate: true },
@@ -96,7 +97,8 @@ export default {
               }
             },
           }))),
-        h('section', { class: 'card span-2' }, form)));
+        h('section', { class: 'card span-2' }, form),
+        who.el));
 
     let languagesFilled = false;
     function fill(res) {
@@ -122,6 +124,136 @@ export default {
     }
 
     get('/profile').then(fill).catch((e) => view.append(banner('danger', 'alert', 'Could not load the profile', e.message)));
+    who.load();
     return {};
   },
 };
+
+// Who's who: the people LittleBot may recognise on its camera (littlebot/vision/faces.py, opt-in in Privacy).
+// Only names, roles and sample counts come from the robot. Taking a sample or checking who is in view
+// shows one small preview of what the camera saw; it is not kept anywhere.
+function whosWho(app) {
+  const status = h('div');
+  const list = h('div', { class: 'media-list' });
+  const shot = h('img', { alt: 'What the camera saw (not kept)', style: { maxWidth: '320px', width: '100%', borderRadius: '8px', display: 'block' } });
+  const shotText = h('p', { class: 'muted' });
+  const shotBox = h('div', { class: 'stack-sm mt-2' }, shot, shotText);
+  shotBox.hidden = true;
+  const name = h('input', { type: 'text', id: 'ww-name', maxlength: 30, autocomplete: 'off', placeholder: 'e.g. Ali' });
+  const role = h('input', { type: 'text', id: 'ww-role', maxlength: 30, autocomplete: 'off', placeholder: 'e.g. dad, the baby' });
+  const addBtn = h('button', { type: 'submit', class: 'btn primary' }, icon('plus'), h('span', { text: 'Add person' }));
+  const addForm = h('form', { class: 'form-grid two mt-2', novalidate: true },
+    h('div', { class: 'field' }, h('label', { for: 'ww-name', text: 'Name' }), name),
+    h('div', { class: 'field' }, h('label', { for: 'ww-role', text: 'Who they are' }), role, h('span', { class: 'hint', text: 'A few words, for example "dad", "the baby" or "Amara\'s grandma".' })),
+    h('div', {}, addBtn));
+  let state = { people: [], suggested_samples: 5, retake_days: 30 };
+
+  const showShot = (res, text) => {
+    shotBox.hidden = !res?.preview;
+    if (res?.preview) shot.src = res.preview; // a data: URL made for this answer only
+    setText(shotText, text || '');
+  };
+
+  addForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (!name.value.trim()) { toast('Add a name first.', 'error'); name.focus(); return; }
+    addBtn.disabled = true;
+    const res = await app.act(() => post('/people', { name: name.value.trim(), role: role.value.trim() }), (r) => `${r.person?.name || 'They'} can now have face samples taken.`);
+    addBtn.disabled = false;
+    if (res) { name.value = ''; role.value = ''; fill(res); }
+  });
+
+  const label = (p) => (p.role ? `${p.name} (${p.role})` : p.name);
+  const samplesText = (p) => {
+    if (!p.samples) return `No samples yet: take about ${state.suggested_samples}.`;
+    const when = p.last_sample_days == null ? '' : p.last_sample_days < 1 ? ', newest today' : `, newest ${p.last_sample_days} day${p.last_sample_days === 1 ? '' : 's'} ago`;
+    const more = p.samples < state.suggested_samples ? ` A few more help (about ${state.suggested_samples}).` : '';
+    return `${p.samples} sample${p.samples === 1 ? '' : 's'}${when}.${more}`;
+  };
+
+  function row(p) {
+    const take = button('Take a sample', {
+      kind: 'primary', small: true, iconName: 'camera',
+      onClick: async () => {
+        const res = await app.act(() => post(`/people/${p.id}/samples`));
+        if (!res) return;
+        fill(res);
+        if (res.ok) {
+          toast(`Sample kept for ${p.name} (${res.samples}).`, 'ok');
+          showShot(res, `The face boxed in green was kept as numbers for ${p.name}; this photo isn't kept.`);
+        } else {
+          toast(res.detail || 'That sample was not kept.', 'error');
+          showShot(res, res.detail || '');
+        }
+      },
+    });
+    const again = button('', {
+      kind: 'ghost', small: true, iconName: 'refresh', title: 'Start again', ariaLabel: `Delete ${p.name}'s samples and start again`,
+      onClick: async () => {
+        if (await confirmDialog({ title: `Start ${p.name}'s samples again?`, body: 'This deletes their samples; take new ones afterwards.', confirm: 'Delete samples', danger: true })) {
+          const res = await app.act(() => del(`/people/${p.id}/samples`), 'Samples deleted.');
+          if (res) fill(res);
+        }
+      },
+    });
+    const remove = button('', {
+      kind: 'danger-outline', small: true, iconName: 'trash', title: 'Remove', ariaLabel: `Remove ${p.name}`,
+      onClick: async () => {
+        if (await confirmDialog({ title: `Remove ${p.name}?`, body: 'LittleBot forgets their name and face samples.', confirm: 'Remove', danger: true })) {
+          const res = await app.act(() => del(`/people/${p.id}`), `${p.name} removed.`);
+          if (res) fill(res);
+        }
+      },
+    });
+    return h('div', { class: 'media-item' },
+      h('div', { class: 'thumb' }, icon('person')),
+      h('div', { class: 'info' },
+        h('div', { class: 'title', text: label(p) }),
+        h('div', { class: 'muted', text: samplesText(p) }),
+        p.needs_new_samples ? h('span', { class: 'badge warn mt-1' }, icon('clock'), 'Time for new samples') : null),
+      h('div', { class: 'actions' }, take, again, remove));
+  }
+
+  function fill(res) {
+    state = res;
+    const banners = [];
+    if (res.blocked === 'off') banners.push(banner('info', 'info', 'Recognising family members is off', 'Turn on "Recognise family members" on the Privacy page to take samples and let LittleBot use these names.'));
+    else if (res.blocked) banners.push(banner('warn', 'alert', 'LittleBot can\'t recognise faces right now', res.blocked_detail || ''));
+    clear(status).append(...banners);
+    clear(list).append(...(res.people || []).map(row));
+    if (!(res.people || []).length) list.append(h('p', { class: 'muted', text: 'Nobody added yet.' }));
+    addForm.hidden = (res.people || []).length >= (res.max_people || 12);
+  }
+
+  const check = button('Who\'s in view?', {
+    kind: 'soft', iconName: 'eye',
+    onClick: async () => {
+      const res = await app.act(() => post('/people/check'));
+      if (!res) return;
+      fill(res);
+      const names = (res.faces || []).map((f) => `${f.n}: ${f.name ? `${f.name}${f.role ? ` (${f.role})` : ''}` : 'someone LittleBot doesn\'t know'} (match ${f.score.toFixed(2)}, needs ${res.threshold.toFixed(2)})`);
+      showShot(res, names.length ? names.join('; ') : 'LittleBot can\'t see a clear face right now.');
+    },
+  });
+  const forget = button('Forget all faces', {
+    kind: 'danger-outline', iconName: 'trash',
+    onClick: async () => {
+      if (await confirmDialog({ title: 'Forget every face?', body: 'This deletes everyone on this list and all their face samples. It cannot be undone.', confirm: 'Forget all faces', danger: true })) {
+        const res = await app.act(() => post('/people/forget-all'), 'All faces forgotten.');
+        if (res) { fill(res); showShot(null); }
+      }
+    },
+  });
+
+  const el = h('section', { class: 'card span-2' },
+    h('div', { class: 'card-head' }, h('h2', {}, icon('person'), 'Who\'s who')),
+    h('p', { class: 'muted', text: 'LittleBot can learn to recognise the family on its camera, so the voice chat knows who is in front of it and uses their names. Add each person, then take about 5 samples with only them in front of the camera, about an arm\'s length away, facing it, in good light (turn the head a little between samples). Babies\' faces change fast: take new samples every month or so.' }),
+    h('p', { class: 'muted mt-1', text: 'Kept on the robot only: the names and, for each sample, 128 numbers that describe the face. Never the photos. The voice chat is told only the names of the people in view.' }),
+    status, addForm, h('div', { class: 'mt-2' }, list), shotBox,
+    h('div', { class: 'btn-row mt-2' }, check, forget));
+
+  return {
+    el,
+    load: () => get('/people').then(fill).catch((e) => clear(status).append(banner('danger', 'alert', 'Could not load Who\'s who', e.message))),
+  };
+}

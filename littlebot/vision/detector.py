@@ -3,7 +3,8 @@
 There is deliberately NO recognition, identity, age/emotion estimation or any
 other biometric profiling here, and frames are never written anywhere. Detectors
 return plain boxes in normalised frame coordinates; landmarks that some models
-produce are discarded immediately.
+produce are discarded immediately. (Opt-in recognition of the family members a
+parent added is separate: littlebot/vision/faces.py.)
 
 Detectors
 ---------

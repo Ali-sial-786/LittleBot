@@ -17,8 +17,9 @@ Frames live only in local variables for one cycle: nothing is buffered,
 stored, sent anywhere, or used for identification. The exceptions:
 
 * ``capture_photo``: on request (one at a time, e.g. a parent asks ChatGPT "how many
-  fingers?") the thread JPEG-encodes a downscaled copy of the NEXT frame and hands
-  the bytes to that one caller; nothing is kept here or written anywhere.
+  fingers?", or the opt-in family recognition in littlebot/vision/faces.py checks who is
+  there) the thread JPEG-encodes a downscaled copy of the NEXT frame and hands the bytes
+  to that one caller; nothing is kept here or written anywhere.
 * ``keep_photo_warm``: while a live conversation runs AND its ``allowed`` check passes
   (the parent's AI-camera consent), the thread keeps ONE small JPEG of a recent frame in
   memory, replaced every ``every`` seconds, so a look answers without waiting for the

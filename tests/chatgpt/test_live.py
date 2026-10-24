@@ -1241,3 +1241,150 @@ async def test_notes_leave_the_childs_name_out_when_it_isnt_shared(live, ctx):
     await connect(svc, server)
     text = server.requests[-1]["body"]["session"]["instructions"]
     assert "Amara" not in text and "Ali is the little one's dad" in text
+
+
+# ------------------------------------------------------------------ who is in front of the camera
+class SeenFaces:
+    """Stands in for the family's faces (littlebot/vision/faces.py): ``seen`` is who each check finds."""
+
+    def __init__(self, *people: Any, reason: str | None = None) -> None:
+        from types import SimpleNamespace  # noqa: PLC0415
+
+        self.seen = list(people)
+        self.reason = reason
+        self.checks = 0
+        self.store = SimpleNamespace(has_samples=lambda: True)
+
+    def blocked_reason(self) -> str | None:
+        return self.reason
+
+    async def who_is_there(self) -> Any:
+        from littlebot.vision import faces  # noqa: PLC0415
+
+        self.checks += 1
+        return faces.Sighting(0.0, tuple(faces.Seen(p, 0.8 if p else 0.1, (0.05 + 0.6 * i, 0.3, 0.2, 0.3))
+                                         for i, p in enumerate(self.seen)))
+
+
+def person(pid: int, name: str, role: str = "") -> Any:
+    import numpy as np  # noqa: PLC0415
+
+    from littlebot.vision import faces  # noqa: PLC0415
+
+    centre = np.zeros(128, np.float32)
+    centre[pid] = 1.0
+    return faces.Known(pid, name, role, centre)
+
+
+def face_notes(server: FakeOpenAI) -> list[str]:
+    return [n for n in notes(server) if "front of the camera" in n or "front of your camera" in n
+            or "recognising faces" in n]
+
+
+@pytest.fixture
+def quick_faces(monkeypatch):
+    from littlebot.vision import faces  # noqa: PLC0415
+
+    for name, value in {"CHECK_EVERY_S": 0.05, "TICK_S": 0.02, "ARRIVE_WINDOW_S": 5.0, "LEAVE_AFTER_S": 0.3,
+                        "NOTE_MIN_GAP_S": 0.0}.items():
+        monkeypatch.setattr(faces, name, value)
+
+
+async def test_the_voice_knows_who_is_in_front_of_the_camera_from_the_start(live, ctx, caplog):
+    svc, server, _audio, _provider, _alerts = live
+    ctx.extras["faces"] = SeenFaces(person(1, "Ali", "dad"))
+    with caplog.at_level(logging.INFO):
+        await connect(svc, server)
+    text = server.requests[-1]["body"]["session"]["instructions"]
+    assert "LittleBot recognises the family members a grown-up showed it" in text
+    assert "In front of your camera now: Ali (dad)." in text and "never guess who someone is" in text
+    assert "live voice: 1 known face(s) in view at the start" in caplog.text
+    await asyncio.sleep(0.3)
+    assert face_notes(server) == []  # already in the instructions: no note about it
+
+
+async def test_the_voice_is_told_quietly_only_when_that_changes(live, ctx, quick_faces):
+    svc, server, _audio, _provider, _alerts = live
+    ali, mum = person(1, "Ali", "dad"), person(2, "Mum")
+    seen = ctx.extras["faces"] = SeenFaces(ali)
+    await connect(svc, server)
+    seen.seen = [ali, mum]
+    await wait_for(lambda: face_notes(server))
+    assert face_notes(server) == ["Now in front of your camera: Ali (dad) and Mum. Don't announce this; just know it."]
+    checks = seen.checks
+    await wait_for(lambda: seen.checks >= checks + 4)
+    assert len(face_notes(server)) == 1  # the same people: nothing more is said
+    seen.seen = [ali, None]  # Mum went; someone LittleBot doesn't know came
+    await wait_for(lambda: len(face_notes(server)) == 2)
+    assert face_notes(server)[-1] == "Now in front of your camera: Ali (dad). Don't announce this; just know it."
+    assert any(c.startswith("Now in front of your camera") for c in note_captions(svc))  # the parent sees it too
+    seen.reason = "off"  # the parent switched it off mid-call
+    await wait_for(lambda: len(face_notes(server)) == 3)
+    assert face_notes(server)[-1].startswith("LittleBot has stopped recognising faces")
+    assert svc.status()["active"]
+
+
+async def test_no_faces_line_or_notes_while_it_is_switched_off(live, ctx, quick_faces):
+    svc, server, _audio, _provider, _alerts = live
+    seen = ctx.extras["faces"] = SeenFaces(person(1, "Ali", "dad"), reason="off")
+    await connect(svc, server)
+    text = server.requests[-1]["body"]["session"]["instructions"]
+    assert "recognises the family members" not in text and "Ali" not in text
+    await asyncio.sleep(0.3)
+    assert face_notes(server) == [] and seen.checks == 0  # no photo looked at, nothing said
+
+
+async def test_face_recognition_is_off_by_default_in_a_call(live, ctx):
+    from littlebot.vision import faces  # noqa: PLC0415
+
+    svc, server, _audio, _provider, _alerts = live
+    await connect(svc, server)
+    assert "recognises the family members" not in server.requests[-1]["body"]["session"]["instructions"]
+    assert faces.get_faces(ctx).blocked_reason() == "off"
+
+
+class NamingLook(FakeLook):
+    """A CameraLook that also takes who LittleBot recognised."""
+
+    def __init__(self, **kw: Any) -> None:
+        super().__init__(**kw)
+        self.contexts: list[str | None] = []
+
+    async def look(self, question: str, *, asked_by: str = "parent", context: str | None = None) -> dict[str, Any]:
+        self.contexts.append(context)
+        return await super().look(question, asked_by=asked_by)
+
+
+async def test_a_look_is_told_who_littlebot_recognised(live, ctx, quick_faces):
+    pytest.importorskip("littlebot.chatgpt.look")
+    svc, server, _audio, _provider, _alerts = live
+    look = ctx.extras["camera_look"] = NamingLook(answer="Ali is holding a red cup.")
+    ctx.extras["faces"] = SeenFaces(person(1, "Ali", "dad"), None)
+    await connect(svc, server)
+    delegate(server, "f1", "Look at the camera: who is holding the cup?")
+    await wait_for(lambda: answers(server, "f1"))
+    (context,) = look.contexts
+    assert "Ali (dad) on the left of the photo and someone LittleBot doesn't know" in context
+    assert "never guess a name for anyone else" in context
+    assert answers(server, "f1") == ["Ali is holding a red cup."]
+
+
+async def test_a_look_without_recognition_gets_no_names(live, ctx):
+    pytest.importorskip("littlebot.chatgpt.look")
+    svc, server, _audio, _provider, _alerts = live
+    look = ctx.extras["camera_look"] = NamingLook()
+    ctx.extras["faces"] = SeenFaces(person(1, "Ali", "dad"), reason="off")
+    await connect(svc, server)
+    delegate(server, "f2", "Look at the camera: who is that?")
+    await wait_for(lambda: answers(server, "f2"))
+    assert look.contexts == [None]
+
+
+async def test_the_childs_name_stays_on_the_robot_when_recognised(live, ctx):
+    svc, server, _audio, _provider, _alerts = live
+    ctx.settings.set("profile", {"nickname": "Amara"})
+    ctx.settings.set("ai.share_child_name", False)
+    ctx.extras["faces"] = SeenFaces(person(3, "Amara", "the baby"))
+    await connect(svc, server)
+    text = server.requests[-1]["body"]["session"]["instructions"]
+    assert "In front of your camera now: the little one (the baby)." in text and "Amara" not in text

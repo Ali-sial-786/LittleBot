@@ -1,4 +1,4 @@
-"""Parent privacy controls (camera, microphone, cloud, AI camera), backed by Settings."""
+"""Parent privacy controls (camera, microphone, cloud, AI camera, recognising faces), backed by Settings."""
 
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ _KEYS = {
     "cloud_enabled": "privacy.cloud_enabled",
     "record_history": "privacy.record_history",
     "ai_camera_enabled": "privacy.ai_camera_enabled",
+    "face_recognition_enabled": "privacy.face_recognition_enabled",
 }
 
 
@@ -45,6 +46,12 @@ class PrivacyManager:
         The camera and cloud switches must be on as well for a photo to be taken."""
         return (not self._offline) and bool(self._settings.get(_KEYS["ai_camera_enabled"]))
 
+    @property
+    def face_recognition_enabled(self) -> bool:
+        """Parent allowed LittleBot to recognise the family members they added (off by default). On the
+        robot only (offline mode too); the camera switch must be on as well (littlebot/vision/faces.py)."""
+        return bool(self._settings.get(_KEYS["face_recognition_enabled"]))
+
     def set(self, **flags: bool) -> dict[str, Any]:
         for name, value in flags.items():
             if name not in _KEYS:
@@ -63,6 +70,7 @@ class PrivacyManager:
             "cloud_enabled": self.cloud_enabled,
             "record_history": self.record_history,
             "ai_camera_enabled": self.ai_camera_enabled,
+            "face_recognition_enabled": self.face_recognition_enabled,
             "offline_mode": self._offline,
         }
 

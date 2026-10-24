@@ -108,7 +108,7 @@ What it does (idempotent - safe to run again after `git pull`):
 | Groups | adds you to `video audio input render` only if missing (log out/in afterwards) |
 | `.venv` | created once, never deleted or recreated; `pip install -e ".[vision,audio,pi]"` |
 | Live voice | `pip install -e ".[live]"` as its own step: aiortc for GPT-Live voice ([CHATGPT.md](CHATGPT.md)), prebuilt aarch64 wheels (~40 MB, nothing compiled). A failure only warns; `--no-live` skips it |
-| Face and hand models | `scripts/download_models.py yunet hands` (vision module; ~8 MB into `models/`: the face detector and the hand models that count fingers on the robot; skipped when already verified; needs internet; `--no-models` skips) |
+| Face and hand models | `scripts/download_models.py yunet hands sface` (vision module; ~47 MB into `models/`: the face detector, the hand models that count fingers on the robot and SFace, which recognises family members only once a parent switches it on (section 8); skipped when already verified; needs internet; `--no-models` skips) |
 | Wake word | "Hey LittleBot" starts live voice ([CHATGPT.md](CHATGPT.md#wake-word-hey-littlebot)), heard offline on the robot: `pip install -e ".[local-stt]"` (vosk, one prebuilt aarch64 wheel, ~3 MB) and `scripts/download_models.py vosk-en` (40 MB download, unpacked to `models/vosk-model-small-en-us-0.15/`, ~140 MB RAM while the wake word is on). A failure only warns; `--no-wake-word` skips both, `--no-models` only the model |
 | Files | `data/logs/`; `config/local.yaml` from `config/hardware.example.yaml` and `.env` from `.env.example` **only if missing**; `.env` set to mode 600 |
 | Sound output | `scripts/set_default_speaker.sh`: the USB speaker and USB microphone become the default sound devices instead of the HDMI screen (a WirePlumber rule in `~/.config/wireplumber` + `wpctl set-default`; no sudo). A failure only warns; `--no-audio-default` skips it |
@@ -224,6 +224,29 @@ grep -i setup data/logs/littlebot.log | tail -3        # or from the app's log f
 
 Open http://127.0.0.1:8765 in the Pi's browser, enter the code and choose a strong password.
 
+### Recognising family members (optional)
+
+So the voice chat knows who is in front of the camera ("Ali (dad)", "Amara (the baby)") and uses
+their names. Everything runs on the robot; only names and 128 numbers per face sample are kept
+(details: [AI_SAFETY.md §4](AI_SAFETY.md#4-privacy)). Off by default.
+
+1. The model (the installer gets it; else, once): `.venv/bin/python scripts/download_models.py faces`
+   (YuNet + SFace, 39 MB, SHA-256 checked). `--list` shows whether both are `verified`.
+2. Dashboard **Privacy** → switch on **Recognise family members** (the camera must be on too).
+3. Dashboard **Profile** → **Who's who**: add each person with a name and a few words ("Ali", "dad";
+   "Amara", "the baby"), then press **Take a sample** about 5 times with only that person in front
+   of the camera, about an arm's length away, facing it, in good light. Each press shows what the
+   camera saw (green box: kept as numbers; the photo itself is not kept).
+4. Press **Who's in view?** to check: it lists each face as a name or "someone LittleBot doesn't
+   know", with its match score and the score needed (`vision.face_match_threshold`, 0.45).
+5. Take new samples of the baby every month or so (the card says when it's time).
+
+In the journal (`journalctl --user -u littlebot -f`), look for `face recognition: models loaded in
+... ms`, `face recognition: sample kept (N for that person)` and, in a voice chat,
+`live voice: face recognition is on (N face(s) in view, N known)`, `live voice: N known face(s) in
+view at the start` and `live voice: told who is in view (N known)`. `face recognition can't run
+(no_models)` means step 1 is missing. Names and face numbers are never logged.
+
 ## 9. Use the dashboard from your phone (LAN opt-in)
 
 By default the dashboard listens on `127.0.0.1` only, so nothing on the network can
@@ -310,7 +333,7 @@ What is worth keeping (everything else can be re-installed):
 
 | Path | Contents |
 |---|---|
-| `data/littlebot.db` | parent settings, dashboard password hash, allowlists, child profile |
+| `data/littlebot.db` | parent settings, dashboard password hash, allowlists, child profile, Who's who face samples (if any) |
 | `config/local.yaml`, `config/calibration.yaml` | this robot's hardware settings and servo calibration |
 | `.env` | API keys (secret: store the backup safely) |
 

@@ -125,6 +125,9 @@ class VisionConfig(_Section):
     gesture_fps: float = 10.0  # frame rate for the experimental gesture analyser (when enabled)
     pause_during_media: bool = True  # PLAYING_MEDIA: no frame decoding / detection (video needs the CPU)
     sleep_detect_fps: float = 1.5  # SLEEPING: reduced detection rate (a person can still wake the robot)
+    # Recognising family members (littlebot/vision/faces.py; opt-in: privacy.face_recognition_enabled)
+    sface_model: str = "models/face_recognition_sface_2021dec.onnx"  # relative to the project root
+    face_match_threshold: float = 0.45  # cosine similarity to a person's average sample (SFace's own: 0.363)
 
 
 class MicrophoneConfig(_Section):

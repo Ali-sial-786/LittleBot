@@ -1,17 +1,20 @@
 #!/usr/bin/env python3
-"""Download the optional face-DETECTION models and the wake-word speech model into models/ (git-ignored).
+"""Download the optional vision models and the wake-word speech model into models/ (git-ignored).
 
     .venv/bin/python scripts/download_models.py            # YuNet (recommended, ~230 KB)
     .venv/bin/python scripts/download_models.py haar       # Haar cascade XML (OpenCV 4.x builds without it)
     .venv/bin/python scripts/download_models.py hands      # optional: count fingers on the robot (~8 MB)
+    .venv/bin/python scripts/download_models.py faces      # optional: recognise family members (YuNet + SFace, 39 MB)
     .venv/bin/python scripts/download_models.py vosk-en    # wake word "Hey LittleBot" (Vosk small English, 40 MB)
     .venv/bin/python scripts/download_models.py all
     .venv/bin/python scripts/download_models.py --list     # what is installed / verified
     .venv/bin/python scripts/download_models.py --dest /some/dir --force
 
-These models only find WHERE faces are. LittleBot never does face recognition,
-identification or any other biometric analysis. Every file is checked against a
-pinned SHA-256 hash; a mismatch is deleted and reported. Standard library only.
+YuNet and Haar only find WHERE faces are. SFace (``faces``) is used only when a parent switches
+on "Recognise family members" in Privacy: it tells apart the family members the parent added on
+the dashboard, on the robot (littlebot/vision/faces.py); nothing else does any biometric analysis.
+Every file is checked against a pinned SHA-256 hash; a mismatch is deleted and reported. Standard
+library only.
 
 The speech model (vosk-en, a zip) is unpacked into models/vosk-model-small-en-us-0.15/
 and the zip deleted; it lets LittleBot hear its wake word on the robot, offline
@@ -96,8 +99,23 @@ MODELS: dict[str, Model] = {
         license="Apache-2.0 (OpenCV Model Zoo, from Google MediaPipe Hands)",
         note="hand landmarks for local finger counting (cv2.dnn); with hand_palm",
     ),
+    # Optional: recognise the family members a parent added (littlebot/vision/faces.py, opt-in in Privacy).
+    # 128 numbers per face, kept on the robot. Get it with YuNet: download_models.py faces
+    "sface": Model(
+        filename="face_recognition_sface_2021dec.onnx",
+        sha256="0ba9fbfa01b5270c96627c4ef784da859931e02f04419c829e83484087c34e79",
+        size=38_696_353,
+        urls=[
+            "https://media.githubusercontent.com/media/opencv/opencv_zoo/main/models/face_recognition_sface/"
+            "face_recognition_sface_2021dec.onnx",
+            "https://huggingface.co/opencv/face_recognition_sface/resolve/main/face_recognition_sface_2021dec.onnx",
+        ],
+        license="Apache-2.0 (OpenCV Model Zoo)",
+        note="SFace for cv2.FaceRecognizerSF: recognises family members (privacy.face_recognition_enabled); "
+             "~110 MB RAM in use",
+    ),
 }
-GROUPS: dict[str, list[str]] = {"hands": ["hand_palm", "hand_pose"]}  # names that fetch several models
+GROUPS: dict[str, list[str]] = {"hands": ["hand_palm", "hand_pose"], "faces": ["yunet", "sface"]}  # several models
 
 
 @dataclass(frozen=True)
@@ -264,8 +282,8 @@ def download(model: Model, dest: Path, *, force: bool = False, timeout: float = 
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(description="Download optional face-detection models (detection only, no recognition) "
-                                             "and the wake-word speech model.")
+    ap = argparse.ArgumentParser(description="Download optional vision models (face detection, finger counting, "
+                                             "opt-in family recognition) and the wake-word speech model.")
     choices = [*MODELS, *GROUPS, *ARCHIVES]
     ap.add_argument("names", nargs="*", default=["yunet"], help=f"models: {', '.join(choices)} or all (default: yunet)")
     ap.add_argument("--dest", default=str(DEFAULT_DEST), help="target directory (default: models/)")
@@ -302,6 +320,9 @@ def main(argv: list[str] | None = None) -> int:
         print("Done. The wake word (\"Hey LittleBot\") uses it within a few seconds; see docs/CHATGPT.md.")
     if ok and "yunet" in names:
         print("Done. vision.detector: yunet (the default) will now use YuNet; check with scripts/check_camera.py.")
+    if ok and "sface" in names:
+        print("Done. To recognise family members: switch on \"Recognise family members\" in Privacy, then add "
+              "people under Who's who on the Profile page.")
     return 0 if ok else 1
 
 

@@ -52,7 +52,7 @@ Options:
   --no-chromium        do not install Chromium (YouTube player)
   --dev                also install test tools (pytest) to run the test-suite on the Pi
   --no-models          do not download models (scripts/download_models.py): the YuNet face
-                       detector and the wake-word speech model
+                       detector, the hand and face-recognition models and the wake-word speech model
   --no-live            do not install live voice (the "live" extra: aiortc WebRTC, ~40 MB of
                        prebuilt wheels; docs/CHATGPT.md). Sign in with ChatGPT text works without it
   --no-wake-word       do not install the wake word ("Hey LittleBot" starts live voice): the
@@ -294,7 +294,7 @@ else
     info "live voice: pip install -e \".[live]\" (aiortc, prebuilt wheels ~40 MB; a failure only warns)"
 fi
 if ((NO_MODELS == 0)) && [[ -f "$REPO_DIR/scripts/download_models.py" ]]; then
-    info "models: YuNet face detector via scripts/download_models.py (skipped if already verified)"
+    info "models: YuNet face detector, hand models and SFace (family recognition, opt-in) via scripts/download_models.py (skipped if already verified)"
 fi
 if ((NO_WAKE)); then
     info "wake word: skipped (--no-wake-word)"
@@ -398,10 +398,11 @@ fi
 # The OpenCV 5 pip wheel has no Haar cascade support, so the vision module uses YuNet,
 # whose small ONNX model is downloaded by the vision module's own script (idempotent).
 if ((NO_MODELS == 0)) && [[ -f "$REPO_DIR/scripts/download_models.py" ]]; then
-    step "Face-detection and hand models"
+    step "Face-detection, hand and face-recognition models"
     # hands: "how many fingers?" is counted on the robot (~0.1 s) instead of by ChatGPT (~2 s).
-    run "$VENV_DIR/bin/python" "$REPO_DIR/scripts/download_models.py" yunet hands \
-        || warn "Model download failed (no internet?). Later: .venv/bin/python scripts/download_models.py yunet hands"
+    # sface: recognising family members (39 MB on disk; only loaded once a parent switches it on in Privacy).
+    run "$VENV_DIR/bin/python" "$REPO_DIR/scripts/download_models.py" yunet hands sface \
+        || warn "Model download failed (no internet?). Later: .venv/bin/python scripts/download_models.py yunet hands sface"
 fi
 
 # Wake word ("Hey LittleBot" starts live voice, docs/CHATGPT.md): Vosk, an offline speech

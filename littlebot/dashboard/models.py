@@ -12,6 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from littlebot.brain.remembered import MAX_LEN as MAX_NOTE_LEN
 from littlebot.brain.remembered import MAX_NOTES
 from littlebot.core.interfaces import EXPRESSIONS, FACE_ANIMATIONS, SOUND_NAMES
+from littlebot.vision.faces import LABEL_MAX, clean_label
 
 MAX_PROFILE_AGE_MONTHS = 72  # LittleBot is designed for 6 months - 5 years
 
@@ -258,6 +259,39 @@ class ProfileBody(Body):
         return None if v is None else _clean_list(v, "remembered", max_items=MAX_NOTES, max_len=MAX_NOTE_LEN)
 
 
+# ----------------------------------------------------------------- who's who (littlebot/vision/faces.py)
+class PersonBody(Body):
+    """Someone LittleBot may recognise on its camera: a name and a short role ("Ali", "dad")."""
+
+    name: str = Field(min_length=1, max_length=LABEL_MAX)
+    role: str = Field(default="", max_length=LABEL_MAX)
+
+    @field_validator("name")
+    @classmethod
+    def _name(cls, v: str) -> str:
+        return clean_label(v, field="name")
+
+    @field_validator("role")
+    @classmethod
+    def _role(cls, v: str) -> str:
+        return clean_label(v, field="role", required=False)
+
+
+class PersonUpdateBody(Body):
+    name: str | None = Field(default=None, min_length=1, max_length=LABEL_MAX)
+    role: str | None = Field(default=None, max_length=LABEL_MAX)
+
+    @field_validator("name")
+    @classmethod
+    def _name(cls, v: str | None) -> str | None:
+        return None if v is None else clean_label(v, field="name")
+
+    @field_validator("role")
+    @classmethod
+    def _role(cls, v: str | None) -> str | None:
+        return None if v is None else clean_label(v, field="role", required=False)
+
+
 # ----------------------------------------------------------------- AI
 class AISettingsBody(Body):
     enabled: bool | None = None
@@ -282,6 +316,8 @@ class PrivacyBody(Body):
     record_history: bool | None = None
     # Lets the AI take one photo when someone asks it about what LittleBot sees (off by default).
     ai_camera_enabled: bool | None = None
+    # Lets LittleBot recognise the family members a parent added, on the robot (off by default).
+    face_recognition_enabled: bool | None = None
 
 
 # ----------------------------------------------------------------- audio
