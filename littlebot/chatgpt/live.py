@@ -660,6 +660,7 @@ class LiveCall:
         self._told_blocked: set[str] = set()
         self._rule_noted: set[str] = set()  # RULE_NOTES the voice was given this turn
         self._recent_face: tuple[str, float] | None = None  # (name, when) the latest face played
+        self._sent: collections.deque[tuple[float, str, int]] = collections.deque(maxlen=4)  # (when, what, chars)
         self._voice_face_this_turn = False
         self._seen_types: set[str] = set()
         # A video / activity / sleep the tools queued (RobotToolbox): runs once the voice said its line.
@@ -990,7 +991,12 @@ class LiveCall:
         elif isinstance(event, wire.Delegation):
             self._spawn(self._answer(event))
         elif isinstance(event, wire.Failure):
-            log.info("live voice: error event %s", event.code)
+            # What ChatGPT didn't accept, and what LittleBot had sent just before (never the text itself).
+            now = time.monotonic()
+            sent = ", ".join(f"{what} ({chars} chars) {now - at:.1f} s before" for at, what, chars in reversed(self._sent))
+            log.warning("live voice: error event %s: %s%s; LittleBot last sent: %s", event.code,
+                        (event.message or "no message")[:200], f" (param {event.param})" if event.param else "",
+                        sent or "nothing yet")
         elif isinstance(event, wire.Closed):
             if event.reason != "close_requested":
                 self.error = "ChatGPT ended the call."
@@ -1280,6 +1286,7 @@ class LiveCall:
         if not self._ended.is_set() and self.channel is not None and self.channel.readyState == "open":
             for frame in wire.result_frames(delegation_id, text):
                 self.channel.send(frame)
+            self._sent.append((time.monotonic(), "a hand-off answer", len(text)))
 
     # ------------------------------------------------------------ tools (littlebot/chatgpt/tools.py)
     def _tools_on(self) -> bool:
@@ -1756,6 +1763,7 @@ class LiveCall:
         if not self._ended.is_set() and self.channel is not None and self.channel.readyState == "open":
             for frame in wire.note_frames(text):
                 self.channel.send(frame)
+            self._sent.append((time.monotonic(), "a note", len(text)))
 
     # ------------------------------------------------------------ cleanup
     async def _cleanup(self) -> None:

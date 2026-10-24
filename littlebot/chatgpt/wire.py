@@ -40,6 +40,8 @@ class Delegation:
 @dataclass(frozen=True)
 class Failure:
     code: str | None
+    message: str | None = None  # the service's own words: what it didn't accept
+    param: str | None = None
 
 
 @dataclass(frozen=True)
@@ -96,7 +98,8 @@ def parse(payload: str | bytes) -> tuple[str, Event] | None:
             prompt = "".join(_s(c, "text") or "" for c in content if _s(c, "type") == "input_text")
             event = Delegation(did, prompt)
     elif etype == "error":
-        event = Failure(_s(_o(obj, "error"), "code") or _s(obj, "code"))
+        err = _o(obj, "error") or obj
+        event = Failure(_s(err, "code") or _s(obj, "code"), _s(err, "message"), _s(err, "param"))
     elif etype == "session.closed":
         event = Closed(_s(obj, "reason"))
     return etype, (event if event is not None else Other())

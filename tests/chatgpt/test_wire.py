@@ -25,6 +25,8 @@ def test_parse_delegation_only_for_the_client():
 
 def test_parse_errors_and_close_and_junk():
     assert wire.parse('{"type":"error","error":{"code":"x"}}')[1] == wire.Failure("x")
+    assert wire.parse('{"type":"error","error":{"code":"invalid_request","message":"Unknown item","param":"id"}}')[1] \
+        == wire.Failure("invalid_request", "Unknown item", "id")
     assert wire.parse('{"type":"session.closed","reason":"close_requested"}')[1] == wire.Closed("close_requested")
     assert wire.parse("not json") is None
     assert wire.parse('{"no":"type"}') is None

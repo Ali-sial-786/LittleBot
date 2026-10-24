@@ -1469,3 +1469,16 @@ async def test_the_wake_phrase_heard_in_the_call_doesnt_end_it(live, words, monk
     hear(server, words)
     await asyncio.sleep(0.4)
     assert svc.status()["active"]
+
+
+async def test_an_error_from_chatgpt_is_logged_with_its_message_and_what_was_sent_before(live, caplog):
+    svc, server, _audio, _provider, _alerts = live
+    caplog.set_level(logging.INFO, logger="littlebot")
+    await connect(svc, server)
+    delegate(server, "e1", "remember: Ali is the dad")
+    await wait_for(lambda: answers(server, "e1"))
+    server.send({"type": "error", "error": {"code": "invalid_request", "message": "Item not found", "param": "id"}})
+    await wait_for(lambda: "error event invalid_request" in caplog.text)
+    assert "Item not found (param id); LittleBot last sent: a hand-off answer (" in caplog.text
+    assert "Ali" not in caplog.text  # never the text itself
+    assert svc.status()["active"]
