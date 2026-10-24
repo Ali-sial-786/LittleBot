@@ -193,11 +193,15 @@ def blocked_reason(ctx: Any) -> str | None:
     return None
 
 
+# Wikimedia's robot policy (https://w.wiki/4wJS) wants a way to reach whoever runs a client: without one
+# (and naming httpx) the robot's requests got HTTP 403 "Please respect our robot policy".
+CONTACT_URL = "https://github.com/ali-sial-786/littlebot"
+
+
 def _user_agent() -> str:
     from littlebot import __version__
 
-    return (f"LittleBot/{__version__} (a home companion robot showing pictures on its info cards; "
-            f"personal, non-commercial) httpx/{httpx.__version__}")
+    return f"LittleBot/{__version__} (home companion robot; {CONTACT_URL})"
 
 
 def fetch(ctx: Any, *, query: str = "", url: str = "",
