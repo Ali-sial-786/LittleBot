@@ -335,6 +335,7 @@ class PrivacyBody(Body):
 class AudioSettingsBody(Body):
     volume: float | None = Field(default=None, ge=0.0, le=1.0)
     tts_rate: float | None = Field(default=None, ge=0.5, le=1.5)
+    input_gain: float | None = Field(default=None, ge=0.5, le=4.0)  # live voice caps the microphone boost at 4
 
 
 class MicTestBody(Body):

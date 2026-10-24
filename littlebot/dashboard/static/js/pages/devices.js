@@ -38,6 +38,8 @@ export default {
       onChange: async (v) => { const r = await app.act(() => put('/audio/settings', { volume: v })); if (r?.settings?.volume !== undefined) volume.set(r.settings.volume); } });
     const rate = rangeField({ label: 'Speaking speed', min: 0.5, max: 1.5, step: 0.05, value: 0.9, format: (v) => `${v.toFixed(2)}×`,
       onChange: (v) => app.act(() => put('/audio/settings', { tts_rate: v })) });
+    const micGain = rangeField({ label: 'Microphone level', min: 0.5, max: 4, step: 0.25, value: 1, format: (v) => `${v.toFixed(2)}×`,
+      onChange: (v) => app.act(() => put('/audio/settings', { input_gain: v })) });
     const follow = switchRow({ title: 'Follow faces with the eyes', text: "LittleBot's eyes gently follow the nearest face the camera sees.",
       onChange: async (v) => (await app.act(() => put('/vision/settings', { follow_faces: v }))) !== null });
     const sayInput = h('input', { type: 'text', id: 'say-text', maxlength: 200, placeholder: 'Hello! Shall we play?', autocomplete: 'off' });
@@ -72,7 +74,8 @@ export default {
           h('div', { class: 'stack' }, rate.el, sayForm)),
         h('section', { class: 'card' },
           h('div', { class: 'card-head' }, h('h2', {}, icon('mic'), 'Microphone'), micBadge),
-          h('div', { class: 'stack' }, micNote, micKv,
+          h('div', { class: 'stack' }, micNote, micKv, micGain.el,
+            h('p', { class: 'muted', text: 'Turn it up if LittleBot often misses what is said. Too high and loud sounds distort.' }),
             h('div', { class: 'btn-row' }, button('Test microphone (2 s)', { kind: 'soft', iconName: 'mic', onClick: testMic })),
             h('p', { class: 'muted', text: 'Say something during the test. The sound is measured and immediately discarded.' }),
             micResult)),
@@ -147,6 +150,7 @@ export default {
       }
       volume.set(d.settings?.volume);
       rate.set(d.settings?.tts_rate);
+      micGain.set(d.settings?.input_gain);
       clear(sounds);
       for (const n of d.sounds || []) sounds.append(button(titleCase(n), { kind: 'soft small', onClick: () => app.act(() => post('/audio/sound', { name: n })) }));
       if (!d.available) spkResult.append(banner('warn', 'alert', 'Audio unavailable', 'LittleBot has no working audio system right now.'));

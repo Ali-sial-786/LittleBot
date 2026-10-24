@@ -493,6 +493,10 @@ async def test_audio_endpoints(authed, dctx):
     assert r.json()["settings"] == {"volume": 0.8, "tts_rate": 1.1}
     assert dctx.audio.volume == 0.8 and dctx.settings.get("audio.tts_rate") == 1.1
     assert (await authed.put("/api/audio/settings", json={"tts_rate": 3})).status_code == 422
+    r = await authed.put("/api/audio/settings", json={"input_gain": 2.5})
+    assert r.json()["settings"] == {"input_gain": 2.5} and dctx.settings.get("audio.input_gain") == 2.5
+    assert (await authed.get("/api/audio")).json()["settings"]["input_gain"] == 2.5
+    assert (await authed.put("/api/audio/settings", json={"input_gain": 5})).status_code == 422
     assert (await authed.post("/api/audio/test-speaker")).json()["result"]["ok"] is True
     assert (await authed.post("/api/audio/test-microphone", json={"seconds": 1})).json()["result"]["ok"] is True
     assert (await authed.get("/api/audio/devices")).json() == {"inputs": [], "outputs": []}

@@ -1,4 +1,4 @@
-"""Audio and camera devices: status, tests, volume, speech rate, face following."""
+"""Audio and camera devices: status, tests, volume, speech rate, microphone level, face following."""
 
 from __future__ import annotations
 
@@ -23,7 +23,8 @@ async def audio_info(dash: DashState = Depends(get_dash)) -> dict[str, Any]:
     return {
         "available": audio is not None,
         "status": scrub(audio.status()) if audio is not None else {"status": "unavailable"},
-        "settings": {"volume": s.get("audio.volume"), "tts_rate": s.get("audio.tts_rate")},
+        "settings": {"volume": s.get("audio.volume"), "tts_rate": s.get("audio.tts_rate"),
+                     "input_gain": s.get("audio.input_gain")},
         "max_volume": dash.ctx.config.audio.speaker.max_volume,
         "sounds": list(SOUND_NAMES),
         "microphone_enabled": dash.ctx.privacy.microphone_enabled,
@@ -47,6 +48,8 @@ async def audio_settings(body: AudioSettingsBody, dash: DashState = Depends(get_
         out["volume"] = s.set("audio.volume", float(applied), source="dashboard")
     if body.tts_rate is not None:
         out["tts_rate"] = s.set("audio.tts_rate", float(body.tts_rate), source="dashboard")
+    if body.input_gain is not None:
+        out["input_gain"] = s.set("audio.input_gain", float(body.input_gain), source="dashboard")
     return {"ok": True, "settings": out}
 
 
