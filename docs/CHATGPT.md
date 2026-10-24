@@ -125,13 +125,42 @@ and you are there for all of it.
 Afterwards the card shows how the last call ended (for example "Last call: time limit reached
 after 10 min"), a safety stop, or an error.
 
-### Talking to it: one at a time
+<a id="talking-to-it-one-at-a-time"></a>
 
-The Pi has no echo cancellation. If the microphone stayed open, ChatGPT would hear its own
-voice and answer itself. So the conversation is **half-duplex**: while LittleBot's voice is
-playing, and for 0.45 s after it stops, the microphone sends silence. **You can't talk over it
-or interrupt it.** Wait until it stops, then speak. Stand close to LittleBot. The volume is the
-speaker volume from **Audio & devices**, capped for little ears.
+### Talking over it (barge-in)
+
+**With echo cancelling** (set up once with `scripts/setup_echo_cancel.sh`, see
+[PI_SETUP.md](PI_SETUP.md#echo-cancelling)), PipeWire takes LittleBot's own voice out of what the
+microphone hears, so a grown-up can **interrupt it**: just start talking while it speaks. After
+about 0.4 s of your speech its voice fades out, it listens, and ChatGPT hears you from your first
+word. The face goes from speaking to listening at once.
+
+* **Only grown-ups' voices interrupt it.** It listens for voiced speech at a grown-up's pitch
+  (about 80-260 Hz) that is clearly louder than what is left of its own voice. The baby's babbling
+  (300-600 Hz), a cough, a short "mm" or a TV quieter than you don't. When voice recognition knows
+  who is talking (`ctx.voices`, if set up), a known grown-up interrupts a little sooner (0.25 s) and
+  a child never.
+* **Didn't mean to?** Say only "oops, go ahead", "sorry, carry on", "never mind, keep going" or
+  similar, and it carries on from where it stopped, without starting over.
+* **Just a noise?** If no words of yours reach ChatGPT within 1.2 s (for example someone laughed),
+  it was a false alarm: its voice plays on from where it faded out (it waits up to 1.5 s).
+* Stand within about a metre and speak normally; a loud TV or someone else talking nearby can
+  still interrupt it.
+
+**Without echo cancelling** (until you run the script, or with `chatgpt.live_barge_in: off`) it
+is one at a time, as before: if the microphone stayed open, ChatGPT would hear its own voice and
+answer itself. So the conversation is **half-duplex**: while LittleBot's voice is playing, and for
+0.45 s after it stops, the microphone sends silence. **You can't talk over it or interrupt it.**
+Wait until it stops, then speak. Stand close to LittleBot.
+
+The journal says which it is when a call starts: `journalctl --user -u littlebot | grep "live audio:"`
+ends in "echo cancelling on (PipeWire): a grown-up can talk over the voice (barge-in on)" or
+"one at a time (half-duplex; ...)". The volume is the speaker volume from **Audio & devices**,
+capped for little ears.
+
+**Not tested on a real Pi yet.** The echo cancelling script, PipeWire's echo canceller with the
+robot's USB microphone and speaker, and barge-in with real voices in a real room have only been
+tested with stand-ins and synthetic sounds (see [Testing status](#testing-status)).
 
 ### What LittleBot checks
 
@@ -552,6 +581,11 @@ chatgpt:
   live_idle_hangup_seconds: 90    # hang up after this long with nobody talking (0 = never)
   live_echo_tail_ms: 450          # microphone stays shut this long after LittleBot's voice stops
   live_volume: null               # null = the speaker volume setting; 0..1 (always capped at max_volume)
+  live_barge_in: auto             # talking over the voice: auto = only with echo cancelling | on | off
+  live_barge_in_speech_ms: 400    # this much grown-up speech interrupts it
+  live_barge_in_over_echo_db: 10  # and it must be this much louder than what is left of its voice
+audio:
+  echo_cancel: auto               # use PipeWire's echo-cancelled devices when they exist | on | off
 ```
 
 All keys and defaults are listed in the [technical section](#configuration).
@@ -580,8 +614,10 @@ All keys and defaults are listed in the [technical section](#configuration).
 | After a voice chat starts an activity, its first sound is cut off | The speaker was still being let go by the call | LittleBot now waits for the speaker (up to 3 s) before starting; if it still happens, the journal says "speaker still not back" |
 | "LittleBot is busy with something else. Stop it first." | A video or another parent action holds the speaker | Stop it, then start live voice |
 | "The speaker or microphone could not be opened." | The USB devices are missing or in use by another program | **Audio & devices**: check both devices. See [TROUBLESHOOTING.md](TROUBLESHOOTING.md#no-sound--sound-from-the-wrong-device) |
-| It hears itself, echoes or answers itself | Its own voice reaches the microphone after the gate opens | Lower the volume, move the microphone away from the speaker, raise `chatgpt.live_echo_tail_ms` (for example to 700). Keep `live_half_duplex: true` |
-| It doesn't react when you talk | It was still talking (the microphone is shut then), or your voice is too quiet | Wait until it stops, speak closer. Raise `audio.microphone.input_gain` (for example 1.5) |
+| It hears itself, echoes or answers itself | Its own voice reaches the microphone after the gate opens | Lower the volume, move the microphone away from the speaker, raise `chatgpt.live_echo_tail_ms` (for example to 700). Keep `live_half_duplex: true`. With echo cancelling: `scripts/setup_echo_cancel.sh --check` |
+| It doesn't react when you talk | It was still talking (without echo cancelling the microphone is shut then), or your voice is too quiet | Wait until it stops, speak closer. Raise `audio.microphone.input_gain` (for example 1.5) |
+| It doesn't stop when I talk over it | Echo cancelling isn't set up (the journal says "audio: echo cancelling off (...)" and "one at a time"), your voice is too quiet next to its voice, or it is high (above `live_barge_in_max_pitch_hz`, 260 Hz, counts as a child) | `scripts/setup_echo_cancel.sh --check` (see [Talking over it](#talking-over-it-barge-in)); speak closer or louder; lower the volume; lower `chatgpt.live_barge_in_over_echo_db` (for example 6); for a high voice raise `chatgpt.live_barge_in_max_pitch_hz` (for example 300). `journalctl --user -u littlebot \| grep "interrupted by"` shows each time it did stop |
+| It stops by itself in the middle of a sentence | Something loud and voice-like (a TV, another grown-up nearby) or its own echo, when echo cancelling works poorly | The journal says "false alarm (...), the voice carried on" when nobody's words followed. Raise `chatgpt.live_barge_in_over_echo_db` (for example 14) or `live_barge_in_speech_ms` (600); lower the volume; or `chatgpt.live_barge_in: off` for one at a time |
 | Too quiet or too loud | The speaker volume | **Audio & devices** → volume (capped at `audio.speaker.max_volume`). Or set `chatgpt.live_volume` for live voice only |
 | "hung up after 90 s of quiet" | Nobody talked | Normal. Change `chatgpt.live_idle_hangup_seconds` if it's too short |
 | Wake word: **The wake-word model is missing** / **isn't available** | The vosk library or its model is not installed | `.venv/bin/python -m pip install --prefer-binary -e '.[local-stt]'` and `.venv/bin/python scripts/download_models.py vosk-en`, then `systemctl --user restart littlebot` |
@@ -672,9 +708,85 @@ audio service lends it the devices (`AudioService.suspend`). `LiveAudio` opens i
 streams at 48 kHz in 20 ms frames, resampling with PyAV when a device needs another rate. It
 queues at most 1 s of voice and applies the half-duplex gate: a speaker block above
 `live_voice_level` RMS counts as speaking, and the microphone stays shut for `live_echo_tail_ms`
-after. While a reply is in progress, its latest ~320 characters are re-checked as caption text
+after (with barge-in on, someone talking over the voice opens it: [Barge-in](#barge-in-echo-cancelling)).
+While a reply is in progress, its latest ~320 characters are re-checked as caption text
 arrives (at most every 0.1 s, or at once at the end of a sentence). The whole turn is checked
 again when it is done.
+
+### Barge-in (echo cancelling)
+
+**Devices.** `scripts/setup_echo_cancel.sh` loads PipeWire's `libpipewire-module-echo-cancel`
+(WebRTC echo canceller, `aec/libspa-aec-webrtc`) for the user, between the USB microphone and the
+USB speaker. It makes two PipeWire nodes, the source `littlebot_ec_mic` and the sink
+`littlebot_ec_speaker`, and makes them PipeWire's defaults, so Chromium's YouTube sound goes
+through the canceller too (the wake word then hears less of the video). PortAudio has no PipeWire
+host API, so `~/.asoundrc` gets two ALSA PCMs of the same names (`type pipewire`, from the
+`pipewire-alsa` package) that PortAudio lists like any ALSA device. Details and undo:
+[PI_SETUP.md](PI_SETUP.md#echo-cancelling). `littlebot/audio/devices.py` (`audio.echo_cancel: auto`)
+picks the pair for an automatic device (`audio.speaker.device` / `audio.microphone.device` not set or
+`auto`) when **both** exist, else the USB `hw:` devices as before; a device named in the config wins.
+The audio service (and so the wake word, which reads its microphone) and live voice then open the
+same two devices; through PipeWire they aren't exclusive. The journal says "audio: echo cancelling
+on (PipeWire: littlebot_ec_mic / littlebot_ec_speaker)" or "audio: echo cancelling off (why)".
+
+**When.** `chatgpt.live_barge_in: auto` turns barge-in on in `LiveAudio` when both of its devices
+are the echo-cancelled ones; `on` forces it (a headset, a speakerphone with its own echo
+cancelling), `off` keeps half-duplex. It needs `live_half_duplex: true` (the gate is what it opens).
+
+**The detector** (`BargeInDetector`, `live_audio.py`) looks at each 20 ms microphone frame while the
+voice is audible:
+
+* *Loud enough:* the frame's RMS must be at least `live_barge_in_min_level` (0.008), 10 dB above the
+  room's noise floor (measured while the voice is quiet) and `live_barge_in_over_echo_db` (10 dB)
+  above the residual echo. The residual echo is `coupling` x the loudest the speaker played in the
+  last 0.3 s; `coupling` (microphone level / speaker level) is measured all the time while only the
+  voice plays, tracked near the top of its spread (up quickly in capped steps, down slowly) and
+  frozen for 1 s after anything loud, so someone's speech doesn't teach it. Nothing interrupts in
+  the first 0.3 s of voice of a call, while it measures.
+* *A grown-up's voice:* each loud frame's pitch is estimated by normalised autocorrelation on the
+  last 40 ms at 8 kHz (one 1024-point FFT pair; the shortest period whose peak is within 85 % of the
+  best wins, so a baby's 450 Hz never reads as 225 Hz). Voiced (correlation 0.5 or more) at 75 Hz to
+  `live_barge_in_max_pitch_hz` (260) counts as a grown-up, above it as a child.
+* *Long enough:* a run of loud frames (gaps under 0.12 s are consonants) fires after
+  `live_barge_in_speech_ms` (400 ms) when at least 40 % of its frames are grown-up voiced and more
+  than twice as many as child voiced. A cough (no pitch), a short "mm" (too short), the baby (too
+  high), the voice's own echo (not louder than itself) and a quiet TV (the floor) don't.
+* *Voice recognition* (optional): after 0.2 s of a run, `ctx.voices.identify(samples, 16000)` is
+  asked once in the background, if `ctx.voices` has it. A grown-up's match lets it fire after
+  0.25 s; `is_child` vetoes the run (and lets a held voice carry on). The detector never waits for it.
+
+Measured on the development machine: about 46 µs per loud 20 ms frame (pitch computed) and 23 µs
+per quiet one, under 0.25 % of one core; it adds no delay beyond the speech it waits for. Not
+measured on the Pi 5 (expect a few times slower: still well under 1 %).
+
+**The flow.** On firing, the voice fades out over 50 ms in the PortAudio callback and **is held**:
+what keeps arriving waits in the queue (up to 1.5 s). The microphone gate opens and the last ~0.5 s
+(from 0.1 s before their speech began, out of a 0.8 s ring buffer in memory) goes out first, one
+frame per frame (pauses longer than 0.3 s shortened until it is back in real time). The call's face
+and state go to listening (`LiveCall._barge_in_changed`). Then either:
+
+* **ChatGPT's caption of their words arrives** (`input_transcript.added` / `turn.done`, passed by
+  `LiveCall._barge_in_words` to `LiveAudio.barge_in_heard`): the held voice is dropped, and so is
+  the rest of the turn they cut into as it still arrives (the server's own turn detection usually
+  cancels it). The next sound after a 0.25 s pause in the voice, once they stopped talking for 0.25 s
+  or their words were final, is a new turn and plays (at the latest after 15 s). If their first final
+  words are only "oops, go ahead" or the like (`GO_AHEAD`, the whole utterance), the call sends the
+  note "They didn't mean to interrupt: carry on from where you stopped, without starting over." The
+  instructions also say: "If someone talks while you are speaking, stop and listen to them. If all
+  they say is something like "oops, go ahead" or "sorry, carry on", carry on from where you stopped,
+  without starting over." (only when barge-in is on).
+* **No words within `live_barge_in_false_alarm_ms`** (1.2 s; longer while they are still making
+  sound, at most 2.5 s): a false alarm. The gate shuts and the held voice fades back in where it
+  stopped (a little late for the rest of that turn).
+
+One INFO line each time, never any sound: "live voice: interrupted by a grown-up after 0.4 s of
+speech (pitch 120 Hz, voice Ali)", "live voice: false alarm (no words within 1.2 s), the voice
+carried on", "live voice: they didn't mean to interrupt ("go ahead"); the voice carries on".
+
+Known limits: a TV or a radio voice louder than the threshold interrupts like a person; after a
+false alarm on a noise, OpenAI's own turn detection may already have cut its reply short; "go
+ahead" meant as "yes, do it" gets the carry-on note too; GPT-Live's data channel has no documented
+"cancel the reply" event, so the cut is LittleBot's (the voice that still arrives is dropped).
 
 Dashboard API (parent session + CSRF, like every route): `GET /api/chatgpt`,
 `POST /api/chatgpt/sign-in`, `/sign-in/cancel`, `/sign-out`,
@@ -718,13 +830,23 @@ back to text-to-speech; the index is re-read when the file changes. Dashboard: `
 | `live_session_minutes` | `10` | hard limit per call, counted from connection. Then a goodbye and hang-up |
 | `live_idle_hangup_seconds` | `90` | hang up after this long with nobody talking. `0` = never. Until the first words are heard, at least 30 s |
 | `live_connect_timeout_seconds` | `20` | waiting for OpenAI's SDP answer |
-| `live_half_duplex` | `true` | shut the microphone while LittleBot's voice plays. Turn off only with a headset or hardware echo cancellation |
+| `live_half_duplex` | `true` | shut the microphone while LittleBot's voice plays. Turn off only with a headset or hardware echo cancellation (barge-in then stays off: the microphone is always open) |
 | `live_echo_tail_ms` | `450` | how long the microphone stays shut after the voice stops |
+| `live_barge_in` | `auto` | a grown-up talking over the voice stops it ([Barge-in](#barge-in-echo-cancelling)): `auto` = only when both devices are PipeWire's echo-cancelled ones (`scripts/setup_echo_cancel.sh`), `on` = always (a headset or hardware echo cancelling), `off` = one at a time |
+| `live_barge_in_speech_ms` | `400` | (150-2000) this much voiced grown-up speech interrupts it. A known grown-up (voice recognition) needs 250 ms |
+| `live_barge_in_over_echo_db` | `10.0` | how much louder than what is left of its own voice (and than the room's noise) speech must be |
+| `live_barge_in_min_level` | `0.008` | and at least this loud (microphone RMS, full scale 1.0) |
+| `live_barge_in_max_pitch_hz` | `260.0` | (150-400) voiced above this counts as a child and doesn't interrupt |
+| `live_barge_in_false_alarm_ms` | `1200` | (300-5000) no words of theirs from ChatGPT by then: the voice carries on |
 | `live_voice_level` | `0.012` | speaker RMS (0..1) above which the voice counts as speaking |
 | `live_volume` | `null` | `null` = the speaker volume setting. Always capped at `audio.speaker.max_volume` |
 | `tools_enabled` | `true` | ChatGPT may control LittleBot when asked: typed chat, push to talk and live-voice hand-offs ([section 5](#5-asking-littlebot-to-do-things)) |
 | `max_tool_rounds` | `6` | tool calls per answer |
 | `web_search` | `true` | offer OpenAI's hosted web search with the tools (`{"type": "web_search"}`). Refused by the endpoint: asked again without it, then not offered until restart |
+
+Echo cancelling (`audio:` section, `AudioConfig`): `echo_cancel` (`auto`: use `littlebot_ec_mic` /
+`littlebot_ec_speaker` for automatic devices when both exist; `on`: the same, and a warning when they
+don't; `off`: never).
 
 Live information (`info:` section, `InfoConfig`): `location` (`""`: a place or "lat, lon"; empty = from
 the internet connection), `units` (`auto` | `celsius` | `fahrenheit`), `locate_by_ip` (`true`),
@@ -754,7 +876,9 @@ YouTube search (`media:` section, `MediaConfig`): `allow_search` (`true`: any vi
 | `littlebot/chatgpt/responses.py` | the `chatgpt` conversation provider |
 | `littlebot/chatgpt/wire.py` | GPT-Live data-channel events |
 | `littlebot/chatgpt/live.py` | `LiveVoiceService` (`ctx.live`): gates, safety checks, limits, delegations, clean-up |
-| `littlebot/chatgpt/live_audio.py` | microphone / speaker bridge with the half-duplex gate |
+| `littlebot/chatgpt/live_audio.py` | microphone / speaker bridge with the half-duplex gate; barge-in (`BargeInDetector`, `estimate_pitch`, `GO_AHEAD`) |
+| `scripts/setup_echo_cancel.sh` | PipeWire's echo canceller for the USB microphone and speaker (`--check`, `--remove`, `--dry-run`; `scripts/install_pi.sh --echo-cancel`) |
+| `littlebot/audio/devices.py` | device choice, including the echo-cancelled pair (`echo_cancel_devices`) |
 | `littlebot/chatgpt/tools.py` | `RobotToolbox`: the tools ChatGPT may use (status, volume, faces, videos, activities, games, sleep, camera, weather, time; web search) |
 | `littlebot/info/weather.py`, `littlebot/info/clock.py` | the weather (Open-Meteo, place search, home from the dashboard / config / IP address, cache) and the time |
 | `littlebot/dashboard/routes/info_routes.py`, `static/js/pages/settings.js` | the "Weather & time" card on the Settings page |
@@ -782,6 +906,23 @@ YouTube search (`media:` section, `MediaConfig`): `allow_search` (`true`: any vi
   tested separately (`test_live_audio.py`) against a fake PortAudio: device and rate choice,
   resampling to 48 kHz, the half-duplex gate and echo tail, mute on a safety cut, and the
   playback backlog cap.
+* **Barge-in and echo cancelling** (`tests/chatgpt/test_barge_in.py`, `test_live_barge_in.py`,
+  `tests/audio/test_echo_cancel_devices.py`, `tests/test_echo_cancel_script.py`): the detector on
+  synthetic signals (a grown-up at 90-230 Hz over the residual echo fires after 0.4 s; a 450 Hz
+  babble, a 330 Hz squeal, a cough, a 0.25 s "mm", a quiet TV voice, the echo alone, a 20 dB louder
+  echo and an echo jumping 6 dB up and down frame to frame don't; voice recognition's grown-up /
+  child); the pitch estimate (85-600 Hz within 3 %); the "go ahead" phrases; the whole flow through
+  `LiveAudio` on a fake PortAudio (the fade, the pre-roll frame by frame, the held voice, the drop
+  until the next turn, the false alarm playing the held voice on, barge-in off, a stalled stream
+  reopened); the call's hooks against the local WebRTC peer (instructions, the face listening at
+  once, the "go ahead" note); the device choice with and without the echo-cancelled pair; the setup
+  script against stand-ins for `pw-dump`, `wpctl` and `systemctl` (dry run, install twice, check,
+  remove, the installer flag) and shellcheck. **Not tested on a real Pi or in a real room:** the
+  script with Bookworm's real PipeWire 0.3.65 / WirePlumber 0.4.13, how well WebRTC cancels the USB
+  speaker at the USB microphone (the more of it is left, the louder you must talk over it), the ALSA
+  `pipewire` PCMs through PortAudio, YouTube in Chromium through the echo-cancelled sink, the
+  detector with real voices, the baby, coughs and a TV, the timing of OpenAI's captions after
+  someone cuts in, and the Pi 5's CPU.
 * **Letting the AI see:** the dashboard route and card are tested with a stand-in for the camera
   look (answer text only reaches the browser, blocked → a plain reason, "say it out loud", the
   Privacy switch off by default) and in a phone-sized browser.
@@ -840,4 +981,5 @@ YouTube search (`media:` section, `MediaConfig`): `allow_search` (`true`: any vi
   after the call let it go; the activity's first line used to be cut off (and the speaker taken for
   unplugged), now it plays in full. Whether the Pi's real USB speaker behaves like that is not known.
 * **Not yet tested:** OpenAI's real service (sign-in, text, live voice or photos), the Pi's real
-  microphone, speaker and camera, echo in a real room, latency, and real plan limits.
+  microphone, speaker and camera, echo in a real room, echo cancelling and barge-in, latency, and real
+  plan limits.

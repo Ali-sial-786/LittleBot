@@ -110,8 +110,11 @@ LittleBot) then gets "device busy". `media.volume` (0..`media.max_volume` = 0.8)
 YouTube player's volume relative to the system volume. *Unverified on the Pi.*
 
 The wake word keeps listening while a video plays (section 10), so the video's own sound reaches
-the microphone. There is no echo cancellation; a quieter `media.volume` makes "Hey LittleBot" much
-easier to hear (section 10 has the numbers).
+the microphone. Without echo cancelling (the default) a quieter `media.volume` makes "Hey LittleBot"
+much easier to hear (section 10 has the numbers). With `scripts/setup_echo_cancel.sh`
+([PI_SETUP.md](PI_SETUP.md#echo-cancelling)) PipeWire's echo-cancelled speaker becomes the default
+output, so Chromium plays through it and much of the video is taken out of what the wake word hears
+(*unverified* on the Pi; LittleBot opens the same PipeWire devices, which are not exclusive).
 
 ## 6. Measure on arrival
 
@@ -313,9 +316,10 @@ the child a metre or two away, so the SNR may well be 0 dB or less at a normal v
 
 * a lower `media.volume` (moves you to the left in the table: half the volume is 6 dB);
 * saying it louder or closer, and a short pause after "hey";
-* PipeWire's echo cancellation (`libpipewire-module-echo-cancel`, a WebRTC echo canceller): play
-  Chromium into its sink and let LittleBot record from its source, so most of the video is
-  removed from what the wake word hears. Not set up by LittleBot; *unverified* on the Pi;
+* PipeWire's echo cancellation (`libpipewire-module-echo-cancel`, a WebRTC echo canceller):
+  `scripts/setup_echo_cancel.sh` ([PI_SETUP.md](PI_SETUP.md#echo-cancelling)) makes its sink the
+  default output (Chromium plays into it) and LittleBot records from its source, so much of the
+  video should be removed from what the wake word hears. Not measured: *unverified* on the Pi;
 * `wake.video_duck: true`. With the video turned down to 30 % 0.6 s after a heard "hey" (the page
   polls twice a second), "hey little bot" was heard more often against speech (+10 dB: 28 -> 44 %,
   +5 dB: 9 -> 28 %, 0 dB: 6 -> 16 %) and songs (+5 dB: 22 -> 31 %), not against music. But the

@@ -28,6 +28,7 @@ NO_MODELS=0
 NO_LIVE=0
 NO_WAKE=0
 NO_AUDIO_DEFAULT=0
+ECHO_CANCEL=0
 
 usage() {
     cat <<'EOF'
@@ -59,6 +60,9 @@ Options:
                        "local-stt" extra (Vosk, offline) and its 40 MB English model
   --no-audio-default   do not make the USB speaker / USB microphone the default sound devices
                        (scripts/set_default_speaker.sh; otherwise sound may go to the HDMI screen)
+  --echo-cancel        set up PipeWire's echo canceller for the USB microphone and speaker
+                       (scripts/setup_echo_cancel.sh, user-level; undo: setup_echo_cancel.sh --remove).
+                       Lets a grown-up talk over the live voice; untested on a real Pi
   --allow-non-pi       allow running on a non-Raspberry-Pi Debian system (testing)
   -h, --help           show this help
 EOF
@@ -79,6 +83,7 @@ while (($#)); do
         --no-live) NO_LIVE=1 ;;
         --no-wake-word) NO_WAKE=1 ;;
         --no-audio-default) NO_AUDIO_DEFAULT=1 ;;
+        --echo-cancel) ECHO_CANCEL=1 ;;
         --allow-non-pi) ALLOW_NON_PI=1 ;;
         -h | --help) usage; exit 0 ;;
         *) echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;
@@ -245,6 +250,8 @@ APT_WANTED=(
     fonts-dejavu-core                      # readable fonts for the dashboard / kiosk
 )
 [[ -n "$CHROMIUM_PKG" ]] && APT_WANTED+=("$CHROMIUM_PKG")
+# --echo-cancel: PipeWire's echo-cancel module, its WebRTC canceller and the ALSA plugin LittleBot reaches it through
+((ECHO_CANCEL)) && APT_WANTED+=(pipewire-alsa libspa-0.2-modules libpipewire-0.3-modules)
 ((SYSTEM_OPENCV)) && APT_WANTED+=(python3-opencv opencv-data)
 
 APT_INSTALL=()
@@ -307,6 +314,10 @@ if ((NO_AUDIO_DEFAULT)); then
 else
     info "audio default: USB speaker + USB microphone before HDMI, for $CURRENT_USER (WirePlumber rule in"
     info "               ~/.config/wireplumber, scripts/set_default_speaker.sh; a failure only warns)"
+fi
+if ((ECHO_CANCEL)); then
+    info "echo cancelling: PipeWire's echo canceller for the USB microphone + speaker, for $CURRENT_USER"
+    info "               (~/.config/pipewire, ~/.asoundrc; scripts/setup_echo_cancel.sh; a failure only warns)"
 fi
 ((WITH_SERVICE)) && info "autostart: systemd user service + ~/.config/autostart/littlebot.desktop"
 ((HEADLESS_SERVICE)) && info "autostart: HEADLESS system service /etc/systemd/system/littlebot.service"
@@ -508,6 +519,16 @@ if ((NO_AUDIO_DEFAULT == 0)); then
     step "Default sound devices (USB speaker and microphone, not HDMI)"
     run bash "$REPO_DIR/scripts/set_default_speaker.sh" \
         || warn "The USB speaker is not the default sound output yet (plugged in? desktop session running?). Later: scripts/set_default_speaker.sh"
+fi
+
+# ---------------------------------------------------------------------------
+# 8b. Echo cancelling (opt-in, --echo-cancel): PipeWire's WebRTC echo canceller between the USB
+#     microphone and speaker, made the default devices; user-level, undo with --remove.
+# ---------------------------------------------------------------------------
+if ((ECHO_CANCEL)); then
+    step "Echo cancelling (PipeWire)"
+    run bash "$REPO_DIR/scripts/setup_echo_cancel.sh" \
+        || warn "Echo cancelling is not set up (desktop session running? USB devices plugged in?). Later: scripts/setup_echo_cancel.sh, then --check"
 fi
 
 # ---------------------------------------------------------------------------

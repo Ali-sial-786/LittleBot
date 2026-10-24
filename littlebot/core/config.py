@@ -172,6 +172,9 @@ class AudioConfig(_Section):
     tts: TTSConfig = Field(default_factory=TTSConfig)
     stt: STTConfig = Field(default_factory=STTConfig)
     half_duplex: bool = True  # never listen while speaking (echo prevention)
+    # PipeWire's echo-cancelled microphone + speaker (scripts/setup_echo_cancel.sh): auto = use them when both
+    # exist (with device: null), on = the same but warn when they're missing, off = always the USB devices.
+    echo_cancel: Literal["auto", "on", "off"] = "auto"
     post_speech_mute_seconds: float = 0.4  # keep mic muted briefly after speaking
     store_recordings: bool = False  # never store audio unless explicitly enabled
 
@@ -277,11 +280,20 @@ class ChatGPTConfig(_Section):
     live_session_minutes: float = 10.0  # hard limit per conversation
     live_idle_hangup_seconds: float = 90.0  # hang up after this long with nobody talking
     live_connect_timeout_seconds: float = 20.0
-    # The Pi has no echo cancellation: don't send the microphone while LittleBot's voice plays
-    # (and for live_echo_tail_ms after), or the model hears itself. Grown-ups can't talk over it.
+    # Don't send the microphone while LittleBot's voice plays (and for live_echo_tail_ms after), or the model
+    # hears itself. With echo cancelling a grown-up can still talk over it (live_barge_in, below).
     live_half_duplex: bool = True
     live_echo_tail_ms: int = 450
     live_voice_level: float = 0.012  # RMS (0..1) above which the model's audio counts as speaking
+    # Barge-in (littlebot/chatgpt/live_audio.py, BargeInDetector): a grown-up talking over the voice stops it and
+    # is heard. auto = only with echo cancelling (PipeWire's echo-cancelled devices in use), on = always (with a
+    # headset or hardware echo cancelling), off = never (half-duplex as before).
+    live_barge_in: Literal["auto", "on", "off"] = "auto"
+    live_barge_in_speech_ms: int = Field(default=400, ge=150, le=2000)  # voiced grown-up speech needed
+    live_barge_in_over_echo_db: float = Field(default=10.0, ge=0.0, le=40.0)  # this much louder than the echo left
+    live_barge_in_min_level: float = Field(default=0.008, ge=0.0, le=0.5)  # and at least this loud (RMS 0..1)
+    live_barge_in_max_pitch_hz: float = Field(default=260.0, ge=150.0, le=400.0)  # higher voices: a child's
+    live_barge_in_false_alarm_ms: int = Field(default=1200, ge=300, le=5000)  # no words from ChatGPT by then: carry on
     live_volume: float | None = None  # None = the speaker volume setting (always capped at max_volume)
     # --- asking LittleBot to do things (function calling, littlebot/chatgpt/tools.py) ---
     # Typed / push-to-talk chat and live-voice hand-offs may control the robot: volume, faces,

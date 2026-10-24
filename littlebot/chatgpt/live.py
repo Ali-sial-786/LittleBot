@@ -362,6 +362,12 @@ still working on something, say you are thinking and wait; the answer comes soon
 while you keep talking, and LittleBot runs it: never play it out loud or make your own move (in Rock Paper \
 Scissors LittleBot picks on the screen); the client tells you what happened, then you say it."""
 
+# Added to the instructions when a grown-up can talk over the voice (barge-in: echo cancelling is on).
+BARGE_IN_INSTRUCTION = ("If someone talks while you are speaking, stop and listen to them. If all they say is "
+                        "something like \"oops, go ahead\" or \"sorry, carry on\", carry on from where you stopped, "
+                        "without starting over.")
+BARGE_IN_GO_AHEAD = "They didn't mean to interrupt: carry on from where you stopped, without starting over."
+
 LOOKUP_NOTE = f"""
 You are answering a question that LittleBot's voice will say out loud to a family with a very young child; \
 usually a grown-up asked it. Answer it properly in plain spoken sentences: two to four for a grown-up, one or \
@@ -511,7 +517,7 @@ class LiveVoiceService(Service):
 
     # ------------------------------------------------------------ helpers
     def _default_audio(self) -> Any:
-        from littlebot.chatgpt.live_audio import LiveAudio  # noqa: PLC0415
+        from littlebot.chatgpt.live_audio import BargeInSettings, LiveAudio  # noqa: PLC0415
 
         a = self.ctx.config.audio
         max_vol = float(a.speaker.max_volume)
@@ -533,7 +539,7 @@ class LiveVoiceService(Service):
 
         return LiveAudio(mic=a.microphone.device, speaker=a.speaker.device, volume=volume, mic_gain=gain,
                          half_duplex=self.cfg.live_half_duplex, echo_tail_s=self.cfg.live_echo_tail_ms / 1000,
-                         voice_level=self.cfg.live_voice_level)
+                         voice_level=self.cfg.live_voice_level, barge_in=BargeInSettings.from_config(self.cfg))
 
     def provider(self) -> BaseProvider:
         if self._provider is None:
@@ -781,6 +787,7 @@ class LiveCall:
         self.audio = self.svc._audio_factory()
         loop = asyncio.get_running_loop()
         await asyncio.to_thread(self.audio.open, loop)
+        self._barge_in_setup()
         mic = self.audio
         if self.carry is not None:  # started by the wake word: what they said with it goes first
             from littlebot.chatgpt.live_audio import CarryFeed  # noqa: PLC0415
@@ -851,6 +858,7 @@ class LiveCall:
                          f"about {nickname} (not in every sentence).")
             text += (f"\nGrown-ups talk to you too: only call someone {who} when it's clearly the child. If a "
                      f"grown-up tells you who they are, use their name.")
+        text += self._barge_in_instructions()
         notes = self._notes(nickname)
         if notes:
             text += "\nWhat the family asked you to remember: " + "; ".join(notes) + "."
@@ -987,6 +995,7 @@ class LiveCall:
             self._seen_types.add(etype)  # shows in the journal whether hand-offs arrive at all
             log.info("live voice: first %r event", etype[:60])
         now = self.svc._now()
+        self._barge_in_words(event)
         if isinstance(event, wire.AssistantText):
             self._last_activity = now
             if not event.final:  # words it is saying now (a turn's final caption may come a little late)
@@ -1056,6 +1065,36 @@ class LiveCall:
             if event.reason != "close_requested":
                 self.error = "ChatGPT ended the call."
             self.end(f"closed by ChatGPT ({event.reason or 'no reason'})")
+
+    # ------------------------------------------------------------ barge-in (live_audio.LiveAudio, BargeInDetector)
+    def _barge_in_setup(self) -> None:
+        """Hand the call's hooks to the audio: voice recognition (ctx.voices, if there is one) and the call's
+        reaction when someone cuts in. Without echo cancelling the audio stays half-duplex and never calls back."""
+        setup = getattr(self.audio, "setup_barge_in", None)
+        if callable(setup):
+            voices = getattr(self.ctx, "voices", None)
+            setup(identify=getattr(voices, "identify", None), on_change=self._barge_in_changed)
+
+    def _barge_in_instructions(self) -> str:
+        return "\n" + BARGE_IN_INSTRUCTION if getattr(self.audio, "barge_in_on", False) else ""
+
+    def _barge_in_changed(self, what: str, info: dict[str, Any]) -> None:
+        """The audio stopped the voice for someone talking over it (or let it carry on after a false alarm)."""
+        if what == "interrupted" and not self._ended.is_set():
+            self._last_activity = self.svc._now()
+            self.phase = "listening"  # the face listens at once, not at the next poll
+            self._set_state(RobotState.LISTENING)
+            self._publish(Topics.AUDIO_VISEME, {"level": 0.0})
+
+    def _barge_in_words(self, event: Any) -> None:
+        """Their words after cutting in: tell the audio (it drops the voice it held), and when all they said was
+        "oops, go ahead", tell the voice to carry on where it stopped."""
+        heard = getattr(self.audio, "barge_in_heard", None)
+        if not isinstance(event, wire.UserText) or not callable(heard):
+            return
+        if heard(event.text, event.final) == "go ahead":
+            log.info("live voice: they didn't mean to interrupt (\"go ahead\"); the voice carries on")
+            self._note(BARGE_IN_GO_AHEAD)
 
     # ------------------------------------------------------------ a video paused for this chat
     def _held_video(self) -> dict[str, Any] | None:

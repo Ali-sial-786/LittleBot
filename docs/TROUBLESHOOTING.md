@@ -119,6 +119,26 @@ YouTube in Chromium, `aplay` / `speaker-test` without `-D`, and LittleBot withou
 4. The parent dashboard can switch the microphone off (privacy) - check it is enabled.
 5. `sounddevice unavailable: PortAudio library not found` -> `sudo apt install libportaudio2`.
 
+## Echo cancelling / talking over the live voice
+
+Optional and **untested on a real Pi** ([PI_SETUP.md](PI_SETUP.md#echo-cancelling)). Start with
+`scripts/setup_echo_cancel.sh --check`: each FAIL line says what to install or run.
+
+- The journal says "audio: echo cancelling off (not set up on this robot ...)": run
+  `scripts/setup_echo_cancel.sh`. "... exist, but another device was chosen": `audio.speaker.device`
+  or `audio.microphone.device` names a USB device in `config/local.yaml`; remove it (or set `auto`).
+- `wpctl status` has no "LittleBot ... (echo cancelled)" devices: `journalctl --user -u pipewire -b | grep -i echo`
+  (a missing `libspa-0.2-modules` / `libpipewire-0.3-modules`, or the USB devices weren't found:
+  `--mic NAME` / `--speaker NAME`).
+- They are in `wpctl status` but not in `arecord -L` / `scripts/check_audio.py --list`: the ALSA
+  plugin is missing (`sudo apt install pipewire-alsa`) or `~/.asoundrc` lost LittleBot's block (run the
+  script again).
+- No sound, or the voice sounds odd, through it: `scripts/setup_echo_cancel.sh --remove` puts
+  everything back as before (USB devices as the defaults).
+- Live voice doesn't stop when you talk over it, or stops by itself: the rows in
+  [CHATGPT.md](CHATGPT.md#7-troubleshooting) (`chatgpt.live_barge_in_*` settings,
+  `chatgpt.live_barge_in: off` for one at a time).
+
 ## Camera busy or not found
 
 1. `v4l2-ctl --list-devices` - the USB camera appears with (usually) two `/dev/videoN`
@@ -198,7 +218,7 @@ YouTube in Chromium, `aplay` / `speaker-test` without `-D`, and LittleBot withou
 
 See the troubleshooting table in [CHATGPT.md](CHATGPT.md#5-troubleshooting): code sign-in off,
 expired sign-in, "not available for this account or region" (403), plan usage limit (429),
-endpoint changed (404), "Not installed on this robot yet", echo, volume.
+endpoint changed (404), "Not installed on this robot yet", echo, talking over it, volume.
 
 ## Anything else
 
