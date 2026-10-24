@@ -24,14 +24,12 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import fractions
 import json
 import shutil
 import subprocess
 import sys
 import tempfile
 import time
-import uuid
 from pathlib import Path
 from typing import Any
 
@@ -44,8 +42,10 @@ import numpy as np  # noqa: E402
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import set_giggle  # noqa: E402
 
-RATE = 48000
-OUT_RATE = 22050
+# The call machinery is shared with scripts/record_voice_lines.py.
+from littlebot.chatgpt.voice_record import OUT_RATE, RATE, VoiceCallError, open_call, tidy, to_call_pcm  # noqa: E402,F401
+from littlebot.chatgpt.voice_record import mic_track as _mic_track  # noqa: E402
+
 INSTRUCTIONS = (
     "You are LittleBot, a cute, friendly toy robot, and you are being recorded for a sound effect. "
     "When you are asked, perform exactly this out loud: a real, warm, happy giggle like someone being "
@@ -74,68 +74,14 @@ def _say_clause(say: str | None, lead: str) -> str:
 
 def _espeak(text: str) -> np.ndarray | None:
     """The spoken fallback request at 48 kHz (int16), or None without espeak-ng."""
-    exe = shutil.which("espeak-ng") or shutil.which("espeak")
-    if exe is None:
-        return None
-    with tempfile.TemporaryDirectory() as d:
-        wav = Path(d) / "req.wav"
-        subprocess.run([exe, "-s", "150", "-w", str(wav), text], check=True, capture_output=True)
-        from littlebot.audio import dsp
+    from littlebot.chatgpt.voice_record import espeak_pcm
 
-        x, sr = dsp.read_wav(wav)
-    return to_call_pcm(x, sr)
-
-
-def to_call_pcm(x: np.ndarray, sr: int) -> np.ndarray:
-    """Float audio at ``sr`` as the call's microphone sound (int16 at RATE)."""
-    x = np.asarray(x, dtype=np.float64).reshape(-1)
-    n = int(len(x) * RATE / sr)
-    y = np.interp(np.linspace(0, len(x) - 1, n), np.arange(len(x)), x)
-    return (np.clip(y, -1, 1) * 20000).astype(np.int16)
+    return espeak_pcm(text)
 
 
 def load_like(path: Path, start: float | None = None, end: float | None = None) -> np.ndarray:
     """The giggle to copy, from any video or audio file, trimmed and levelled like set_giggle does."""
     return to_call_pcm(set_giggle.tidy(set_giggle.decode(path), start, end, peak=1.0), set_giggle.RATE)
-
-
-def _mic_track() -> Any:
-    """Silence, except for the sounds handed to ``play()`` (one after another)."""
-    import av
-    from aiortc.mediastreams import AudioStreamTrack
-
-    class Mic(AudioStreamTrack):
-        def __init__(self) -> None:
-            super().__init__()
-            self._queue: list[tuple[np.ndarray, asyncio.Event]] = []
-            self._pos = 0
-            self._pts = 0
-
-        def play(self, pcm: np.ndarray) -> asyncio.Event:
-            """Queue ``pcm`` (int16 at RATE); the returned event is set once it has all been sent."""
-            ended = asyncio.Event()
-            self._queue.append((pcm, ended))
-            return ended
-
-        async def recv(self) -> Any:
-            await super().recv()  # only for the 20 ms pacing: its silence is 8 kHz, every frame here is RATE
-            n = RATE // 50
-            pcm = np.zeros(n, dtype=np.int16)
-            if self._queue:
-                sound, ended = self._queue[0]
-                chunk = sound[self._pos:self._pos + n]
-                pcm[:len(chunk)] = chunk
-                self._pos += n
-                if self._pos >= len(sound):
-                    self._queue.pop(0)
-                    self._pos = 0
-                    ended.set()
-            out = av.AudioFrame.from_ndarray(pcm.reshape(1, -1), format="s16", layout="mono")
-            out.sample_rate, out.pts, out.time_base = RATE, self._pts, fractions.Fraction(1, RATE)
-            self._pts += n
-            return out
-
-    return Mic()
 
 
 async def record_take(auth: Any, cfg: Any, *, transport: Any = None, call_url: str | None = None,
@@ -147,12 +93,9 @@ async def record_take(auth: Any, cfg: Any, *, transport: Any = None, call_url: s
     the whole giggle is kept. ``say``: words to add after the giggle in that case.
     """
     import av
-    import httpx
-    from aiortc import RTCConfiguration, RTCPeerConnection, RTCSessionDescription
     from aiortc.mediastreams import MediaStreamError
 
     from littlebot.chatgpt import wire
-    from littlebot.chatgpt.live import CALL_URL
 
     if like is None:
         instructions, request, spoken = INSTRUCTIONS, REQUEST, SPOKEN_REQUEST
@@ -161,9 +104,6 @@ async def record_take(auth: Any, cfg: Any, *, transport: Any = None, call_url: s
         request = LIKE_REQUEST.format(say=_say_clause(say, " and then say "))
         spoken = SPOKEN_LIKE_REQUEST
     mic = _mic_track()
-    pc = RTCPeerConnection(RTCConfiguration(iceServers=[]))
-    pc.addTrack(mic)
-    channel = pc.createDataChannel("oai-events")
     resampler = av.AudioResampler(format="s16", layout="mono", rate=OUT_RATE)
     chunks: list[np.ndarray] = []
     said: list[str] = []
@@ -187,13 +127,10 @@ async def record_take(auth: Any, cfg: Any, *, transport: Any = None, call_url: s
         elif isinstance(ev, wire.Closed):
             done.set()
 
-    def on_open() -> None:
+    def on_open(channel: Any) -> None:
         for f in wire.note_frames(request):
             channel.send(f)
         opened.set()
-
-    channel.on("message", on_message)
-    channel.on("open", on_open)
 
     async def pump(track: Any) -> None:
         while True:
@@ -213,27 +150,14 @@ async def record_take(auth: Any, cfg: Any, *, transport: Any = None, call_url: s
                 chunks.append(pcm)
 
     tasks: list[asyncio.Task[Any]] = []
-    pc.on("track", lambda track: tasks.append(asyncio.ensure_future(pump(track))) if track.kind == "audio" else None)
-    await pc.setLocalDescription(await pc.createOffer())
-    bearer = await auth.bearer()
-    voice = ""
     try:
-        async with httpx.AsyncClient(transport=transport, timeout=httpx.Timeout(20.0, connect=8.0)) as client:
-            for voice in list(dict.fromkeys([cfg.live_voice, *cfg.live_voice_fallbacks, "sol"])):
-                body = {"sdp": pc.localDescription.sdp, "session": {
-                    "model": cfg.live_model, "instructions": instructions,
-                    "audio": {"output": {"voice": voice}}, "delegation": {"type": "client"}}}
-                headers = {**auth.headers(bearer), "OpenAI-Alpha": "quicksilver=v2", "session-id": str(uuid.uuid4()),
-                           "thread-id": str(uuid.uuid4()), "x-session-id": str(uuid.uuid4())}
-                resp = await client.post(call_url or CALL_URL, json=body, headers=headers)
-                if resp.status_code in (400, 422):
-                    continue  # that voice isn't available: try the next one
-                if resp.status_code >= 400:
-                    raise SystemExit(f"ChatGPT refused the call (HTTP {resp.status_code}).")
-                break
-            else:
-                raise SystemExit("ChatGPT accepted none of the voices.")
-        await pc.setRemoteDescription(RTCSessionDescription(sdp=resp.text, type="answer"))
+        pc, _channel, voice = await open_call(
+            auth, cfg, instructions, mic=mic, on_message=on_message, on_open=on_open, transport=transport,
+            call_url=call_url,
+            on_track=lambda track: tasks.append(asyncio.ensure_future(pump(track))) if track.kind == "audio" else None)
+    except VoiceCallError as e:
+        raise SystemExit(str(e)) from None
+    try:
         if like is not None:
             await asyncio.wait_for(opened.wait(), 15.0)
             await asyncio.sleep(0.5)  # let the request land before the giggle starts
@@ -255,24 +179,6 @@ async def record_take(auth: Any, cfg: Any, *, transport: Any = None, call_url: s
             t.cancel()
     audio = np.concatenate(chunks) if chunks else np.zeros(0, dtype=np.float32)
     return audio, " ".join(said).strip(), voice
-
-
-def tidy(audio: np.ndarray, peak: float = 0.55) -> np.ndarray:
-    """Trim the silence around the voice and normalise its loudness."""
-    if not len(audio):
-        return audio
-    win = max(1, OUT_RATE // 50)
-    env = np.sqrt(np.convolve(audio * audio, np.ones(win) / win, mode="same"))
-    loud = np.nonzero(env > max(0.01, 0.06 * float(env.max())))[0]
-    if not len(loud):
-        return np.zeros(0, dtype=np.float32)
-    pad = int(0.06 * OUT_RATE)
-    y = audio[max(0, loud[0] - pad): loud[-1] + pad].astype(np.float64)
-    fade = min(len(y) // 4, int(0.02 * OUT_RATE))
-    if fade:
-        y[:fade] *= np.linspace(0, 1, fade)
-        y[-fade:] *= np.linspace(1, 0, fade)
-    return (y / max(1e-6, float(np.abs(y).max())) * peak).astype(np.float32)
 
 
 async def main_async(args: argparse.Namespace) -> int:

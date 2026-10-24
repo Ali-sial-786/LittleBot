@@ -283,3 +283,37 @@ def test_settings_show_where_the_weather_is_for_and_let_the_parent_change_it(pho
     card.get_by_role("button", name="Use my internet connection").click()
     expect(card.get_by_role("button", name="Change")).to_be_visible()
     assert phone.bot.ctx.settings.get("info.location") == {} and phone.bot.ctx.settings.get("info.units") == "auto"
+
+
+def test_activity_voices_card_records_in_the_chatgpt_voice_with_the_parents_ok_for_the_name(phone, tmp_path):
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent / "chatgpt"))
+    from chatgpt_helpers import signed_in_auth
+
+    ctx = phone.bot.ctx
+    page = phone.open("activities")
+    phone.api("PUT", "/profile", {"nickname": "Amara", "age_months": 10})
+    page.reload()
+    card = page.get_by_role("region", name="Activity voices")
+    expect(card).to_contain_text("lines LittleBot says in activities, games and chats are recorded in its ChatGPT voice")
+    expect(card.locator(".banner")).to_contain_text("Turn on cloud communication in Privacy first")  # not yet
+    signed_out = ctx.extras["chatgpt_auth"]
+    ctx.extras["chatgpt_auth"] = signed_in_auth(tmp_path)  # (a stand-in sign-in: nothing is recorded here)
+    phone.api("PUT", "/privacy", {"cloud_enabled": True})
+    try:
+        page.reload()
+        expect(card.get_by_role("button", name="Record activity voices in the ChatGPT voice")).to_be_visible()
+        box = card.get_by_role("checkbox", name=re.compile("Also record the .* lines with Amara's name"))
+        expect(box).not_to_be_checked()  # the name is only sent to ChatGPT with the parent's OK
+        count = card.get_by_text(re.compile(r"^\d+ lines to record"))
+        without = count.inner_text()
+        box.check()
+        expect(count).not_to_have_text(without)
+        expect(card).to_contain_text("The activities for Amara's age come first")
+        assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")  # no sideways scroll
+    finally:
+        phone.api("PUT", "/privacy", {"cloud_enabled": False})
+        ctx.extras["chatgpt_auth"] = signed_out
+        phone.api("PUT", "/profile", {"nickname": "", "age_months": None, "birth_month": ""})

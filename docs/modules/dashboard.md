@@ -148,6 +148,9 @@ except login/setup). All routes except the four public ones need a session cooki
 | POST | `/api/activities/stop`, `/pause`, `/resume` | | `stop("parent stop")`, `pause()`, `resume()` |
 | POST | `/api/activities/respond` | `{response, prompt_id?}` | `respond()`; 409 if nothing is waiting |
 | PUT | `/api/activities/{id}/preferences` | `{enabled?, favourite?}` | stored in `profile.activity_preferences` (defaults are not stored) |
+| GET | `/api/voice-lines` | | the "Activity voices" card: `{total, recorded, missing, named, named_missing, nickname, share_name, minutes, minutes_without_name, for_age_missing, voice, blocked, blocked_detail, job}` |
+| POST | `/api/voice-lines/record` | `{with_name?: bool, again?: false}` | records the missing lines in the ChatGPT voice (`VoiceLineJob`, background); 403 offline / cloud off / not signed in / live voice not installed, 409 already recording or during a voice chat |
+| POST | `/api/voice-lines/stop` | | stops after the current line |
 
 ### Media
 

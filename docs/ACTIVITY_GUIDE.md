@@ -80,6 +80,39 @@ In the dashboard profile you can add (all optional):
   want suggested. Switched-off activities disappear from the suggestions but you can
   still start them from the full list.
 
+### LittleBot's voice in activities (the ChatGPT voice)
+
+Out of the box, activities speak with the robot's built-in voice (espeak), which sounds
+robotic. If you signed in with ChatGPT ([CHATGPT.md](CHATGPT.md)), LittleBot can say its
+activity lines in the same warm voice as in a voice chat ("bubbie"):
+
+1. **Activities** page → **Activity voices** card → **Record activity voices in the ChatGPT
+   voice**. The card shows how many lines are recorded, how long the rest takes, and a
+   progress bar while it records.
+2. That's it. Each line is used as soon as it is recorded - no restart. LittleBot can keep
+   playing meanwhile: the recording doesn't use its speaker or microphone.
+
+* **What gets recorded:** every fixed line the activities say (with your child's nickname
+  and favourites from the profile filled in, and one line per animal, colour or shape of the
+  lists they use), the screen games' animal noises, and the scripted chat replies and
+  greetings. About 1,000 lines in all, roughly **1½ hours** the first time; the activities
+  for your child's age come first (about 350 lines, half an hour for a baby). Stop any time
+  and press the button again later to carry on.
+* **Your child's name** is only sent to ChatGPT with your OK: tick *Also record the lines
+  with …'s name* on the card (it is ticked already if you share the name with the AI on the
+  AI page). Without it, the handful of lines with the name keep the robot voice.
+* **Still robotic?** Lines that can't be known in advance keep the robot voice: what your
+  child just said ("You said *ball*!"), two or three animals picked at once, and anything the
+  AI makes up. A line the voice didn't say right (LittleBot checks what it said) is listed on
+  the card and tried again next time you press the button. After you change the nickname or
+  favourites, or add your own activity, press it again for the new lines.
+* **Command line** (the same thing, for the terminal): `.venv/bin/python
+  scripts/record_voice_lines.py --dry-run` lists the lines and the time it takes;
+  `--missing` records what isn't recorded yet; `--only peekaboo` just one activity;
+  `--with-name` includes the lines with the name. See [CHATGPT.md](CHATGPT.md#activities-in-the-chatgpt-voice).
+* The recordings live in `data/voice_lines/` (updates never touch them). Delete that folder
+  to go back to the robot voice everywhere.
+
 ### Tips for caregiver-led play
 
 * **Follow your child's lead.** If she wants to bang the "shaker" instead of copying the
@@ -416,6 +449,18 @@ responses warm whatever was heard - toddlers' words are hard to recognise.
 ```
 
 Only use songs that are traditional / public domain (or that you wrote yourself).
+
+#### Your lines in the ChatGPT voice
+
+Your own activities' `say` lines and sung words are recorded like the built-in ones (press
+**Record activity voices** again, or `scripts/record_voice_lines.py --missing --only my_game`).
+The recorder works the lines out from the script: placeholders are filled with the profile
+values and with **every item** of a `pick` / `for_each` list (`{animal.sound}` = one line per
+animal), `set` values and `{round}` numbers. A line stays in the robot voice when its words
+can't be known in advance: `listen: store_as` text, `pick` with `count` above 1, or more than 40
+combinations of values in one sentence. Prompts, notes and `ask_caregiver` texts are not spoken,
+so they are not recorded. A recording is matched to what LittleBot says ignoring case,
+punctuation and spacing; change a word and that line is the robot voice again until recorded.
 
 ### Writing good activities for little ones
 

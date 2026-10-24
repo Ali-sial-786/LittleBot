@@ -300,6 +300,31 @@ class MockProvider(BaseProvider):
             return f"Can you touch your {part}? Boop!"
         return f"Let's play a game! Can you touch your {part}? Now wiggle your toes!"
 
+    # -- the fixed lines (recorded once in the ChatGPT voice) --------------
+    def scripted_lines(self, tiers: Iterable[Tier] | None = None) -> list[str]:
+        """Every line ``respond`` can give for ``tiers`` (default: the child's age now), without repeats.
+
+        Templated topics are filled with each word they know ("Woof! Woof!", "Red! Pretty red!") and
+        ``{animal}`` with the favourite animal (else "duck"), as ``respond`` would. Used to record the
+        lines in the ChatGPT voice (scripts/record_voice_lines.py)."""
+        if tiers is None:
+            try:
+                tiers = [tier_for_age(self._age())]
+            except Exception:  # noqa: BLE001
+                tiers = ["baby"]
+        out: dict[str, None] = {}
+        for tier in tiers:
+            for rule in _RULES:
+                for line in rule.replies[tier]:
+                    out[self._fill(line, [])] = None
+            for line in _UNKNOWN[tier]:
+                out[line] = None
+            for make, words in ((self._animal, ANIMAL_SOUNDS), (self._colour, COLOURS), (self._shape, SHAPES),
+                                (self._food, FOODS), (self._body, BODY_PARTS)):
+                for word in words:
+                    out[make(word, tier)] = None
+        return list(out)
+
     # -- provider interface ----------------------------------------------
     async def reply(self, messages: list[Message], *, system: str = "", max_tokens: int = 120,
                     timeout: float = 5.0) -> ProviderReply:
