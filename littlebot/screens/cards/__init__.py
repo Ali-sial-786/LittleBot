@@ -10,7 +10,7 @@ import logging
 
 log = logging.getLogger("littlebot.screens")
 
-_MODULES = ("weather", "clock", "timer", "maths", "definition", "explain", "recipe", "facts")
+_MODULES = ("weather", "clock", "timer", "maths", "definition", "explain", "recipe", "facts", "games")
 
 for _name in _MODULES:
     try:

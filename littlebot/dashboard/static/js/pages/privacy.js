@@ -28,6 +28,26 @@ export default {
     const history = flag('record_history', 'Remember activity history',
       'Keeps a simple list of which activities were played (names and times only), stored on the robot.');
     const offlineNote = h('div');
+    // Info cards on LittleBot's screen (littlebot/screens): their own switches, kept as settings.
+    const screenFlag = (key, title, text, okText) => switchRow({
+      title, text,
+      onChange: async (v) => {
+        const r = await app.act(() => put('/screens/settings', { [key]: v }), okText(v));
+        if (r) fillScreens(r);
+        return r !== null;
+      },
+    });
+    const cards = screenFlag('enabled', 'Info cards on the screen during voice chats',
+      'While LittleBot talks with you it can show what you asked on its screen - the weather, a word\'s meaning, the steps of a recipe, a timer - with its own little eyes in the corner. A card goes 30 seconds after the chat ends (a running timer stays until it rings), or straight away when you tap the little eyes or say “close it”. On by default.',
+      (v) => (v ? 'Info cards are on.' : 'Info cards are off.'));
+    const pictures = screenFlag('web_pictures', 'Show pictures from the internet on LittleBot\'s screen',
+      'Lets a card show a picture of what you asked about (an animal, a place, a dish), found on the internet with strict safe search. Pictures are only shown, never kept: nothing is saved on the robot, and nothing about your child is sent - only the word being looked up. Off: cards show no pictures. On by default.',
+      (v) => (v ? 'Cards may show pictures from the internet.' : 'Cards no longer show pictures from the internet.'));
+    const showing = h('p', { class: 'muted' });
+    const closeBtn = button('Close the card', {
+      kind: 'soft', iconName: 'x',
+      onClick: async () => { const r = await app.act(() => post('/screens/close'), 'Card closed.'); if (r) fillScreens(r); },
+    });
 
     view.append(
       pageHead('Privacy', 'You decide what LittleBot can see, hear and share.'),
@@ -41,6 +61,9 @@ export default {
         h('div', { class: 'grid two' },
           h('section', { class: 'card' }, h('div', { class: 'card-head' }, h('h2', {}, icon('eye'), 'Sensors & sharing')), camera.el, mic.el, cloud.el, aiCamera.el, faces.el, history.el),
           h('div', { class: 'stack' },
+            h('section', { class: 'card' },
+              h('div', { class: 'card-head' }, h('h2', {}, icon('face'), 'LittleBot\'s screen')),
+              cards.el, pictures.el, showing, h('div', { class: 'mt-2' }, closeBtn)),
             h('section', { class: 'card' },
               h('div', { class: 'card-head' }, h('h2', {}, icon('history'), 'Clear history')),
               h('p', { class: 'muted', text: 'Removes any stored activity history and conversation memory from the robot.' }),
@@ -69,6 +92,14 @@ export default {
       offlineNote.replaceChildren(...(d.offline_mode ? [banner('info', 'info', 'Offline mode', 'LittleBot is running in offline mode: cloud communication is switched off and cannot be turned on.')] : []));
     }
 
+    function fillScreens(d) {
+      cards.set(d.enabled !== false);
+      pictures.set(d.web_pictures !== false);
+      showing.textContent = d.active ? `On the screen now: ${d.showing || d.card?.title || 'a card'}.` : 'No card on the screen right now.';
+      closeBtn.disabled = !d.active;
+    }
+
+    get('/screens').then(fillScreens).catch(() => { showing.textContent = 'Info card status is unavailable.'; });
     get('/privacy').then(fill).catch((e) => offlineNote.replaceChildren(banner('danger', 'alert', 'Could not load privacy settings', e.message)));
     return {
       update(s) {

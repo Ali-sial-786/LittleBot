@@ -48,6 +48,7 @@ class RobotContext:
     brain: BrainAPI | None = None
     activities: ActivityAPI | None = None
     games: Any = None  # on-screen games (littlebot.games.service.GamesService)
+    screens: Any = None  # info cards over the face (littlebot.screens.service.ScreenService)
     live: Any = None  # live voice (littlebot.chatgpt.live.LiveVoiceService)
     wake: Any = None  # wake word, "Hey LittleBot" (littlebot.audio.wakeword.WakeWordService)
     extras: dict[str, Any] = field(default_factory=dict)

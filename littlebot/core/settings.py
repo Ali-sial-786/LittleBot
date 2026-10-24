@@ -73,6 +73,10 @@ def build_defaults(cfg: LittleBotConfig) -> dict[str, Any]:
         # dashboard ({} = config ``info.location``, else from the internet connection), and the units
         "info.location": {},
         "info.units": cfg.info.units,
+        # info cards on the screen during voice chats (littlebot/screens), and whether they may show
+        # pictures from the internet (strict safe search, never kept)
+        "screens.enabled": True,
+        "screens.web_pictures": True,
         # child profile (minimum necessary information; all optional)
         "profile": {
             "nickname": "",

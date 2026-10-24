@@ -309,6 +309,18 @@ class InfoConfig(_Section):
     cache_minutes: float = Field(default=10.0, ge=0)  # a forecast is reused this long
 
 
+class ScreensConfig(_Section):
+    """Info cards on the face screen during voice chats (littlebot/screens, docs/SCREENS.md).
+
+    The parent's switches (dashboard Privacy page: ``screens.enabled``, ``screens.web_pictures``) can
+    turn them off; ``enabled: false`` here switches the feature off whatever the parent chose."""
+
+    enabled: bool = True
+    # After the voice chat ends a card stays this long (a running timer stays until it is done).
+    linger_seconds: float = Field(default=30.0, ge=0.0, le=600.0)
+    presenter_backing: bool = True  # the presenter's eyes sit on a little patch of LittleBot's pink face
+
+
 class MediaConfig(_Section):
     # auto: Pi -> kiosk (if Chromium is installed), desktop -> browser, headless/offline -> none
     player: Literal["auto", "browser", "kiosk", "none"] = "auto"
@@ -436,6 +448,7 @@ class LittleBotConfig(BaseModel):
     ai: AIConfig = Field(default_factory=AIConfig)
     chatgpt: ChatGPTConfig = Field(default_factory=ChatGPTConfig)
     info: InfoConfig = Field(default_factory=InfoConfig)
+    screens: ScreensConfig = Field(default_factory=ScreensConfig)
     media: MediaConfig = Field(default_factory=MediaConfig)
     motion: MotionConfig = Field(default_factory=MotionConfig)
     dashboard: DashboardConfig = Field(default_factory=DashboardConfig)
