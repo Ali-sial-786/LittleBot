@@ -171,7 +171,7 @@ async def test_a_question_worth_showing_puts_a_card_up_and_tells_the_voice_once(
     content = call["messages"][-1]["content"]
     assert content.startswith("Card on screen: none.")
     assert "LittleBot: Hello! What shall we do today?" in content
-    assert content.endswith("They just said: What's the weather like tomorrow?")
+    assert content.endswith("They just said: What's the weather like tomorrow?\n\n" + director_mod.ANSWER_CUE)
     await s.heard("How do I make pancakes for breakfast?")
     assert s.notes[1] == "On your screen now: recipe: Pancakes."  # brief from now on
     assert [h["what"] for h in s.director.history] == ["show weather", "show recipe"]
@@ -250,6 +250,31 @@ def test_parse_decision_tolerates_fences_and_words_around_it():
     assert parse_decision('```json\n{"do": "close"}\n```') == {"do": "close"}
     assert parse_decision('Here: {"do": "none"} done') == {"do": "none"}
     assert parse_decision("{not json}") is None and parse_decision("") is None
+
+
+def test_parse_decision_forgives_what_fast_models_do():
+    assert parse_decision('{"do": "show", "spec": {"card": "timer", "minutes": 5,},}') == \
+        {"do": "show", "spec": {"card": "timer", "minutes": 5}}  # trailing commas
+    assert parse_decision('{"do": "close"}\n{"do": "none"}') == {"do": "close"}  # two objects
+    assert parse_decision('4! {"do": "show", "spec": {"card": "maths"}} and {x}') == \
+        {"do": "show", "spec": {"card": "maths"}}
+    assert parse_decision("none") == {"do": "none"} and parse_decision('"close".') == {"do": "close"}
+    assert parse_decision("2 + 2 is 4") is None
+
+
+async def test_an_answer_without_json_is_asked_for_once_more(make):
+    s = make("Two plus two is four!", WEATHER)
+    await s.heard("What's the weather like tomorrow?")
+    assert s.screens.shown == [({"card": "weather", "day": 1}, "voice")]
+    assert len(s.provider.calls) == 2 and director_mod.RETRY_NOTE in s.provider.calls[1]["messages"][0]["content"]
+
+
+async def test_a_new_question_may_replace_the_card_up(make):
+    s = make(WEATHER, {"do": "show", "spec": {"card": "recipe", "title": "Pancakes", "steps": ["Mix", "Fry"]}})
+    await s.heard("What's the weather like tomorrow?")
+    await s.heard("How do I make pancakes?")
+    assert [spec["card"] for spec, _ in s.screens.shown] == ["weather", "recipe"]
+    assert "Never leave a card about something else up" in s.provider.calls[-1]["system"]
 
 
 def test_specs_are_trimmed_to_the_cards_fields_types_and_sizes():

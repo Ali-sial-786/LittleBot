@@ -375,11 +375,16 @@ Scissors LittleBot picks on the screen); the client tells you what happened, the
 
 # Added to VOICE_INSTRUCTIONS when the call has a screen director (littlebot/screens/director.py).
 SCREEN_INSTRUCTIONS = """
-Your screen also shows info cards. When something you are asked is worth seeing (the weather, a word's meaning, \
-the key points of an answer, a recipe step, a timer, a sum), LittleBot puts a card on it by itself while you talk, \
-and a note tells you what is on it. Never read the card out or describe it word for word: say the answer in your \
-own words, and you may point to it ("look!"). You don't need to ask for cards. If they ask to change or close what is \
-on the screen ("next step", "close it"), just say okay in a few words: LittleBot does it."""
+Your screen also shows info cards, and you can show things on it: the weather and forecast (now, by the hour, \
+the next days), a word's meaning, the key points of an explanation with a picture, a recipe one or two big steps \
+at a time, timers, the time, sums and maths, quick facts, and the menu of your games. When something you are \
+asked is worth seeing, LittleBot usually puts a card up by itself while you talk, and a note tells you what is on \
+it. Never read a card out or describe it word for word: say the answer in your own words, and you may point to it \
+("look!"). When someone asks you to show something, put it on the screen, or asks why it isn't on the screen, \
+delegate it to the client as "show on the screen: <what, with the details>" (for example "show on the screen: 2 + \
+2 = 4" or "show on the screen: why New York is called the Big Apple"), wait, then carry on. Never say you can't \
+show things on your screen. If they ask to change or close what is on the screen ("next step", "tomorrow", "by \
+the hour", "close it"), just say okay in a few words: LittleBot does it."""
 SCREEN_NEWS = "screen.news"  # {text}: a card wants the voice to say something ("the egg timer is done")
 # Published by live voice for whoever needs to know a call is on (the screen service: a card's presenter talks).
 CALL_STARTED = "live.call_started"  # {} the call is connected: the voice can talk now
@@ -396,7 +401,8 @@ Use your tools for live information (the weather and forecast, the date and time
 anything current): look it up and answer with what you found; never say you can't check it. The hand-off may also \
 ask LittleBot to do something (the volume, a video, an activity, a game, sleep) or ask about LittleBot itself (how \
 hot it is, its memory, Wi-Fi, what it can do): use your tools for that too, then answer with one short sentence \
-for the voice to say."""
+for the voice to say. When it asks to show something on the screen, call show_on_screen with the card that fits \
+best (an explain card with a picture for an explanation, a maths card for a sum), then answer briefly."""
 HANDOVER_WHAT = {"video": "the video starts", "activity": "the activity starts", "sleep": "LittleBot goes to sleep"}
 # A video paused for this chat ("Hey LittleBot" while it played: littlebot/audio/wakeword.py, MediaController.hold).
 # The person's own words, or the voice's hand-off, carry on with it (once the voice said goodbye, as a hand-over)
@@ -1940,6 +1946,7 @@ class LiveCall:
             log.warning("live voice: the %s stopped (nothing from it for %.0f s); opening the speaker and microphone "
                         "again", which, float(getattr(self.audio, "stall_s", 0.0)))
             self._reopen_job = asyncio.get_running_loop().run_in_executor(None, self.audio.reopen)
+            self._reopen_job.add_done_callback(_retrieved)  # also when the call ends before it is done
             self._spawn(self._reopened(which, self._reopen_job))
             return
         frames = getattr(self.audio, "frames_in", None)
@@ -1967,6 +1974,7 @@ class LiveCall:
         finally:
             if self._reopen_job is job and job.done():
                 self._reopen_job = None
+            self._read_check = None  # the time it took isn't "sound not sent"
         log.info("live voice: the speaker and microphone are open again")
 
     async def _watch(self) -> None:
@@ -2092,6 +2100,12 @@ def _face_menu() -> str:
         return menu_text()
     except Exception:  # noqa: BLE001
         return "happy, surprised, sleepy, curious, excited, sad, playful, celebrating, wink, spin_eyes, peekaboo"
+
+
+def _retrieved(job: "asyncio.Future[Any]") -> None:
+    """Done callback: a failed job's error is taken (and so never reported as never retrieved)."""
+    if not job.cancelled():
+        job.exception()
 
 
 def asks_to_see(text: str, *, partial: bool = False, follow_up: bool = False) -> bool:

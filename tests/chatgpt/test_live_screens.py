@@ -110,6 +110,8 @@ async def wait_for(cond: Any, timeout: float = 15.0) -> None:
 @pytest.fixture
 def make_live(ctx, tmp_path, monkeypatch):
     """make_live(provider, screens=True) -> a connected call (each test closes it with ``close``)."""
+    import littlebot.screens.cards  # noqa: F401, PLC0415 - the real cards first, so this weather card replaces theirs
+
     monkeypatch.setitem(base._TYPES, "weather", CardType(
         "weather", "The weather.", {"place": {"type": "string"}, "days": {"type": "integer"}}, _build,
         actions={"day": "offset"}))
@@ -167,7 +169,7 @@ async def test_a_question_puts_a_card_up_while_the_voice_talks(make_live, ctx):
         assert ctx.screens.shown == [({"card": "weather", "days": 2}, "voice")]
         await wait_for(lambda: any(n.startswith("On your screen now: the weather card.") for n in notes(server)))
         content = provider.decisions[0]["content"]
-        assert "LittleBot: Hello there!" in content and content.endswith("They just said: What's the weather like tomorrow?")
+        assert "LittleBot: Hello there!" in content and "They just said: What's the weather like tomorrow?\n" in content
         assert provider.decisions[0]["effort"] == "none"
         hear(server, "ba ba ba")  # the baby: nothing is asked
         await asyncio.sleep(0.2)

@@ -49,6 +49,8 @@ PACE_SLACK_S = 0.06  # a frame this late (the microphone or the encoder was slow
 STALL_S = 2.0  # no block from the microphone (or no request from the speaker) for this long: that stream stopped
 OPEN_RETRY_S = 3.0  # a device still busy (a video's browser was just closed): keep trying this long
 OPEN_RETRY_STEP_S = 0.25
+REOPEN_S = 8.0  # reopen(): a device that went away mid-call is looked for this long
+REOPEN_STEP_S = 0.5
 
 
 class LiveAudio:
@@ -116,11 +118,24 @@ class LiveAudio:
         if sd is None:
             raise AudioDeviceError(f"PortAudio unavailable ({dev.sounddevice_error()})")
         self._close_streams()
-        dev.refresh_portaudio()  # a USB device that was reset has a new index (done only while nothing is open)
-        self._open_streams(sd)
+        try:
+            self._open_streams(sd, retry_s=0.0)  # the same devices: quickest when the stream only stalled
+            return
+        except Exception as e:  # noqa: BLE001 - gone or reset: look for them again
+            log.info("live audio: opening them again didn't work at once (%s); looking for them again", e)
+        deadline = time.monotonic() + REOPEN_S
+        while True:
+            dev.refresh_portaudio()  # a USB device that was reset has a new index (done only while nothing is open)
+            try:
+                self._open_streams(sd)
+                return
+            except Exception:
+                if time.monotonic() >= deadline:
+                    raise
+                time.sleep(REOPEN_STEP_S)  # a USB microphone takes a few seconds to come back after a reset
 
-    def _open_streams(self, sd: Any) -> None:
-        deadline = time.monotonic() + max(0.0, self.open_retry_s)
+    def _open_streams(self, sd: Any, retry_s: float | None = None) -> None:
+        deadline = time.monotonic() + max(0.0, self.open_retry_s if retry_s is None else retry_s)
         tries = 0
         while True:
             tries += 1
@@ -213,7 +228,7 @@ class LiveAudio:
                 continue
             with dev._PA_LOCK:  # noqa: SLF001
                 try:
-                    stream.stop()
+                    stream.abort()  # not stop(): that waits for a stream that stalled (a USB device that went away)
                 except Exception:  # noqa: BLE001
                     pass
                 try:

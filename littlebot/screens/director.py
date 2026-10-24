@@ -54,6 +54,9 @@ log = logging.getLogger("littlebot.screens.director")
 
 SOURCE = "voice"  # ScreenService.show(source=...) for the director's own cards; the tools use "tool"
 DECIDE_TIMEOUT_S = 4.0  # the model's answer; later than this the voice has said it all anyway
+RETRY_TIMEOUT_S = 3.0  # one more try when the answer had no usable JSON
+RETRY_NOTE = "Your answer was not a JSON object. Answer again with exactly one JSON object and nothing else."
+ANSWER_CUE = "Answer with exactly one JSON object and nothing else."
 SHOW_TIMEOUT_S = 6.0  # building and showing the card (a forecast is usually cached by then)
 FAST_EFFORT = "none"  # reasoning effort for the decision, as for camera looks (look.LOOK_EFFORT)
 LINES = 6  # conversation lines the model sees
@@ -85,8 +88,11 @@ or conversion, a quick fact, a list or a comparison.
 {{"do": "command", "action": "<one of the card's actions>", "args": {{...}}}} to steer the card on screen when \
 they follow up on it ("and tomorrow?", "next step"). Prefer this to a new card of the same kind.
 {{"do": "close"}} when they want the card gone, or the talk has moved on to something it doesn't fit.
-{{"do": "none"}} for everything else: chit-chat, songs, games, talking to the baby, or nothing worth showing. \
-That is most turns.
+When a card is on screen and they now ask about something else that is worth seeing, answer "show" with the new \
+card (it replaces the old one); if the new thing isn't worth a card, answer "close". Never leave a card about \
+something else up.
+{{"do": "none"}} for everything else: chit-chat, songs, games, talking to the baby, or nothing worth showing.
+Never answer the question yourself: the voice does that. Your whole answer is the one JSON object.
 Use only the fields listed for the card, with short text (a few words per line, numbers as digits). Never put \
 personal details on the screen.
 
@@ -249,17 +255,41 @@ _DROP = object()
 _CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b-\x1f\x7f\u200b-\u200f\u202a-\u202e\u2066-\u2069]")
 
 
+_TRAILING_COMMA = re.compile(r",(\s*[}\]])")
+_BARE = re.compile(r"^\W*(none|close)\W*$", re.I)
+
+
 def parse_decision(text: str) -> dict[str, Any] | None:
-    """The JSON object in the model's answer (code fences and stray words around it are ignored), or None."""
+    """The JSON object in the model's answer, or None. Forgiving: code fences and words around it, a second
+    object after it, trailing commas, or a bare "none" / "close" all still count."""
     t = str(text or "").strip()
+    bare = _BARE.match(t)
+    if bare:
+        return {"do": bare.group(1).lower()}
     start, end = t.find("{"), t.rfind("}")
     if start < 0 or end <= start:
         return None
-    try:
-        obj = json.loads(t[start:end + 1])
-    except ValueError:
-        return None
-    return obj if isinstance(obj, dict) else None
+    for candidate in (t[start:end + 1], _TRAILING_COMMA.sub(r"\1", t[start:end + 1])):
+        try:
+            obj = json.loads(candidate)
+        except ValueError:
+            continue
+        if isinstance(obj, dict):
+            return obj
+    decoder = json.JSONDecoder()
+    first: dict[str, Any] | None = None
+    i = start
+    while 0 <= i <= end:
+        try:
+            obj, _ = decoder.raw_decode(t, i)
+        except ValueError:
+            obj = None
+        if isinstance(obj, dict):
+            if "do" in obj:
+                return obj
+            first = first if first is not None else obj
+        i = t.find("{", i + 1)
+    return first
 
 
 def _text(value: str, limit: int) -> str:
@@ -601,7 +631,22 @@ class ScreenDirector:
         if turn != self._turn or self._closed:
             self._log("dropped", t0, "model", "they said something else meanwhile")
             return
-        decision = self._validate(parse_decision(getattr(reply, "text", "") or ""))
+        text = getattr(reply, "text", "") or ""
+        obj = parse_decision(text)
+        if obj is None:  # a fast model sometimes answers the question itself: ask once more, firmly
+            log.info("screen: the answer had no JSON (%d characters%s); asking once more", len(text),
+                     ", starts with text" if text.strip()[:1] not in ("{", "`", "") else "")
+            try:
+                retry = await asyncio.wait_for(self._ask(retry=True), RETRY_TIMEOUT_S)
+                obj = parse_decision(getattr(retry, "text", "") or "")
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001 - still no card
+                obj = None
+            if turn != self._turn or self._closed:
+                self._log("dropped", t0, "model", "they said something else meanwhile")
+                return
+        decision = self._validate(obj)
         child = self._speaker(t0)
         if decision.do != "none" and (child or (needs_grownup and child is not False)):
             self._log("none", t0, "model", "the child spoke" if child else "not known to be a grown-up")
@@ -625,11 +670,12 @@ class ScreenDirector:
         self._log(f"show {clean['card']}", t0, path,
                   "" if result.get("ok") else f"not shown ({result.get('error') or 'no card'})")
 
-    async def _ask(self) -> Any:
+    async def _ask(self, *, retry: bool = False) -> Any:
         provider = self._provider_factory()
         opts = _reply_options(provider.reply, effort=self.effort)
-        return await provider.reply([{"role": "user", "content": self._context()}], system=self._prompt(),
-                                    max_tokens=400, timeout=self.timeout, **opts)
+        content = f"{self._context()}\n\n{RETRY_NOTE if retry else ANSWER_CUE}"
+        return await provider.reply([{"role": "user", "content": content}], system=self._prompt(),
+                                    max_tokens=400, timeout=RETRY_TIMEOUT_S if retry else self.timeout, **opts)
 
     def _prompt(self) -> str:
         if self._system is None:

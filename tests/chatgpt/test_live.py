@@ -1576,17 +1576,22 @@ class StoppingAudio(FakeLiveAudio):
 
     stall_s = 2.0
 
-    def __init__(self, reopen_fails: bool = False) -> None:
+    def __init__(self, reopen_fails: bool = False, reopen_s: float = 0.0) -> None:
         super().__init__()
         self.stopped: str | None = None
         self.reopens = 0
         self.reopen_fails = reopen_fails
+        self.reopen_s = reopen_s
 
     def stalled(self) -> str | None:
         return self.stopped
 
     def reopen(self) -> None:
         self.reopens += 1
+        if self.reopen_s:
+            import time
+
+            time.sleep(self.reopen_s)
         if self.reopen_fails:
             from littlebot.audio.errors import AudioDeviceError
 
@@ -1662,6 +1667,19 @@ async def test_the_call_ends_when_the_microphones_sound_is_no_longer_sent(stoppi
     await wait_for(lambda: not svc.status()["active"])
     assert svc.status()["last_call"]["ended_reason"] == "the microphone stopped"
     assert "stopped reaching ChatGPT" in svc.status()["last_call"]["error"]
+
+
+async def test_a_slow_reopen_doesnt_count_as_sound_not_sent(stopping, monkeypatch):
+    """Opening a reset USB microphone again took 40 s once, and the call then ended at once as "not sent"."""
+    svc, server, audio = await stopping(reopen_s=0.3)
+    await connect(svc, server)
+    call = svc._call
+    audio.frames_in = 5
+    call._read_check = (5, -1000.0)  # the last frames counted long ago, before the microphone stopped
+    audio.stopped = "microphone"
+    await wait_for(lambda: audio.reopens == 1 and call._reopen_job is None)
+    await asyncio.sleep(0.3)
+    assert svc.status()["active"]  # counting starts again after the reopen
 
 
 def test_talking_to_the_child_by_name_is_told_apart_from_talking_about_her():

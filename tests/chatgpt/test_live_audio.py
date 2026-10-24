@@ -26,13 +26,16 @@ DEVICES = [
 class FakeStream:
     def __init__(self, **kw: Any) -> None:
         self.kw = kw
-        self.started = self.closed = False
+        self.started = self.closed = self.aborted = False
 
     def start(self) -> None:
         self.started = True
 
     def stop(self) -> None:
-        pass
+        raise AssertionError("stop() waits for a stalled stream: abort() it")
+
+    def abort(self) -> None:
+        self.aborted = True
 
     def close(self) -> None:
         self.closed = True
@@ -407,6 +410,39 @@ async def test_reopening_carries_on_where_the_call_reads(setup):
     finally:
         audio.close()
     assert dev._open_streams == opened - 2
+
+
+async def test_a_microphone_that_went_away_is_looked_for_again(setup, caplog, monkeypatch):
+    """A USB microphone reset mid-call: the same device fails at once, PortAudio looks again until it is back."""
+    audio, sd, _ = setup
+    monkeypatch.setattr("littlebot.chatgpt.live_audio.OPEN_RETRY_STEP_S", 0.01)
+    monkeypatch.setattr("littlebot.chatgpt.live_audio.REOPEN_STEP_S", 0.01)
+    refreshed: list[int] = []
+    monkeypatch.setattr(dev, "refresh_portaudio", lambda: refreshed.append(1) or True)
+    audio.open_retry_s = 0.03
+    audio.open(asyncio.get_running_loop())
+    gone = [8]
+    real = sd.InputStream
+
+    def mic(**kw: Any) -> FakeStream:
+        if gone[0]:
+            gone[0] -= 1
+            raise RuntimeError("Error opening InputStream: Device unavailable")
+        return real(**kw)
+
+    sd.InputStream = mic
+    caplog.set_level(logging.INFO, logger="littlebot.chatgpt.live")
+    try:
+        await asyncio.to_thread(audio.reopen)
+        assert all(s.aborted and s.closed for s in sd.streams[:2]) and gone[0] == 0
+        assert len(refreshed) >= 2 and "looking for them again" in caplog.text
+        assert sd.streams[-1].started and not sd.streams[-1].closed
+    finally:
+        audio.close()
+    sd.InputStream = lambda **kw: (_ for _ in ()).throw(RuntimeError("gone"))
+    monkeypatch.setattr("littlebot.chatgpt.live_audio.REOPEN_S", 0.05)
+    with pytest.raises(RuntimeError, match="gone"):
+        await asyncio.to_thread(audio.reopen)  # still gone after REOPEN_S: the call ends
 
 
 async def test_a_busy_device_is_tried_again_while_opening(setup, caplog, monkeypatch):
