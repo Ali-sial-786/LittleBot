@@ -98,7 +98,7 @@ async def test_the_button_records_the_missing_lines_without_the_name_unless_aske
     r = await authed.post("/api/voice-lines/record", json={"with_name": True})
     await wait_for(lambda: len(asked) == 2)
     assert any("Amara" in t for t in asked[1]) and not set(asked[0][:3]) & set(asked[1])
-    await wait_for(lambda: not dctx.extras["voice_lines_job"].running)
+    await wait_for(lambda: not dctx.extras["voice_lines_job"].running, 30.0)  # over a thousand lines to save
 
 
 async def test_not_during_a_voice_chat(authed, dctx, store, fake_call, tmp_path):

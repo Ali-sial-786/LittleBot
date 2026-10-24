@@ -33,6 +33,16 @@ swapping, or a power dip). Memory low, swapping, heat and under-voltage are warn
 start, and a `health:` line every 5 minutes gives memory, swap, temperature, load and LittleBot's
 own memory and CPU. `scripts/log_timeline.py` shows all of this in order.
 
+**It stops answering in the middle of a voice chat** (and "Hey LittleBot" does nothing until the
+chat's time limit). Every 20 s of a chat the log has a `live voice: still on` line: `mic 0 frames
+sent` means the microphone stopped delivering sound. A microphone or speaker that gives nothing
+for 2 s is now opened again (`the microphone stopped (nothing from it for 2 s); opening the
+speaker and microphone again`); if that fails, or it stops a third time, the chat ends (`ending
+(the microphone stopped)`) and the wake word listens again. It happening often points at the USB
+side: `dmesg | grep -i usb | tail -30` shows resets (a weak power supply, or a hub). While the
+voice chat has the speaker, the audio service no longer tests the speaker underneath it, and after
+a video is closed for a chat the earcon waits until the browser has let go of the speaker.
+
 ## No picture on the screen
 
 1. Cable in **HDMI0** (next to USB-C power)? Screen powered (backlight on)?

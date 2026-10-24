@@ -132,6 +132,29 @@ async def test_the_earcon_waits_for_the_page_to_say_it_paused(vrig):
     assert media.status()["held"]["position_seconds"] == 42.5
 
 
+async def test_the_earcon_waits_for_the_speaker_the_video_had(vrig, caplog):
+    """The player window is closed for the chat, but its browser lets go of the USB speaker a moment later: the
+    earcon waits until the speaker plays again (it would fail, and the speaker count as unplugged)."""
+    caplog.set_level(logging.INFO, logger="littlebot.wake")
+    r = await vrig()
+    free_at: list[float] = []
+
+    async def speaker_back(timeout: float = 5.0) -> bool:
+        while r.backend.closed < 1:  # busy until the video's window is closed, and a moment after
+            await asyncio.sleep(0.02)
+        await asyncio.sleep(0.4)
+        free_at.append(time.monotonic())
+        return True
+
+    r.audio.speaker_back = speaker_back
+    await _listening(r)
+    sounds = _spy_earcon(r)
+    r.rec.say("hey little bot", conf=0.9)
+    await until(lambda: r.live.calls, what="live voice started")
+    assert free_at and sounds[0][0] == "listen" and sounds[0][3] >= free_at[0]
+    assert "the speaker was free" in caplog.text
+
+
 async def test_the_video_carries_on_when_live_voice_cannot_start(vrig):
     r = await vrig(error="not_signed_in")
     await _listening(r)

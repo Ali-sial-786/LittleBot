@@ -638,6 +638,10 @@ class AudioService(Service):
             self._try_reconnect_output(out)
 
     def _try_reconnect_output(self, out: OutputBackend) -> bool:
+        if self._suspended:
+            # Lent (live voice has it open): probing the same USB device under its stream can stop that
+            # stream. Tried again once it is given back.
+            return False
         self._next_out_retry = time.monotonic() + self.reconnect_seconds
         if isinstance(out, SoundDeviceOutput):
             dev.refresh_portaudio()

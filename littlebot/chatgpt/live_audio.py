@@ -11,6 +11,10 @@ says it will be heard, and :attr:`LiveAudio.mouth` reads the one being heard now
 
 A call started by the wake word sends what was said with it first (:class:`CarryFeed`).
 
+A USB microphone or speaker can stop mid-call (a power dip resets it, or another program still had
+it): :meth:`LiveAudio.stalled` says which one went quiet, and :meth:`LiveAudio.reopen` opens both
+again (littlebot/chatgpt/live.py does this, and ends the call if it doesn't help).
+
 Nothing is recorded: samples only pass through small in-memory buffers.
 """
 
@@ -42,14 +46,20 @@ KEEP_PAUSE_S = 0.3
 BEHIND_FRAMES = 2  # this many frames waiting = behind real time (fewer is ordinary jitter)
 MAX_WAITING_S = 10.0  # never more than this waiting to be sent: the oldest goes
 PACE_SLACK_S = 0.06  # a frame this late (the microphone or the encoder was slow) restarts the beat: no burst
+STALL_S = 2.0  # no block from the microphone (or no request from the speaker) for this long: that stream stopped
+OPEN_RETRY_S = 3.0  # a device still busy (a video's browser was just closed): keep trying this long
+OPEN_RETRY_STEP_S = 0.25
 
 
 class LiveAudio:
     """Real devices through sounddevice (PortAudio). ``sd`` is injectable for tests."""
 
+    stall_s = STALL_S
+
     def __init__(self, *, mic: int | str | None, speaker: int | str | None, volume: Callable[[], float],
                  mic_gain: Callable[[], float] = lambda: 1.0, half_duplex: bool = True, echo_tail_s: float = 0.45,
-                 voice_level: float = 0.012, sd: Any = None, now: Callable[[], float] = time.monotonic) -> None:
+                 voice_level: float = 0.012, sd: Any = None, now: Callable[[], float] = time.monotonic,
+                 open_retry_s: float = OPEN_RETRY_S) -> None:
         self.mic_spec, self.speaker_spec = mic, speaker
         self._volume, self._mic_gain = volume, mic_gain
         self.half_duplex = half_duplex
@@ -83,18 +93,55 @@ class LiveAudio:
         # For the call's "still on" log line (littlebot/chatgpt/live.py, LiveCall._pulse): counts only, never sound.
         self.frames_in = self.frames_gated = self.frames_out = 0  # mic frames sent (of them silenced), voice frames
         self.peak_in = 0.0  # the loudest mic block since the last line
+        self.open_retry_s = open_retry_s
+        self._opened_at: float | None = None
+        self.mic_at: float | None = None  # the latest block from the microphone (PortAudio's thread sets it)
+        self.speaker_at: float | None = None  # the latest request for sound from the speaker
 
     # ------------------------------------------------------------ lifecycle
     def open(self, loop: Any) -> None:
-        import asyncio  # noqa: PLC0415
-
-        import av  # noqa: PLC0415  (comes with aiortc)
-
         sd = self._sd or dev.get_sounddevice()
         if sd is None:
             raise AudioDeviceError(f"PortAudio unavailable ({dev.sounddevice_error()})")
         self._loop = loop
         self._in_event = asyncio.Event()
+        self._open_streams(sd)
+
+    def reopen(self) -> None:
+        """Close both streams and open them again (a stream stopped mid-call). Raises if they can't be opened.
+
+        Blocking: call it from a worker thread. What the call reads keeps waiting on the same event, so
+        the microphone simply carries on once it is back."""
+        sd = self._sd or dev.get_sounddevice()
+        if sd is None:
+            raise AudioDeviceError(f"PortAudio unavailable ({dev.sounddevice_error()})")
+        self._close_streams()
+        dev.refresh_portaudio()  # a USB device that was reset has a new index (done only while nothing is open)
+        self._open_streams(sd)
+
+    def _open_streams(self, sd: Any) -> None:
+        deadline = time.monotonic() + max(0.0, self.open_retry_s)
+        tries = 0
+        while True:
+            tries += 1
+            try:
+                mic, spk = self._start_streams(sd)
+                break
+            except Exception as e:  # busy for a moment (Device unavailable): try again shortly
+                if time.monotonic() + OPEN_RETRY_STEP_S > deadline:
+                    raise
+                if tries == 1:
+                    log.info("live audio: the speaker or microphone isn't free yet (%s); trying again", e)
+                time.sleep(OPEN_RETRY_STEP_S)
+        self.device_names = (mic["name"], spk["name"])
+        self._opened_at = self._now()
+        self.mic_at = self.speaker_at = None
+        log.info("live audio: mic %s @ %d Hz, speaker %s @ %d Hz%s", mic["name"], self.mic_rate, spk["name"],
+                 self.out_rate, f" (after {tries} tries)" if tries > 1 else "")
+
+    def _start_streams(self, sd: Any) -> tuple[dict[str, Any], dict[str, Any]]:
+        import av  # noqa: PLC0415  (comes with aiortc)
+
         mic = dev.find_device(self.mic_spec, "input")
         spk = dev.find_device(self.speaker_spec, "output")
         self.mic_rate = self._pick_rate(sd.check_input_settings, mic, 1)
@@ -116,10 +163,13 @@ class LiveAudio:
                 dev._stream_closed()  # noqa: SLF001
                 self._out_stream = None
                 raise
-        self._out_stream.start()
-        self._in_stream.start()
-        self.device_names = (mic["name"], spk["name"])
-        log.info("live audio: mic %s @ %d Hz, speaker %s @ %d Hz", mic["name"], self.mic_rate, spk["name"], self.out_rate)
+        try:
+            self._out_stream.start()
+            self._in_stream.start()
+        except Exception:
+            self._close_streams()
+            raise
+        return mic, spk
 
     @staticmethod
     def _pick_rate(check: Callable[..., Any], d: dict[str, Any], channels: int) -> int:
@@ -144,6 +194,18 @@ class LiveAudio:
         raise AudioDeviceError(f"{d['name']}: no usable sample rate / channel layout")
 
     def close(self) -> None:
+        self._close_streams()
+        with self._lock:
+            self._out.clear()
+            self._out_queued = 0
+            self._in.clear()
+        self._pcm = np.zeros(0, dtype=np.int16)
+        self.level = self.mic_level = 0.0
+        self._mouths.clear()
+        self._mouth = (0.0, "closed")
+        self._opened_at = None
+
+    def _close_streams(self) -> None:
         for name in ("_in_stream", "_out_stream"):
             stream = getattr(self, name)
             setattr(self, name, None)
@@ -159,16 +221,19 @@ class LiveAudio:
                 except Exception:  # noqa: BLE001
                     log.debug("closing live audio stream failed", exc_info=True)
                 dev._stream_closed()  # noqa: SLF001
-        with self._lock:
-            self._out.clear()
-            self._out_queued = 0
-            self._in.clear()
-        self._pcm = np.zeros(0, dtype=np.int16)
-        self.level = self.mic_level = 0.0
-        self._mouths.clear()
-        self._mouth = (0.0, "closed")
 
     # ------------------------------------------------------------ state
+    def stalled(self) -> str | None:
+        """"microphone" or "speaker" when that stream has given nothing for STALL_S (it stopped), else None."""
+        if self._opened_at is None:
+            return None
+        now = self._now()
+        if now - (self.mic_at if self.mic_at is not None else self._opened_at) >= self.stall_s:
+            return "microphone"
+        if now - (self.speaker_at if self.speaker_at is not None else self._opened_at) >= self.stall_s:
+            return "speaker"
+        return None
+
     @property
     def speaking(self) -> bool:
         """The model's voice is audible now (or was within the echo tail)."""
@@ -204,6 +269,7 @@ class LiveAudio:
     # ------------------------------------------------------------ microphone
     def _record_cb(self, indata: Any, frames: int, time_info: Any, status: Any) -> None:  # PortAudio thread
         block = np.array(indata[:, 0], dtype=np.int16, copy=True)
+        self.mic_at = self._now()
         with self._lock:
             self._in.append(block)
         loop, ev = self._loop, self._in_event
@@ -297,7 +363,7 @@ class LiveAudio:
         y = self._take(frames) if not self._muted else np.zeros(frames, dtype=np.float32)
         rms = float(np.sqrt(np.mean(y * y))) if frames else 0.0
         self.level = rms
-        now = self._now()
+        now = self.speaker_at = self._now()
         if rms >= self.voice_level:
             self._last_loud = now
         try:  # lip-sync for the face: must never break the voice (an exception here stops the stream)
@@ -381,6 +447,11 @@ class CarryFeed:
                     self._carried = max(0, self._carried - 1)
                     self.lost += 1
                 self._arrived.set()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("live voice: reading the microphone failed")
+            raise
         finally:
             self._arrived.set()  # a waiting reader then reads the microphone itself
 

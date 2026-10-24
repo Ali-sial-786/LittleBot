@@ -244,6 +244,8 @@ STILL_WORKING = ("LittleBot is still working on that. Say, in a few words, that 
 # "remember: Ali is Amara's dad" / "forget: ..." from the voice (VOICE_INSTRUCTIONS); not a question about the past.
 REMEMBER_ASK = re.compile(r"^\s*(?:please\s+)?(remember|forget)\b\s*(?::|that\b)?\s*([^?]+?)[\s.!]*$", re.I)
 PULSE_EVERY_S = 20.0  # a "still on" line of counts in the log during a call (_pulse)
+AUDIO_REOPENS = 2  # a microphone or speaker that stopped is opened again at most this often in one call
+SENT_STALL_S = 8.0  # the microphone gives sound but none of it is read (sending stopped): the call ends
 FACES_WAIT_S = 1.0  # from the call's start: how long connecting waits for the first face check (see _instructions)
 TALKS_FROM_MONTHS = 24  # younger: whoever talks to LittleBot in sentences is a grown-up, not the child
 LATE_ANSWER = "Here is the answer to what they asked a moment ago: {answer} Tell them now, in your own words."
@@ -675,6 +677,9 @@ class LiveCall:
         self._recent_face: tuple[str, float] | None = None  # (name, when) the latest face played
         self._sent: collections.deque[tuple[float, str, int]] = collections.deque(maxlen=4)  # (when, what, chars)
         self._pulse_counts: tuple[int, int, int, int] | None = None  # for _pulse
+        self._reopens = 0  # times a stopped microphone / speaker was opened again (_check_audio)
+        self._reopen_job: asyncio.Future[Any] | None = None
+        self._read_check: tuple[int, float] | None = None  # (mic frames read, since when): is sending going on?
         self._voice_face_this_turn = False
         self._seen_types: set[str] = set()
         # A video / activity / sleep the tools queued (RobotToolbox): runs once the voice said its line.
@@ -1786,6 +1791,54 @@ class LiveCall:
         if hasattr(a, "peak_in"):
             a.peak_in = 0.0
 
+    def _check_audio(self, now: float) -> None:
+        """A microphone or speaker that stopped mid-call is opened again; when that doesn't help, the call ends.
+
+        Otherwise a call nobody can hear stays on (and the wake word stays off) until its time limit: the
+        voice keeps answering its own notes, so it never seems quiet enough to hang up."""
+        if self._reopen_job is not None:
+            return
+        stalled = getattr(self.audio, "stalled", None)
+        which = stalled() if callable(stalled) else None
+        if which is not None:
+            if self._reopens >= AUDIO_REOPENS:
+                log.warning("live voice: the %s stopped again; ending the call", which)
+                self.error = f"The {which} stopped working, so the chat ended."
+                self.end(f"the {which} stopped")
+                return
+            self._reopens += 1
+            log.warning("live voice: the %s stopped (nothing from it for %.0f s); opening the speaker and microphone "
+                        "again", which, float(getattr(self.audio, "stall_s", 0.0)))
+            self._reopen_job = asyncio.get_running_loop().run_in_executor(None, self.audio.reopen)
+            self._spawn(self._reopened(which, self._reopen_job))
+            return
+        frames = getattr(self.audio, "frames_in", None)
+        if not isinstance(frames, int) or getattr(self.pc, "connectionState", None) != "connected":
+            self._read_check = None
+            return
+        if self._read_check is None or frames != self._read_check[0]:
+            self._read_check = (frames, now)
+        elif now - self._read_check[1] >= SENT_STALL_S:
+            log.warning("live voice: the microphone gives sound but none of it was sent for %.0f s; ending the call",
+                        now - self._read_check[1])
+            self.error = "The microphone's sound stopped reaching ChatGPT, so the chat ended."
+            self.end("the microphone stopped")
+
+    async def _reopened(self, which: str, job: asyncio.Future[Any]) -> None:
+        try:
+            await asyncio.shield(job)  # never cancelled: _cleanup waits for it before closing the devices
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:  # noqa: BLE001
+            log.warning("live voice: the speaker and microphone could not be opened again (%s); ending the call", e)
+            self.error = f"The {which} stopped working, so the chat ended."
+            self.end(f"the {which} stopped")
+            return
+        finally:
+            if self._reopen_job is job and job.done():
+                self._reopen_job = None
+        log.info("live voice: the speaker and microphone are open again")
+
     async def _watch(self) -> None:
         limit = self.cfg.live_session_minutes * 60
         idle = self.cfg.live_idle_hangup_seconds
@@ -1797,6 +1850,9 @@ class LiveCall:
             if now >= next_pulse:
                 next_pulse = now + PULSE_EVERY_S
                 self._pulse(now)
+            self._check_audio(now)
+            if self._ended.is_set():
+                break
             speaking = bool(self.audio.speaking)
             if speaking:
                 self._last_activity = now
@@ -1862,6 +1918,8 @@ class LiveCall:
                 await asyncio.wait_for(self.pc.close(), 5.0)
             except Exception:  # noqa: BLE001
                 log.debug("closing the peer connection failed", exc_info=True)
+        if self._reopen_job is not None and not self._reopen_job.done():
+            await asyncio.wait([self._reopen_job], timeout=10.0)  # opening them again: done before they close
         if self.audio is not None:
             await asyncio.to_thread(self.audio.close)
         if self._suspended_audio:

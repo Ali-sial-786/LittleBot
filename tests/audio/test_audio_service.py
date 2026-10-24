@@ -628,6 +628,33 @@ async def test_unplugged_usb_speaker_mid_speech(fake_sd):
         ctx.db.close()
 
 
+async def test_a_lent_speaker_is_never_probed(fake_sd):
+    """Live voice has the USB speaker open: the service doesn't try to "reconnect" it underneath (that can
+    stop the call's stream); it does once the speaker is given back."""
+    ctx = make_test_context(fakes=False, audio={"speaker": {"backend": "sounddevice"}})
+    svc = AudioService(ctx, input=MockInput(), tts=MockTTS(), stt=MockSTT())
+    svc.reconnect_seconds = 0.0
+    try:
+        await svc.start()
+        fake_sd.fail_write_after = 0  # busy (a video's browser still had it): the earcon fails
+        assert await svc.play_sound("pop") is False
+        assert svc.status()["speaker"]["status"] == "disconnected"
+        fake_sd.fail_write_after = None
+        await svc.suspend("live voice")
+        opens: list[int] = []
+        real_open = svc._out.open
+        svc._out.open = lambda: (opens.append(1), real_open())[1]
+        svc._idle_tick(time.monotonic())
+        assert svc._try_reconnect_output(svc._out) is False
+        assert opens == [] and svc.status()["speaker"]["status"] == "disconnected"
+        svc.resume("live voice")
+        svc._idle_tick(time.monotonic())
+        assert svc.status()["speaker"]["status"] == "ok"
+    finally:
+        await svc.stop()
+        ctx.db.close()
+
+
 async def test_unplugged_usb_mic_during_listen(fake_sd):
     ctx = make_test_context(fakes=False, audio={"microphone": {"backend": "real"}})
     svc = AudioService(ctx, output=MockOutput(time_scale=0), tts=MockTTS(), stt=MockSTT())

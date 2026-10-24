@@ -86,7 +86,9 @@ UNLOAD_IDLE_S = 600.0  # the models (~110 MB) are dropped after this long withou
 # During a live call: a check every CHECK_EVERY_S. Someone counts as arrived after ARRIVE_SIGHTINGS
 # sightings within ARRIVE_WINDOW_S (the very first check of a call counts on its own) and as gone
 # LEAVE_AFTER_S after they were last seen (a baby turning away for a moment hasn't left). The voice is
-# told only when that changes, at most once every NOTE_MIN_GAP_S, and only at a quiet moment.
+# told when someone arrives it wasn't told about yet in this call (never when they leave: every note makes
+# it talk, and recognition that comes and goes would keep it chattering), at most once every NOTE_MIN_GAP_S
+# and only at a quiet moment.
 CHECK_EVERY_S = 3.0
 TICK_S = 0.5
 ARRIVE_SIGHTINGS = 2
@@ -805,9 +807,10 @@ class CallFaces:
     """Who is in front of the camera during one live call (littlebot/chatgpt/live.py).
 
     ``intro()``: a line for the call's instructions. ``run()``: a check every CHECK_EVERY_S while
-    recognising is allowed; when the people in view change (steadied by ``Presence``) one quiet note
-    goes through ``tell(text)``, which returns False when it can't be sent right now (it is tried
-    again). ``for_look()``: their names for a camera look. Only names and roles are ever passed on."""
+    recognising is allowed; when someone arrives (steadied by ``Presence``) that the voice wasn't told
+    about yet in this call, one quiet note goes through ``tell(text)``, which returns False when it can't
+    be sent right now (it is tried again). Nobody leaving is ever a note. ``for_look()``: their names for
+    a camera look. Only names and roles are ever passed on."""
 
     def __init__(self, faces: FaceRecognition, *, tell: Callable[[str], bool], hide: str | None = None,
                  child: str | None = None, now: Callable[[], float] = time.monotonic) -> None:
@@ -819,7 +822,7 @@ class CallFaces:
         self.presence = Presence()
         self.latest: Sighting | None = None
         self.latest_at: float | None = None
-        self.told: frozenset[int] = frozenset()  # who the voice was told is in view
+        self.told: frozenset[int] = frozenset()  # who the voice was told about in this call
         self._told_at: float | None = None
         self._checks = 0
         self._said_why: str | None = None
@@ -833,7 +836,7 @@ class CallFaces:
         text = FACES_INTRO
         if self.latest is not None:
             people = self.latest.people()
-            self.told = frozenset(p.id for p in people)
+            self.told |= frozenset(p.id for p in people)
             text += (f" In front of your camera now: {describe(people, self.hide)}." if people else
                      " Nobody LittleBot knows is in front of the camera right now.")
             log.info("live voice: %d known face(s) in view at the start", len(people))
@@ -858,7 +861,7 @@ class CallFaces:
         if sighting is not None:
             self.latest, self.latest_at = sighting, now
             self.presence.update(sighting.people(), now, at_once=True)
-            self.told, self._told_at = frozenset(p.id for p in sighting.people()), now
+            self.told, self._told_at = self.told | frozenset(p.id for p in sighting.people()), now
         log.info("live voice: asked who is there (%d face(s), %d known)",
                  len(sighting.faces) if sighting else 0, len(sighting.people()) if sighting else 0)
         return who_answer(sighting, self.hide, self.child)
@@ -925,14 +928,12 @@ class CallFaces:
 
     def _maybe_tell(self, now: float) -> None:
         here = list(self.presence.here.values())
-        if frozenset(p.id for p in here) == self.told:
+        if not any(p.id not in self.told for p in here):
             return
         if self._told_at is not None and now - self._told_at < NOTE_MIN_GAP_S:
             return
-        text = (f"Now in front of your camera: {describe(here, self.hide)}. {QUIET}" if here else
-                f"Nobody LittleBot knows is in front of the camera now. {QUIET}")
-        if self.tell(text):
-            self.told, self._told_at = frozenset(p.id for p in here), now
+        if self.tell(f"Now in front of your camera: {describe(here, self.hide)}. {QUIET}"):
+            self.told, self._told_at = self.told | frozenset(p.id for p in here), now
             log.info("live voice: told who is in view (%d known)", len(here))
 
 

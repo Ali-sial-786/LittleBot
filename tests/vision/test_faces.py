@@ -669,7 +669,7 @@ def test_no_intro_when_switched_off_or_nobody_enrolled(call):
     assert call.cf.intro() == ""
 
 
-async def test_the_voice_is_told_only_when_who_is_there_changes(call, caplog):
+async def test_the_voice_is_told_when_someone_arrives_once_per_call(call, caplog):
     c = call
     with caplog.at_level(logging.INFO, logger="littlebot.vision.faces"):
         await c.check_at(100.0, sighting(ALI))
@@ -686,19 +686,20 @@ async def test_the_voice_is_told_only_when_who_is_there_changes(call, caplog):
     for t in (118.0, 121.0, 124.0, 140.0):
         await c.check_at(t, sighting(ALI, MUM))
     assert len(c.told) == 2  # nothing new: nothing said
+    for t in range(143, 200, 3):  # recognition comes and goes (a face turned aside, poor light)
+        await c.check_at(float(t), sighting(ALI) if t % 2 else sighting())
+    assert len(c.told) == 2  # they were told about already in this call: never again
 
 
-async def test_leaving_and_nobody_known(call):
+async def test_leaving_is_never_a_note(call):
     c = call
     await c.check_at(100.0, sighting(ALI))
     for t in (103.0, 106.0, 109.0):
         await c.check_at(t, sighting(None))  # someone LittleBot doesn't know
-    assert len(c.told) == 1
-    await c.check_at(112.0, sighting())
-    assert len(c.told) == 1  # gone after 12 s, but the last note was under 15 s ago
-    await c.check_at(115.0, sighting())
-    assert c.told[-1] == f"Nobody LittleBot knows is in front of the camera now. {F.QUIET}"
-    assert all("Ali" not in t for t in c.told[1:])
+    for t in (112.0, 115.0, 130.0, 160.0):
+        await c.check_at(t, sighting())
+    assert c.cf.presence.here == {}  # gone
+    assert c.told == [f"Now in front of your camera: Ali (dad). {F.QUIET}"]  # and the voice wasn't made to say so
 
 
 async def test_unknown_faces_are_never_named(call):
@@ -742,7 +743,7 @@ async def test_no_camera_for_a_moment_lets_people_leave_in_their_own_time(call, 
     assert caplog.text.count("face recognition can't run (no_camera)") == 1
     c.cf._blocked("no_camera", 113.0)
     c.cf._maybe_tell(116.0)
-    assert c.told[-1].startswith("Nobody LittleBot knows")
+    assert c.cf.presence.here == {} and len(c.told) == 1  # gone after 12 s; leaving is never a note
 
 
 async def test_a_failing_check_never_breaks_the_call(call, caplog):

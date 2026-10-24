@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import fractions
+import logging
 from typing import Any
 
 import numpy as np
@@ -363,3 +364,72 @@ async def test_without_the_reader_task_it_reads_the_microphone_itself():
     feed = CarryFeed(Mic(), None)  # nothing carried and never started
     assert feed.carried_s == 0
     assert kind(await asyncio.wait_for(feed.read_frame(), 1)) == "mic"
+
+
+async def test_a_stream_that_stops_is_noticed(setup):
+    audio, _sd, clock = setup
+    assert audio.stalled() is None  # not open
+    audio.open(asyncio.get_running_loop())
+    try:
+        assert audio.stalled() is None
+        clock.t += 2.1  # nothing from either since it opened
+        assert audio.stalled() == "microphone"
+        audio._record_cb(np.zeros((882, 1), dtype=np.int16), 882, None, None)
+        assert audio.stalled() == "speaker"
+        audio._play_cb(np.zeros((960, 2), dtype=np.float32), 960, None, None)
+        assert audio.stalled() is None
+        clock.t += 2.1
+        audio._play_cb(np.zeros((960, 2), dtype=np.float32), 960, None, None)  # the speaker carries on
+        assert audio.stalled() == "microphone"
+    finally:
+        audio.close()
+    assert audio.stalled() is None
+
+
+async def test_reopening_carries_on_where_the_call_reads(setup):
+    audio, sd, clock = setup
+    audio.open(asyncio.get_running_loop())
+    opened = dev._open_streams
+    try:
+        reading = asyncio.ensure_future(audio.read_frame())  # the call waits for the microphone
+        await asyncio.sleep(0.01)
+        clock.t += 3.0
+        assert audio.stalled() == "microphone"
+        await asyncio.to_thread(audio.reopen)
+        assert len(sd.streams) == 4 and all(s.closed for s in sd.streams[:2])
+        assert all(s.started and not s.closed for s in sd.streams[2:])
+        assert dev._open_streams == opened and audio.stalled() is None
+        block = (np.sin(np.arange(882) / 44100 * 2 * np.pi * 300) * 10000).astype(np.int16).reshape(-1, 1)
+        for _ in range(3):
+            audio._record_cb(block, 882, None, None)
+        frame = await asyncio.wait_for(reading, 1)
+        assert len(frame) == FRAME and np.abs(frame).max() > 1000
+    finally:
+        audio.close()
+    assert dev._open_streams == opened - 2
+
+
+async def test_a_busy_device_is_tried_again_while_opening(setup, caplog, monkeypatch):
+    audio, sd, _ = setup
+    monkeypatch.setattr("littlebot.chatgpt.live_audio.OPEN_RETRY_STEP_S", 0.02)
+    real = sd.OutputStream
+    busy = [2]
+
+    def output(**kw: Any) -> FakeStream:
+        if busy[0]:
+            busy[0] -= 1
+            raise RuntimeError("Error opening OutputStream: Device unavailable [PaErrorCode -9985]")
+        return real(**kw)
+
+    sd.OutputStream = output
+    caplog.set_level(logging.INFO, logger="littlebot.chatgpt.live")
+    audio.open(asyncio.get_running_loop())
+    try:
+        assert len(sd.streams) == 2 and all(s.started for s in sd.streams)
+        assert "isn't free yet" in caplog.text and "(after 3 tries)" in caplog.text
+    finally:
+        audio.close()
+    busy[0] = 1000
+    audio.open_retry_s = 0.1
+    with pytest.raises(RuntimeError, match="Device unavailable"):
+        audio.open(asyncio.get_running_loop())

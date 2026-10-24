@@ -95,6 +95,9 @@ MIN_LISTEN_SECONDS = 0.3  # a listen that ends sooner is followed by a short pau
 CONNECT_GRACE_SECONDS = 10.0  # beyond chatgpt.live_connect_timeout_seconds
 # The earcon is 0.27 s: a speaker that hangs never keeps live voice (and so the wake word) waiting longer.
 EARCON_TIMEOUT = 8.0
+# A video was just closed for the chat: its browser lets go of the USB speaker a moment later. The earcon
+# waits (at most this long) until the speaker plays again, or it fails and the speaker counts as unplugged.
+VIDEO_SPEAKER_WAIT_SECONDS = 2.0
 # "Hey LittleBot, what's the weather?" in one breath: the recogniser only reports the wake phrase once the
 # sentence has ended, so the sentence being recognised is kept (in memory, at most this long) and what was
 # said after the wake phrase goes into the call (littlebot/audio/carry.py).
@@ -851,6 +854,8 @@ class WakeWordService(Service):
                 # hide what they say next (half-duplex). The face shows it is listening.
                 log.info("wake word: no earcon, they kept talking (%.1f s said after the wake phrase)", carry.lead_s)
             else:
+                if video is not None:
+                    await self._speaker_free()
                 await self._play(self.cfg.sound)
             live = ctx.live
             if live is None:
@@ -1006,6 +1011,25 @@ class WakeWordService(Service):
             log.exception("wake word: carrying on with the video failed")
             return
         log.info("wake word: %s; the video %s", why, "carries on" if ok else "couldn't carry on (it stays paused)")
+
+    async def _speaker_free(self) -> None:
+        """Wait (briefly) until the speaker the video's browser had plays again. Never raises."""
+        back = getattr(self.ctx.audio, "speaker_back", None)
+        if back is None:
+            return
+        t0 = time.monotonic()
+        try:
+            ok = await asyncio.wait_for(back(VIDEO_SPEAKER_WAIT_SECONDS), VIDEO_SPEAKER_WAIT_SECONDS + 1.0)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # the earcon is tried anyway
+            log.debug("wake word: waiting for the speaker failed", exc_info=True)
+            return
+        took = int((time.monotonic() - t0) * 1000)
+        if not ok:
+            log.warning("wake word: the speaker was still busy %d ms after the video closed", took)
+        elif took >= 300:
+            log.info("wake word: the speaker was free %d ms after the video closed", took)
 
     async def _play(self, name: str, what: str = "earcon") -> bool:
         """Play ``name`` and log whether it was heard (and if not, why). Never raises, never hangs."""

@@ -1306,21 +1306,29 @@ async def test_the_voice_knows_who_is_in_front_of_the_camera_from_the_start(live
     assert face_notes(server) == []  # already in the instructions: no note about it
 
 
-async def test_the_voice_is_told_quietly_only_when_that_changes(live, ctx, quick_faces):
+async def test_the_voice_is_told_quietly_when_someone_new_arrives(live, ctx, quick_faces):
     svc, server, _audio, _provider, _alerts = live
-    ali, mum = person(1, "Ali", "dad"), person(2, "Mum")
+    ali, mum, gran = person(1, "Ali", "dad"), person(2, "Mum"), person(3, "Gran")
     seen = ctx.extras["faces"] = SeenFaces(ali)
     await connect(svc, server)
     seen.seen = [ali, mum]
     await wait_for(lambda: face_notes(server))
     assert face_notes(server) == ["Now in front of your camera: Ali (dad) and Mum. Don't announce this; just know it."]
+    assert any(c.startswith("Now in front of your camera") for c in note_captions(svc))  # the parent sees it too
     checks = seen.checks
     await wait_for(lambda: seen.checks >= checks + 4)
     assert len(face_notes(server)) == 1  # the same people: nothing more is said
     seen.seen = [ali, None]  # Mum went; someone LittleBot doesn't know came
+    checks = seen.checks
+    await wait_for(lambda: seen.checks >= checks + 10)  # long enough for Mum to count as gone
+    seen.seen = [ali, mum]  # and back
+    checks = seen.checks
+    await wait_for(lambda: seen.checks >= checks + 4)
+    assert len(face_notes(server)) == 1  # leaving and coming back: the voice already knew, nothing said
+    seen.seen = [ali, mum, gran]
     await wait_for(lambda: len(face_notes(server)) == 2)
-    assert face_notes(server)[-1] == "Now in front of your camera: Ali (dad). Don't announce this; just know it."
-    assert any(c.startswith("Now in front of your camera") for c in note_captions(svc))  # the parent sees it too
+    assert face_notes(server)[-1] == ("Now in front of your camera: Ali (dad), Mum and Gran. Don't announce this; "
+                                      "just know it.")
     seen.reason = "off"  # the parent switched it off mid-call
     await wait_for(lambda: len(face_notes(server)) == 3)
     assert face_notes(server)[-1].startswith("LittleBot has stopped recognising faces")
@@ -1559,3 +1567,97 @@ async def test_a_still_on_line_every_little_while_says_which_way_the_sound_went(
     await wait_for(lambda: "live voice: still on (" in caplog.text)
     line = next(r.getMessage() for r in caplog.records if r.getMessage().startswith("live voice: still on ("))
     assert "frames sent" in line and "voice" in line and "since anything happened" in line
+
+
+class StoppingAudio(FakeLiveAudio):
+    """A microphone that stops mid-call (a USB reset, or the speaker still busy): ``stop()`` it. Opening the
+    devices again brings it back, unless ``reopen_fails``."""
+
+    stall_s = 2.0
+
+    def __init__(self, reopen_fails: bool = False) -> None:
+        super().__init__()
+        self.stopped: str | None = None
+        self.reopens = 0
+        self.reopen_fails = reopen_fails
+
+    def stalled(self) -> str | None:
+        return self.stopped
+
+    def reopen(self) -> None:
+        self.reopens += 1
+        if self.reopen_fails:
+            from littlebot.audio.errors import AudioDeviceError
+
+            raise AudioDeviceError("USB PnP Sound Device: not found")
+        self.stopped = None
+
+
+@pytest.fixture
+async def stopping(ctx, tmp_path):
+    made: list[Any] = []
+
+    async def _make(**kw: Any) -> tuple[LiveVoiceService, FakeOpenAI, StoppingAudio]:
+        ctx.privacy.set(cloud_enabled=True)
+        ctx.audio = LendingAudio()
+        server, audio = FakeOpenAI(), StoppingAudio(**kw)
+        svc = LiveVoiceService(ctx, auth=signed_in_auth(tmp_path), transport=httpx.MockTransport(server),
+                               audio_factory=lambda: audio, provider=FakeProvider())
+        await svc.start()
+        made.append((svc, server))
+        return svc, server, audio
+
+    yield _make
+    for svc, server in made:
+        await svc.stop()
+        await server.close()
+
+
+async def test_a_microphone_that_stops_is_opened_again(stopping, caplog):
+    caplog.set_level(logging.INFO, logger="littlebot.chatgpt.live")
+    svc, server, audio = await stopping()
+    await connect(svc, server)
+    audio.stopped = "microphone"
+    await wait_for(lambda: audio.reopens == 1 and audio.stopped is None)
+    await wait_for(lambda: "the speaker and microphone are open again" in caplog.text)
+    assert "the microphone stopped (nothing from it for 2 s)" in caplog.text
+    assert svc.status()["active"]  # the call carries on
+    audio.stopped = "speaker"
+    await wait_for(lambda: audio.reopens == 2 and audio.stopped is None)
+    assert svc.status()["active"]
+    audio.stopped = "microphone"  # a third time: opening it again doesn't help, so the call ends
+    await wait_for(lambda: not svc.status()["active"])
+    last = svc.status()["last_call"]
+    assert last["ended_reason"] == "the microphone stopped" and "microphone stopped working" in last["error"]
+    assert audio.reopens == 2 and audio.closed  # the wake word gets the microphone back
+
+
+async def test_the_call_ends_when_the_microphone_cant_be_opened_again(stopping, ctx):
+    svc, server, audio = await stopping(reopen_fails=True)
+    await connect(svc, server)
+    audio.stopped = "microphone"
+    await wait_for(lambda: not svc.status()["active"])
+    assert svc.status()["last_call"]["ended_reason"] == "the microphone stopped"
+    assert audio.reopens == 1 and audio.closed
+    assert ctx.audio.calls == ["suspend:live voice", "resume:live voice"]
+
+
+async def test_the_call_ends_when_the_microphones_sound_is_no_longer_sent(stopping, monkeypatch):
+    import numpy as np
+
+    monkeypatch.setattr(live_mod, "SENT_STALL_S", 0.4)
+    svc, server, audio = await stopping()
+    audio.frames_in = 0
+
+    async def read_frame() -> Any:  # the sound card works, but nothing reads it any more after a while
+        audio.frames_in += 1
+        if audio.frames_in > 10:
+            await asyncio.Event().wait()
+        await asyncio.sleep(0.02)
+        return np.zeros(960, dtype=np.int16)
+
+    audio.read_frame = read_frame
+    await connect(svc, server)
+    await wait_for(lambda: not svc.status()["active"])
+    assert svc.status()["last_call"]["ended_reason"] == "the microphone stopped"
+    assert "stopped reaching ChatGPT" in svc.status()["last_call"]["error"]
