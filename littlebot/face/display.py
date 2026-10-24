@@ -44,6 +44,10 @@ TAP_COOLDOWN_SECONDS = 1.5
 # A plain tap still giggles: babies tap the face all the time, a deliberate hold is a grown-up's.
 LONG_PRESS_SECONDS = 1.0
 LONG_PRESS_SLOP = 0.04  # of the face width: a finger that wanders further is not holding still
+# A resistive touch screen often flickers as a finger lands: down, up, down again within a few ms. A lift is
+# held back this long; a press again near it (TOUCH_BOUNCE_PX) means the finger never left.
+TOUCH_BOUNCE_S = 0.1
+TOUCH_BOUNCE_PX = 40
 # MX Player-style edge swipes on the idle face (littlebot/face/edge_controls.py): slide up / down on the right
 # edge for the speaker volume, on the left edge for the screen brightness. A soft blip makes the volume audible.
 VOLUME_BLIP = "blip"
@@ -253,6 +257,9 @@ class DisplayLoop:
         self._game_t: float | None = None  # last frame time while an on-screen game runs
         self._card_t: float | None = None  # last frame time while an info card shows
         self._press: tuple[float, float, float] | None = None  # (nx, ny, when) a finger held on the idle face
+        self.touch_bounce_s = TOUCH_BOUNCE_S
+        self._pointer_down = False  # button 1 / the finger is down (some touch drivers' motion has no buttons)
+        self._lift: tuple[tuple[int, int], float] | None = None  # a lift held back (TOUCH_BOUNCE_S)
         # Edge swipes: volume (right) and brightness (left). A press in an edge zone holds back its usual
         # reaction (giggle / simulated face) until the finger lifts or rests: it may become a slide instead.
         self.brightness = self._make_brightness()
@@ -775,8 +782,8 @@ class DisplayLoop:
     # A long press on the idle face opens the games menu (a plain tap keeps its giggle).
     def check_long_press(self, now: float) -> bool:
         press = self._press
-        if press is None or now - press[2] < LONG_PRESS_SECONDS:
-            return False
+        if press is None or self._lift is not None or now - press[2] < LONG_PRESS_SECONDS:
+            return False  # (a lift held back: the finger is up)
         self._press = None
         screens = getattr(self.ctx, "screens", None)
         self.edges.cancel()
@@ -997,15 +1004,46 @@ class DisplayLoop:
                 if not self.handle_key(ev.key, getattr(ev, "mod", 0)):
                     return False
             elif ev.type == pg.MOUSEBUTTONDOWN:
+                if ev.button == 1 and self._bounced(ev.pos):
+                    continue  # the finger never left: it goes on as a move
+                self._flush_lift(force=True)
+                if ev.button == 1:
+                    self._pointer_down = True
                 self.handle_click(ev.pos, ev.button, getattr(ev, "mod", None))
             elif ev.type == pg.MOUSEMOTION:
-                self._pointer_moved(ev.pos, tuple(getattr(ev, "buttons", ()) or ()))
+                buttons = tuple(getattr(ev, "buttons", ()) or ())
+                if self._pointer_down and not any(buttons[:1]):
+                    buttons = (1, *buttons[1:])
+                self._pointer_moved(ev.pos, buttons)
             elif ev.type == pg.MOUSEBUTTONUP:
-                self._press = None
                 if ev.button == 1:
-                    self._edge_release(ev.pos)
-                    self._card_pointer("release", ev.pos)
+                    self._pointer_down = False
+                    self._flush_lift(force=True)
+                    self._lift = (ev.pos, time.monotonic())
+                else:
+                    self._press = None
+        self._flush_lift()
         return True
+
+    def _bounced(self, pos: tuple[int, int]) -> bool:
+        """A press right after a lift, near it: the touch screen flickered. True = the lift never happened."""
+        lift = self._lift
+        if lift is None or time.monotonic() - lift[1] >= self.touch_bounce_s \
+                or abs(pos[0] - lift[0][0]) + abs(pos[1] - lift[0][1]) > TOUCH_BOUNCE_PX:
+            return False
+        self._lift, self._pointer_down = None, True
+        self._pointer_moved(pos, (1,))
+        return True
+
+    def _flush_lift(self, *, force: bool = False) -> None:
+        """The held-back lift, once TOUCH_BOUNCE_S has passed (or at once: another press or lift came)."""
+        lift = self._lift
+        if lift is None or (not force and time.monotonic() - lift[1] < self.touch_bounce_s):
+            return
+        self._lift = None
+        self._press = None
+        self._edge_release(lift[0])
+        self._card_pointer("release", lift[0])
 
     def handle_key(self, key: int, mod: int = 0) -> bool:
         """Apply one key press. Returns False when the user asked to quit."""

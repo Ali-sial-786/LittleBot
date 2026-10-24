@@ -293,6 +293,7 @@ def window():
     ctx.screens = ScreenService(ctx)
     loop = D.DisplayLoop(_Robot(ctx, rt), max_frames=2)
     loop.open()
+    loop.touch_bounce_s = 0.0  # lifts at once (tests/face/test_face_touch_bounce.py has the bounce)
     yield loop, ctx
     loop.close()
     ctx.screens.detach()

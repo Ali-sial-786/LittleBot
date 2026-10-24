@@ -227,6 +227,7 @@ def window():
     ctx.screens = ScreenService(ctx)
     loop = D.DisplayLoop(_Robot(ctx, rt), max_frames=2)
     loop.open()
+    loop.touch_bounce_s = 0.0  # lifts at once (the touch-bounce tests below set it back)
     yield loop, ctx
     loop.close()
     ctx.screens.detach()
@@ -285,3 +286,42 @@ def test_drag_events_scroll_the_menu_in_the_window(window):
     pg.event.post(pg.event.Event(pg.MOUSEBUTTONUP, pos=(start[0], start[1] - 150), button=1))
     loop._handle_events()
     assert card.offset > 100 and card.starting is None
+
+
+def test_a_flickering_touch_screen_still_scrolls_and_doesnt_start_a_game(window):
+    """A resistive screen: down, a lift for a few ms, down again, then moves that carry no button state."""
+    loop, ctx = window
+    loop.touch_bounce_s = D.TOUCH_BOUNCE_S
+    ctx.screens.show_card(G.GamesMenuCard({"card": "games"}), source="touch")
+    card = ctx.screens.current
+    pg = pygame
+    r = loop.face_rect
+    start = (r.centerx, r.y + int(r.h * 0.8))
+    pg.event.post(pg.event.Event(pg.MOUSEBUTTONDOWN, pos=start, button=1))
+    pg.event.post(pg.event.Event(pg.MOUSEBUTTONUP, pos=start, button=1))  # the flicker
+    pg.event.post(pg.event.Event(pg.MOUSEBUTTONDOWN, pos=(start[0], start[1] - 2), button=1))
+    for k in range(1, 6):
+        pg.event.post(pg.event.Event(pg.MOUSEMOTION, pos=(start[0], start[1] - k * 30), rel=(0, -30), buttons=(0, 0, 0)))
+    pg.event.post(pg.event.Event(pg.MOUSEBUTTONUP, pos=(start[0], start[1] - 150), button=1))
+    loop._handle_events()
+    time.sleep(D.TOUCH_BOUNCE_S + 0.05)
+    loop._handle_events()  # the last lift, once nothing followed it
+    assert card.offset > 100 and card.starting is None and not card.dragging
+
+
+def test_a_tap_is_held_back_a_moment_then_plays(window):
+    loop, ctx = window
+    loop.touch_bounce_s = D.TOUCH_BOUNCE_S
+    ctx.screens.show_card(G.GamesMenuCard({"card": "games"}), source="touch")
+    card = ctx.screens.current
+    x, y = row_centre(card, 2)
+    r = loop.face_rect
+    pos = (r.x + int(x / W * r.w), r.y + int(y / H * r.h))
+    pygame.event.post(pygame.event.Event(pygame.MOUSEBUTTONDOWN, pos=pos, button=1))
+    pygame.event.post(pygame.event.Event(pygame.MOUSEBUTTONUP, pos=pos, button=1))
+    before = card.selected
+    loop._handle_events()
+    assert card.selected == before  # the finger may come straight back down (a flicker)
+    time.sleep(D.TOUCH_BOUNCE_S + 0.05)
+    loop._handle_events()
+    assert card.selected == 2  # tapped (this card has no game starter: it only says so)
