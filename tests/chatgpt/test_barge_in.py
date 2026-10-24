@@ -391,6 +391,20 @@ async def test_oops_go_ahead_asks_the_voice_to_carry_on(call):
         audio.close()
 
 
+async def test_drop_voice_empties_what_was_held_and_listens(call):
+    audio, c = call()
+    try:
+        await c.warm_up()
+        assert await c.talk_over(0.5) is not None and audio.interrupted and audio._out_queued > 0
+        audio.drop_voice()  # "stop": the call silences the voice
+        assert audio._out_queued == 0 and not audio.interrupted
+        for _ in range(40):
+            await c.tick(voice=False)
+        assert audio.mic_open and not audio.speaking
+    finally:
+        audio.close()
+
+
 async def test_a_false_alarm_lets_the_held_voice_play_on(call, caplog):
     caplog.set_level(logging.INFO, logger="littlebot.chatgpt.live")
     audio, c = call()

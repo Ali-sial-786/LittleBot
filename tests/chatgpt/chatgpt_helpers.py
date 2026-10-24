@@ -58,6 +58,7 @@ class FakeLiveAudio:
         self.mic_open = True
         self.frames = 0
         self.peak = 0
+        self.dropped = 0  # drop_voice calls ("stop": the voice goes quiet)
 
     def open(self, loop: Any) -> None:
         self.opened = True
@@ -75,6 +76,9 @@ class FakeLiveAudio:
 
     def mute(self) -> None:
         self.muted = True
+
+    def drop_voice(self) -> None:
+        self.dropped += 1
 
 
 def tone_track(silent: Any = None) -> Any:

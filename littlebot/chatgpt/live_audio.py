@@ -821,6 +821,20 @@ class LiveAudio:
                   int((now - self._barge_at) * 1000))
         self._notify("heard", {})
 
+    def drop_voice(self) -> None:
+        """They asked the voice to be quiet: what it was about to say is dropped at once (a short fade of the
+        block playing is all that is left) and the microphone is theirs again."""
+        with self._lock:
+            self._out.clear()
+            self._out_queued = 0
+        self._hold = False
+        self._queue_cap_s = MAX_QUEUED_S
+        if self._bstate != _WATCH:
+            self._bstate, self._barge_run, self._await_final = _WATCH, None, False
+            self._sendq.clear()
+            if self._detector is not None:
+                self._detector.reset_run()
+
     def _dropping(self, pcm: np.ndarray) -> bool:
         """While the turn they cut into may still arrive: True = drop this. The next turn is sound after a pause
         of DROP_GAP_S, once they have stopped talking (or their words are final); at the latest DROP_MAX_S."""

@@ -166,18 +166,26 @@ ALREADY_TOLD = "(You were told this a moment ago too: if you already said it, do
 HUSH_MAX_S = 6.0
 HUSH_PAUSE_S = 0.16
 HUSH_QUIET_LEVEL = 0.01  # RMS (full scale 1.0) below which a 20 ms frame is quiet
-# Said on their own, these end the call at once (a wake word heard by mistake, "stop talking"); the wake
-# word listens again afterwards. The whole utterance must be one of them, so "can you stop the video?" or
-# "stop that, Emma" don't hang up.
+# Said on their own, these stop it. The whole utterance must be one of them, so "can you stop the video?" or
+# "stop that, Emma" don't. END_CALL ("bye", "hang up", "stop listening") ends the call at once; HUSH_CALL
+# ("stop", "be quiet", "shh") makes the voice go quiet and wait for them (QUIET_END_S: then the call ends),
+# except as their first words in a call (a wake word heard by mistake): then it ends too. The wake word
+# listens again after a call.
 _STOP_LEAD = (r"(?:ok|okay|oh|um+|uh+|no|hey|please|just|alright|all right|littlebot|little bot|bot|robot|"
               r"(?:can|could|would|will) you(?: please)?|you can|i want you to|i need you to)")
-_STOP_WHAT = (r"(?:stop(?: (?:talking|listening|it|now|that|for now))*(?: and (?:stop )?(?:talking|listening))?|"
-              r"stop talking to me|stop listening to me|be quiet|quiet|shh+|hush|shush|shut up|never ?mind|"
-              r"cancel(?: that)?|go away|hang up|end (?:the )?call|that'?s (?:all|it|enough)|enough|"
-              r"(?:good ?)?bye(?: bye)?|i'?m done|we'?re done|false alarm|"
-              r"(?:i was )?not talking to you|i wasn'?t talking to you|wrong (?:person|robot))")
-STOP_CALL = re.compile(rf"^(?:{_STOP_LEAD} )*{_STOP_WHAT}"
-                       r"(?: (?:please|now|thanks|thank you|littlebot|little bot|bot|robot))*$")
+_STOP_TAIL = r"(?: (?:please|now|thanks|thank you|littlebot|little bot|bot|robot))*$"
+_HUSH_WHAT = (r"(?:stop(?: (?:talking|it|now|that|for now))*|stop talking to me|be quiet|quiet|shh+|hush|shush|"
+              r"shut up|that'?s enough|enough)")
+_END_WHAT = (r"(?:stop(?: (?:talking|it|now|that|for now))* and (?:stop )?listening|"
+             r"stop listening(?: (?:to me|now|for now))*(?: and (?:stop )?talking)?|"
+             r"never ?mind|cancel(?: that)?|go away|hang up|end (?:the )?call|that'?s (?:all|it)|"
+             r"(?:good ?)?bye(?: bye)?|i'?m done|we'?re done|false alarm|"
+             r"(?:i was )?not talking to you|i wasn'?t talking to you|wrong (?:person|robot))")
+HUSH_CALL = re.compile(rf"^(?:{_STOP_LEAD} )*{_HUSH_WHAT}{_STOP_TAIL}")
+END_CALL = re.compile(rf"^(?:{_STOP_LEAD} )*{_END_WHAT}{_STOP_TAIL}")
+STOP_CALL = re.compile(rf"^(?:{_STOP_LEAD} )*(?:{_END_WHAT}|{_HUSH_WHAT}){_STOP_TAIL}")  # either
+QUIET_END_S = 30.0  # quiet after "stop" and they said nothing more for this long: the call ends
+QUIET_NOTE = "They asked you to be quiet. Say nothing at all until they talk to you again."
 STOP_SETTLE_S = 0.8  # their words so far say stop and nothing more came: stop (the final words may come late)
 # The person's own words asking for one of LittleBot's on-screen games: LittleBot starts it itself (the voice
 # can't see the screen and would often just play it out loud), keeps the voice quiet until it has been told,
@@ -728,6 +736,7 @@ class LiveCall:
         self.photos = 0
         self._look_job: _LookJob | None = None
         self._stop_words = ""  # what they are saying, while it is only a stop ("stop talking")
+        self._quiet_at: float | None = None  # they said "stop": the voice stays quiet until they talk again
         self._game_hold: _Hold | None = None  # the voice waits for the game (a move made, a game starting)
         self._game_started: tuple[str, float] | None = None  # (id, when) of a game started from their words
         self._video_done: tuple[str, float] | None = None  # ("resume" | "stop", when) for a video paused for the chat
@@ -1048,7 +1057,7 @@ class LiveCall:
                 frame = await track.recv()
             except MediaStreamError:
                 return
-            if not self._hushed(frame):
+            if self._quiet_at is None and not self._hushed(frame):
                 self.audio.play_frame(frame)
 
     # ------------------------------------------------------------ keeping the voice quiet while it looks
@@ -1138,11 +1147,11 @@ class LiveCall:
                     self._poke()  # their words are finished: a held look answer may go soon
                     self._voice_turn(event.text)
                 if STOP_CALL.match(_plain_words(event.text)):
-                    log.info("live voice: asked to stop")
-                    self.end("asked to stop")
+                    self._asked_to_stop(event.text, first=self._user_turns <= 1)
                     return
                 if event.text.strip():
                     self._stop_words = ""  # the turn ended with more than a stop: carry on
+                    self._talking_again()
                 concern = classify_child_input(event.text)
                 if concern is not None:
                     log.warning("live voice: worrying words heard (category=%s)", concern.category)
@@ -1785,14 +1794,38 @@ class LiveCall:
             if STOP_CALL.match(_plain_words(self._heard_partial)):
                 self._stop_words = self._heard_partial
                 self._spawn(self._stop_if_nothing_more(self._heard_partial))
+            elif _plain_words(self._heard_partial):
+                self._talking_again()
             self._look_if_asked(self._heard_partial, partial=True)
 
     async def _stop_if_nothing_more(self, words: str) -> None:
         """Their words so far are a stop ("stop talking"): stop unless more words follow (STOP_SETTLE_S)."""
         await asyncio.sleep(STOP_SETTLE_S)
         if self._stop_words == words and self._heard_partial in ("", words) and not self._ended.is_set():
-            log.info("live voice: asked to stop (before their words were final)")
+            self._asked_to_stop(words, first=self._user_turns == 0, early=True)
+
+    def _asked_to_stop(self, words: str, *, first: bool, early: bool = False) -> None:
+        """They said only a stop: "bye" (or "stop" as their first words) ends the call; "stop" / "be quiet" makes
+        the voice go quiet at once and wait for them (QUIET_END_S)."""
+        when = " (before their words were final)" if early else ""
+        if END_CALL.match(_plain_words(words)) or first:
+            log.info("live voice: asked to stop%s", when)
             self.end("asked to stop")
+            return
+        if self._quiet_at is None:
+            log.info("live voice: asked to be quiet%s; waiting for them (the call ends after %.0f s of quiet)",
+                     when, QUIET_END_S)
+            drop = getattr(self.audio, "drop_voice", None)
+            if callable(drop):
+                drop()
+            self._note(QUIET_NOTE)
+        self._quiet_at = self.svc._now()
+
+    def _talking_again(self) -> None:
+        """They said something more than a stop: the voice may answer again."""
+        if self._quiet_at is not None:
+            self._quiet_at = None
+            log.info("live voice: they talk again; the voice may answer")
 
     def _start_look(self, question: str, *, source: str, kind: str = "look") -> "_LookJob":
         # a look started while the person is still talking belongs to the turn their words will end
@@ -2155,6 +2188,9 @@ class LiveCall:
                     break
             if self._handover_at is not None and self._handover_due(now, speaking):
                 self.end(HANDOVER_REASON)  # LiveVoiceService._run then starts the video / activity / sleep
+                break
+            if self._quiet_at is not None and now - self._quiet_at >= QUIET_END_S:
+                self.end(f"quiet for {int(QUIET_END_S)} s after they said stop")
                 break
             idle_limit = idle if self._heard_user else max(idle, FIRST_WORDS_MIN_S)
             if idle > 0 and now - self._last_activity >= idle_limit:

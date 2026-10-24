@@ -118,6 +118,10 @@ and you are there for all of it.
 * the **time limit** is reached (`chatgpt.live_session_minutes`, default **10 minutes**). The
   voice is asked to say a short goodbye, then LittleBot hangs up (at most 10 seconds later);
 * nobody has talked for **90 seconds** (`chatgpt.live_idle_hangup_seconds`);
+* you say only **"bye"**, "hang up", "end the call", "that's all", "stop listening" or "never mind"
+  (at once). **"Stop"**, "be quiet", "shh" or "that's enough" make the voice go quiet straight away and
+  wait for you: say anything and it answers again; nothing for **30 seconds** and the call ends. As
+  the first words of a call (a "Hey LittleBot" heard by mistake) "stop" ends it at once too;
 * OpenAI ends the call, the connection drops, or something more important (a system task)
   needs the speaker;
 * a safety rule is broken (below).

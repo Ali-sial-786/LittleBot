@@ -15,7 +15,7 @@ from chatgpt_helpers import FakeLiveAudio, FakeOpenAI, FakeProvider, signed_in_a
 
 import littlebot.chatgpt.live as live_mod  # noqa: E402
 from littlebot.brain.providers.base import ProviderReply  # noqa: E402
-from littlebot.chatgpt.live import NOT_SURE, LiveVoiceService  # noqa: E402
+from littlebot.chatgpt.live import NOT_SURE, QUIET_NOTE, LiveVoiceService  # noqa: E402
 from littlebot.core.arbiter import Priority, Resource  # noqa: E402
 from littlebot.core.events import Topics  # noqa: E402
 from littlebot.core.state import RobotState  # noqa: E402
@@ -1062,6 +1062,51 @@ async def test_saying_stop_ends_the_call(live, words):
     hear(server, words)
     await wait_for(lambda: not svc.status()["active"])
     assert svc.status()["last_call"]["ended_reason"] == "asked to stop"
+
+
+@pytest.mark.parametrize("words", ["Stop talking!", "Stop.", "Be quiet please", "Shh", "That's enough."])
+async def test_stop_while_talking_makes_the_voice_wait_and_then_hangs_up(live, words, monkeypatch, caplog):
+    monkeypatch.setattr(live_mod, "QUIET_END_S", 0.6)
+    caplog.set_level(logging.INFO, logger="littlebot.chatgpt.live")
+    svc, server, audio, _provider, _alerts = live
+    await connect(svc, server)
+    hear(server, "Tell me a long story.")
+    await wait_for(lambda: audio.frames > 5)  # the voice talks
+    hear(server, words)
+    await wait_for(lambda: audio.dropped == 1)
+    assert svc.status()["active"] and "asked to be quiet" in caplog.text
+    assert any(QUIET_NOTE in n for n in notes(server))
+    quiet_from = audio.frames
+    await asyncio.sleep(0.3)
+    assert audio.frames - quiet_from <= 1  # nothing more of the voice is played
+    await wait_for(lambda: not svc.status()["active"])
+    assert svc.status()["last_call"]["ended_reason"] == "quiet for 0 s after they said stop"
+
+
+async def test_talking_again_after_stop_keeps_the_call(live, monkeypatch):
+    monkeypatch.setattr(live_mod, "QUIET_END_S", 0.6)
+    svc, server, audio, _provider, _alerts = live
+    await connect(svc, server)
+    hear(server, "Tell me a long story.")
+    hear(server, "Stop talking.")
+    await wait_for(lambda: audio.dropped == 1)
+    await asyncio.sleep(0.3)
+    partly_hear(server, "What's ")
+    hear(server, "What's the weather?")
+    resumed = audio.frames
+    await wait_for(lambda: audio.frames > resumed + 5)  # the voice is heard again
+    await asyncio.sleep(0.6)
+    assert svc.status()["active"]
+
+
+@pytest.mark.parametrize("words", ["Bye!", "Hang up.", "Stop listening.", "That's all, thanks."])
+async def test_goodbye_words_end_the_call_even_later(live, words):
+    svc, server, audio, _provider, _alerts = live
+    await connect(svc, server)
+    hear(server, "Tell me a long story.")
+    hear(server, words)
+    await wait_for(lambda: not svc.status()["active"])
+    assert svc.status()["last_call"]["ended_reason"] == "asked to stop" and audio.dropped == 0
 
 
 async def test_stop_inside_a_sentence_doesnt_end_the_call(live):
