@@ -198,14 +198,23 @@ including ChatGPT text answers, still works.
 
 ### Wake word: "Hey LittleBot"
 
-Say **"Hey LittleBot"** (or **"Hey Bot"**) near the robot: it plays a short "listening" sound (two
-soft rising tones, like a smart speaker), its face starts listening and live voice starts, just
-as if you had pressed **Start live voice**. Wait for the sound, then talk.
+Say **"Hey LittleBot"** (or **"Hey Bot"**) near the robot: its face starts listening, it plays a
+short "listening" sound (two soft rising tones, like a smart speaker) and live voice starts, just
+as if you had pressed **Start live voice**.
 
+* **Say it all in one go.** "Hey LittleBot, what's the weather today?": what you say after the
+  wake phrase goes into the call, so there is no need to wait for the sound. When you carry on
+  talking it plays no sound (it would hide your words) and starts the call at once; the voice
+  hears your question a moment after it connects, then catches up by shortening the pauses. The
+  log shows how much was carried over and how long each step took (`wake word: kept ...`,
+  `live voice: microphone on ... ms after the wake phrase`, `live voice: caught up ...`).
 * **Heard on the robot, offline.** LittleBot recognises the phrase itself, with
   [Vosk](https://alphacephei.com/vosk/) and a small English model (40 MB). Microphone audio is
-  processed in memory a tenth of a second at a time and thrown away; **nothing is sent anywhere
-  until it hears the phrase**. From then on it is a normal live voice call (privacy above).
+  processed in memory; only the sentence the recogniser is still deciding on is kept (at most
+  8 seconds) and it is forgotten as soon as that sentence turns out not to hold the phrase.
+  **Nothing is sent anywhere until it hears the phrase**; then the rest of that sentence goes
+  into the call. It is never written to disk, and it is dropped if live voice can't start or
+  connect. From then on it is a normal live voice call (privacy above).
 * **The switch:** **AI** → **Live voice** → **Wake word: say "Hey LittleBot" to start live voice**
   (on by default). The line under it says "Listening for …", why it is paused or what is missing,
   and what happened the last time it heard you. Saying the phrase counts as a grown-up starting
@@ -697,5 +706,11 @@ YouTube search (`media:` section, `MediaConfig`): `allow_search` (`true`: any vi
   the pauses (live voice, video, Privacy, switch off, LittleBot making sound), a missing model or
   library. The real Vosk recogniser was run once on a development PC with espeak-ng voices (it heard
   all "Hey LittleBot" / "Hey Bot" and none of the look-alikes); not on the Pi, and not with real voices.
+  Saying it in one go: the words after the wake phrase (cut where Vosk says the phrase ends), no earcon
+  while they talk, the hand-over at a pause, nothing kept when live voice can't start, and none of
+  LittleBot's own sound; in `tests/chatgpt/test_live.py` and `tests/audio/test_wakeword_robot.py` those
+  words reach the local WebRTC peer first, in real time, and the call then catches up. Once, on a
+  development PC, the real Vosk and wake word on espeak-ng speech carried exactly "what's the weather
+  today" from "Hey LittleBot, what's the weather today?" (checked by dictating the carried audio).
 * **Not yet tested:** OpenAI's real service (sign-in, text, live voice or photos), the Pi's real
   microphone, speaker and camera, echo in a real room, latency, and real plan limits.

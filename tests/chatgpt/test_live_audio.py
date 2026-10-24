@@ -244,3 +244,120 @@ async def test_lip_sync_trouble_never_breaks_the_voice(setup):
         assert audio.speaking
     finally:
         audio.close()
+
+
+# ------------------------------------------------------------------ CarryFeed: what was said with the wake word first
+class Mic:
+    """Stands in for LiveAudio.read_frame: one 20 ms frame per 20 ms, all ``value`` (7: quiet, but recognisable)."""
+
+    def __init__(self, value: int = 7) -> None:
+        self.value = value
+        self.reads = 0
+
+    async def read_frame(self) -> np.ndarray:
+        await asyncio.sleep(0.02)
+        self.reads += 1
+        return np.full(FRAME, self.value, dtype=np.int16)
+
+
+def carry_of(*parts: tuple[float, float]) -> Any:
+    """A sealed SpeechCarry at 16 kHz: (seconds, level) parts, a 440 Hz tone at ``level`` or silence (0)."""
+    from littlebot.audio.carry import SpeechCarry
+
+    c = SpeechCarry(16000, quiet_level=0.0105)
+    for secs, level in parts:
+        t = np.arange(int(secs * 16000)) / 16000
+        c.add((np.sin(2 * np.pi * 440 * t) * level).astype(np.float32))
+    c.seal("test")
+    return c
+
+
+def kind(frame: np.ndarray) -> str:
+    if (frame == 7).all():
+        return "mic"
+    return "tone" if np.abs(frame).max() > 3000 else "pause"
+
+
+def runs(kinds: list[str]) -> list[tuple[str, int]]:
+    out: list[tuple[str, int]] = []
+    for k in kinds:
+        if out and out[-1][0] == k:
+            out[-1] = (k, out[-1][1] + 1)
+        else:
+            out.append((k, 1))
+    return out
+
+
+async def test_carry_goes_first_at_real_time_and_pauses_are_cut_until_caught_up(caplog):
+    import logging
+
+    from littlebot.chatgpt.live_audio import KEEP_PAUSE_S, CarryFeed
+
+    caplog.set_level(logging.INFO, logger="littlebot.chatgpt.live")
+    mic = Mic()
+    carry = carry_of((0.4, 0.2), (1.0, 0.0), (0.4, 0.2), (0.6, 0.0))  # "what's the weather ... today", then quiet
+    feed = CarryFeed(mic, carry)
+    assert len(carry.take()) == 0  # handed over: nothing left in the carry
+    assert feed.carried_s == pytest.approx(2.4, abs=0.03) and feed.carried_speech_s == pytest.approx(0.8, abs=0.06)
+    feed.start()
+    await asyncio.sleep(0.3)  # the call connects: what the microphone hears meanwhile waits too
+    assert feed.waiting_s >= 2.4 + 0.2 and mic.reads >= 10
+    t0 = asyncio.get_running_loop().time()
+    frames = [await feed.read_frame() for _ in range(80)]
+    took = asyncio.get_running_loop().time() - t0
+    try:
+        assert took >= 79 * 0.02 * 0.9  # one frame per 20 ms: never a burst
+        r = runs([kind(f) for f in frames])
+        keep = int(KEEP_PAUSE_S * 50)
+        assert r[0][0] == "tone" and abs(r[0][1] - 20) <= 1  # the carried words, whole
+        assert r[1][0] == "pause" and r[1][1] <= keep + 2  # the 1 s pause between them cut short
+        assert r[2][0] == "tone" and abs(r[2][1] - 20) <= 1
+        assert [k for k, _ in r[3:]] in (["pause", "mic"], ["mic"])  # then the microphone, in real time
+        assert feed.caught_up and feed.skipped >= 50 + 30 - 2 * keep - 4
+        assert "sending first the 2.4 s carried over from the wake word (0.8 s of speech)" in caplog.text
+        assert "caught up with real time" in caplog.text
+        # caught up: the next frames are the microphone's, as they come
+        t1 = asyncio.get_running_loop().time()
+        more = [await feed.read_frame() for _ in range(10)]
+        assert all(kind(f) == "mic" for f in more) and asyncio.get_running_loop().time() - t1 >= 0.15
+        assert feed.waiting_s <= 0.06
+    finally:
+        feed.close()
+
+
+async def test_while_they_keep_talking_nothing_is_cut():
+    from littlebot.chatgpt.live_audio import CarryFeed
+
+    mic = Mic(value=6000)  # still talking: the microphone is loud too
+    feed = CarryFeed(mic, carry_of((0.5, 0.2)))
+    feed.start()
+    frames = [await feed.read_frame() for _ in range(40)]
+    try:
+        assert sum(kind(f) == "tone" for f in frames) >= 24  # all of the carried words
+        assert feed.skipped == 0 and not feed.caught_up and feed.waiting_s >= 0.4  # behind until they pause
+    finally:
+        feed.close()
+
+
+async def test_the_feed_never_holds_more_than_its_limit(monkeypatch):
+    from littlebot.chatgpt import live_audio
+    from littlebot.chatgpt.live_audio import CarryFeed
+
+    monkeypatch.setattr(live_audio, "MAX_WAITING_S", 0.2)
+    mic = Mic()
+    feed = CarryFeed(mic, carry_of((0.4, 0.2)))
+    feed.start()
+    await asyncio.sleep(0.4)  # a very slow connect
+    try:
+        assert feed.waiting_s <= 0.2 + 0.02 and feed.lost >= 10
+    finally:
+        feed.close()
+    assert feed.waiting_s == 0  # nothing kept after the call
+
+
+async def test_without_the_reader_task_it_reads_the_microphone_itself():
+    from littlebot.chatgpt.live_audio import CarryFeed
+
+    feed = CarryFeed(Mic(), None)  # nothing carried and never started
+    assert feed.carried_s == 0
+    assert kind(await asyncio.wait_for(feed.read_frame(), 1)) == "mic"

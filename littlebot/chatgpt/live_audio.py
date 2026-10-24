@@ -9,11 +9,14 @@ The face's mouth follows the voice too: every block handed to the speaker gets a
 mouth shape (:class:`~littlebot.audio.dsp.VisemeEstimator`), stamped with the moment PortAudio
 says it will be heard, and :attr:`LiveAudio.mouth` reads the one being heard now.
 
+A call started by the wake word sends what was said with it first (:class:`CarryFeed`).
+
 Nothing is recorded: samples only pass through small in-memory buffers.
 """
 
 from __future__ import annotations
 
+import asyncio
 import collections
 import logging
 import threading
@@ -33,6 +36,12 @@ FRAME = RATE // 50  # 20 ms
 MAX_QUEUED_S = 1.0  # more than this waiting for the speaker = we fell behind: drop the oldest
 MOUTH_LEAD_S = 0.06  # report the mouth this early: polling (~20 Hz) and drawing the face take about that
 MAX_OUTPUT_DELAY_S = 0.5  # a reported speaker delay above this is nonsense: ignore it
+# CarryFeed: while frames wait to be sent, each pause is cut to KEEP_PAUSE_S (enough to keep words apart);
+# the call is then back in real time at their first pause.
+KEEP_PAUSE_S = 0.3
+BEHIND_FRAMES = 2  # this many frames waiting = behind real time (fewer is ordinary jitter)
+MAX_WAITING_S = 10.0  # never more than this waiting to be sent: the oldest goes
+PACE_SLACK_S = 0.06  # a frame this late (the microphone or the encoder was slow) restarts the beat: no burst
 
 
 class LiveAudio:
@@ -294,3 +303,135 @@ class LiveAudio:
             self._vol_at, self._vol = now, max(0.0, min(1.0, float(self._volume())))
         y = y * self._vol
         outdata[:] = np.repeat(y[:, None], self._out_channels, axis=1) if self._out_channels > 1 else y[:, None]
+
+
+class CarryFeed:
+    """The microphone of a call the wake word started: what was said with the wake word first, then ``audio``.
+
+    ``start()`` (once the devices are open) reads ``audio.read_frame()`` all the time from then on, so what is
+    said while the call connects waits here too (LiveAudio itself keeps only the last second) and the
+    half-duplex gate is applied as it is heard, not when it is sent. ``read_frame()`` (the call's MicTrack)
+    gives one 20 ms frame per 20 ms, never faster than real time: a burst could be dropped or mistimed by the
+    far end. While frames are waiting, each pause is cut to KEEP_PAUSE_S, so the call is back in real time
+    at their first pause. Timestamps stay continuous: MicTrack numbers the frames it is given.
+
+    ``carry``: a littlebot.audio.carry.SpeechCarry (taken once; its audio is never kept anywhere else).
+    """
+
+    def __init__(self, audio: Any, carry: Any) -> None:
+        self.audio = audio
+        self._carry = carry
+        self.quiet_level = float(getattr(carry, "quiet_level", 0.0105))
+        self._waiting: collections.deque[np.ndarray] = collections.deque()
+        self._arrived = asyncio.Event()
+        self._puller: Any = None
+        self._due: float | None = None
+        self._pause = 0  # quiet frames in a row
+        self._keep_pause = int(round(KEEP_PAUSE_S * RATE / FRAME))
+        self._carried = 0  # frames of the carried speech still waiting
+        self._on_at: float | None = None  # the first frame asked for: the call's sound flows
+        self._first_heard: float | None = None  # the first frame from the call's own microphone
+        self.sent = self.skipped = self.lost = 0
+        self.caught_up = False
+        samples = carry.take() if carry is not None else np.zeros(0, dtype=np.float32)
+        rate = int(getattr(carry, "sample_rate", RATE) or RATE)
+        if len(samples):
+            pcm = dsp.to_int16(dsp.resample(dsp.fade(samples, rate, 0.01, 0.01), rate, RATE))  # no click at the cut
+            pcm = np.concatenate([pcm, np.zeros(-len(pcm) % FRAME, dtype=np.int16)])
+            self._waiting.extend(row.copy() for row in pcm.reshape(-1, FRAME))
+            del samples, pcm
+        self._carried = len(self._waiting)
+        self.carried_s = self._carried * FRAME / RATE
+        self.carried_speech_s = sum(1 for f in self._waiting if self._loud(f)) * FRAME / RATE
+
+    def start(self, spawn: Callable[[Any], Any] = asyncio.ensure_future) -> None:
+        """Start reading the microphone (``spawn`` makes the task; the call's own, so it ends with the call)."""
+        if self._puller is None:
+            self._puller = spawn(self._pull())
+
+    def close(self) -> None:
+        if self._puller is not None and not self._puller.done():
+            self._puller.cancel()
+        self._waiting.clear()
+        self._arrived.set()
+        self._carry = None
+
+    @property
+    def waiting_s(self) -> float:
+        return len(self._waiting) * FRAME / RATE
+
+    async def _pull(self) -> None:
+        try:
+            while True:
+                frame = await self.audio.read_frame()
+                if self._first_heard is None:
+                    self._first_heard = time.monotonic()
+                self._waiting.append(frame)
+                while len(self._waiting) > MAX_WAITING_S * RATE / FRAME:  # far behind (a very slow connect)
+                    self._waiting.popleft()
+                    self._carried = max(0, self._carried - 1)
+                    self.lost += 1
+                self._arrived.set()
+        finally:
+            self._arrived.set()  # a waiting reader then reads the microphone itself
+
+    async def read_frame(self) -> np.ndarray:
+        """The next 20 ms to send (int16, 48 kHz)."""
+        if self._on_at is None:
+            self._on_at = time.monotonic()
+            self._log_start()
+        await self._beat()
+        while True:
+            frame, waited = await self._next()
+            if waited:  # nothing was waiting: the microphone sets the pace from here
+                self._due = time.monotonic() + FRAME / RATE
+            quiet = not self._loud(frame)
+            self._pause = self._pause + 1 if quiet else 0
+            if quiet and self._pause > self._keep_pause and len(self._waiting) >= BEHIND_FRAMES:
+                self.skipped += 1  # a long pause while behind: catch up
+                continue
+            self.sent += 1
+            if not self.caught_up and not self._carried and len(self._waiting) < BEHIND_FRAMES:
+                self.caught_up = True
+                log.info("live voice: caught up with real time %d ms after the call's microphone came on "
+                         "(%.1f s of pauses left out)", int((time.monotonic() - self._on_at) * 1000),
+                         self.skipped * FRAME / RATE)
+            return frame
+
+    async def _beat(self) -> None:
+        """Wait for this frame's 20 ms slot (a slot missed by more than PACE_SLACK_S restarts the beat)."""
+        now = time.monotonic()
+        if self._due is None or now - self._due > PACE_SLACK_S:
+            self._due = now
+        elif self._due > now:
+            await asyncio.sleep(self._due - now)
+        self._due += FRAME / RATE
+
+    async def _next(self) -> tuple[np.ndarray, bool]:
+        waited = False
+        while not self._waiting:
+            if self._puller is None or self._puller.done():
+                return await self.audio.read_frame(), True
+            waited = True
+            self._arrived.clear()
+            await self._arrived.wait()
+        if self._carried:
+            self._carried -= 1
+        return self._waiting.popleft(), waited
+
+    def _loud(self, frame: np.ndarray) -> bool:
+        x = frame.astype(np.float32)
+        return float(np.sqrt(np.mean(x * x))) / 32768.0 >= self.quiet_level if len(x) else False
+
+    def _log_start(self) -> None:
+        carry = self._carry
+        now = time.monotonic()
+        heard_at = getattr(carry, "heard_at", None)
+        handed_at = getattr(carry, "sealed_at", None)
+        gap = ""
+        if handed_at is not None and self._first_heard is not None:
+            gap = f"; microphone hand-over gap about {max(0, int((self._first_heard - handed_at) * 1000) - 20)} ms"
+        log.info("live voice: microphone on%s; sending first the %.1f s carried over from the wake word (%.1f s of "
+                 "speech) and the %.1f s heard while connecting%s",
+                 f" {int((now - heard_at) * 1000)} ms after the wake phrase" if heard_at is not None else "",
+                 self.carried_s, self.carried_speech_s, max(0, len(self._waiting) - self._carried) * FRAME / RATE, gap)

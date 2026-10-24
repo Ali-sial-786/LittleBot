@@ -1190,3 +1190,84 @@ async def test_the_voice_knows_the_childs_name_unless_the_parent_says_no(live, c
     ctx.settings.set("ai.share_child_name", False)
     await connect(svc, server)
     assert "Amara" not in server.requests[-1]["body"]["session"]["instructions"]
+
+
+# ------------------------------------------------------------------ "Hey LittleBot, what's the weather?" in one breath
+def wake_carry(*parts: tuple[float, float]) -> Any:
+    """What the wake word hands over (sealed): (seconds, level) parts, a 440 Hz tone at ``level`` or silence (0)."""
+    import numpy as np
+
+    from littlebot.audio.carry import SpeechCarry
+
+    c = SpeechCarry(16000, quiet_level=0.0105)
+    for secs, level in parts:
+        t = np.arange(int(secs * 16000)) / 16000
+        c.add((np.sin(2 * np.pi * 440 * t) * level).astype(np.float32))
+    c.seal("live voice took the microphone")
+    return c
+
+
+def tone_heard(server: FakeOpenAI) -> list[int]:
+    """Which of the frames the far end received carry the tone."""
+    import numpy as np
+
+    return [i for i, f in enumerate(server.heard) if np.abs(f).max() > 1000]
+
+
+async def test_words_said_with_the_wake_word_reach_the_voice_first_in_real_time(live, caplog):
+    caplog.set_level(logging.INFO, logger="littlebot.chatgpt.live")
+    svc, server, _audio, _provider, _alerts = live
+    carry = wake_carry((0.6, 0.2), (1.5, 0.0))  # their words, then quiet
+    assert (await svc.start_session(parent_present=True, carry=carry))["ok"]
+    await wait_for(lambda: server.channel_ready.is_set() and svc.status().get("phase") == "listening")
+    loop = asyncio.get_running_loop()
+    await wait_for(lambda: tone_heard(server))
+    first = loop.time()
+    await wait_for(lambda: len(tone_heard(server)) >= 25)
+    assert loop.time() - first >= 0.3  # ~0.5 s for 25 frames: as it was said, not in a burst
+    await wait_for(lambda: "caught up with real time" in caplog.text)
+    tone = tone_heard(server)
+    assert tone[0] <= 3 and 26 <= len(tone) <= 34  # the 0.6 s of words, first, whole
+    assert "sending first the 2.1 s carried over from the wake word (0.6 s of speech)" in caplog.text
+    import re
+
+    from littlebot.chatgpt.live_audio import KEEP_PAUSE_S
+
+    left_out = float(re.search(r"\((\d+\.\d) s of pauses left out\)", caplog.text).group(1))
+    assert left_out >= 1.5 - KEEP_PAUSE_S - 0.1  # the pause, and the quiet heard meanwhile
+    assert "microphone on " in caplog.text and " ms after the wake phrase" in caplog.text
+    await asyncio.sleep(0.3)
+    assert len(tone_heard(server)) == len(tone)  # then only the (silent) microphone
+    await svc.stop_session()
+    assert carry.dropped and len(carry.take()) == 0  # nothing of it is kept after the call
+
+
+async def test_what_was_carried_is_dropped_when_the_call_fails(ctx, tmp_path):
+    ctx.privacy.set(cloud_enabled=True)
+    ctx.audio = LendingAudio()
+    svc = LiveVoiceService(ctx, auth=signed_in_auth(tmp_path), transport=httpx.MockTransport(FakeOpenAI(status=403)),
+                           audio_factory=FakeLiveAudio, provider=FakeProvider())
+    await svc.start()
+    try:
+        carry = wake_carry((0.5, 0.2))
+        assert (await svc.start_session(parent_present=True, carry=carry))["ok"]
+        await wait_for(lambda: not svc.status()["active"])
+        assert carry.dropped and len(carry.take()) == 0
+        ctx.privacy.set(cloud_enabled=False)
+        blocked = wake_carry((0.5, 0.2))
+        assert (await svc.start_session(parent_present=True, carry=blocked))["error"] == "cloud_off"
+        assert not blocked.dropped  # not started: the wake word drops it (and plays "uh-oh")
+    finally:
+        await svc.stop()
+
+
+@pytest.mark.parametrize("words", ["Hey LittleBot.", "Hey, Little Bot!", "Hey LittleBot, what's the weather today?",
+                                   "Hey bot, stop the video."])
+async def test_the_wake_phrase_heard_in_the_call_doesnt_end_it(live, words, monkeypatch):
+    monkeypatch.setattr(live_mod, "STOP_SETTLE_S", 0.2)
+    svc, server, _audio, _provider, _alerts = live
+    await connect(svc, server)
+    partly_hear(server, words)
+    hear(server, words)
+    await asyncio.sleep(0.4)
+    assert svc.status()["active"]

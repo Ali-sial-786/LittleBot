@@ -6,8 +6,10 @@ local STT when both use it). The recogniser runs in *grammar mode*: it may only 
 the wake phrases, a list of common everyday words (``DISTRACTOR_WORDS``, so that "hey bob" or
 "hey look" have somewhere better to go than "hey bot") and ``[unk]`` (anything else). That is
 cheap - a few percent of one CPU core - and far less prone to false triggers than dictation.
-Audio is processed in memory, 0.1 s at a time, and dropped; nothing leaves the robot until a
-wake phrase was heard and live voice (cloud) starts.
+Audio is processed in memory, 0.1 s at a time; only the sentence the recogniser is still deciding
+on is kept (at most ``PREROLL_MAX_SECONDS``, in memory), and forgotten as soon as it decides that
+sentence held no wake phrase. Nothing leaves the robot until a wake phrase was heard and live
+voice (cloud) starts.
 
 Why Vosk and not openWakeWord: openWakeWord's pretrained models cover other phrases ("alexa",
 "hey jarvis", "hey mycroft" ...); "hey little bot" would need a custom model trained on
@@ -24,10 +26,21 @@ Sharing the microphone
     is off; while LittleBot itself makes sound (half-duplex) the audio is discarded.
 
 When a wake phrase is heard
-    "listen" earcon (two soft rising tones) -> face listening (RobotState.LISTENING) ->
-    ``ctx.live.start_session(parent_present=True)``; live voice then takes the microphone. If
-    live voice can't start (not signed in, cloud off ...) or doesn't connect, LittleBot plays
-    "uhoh" and logs why. No new trigger for ``wake.cooldown_seconds``.
+    face listening (RobotState.LISTENING) -> "listen" earcon (two soft rising tones) ->
+    ``ctx.live.start_session(parent_present=True, carry=...)``; live voice then takes the
+    microphone. If live voice can't start (not signed in, cloud off ...) or doesn't connect,
+    LittleBot plays "uhoh" and logs why. No new trigger for ``wake.cooldown_seconds``.
+
+Carrying what was said into the call ("Hey LittleBot, what's the weather today?" in one breath)
+    The recogniser reports a wake phrase only once the sentence has ended, so the rest of that
+    sentence comes from the kept audio: from where the wake phrase ends (the recogniser's word
+    times), the wake phrase itself left out. The listener then keeps the stream and goes on
+    collecting what they say, without what it hears while LittleBot makes a sound, until live
+    voice takes the microphone (``release_mic``). The call sends it first, at real-time pace,
+    and catches up with real time by shortening the pauses (littlebot/chatgpt/live_audio.py,
+    ``CarryFeed``). If the recogniser heard more words after the wake phrase, they are talking:
+    no earcon, live voice starts at once. In memory only (littlebot/audio/carry.py); dropped if
+    live voice can't start, doesn't connect, or when the call ends.
 """
 
 from __future__ import annotations
@@ -46,6 +59,7 @@ import numpy as np
 
 from littlebot.audio import devices as dev
 from littlebot.audio import dsp
+from littlebot.audio.carry import QUIET_RATIO, PreRoll, SpeechCarry
 from littlebot.audio.devices import SoundDeviceInput
 from littlebot.audio.errors import AudioDeviceError
 from littlebot.audio.stt.vosk import load_model, model_present, resolve_model_path, vosk_installed
@@ -68,6 +82,17 @@ MIN_LISTEN_SECONDS = 0.3  # a listen that ends sooner is followed by a short pau
 CONNECT_GRACE_SECONDS = 10.0  # beyond chatgpt.live_connect_timeout_seconds
 # The earcon is 0.27 s: a speaker that hangs never keeps live voice (and so the wake word) waiting longer.
 EARCON_TIMEOUT = 8.0
+# "Hey LittleBot, what's the weather?" in one breath: the recogniser only reports the wake phrase once the
+# sentence has ended, so the sentence being recognised is kept (in memory, at most this long) and what was
+# said after the wake phrase goes into the call (littlebot/audio/carry.py).
+PREROLL_MAX_SECONDS = 8.0
+WAKE_CUT_MARGIN = 0.03  # start the carried words this much before the wake phrase's end (the recogniser's step)
+CARRY_WAIT_SECONDS = 5.0  # after the wake phrase: keep what they say this long at most until live voice takes over
+# Live voice opens its own stream once this one is closed; what is said in between (~0.1-0.3 s) is lost. So
+# while they are talking it gets the microphone at their next short pause, after at most HANDOVER_WAIT_SECONDS
+# (in a noisy room there may be none: that is what the wait can cost).
+HANDOVER_QUIET_SECONDS = 0.1
+HANDOVER_WAIT_SECONDS = 0.4  # well within RELEASE_TIMEOUT
 
 # Pauses after which the model is unloaded (they usually last long; ~130 MB back for a video).
 _LONG_PAUSES = {"disabled", "microphone_off", "video", "stopped"}
@@ -163,6 +188,30 @@ def match_wake_phrase(result: dict[str, Any], phrases: Sequence[tuple[str, tuple
     return None
 
 
+def wake_phrase_end(result: dict[str, Any], words: Sequence[str],
+                    min_confidence: float = 0.0) -> tuple[float | None, int]:
+    """(Where the wake phrase ``words`` ends in a recogniser result, in the recogniser's seconds; how many
+    words were heard after it). The time is None without word timings. Vosk counts its seconds from the
+    recogniser's first sample, also across ``reset()``; a first word's start includes the silence before
+    it, its end is accurate."""
+    items = [w for w in result.get("result") or [] if isinstance(w, dict)]
+    if items:
+        toks = [str(w.get("word", "")).lower() for w in items]
+        confs = [float(w.get("conf", 1.0)) for w in items]
+    else:
+        toks = str(result.get("text", "")).lower().split()
+        confs = [1.0] * len(toks)
+    ph, n = tuple(words), len(words)
+    for i in range(len(toks) - n + 1):
+        if n and tuple(toks[i:i + n]) == ph and min(confs[i:i + n]) >= min_confidence:
+            after = len(toks) - i - n
+            try:
+                return float(items[i + n - 1]["end"]), after
+            except (IndexError, KeyError, TypeError, ValueError):
+                return None, after
+    return None, 0
+
+
 class VoskKeywordRecognizer:
     """Vosk ``KaldiRecognizer`` restricted to a grammar (wake phrases + distractors + [unk])."""
 
@@ -216,6 +265,7 @@ class WakeWordService(Service):
         self._retry_at = 0.0
         self._mic_failures = 0  # in a row (only the first one is logged as a warning)
         self._recognizer: KeywordRecognizer | None = None
+        self._fed = 0  # samples given to this recogniser so far: its word times count from its first one
         self._unavailable: tuple[str, str] | None = None  # (code, detail) while it can't work
         self._next_check = 0.0
         self._paused = "starting"
@@ -422,7 +472,7 @@ class WakeWordService(Service):
             return None
         if rec is None:
             return None
-        self._recognizer, self._unavailable = rec, None
+        self._recognizer, self._unavailable, self._fed = rec, None, 0
         return rec
 
     def _vosk_recognizer(self) -> KeywordRecognizer | None:
@@ -520,6 +570,7 @@ class WakeWordService(Service):
         pending: list[np.ndarray] = []
         pending_n = 0
         muted = False
+        heard = PreRoll(rec.sample_rate, PREROLL_MAX_SECONDS)  # the sentence being recognised (see _carry_from)
         next_gate = time.monotonic() + GATE_POLL_SECONDS
         try:
             while not self._stop.is_set() and not self._audio_busy:
@@ -542,6 +593,7 @@ class WakeWordService(Service):
                     if not muted:
                         rec.reset()
                         pending, pending_n, muted = [], 0, True
+                        heard.clear()
                     continue
                 muted = False
                 pending.append(chunk)
@@ -554,20 +606,109 @@ class WakeWordService(Service):
                     block = np.clip(block * self._gain, -1.0, 1.0)
                 if inp.sample_rate != rec.sample_rate:
                     block = dsp.resample(block, inp.sample_rate, rec.sample_rate)
+                heard.add(self._fed, block)
                 result = rec.accept(dsp.to_int16(block).tobytes())
+                self._fed += len(block)
                 del block
                 if not result:
                     continue
                 phrase = match_wake_phrase(result, self._phrases, self.cfg.min_confidence)
                 if phrase is not None and not self._audio_busy and not self._stop.is_set():
-                    self._detected(phrase)
+                    carry = self._carry_from(heard, result, phrase, rec.sample_rate)
+                    self._detected(phrase, carry)
+                    self._carry_on(inp, rec.sample_rate, carry)
                     return True
+                heard.decided()  # no wake phrase in that sentence: it is forgotten
             return False
         finally:
             self._listening = False
             pending.clear()
+            heard.clear()
             with contextlib.suppress(Exception):
                 inp.close()
+
+    def _quiet_level(self) -> float:
+        try:
+            return float(self.ctx.config.audio.microphone.vad_threshold) * QUIET_RATIO
+        except (AttributeError, TypeError, ValueError):
+            return 0.015 * QUIET_RATIO
+
+    def _carry_from(self, heard: PreRoll, result: dict[str, Any], phrase: str, rate: int) -> SpeechCarry:
+        """What was said with the wake phrase, for the call: the sentence after it (by the recogniser's word
+        times; the whole sentence when there are none)."""
+        words = dict(self._phrases).get(phrase) or tuple(phrase.split())
+        end, after = wake_phrase_end(result, words, self.cfg.min_confidence)
+        cut = None if end is None else max(0, int((end - WAKE_CUT_MARGIN) * rate))
+        carry = SpeechCarry(rate, phrase=phrase, quiet_level=self._quiet_level(), kept_talking=after > 0)
+        for block in heard.since(cut):
+            carry.add(block)
+        heard.clear()
+        carry.lead_s = carry.seconds
+        return carry
+
+    def _carry_on(self, inp: Any, rate: int, carry: SpeechCarry) -> None:
+        """After the wake phrase: keep what they say for the call until live voice takes the microphone
+        (``release_mic``; while they talk, at their next pause), it can't start (the carry is dropped) or
+        CARRY_WAIT_SECONDS. What the microphone hears while LittleBot makes a sound (the earcon) is left out."""
+        deadline = time.monotonic() + CARRY_WAIT_SECONDS
+        why = ""
+        asked: float | None = None  # when live voice asked for the microphone
+        when = ""
+        muted = False
+        try:
+            while carry.is_open:
+                now = time.monotonic()
+                if self._audio_busy:  # hand it over at a pause (or while LittleBot's own sound is left out anyway)
+                    asked = now if asked is None else asked
+                    if muted or carry.quiet_s >= HANDOVER_QUIET_SECONDS:
+                        if now - asked >= 0.05:
+                            when = f" at a pause ({int((now - asked) * 1000)} ms after it asked)"
+                        break
+                    if now - asked >= HANDOVER_WAIT_SECONDS:
+                        when = f" while they were still talking (no pause within {HANDOVER_WAIT_SECONDS:g} s)"
+                        break
+                if self._stop.is_set() or not self._mic_allowed():
+                    carry.drop("stopped" if self._stop.is_set() else "microphone off")
+                    return
+                if now >= deadline:
+                    why = f"live voice didn't take the microphone within {CARRY_WAIT_SECONDS:g} s"
+                    break
+                try:
+                    chunk = inp.read(READ_SECONDS)
+                except AudioDeviceError as e:
+                    self._mic_failed(f"the microphone stopped: {e}")
+                    why = "the microphone stopped"
+                    break
+                if chunk is None or not len(chunk):
+                    if not inp.is_open:
+                        why = "the microphone was closed"
+                        break
+                    continue
+                muted = self._muted()
+                if muted:  # LittleBot's own sound (the earcon) is never carried
+                    continue
+                if self._gain != 1.0:
+                    chunk = np.clip(chunk * self._gain, -1.0, 1.0)
+                if inp.sample_rate != rate:
+                    chunk = dsp.resample(chunk, inp.sample_rate, rate)
+                carry.add(chunk)
+        finally:
+            done = time.monotonic()
+            if not why:
+                busy = self._busy_reason
+                why = ("live voice took the microphone" if busy in ("", "lent")
+                       else f"the microphone was needed ({busy})") + when
+            carry.seal(why)
+            if not carry.dropped:
+                log.info("wake word: kept %.1f s of what they said for live voice (%.1f s of it speech, %.1f s "
+                         "said with the wake phrase); %s %d ms after the wake phrase", carry.seconds,
+                         carry.speech_seconds, carry.lead_s, why, int((done - carry.heard_at) * 1000))
+
+    def _mic_allowed(self) -> bool:
+        try:
+            return bool(self.ctx.privacy.microphone_enabled)
+        except Exception:  # noqa: BLE001 - fail closed
+            return False
 
     def _mic_failed(self, why: str) -> None:
         self._mic_failures += 1
@@ -579,10 +720,13 @@ class WakeWordService(Service):
             audio._publish_device("microphone")  # noqa: SLF001 - keep the dashboard's device status fresh
 
     # ------------------------------------------------------------ detection
-    def _detected(self, phrase: str) -> None:
-        """Runs in the listener thread (the stream is closed right after): hand over to the loop."""
+    def _detected(self, phrase: str, carry: SpeechCarry | None = None) -> None:
+        """Runs in the listener thread (which then keeps ``carry`` filled until live voice takes the
+        microphone): hand over to the loop."""
         loop = self._loop
         if loop is None or loop.is_closed():
+            if carry is not None:
+                carry.drop("no event loop")
             return
         with self._cv:
             self._triggered = True
@@ -590,34 +734,45 @@ class WakeWordService(Service):
         self.last_heard = {"phrase": phrase, "at": time.time(), "result": "starting", "detail": None}
         log.info("wake word heard (phrase=%s)", phrase)
         try:
-            asyncio.run_coroutine_threadsafe(self._handle(phrase), loop)
+            asyncio.run_coroutine_threadsafe(self._handle(phrase, carry), loop)
         except RuntimeError:  # loop closed meanwhile
+            if carry is not None:
+                carry.drop("no event loop")
             with self._cv:
                 self._triggered = False
 
-    async def _handle(self, phrase: str) -> None:
+    async def _handle(self, phrase: str, carry: SpeechCarry | None = None) -> None:
         ctx = self.ctx
         entered = False
+        started = False
         try:
             with contextlib.suppress(Exception):
                 ctx.bus.publish(WAKE_TOPIC, {"phrase": phrase}, source="wake")
             with contextlib.suppress(Exception):
                 entered = ctx.state.state != RobotState.LISTENING and ctx.state.transition(RobotState.LISTENING,
                                                                                           "wake word")
-            await self._play(self.cfg.sound)
+            if carry is not None and carry.kept_talking:
+                # They asked in the same breath and wait for the answer, not for a sound; a sound now would also
+                # hide what they say next (half-duplex). The face shows it is listening.
+                log.info("wake word: no earcon, they kept talking (%.1f s said after the wake phrase)", carry.lead_s)
+            else:
+                await self._play(self.cfg.sound)
             live = ctx.live
             if live is None:
                 res: dict[str, Any] = {"ok": False, "error": "unavailable",
                                        "detail": "Live voice isn't available on this robot."}
             else:
                 log.info("wake word: starting live voice")
-                res = await live.start_session(parent_present=True)
+                res = await live.start_session(parent_present=True, carry=carry)
             if res.get("ok"):
+                started = True  # the call has the carry now (it drops it when it ends)
                 log.info("wake word: live voice started; connecting")
                 self._note("started")
                 self._spawn(self._watch_connect(live))
                 return
             error, detail = str(res.get("error") or "failed"), str(res.get("detail") or "")
+            if carry is not None:
+                carry.drop("live voice could not start")  # what they said is forgotten, never sent
             log.warning("wake word: live voice could not start (%s%s)", error, f": {detail}" if detail else "")
             self._note("blocked", error=error, detail=detail)
             if entered:
@@ -627,12 +782,16 @@ class WakeWordService(Service):
             raise
         except Exception as e:  # noqa: BLE001
             log.exception("wake word: starting live voice failed")
+            if carry is not None and not started:
+                carry.drop("live voice failed")
             self._note("failed", error=type(e).__name__, detail=str(e))
             if entered:
                 with contextlib.suppress(Exception):
                     ctx.state.release(RobotState.LISTENING, "wake word: live voice failed")
             await self._play("uhoh", "error sound")
         finally:
+            if carry is not None and not started:
+                carry.drop("live voice did not start")
             with self._cv:
                 self._triggered = False
                 self._relisten_note = True

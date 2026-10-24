@@ -183,6 +183,33 @@ def test_wake_word_while_awake_with_a_person_present(bot, caplog):
     assert robot.rig.call_audio.conflicts == []
 
 
+def test_said_in_one_breath_the_words_reach_the_voice_without_an_earcon(bot, caplog):
+    """ "Hey LittleBot, what's the weather?": the words after the wake phrase (the fake USB microphone's tone)
+    are the first thing the far end hears, and no earcon plays over them."""
+    caplog.set_level(logging.INFO, logger="littlebot")
+    robot = bot()
+    ctx, rig = robot.ctx, robot.rig
+    wait_until(lambda: _listening(robot), what="wake word listening on the USB microphone")
+    wait_until(lambda: rig.rec.fed >= 2 * 16000, what="2 s heard")
+    events = collect(ctx.bus, [Topics.AUDIO_SOUND_STARTED])
+    rig.rec.say("hey little bot what is the weather", wake_ended_ago=1.0)
+    wait_until(lambda: ctx.wake.triggers == 1, what="wake phrase heard")
+    wait_until(lambda: ctx.live.status().get("phase") in ("listening", "speaking", "thinking"), timeout=20,
+               what="live call connected")
+
+    def tone() -> list[int]:
+        return [i for i, f in enumerate(list(rig.server.heard)) if np.abs(f).max() > 1000]
+
+    wait_until(lambda: len(tone()) >= 50, timeout=15, what="the carried words reached the voice")
+    assert tone()[0] <= 3  # first
+    assert not any(e.data.get("name") == "listen" for e in events)  # no earcon over their words
+    log = caplog.text
+    assert "wake word: no earcon, they kept talking" in log
+    assert "wake word: kept " in log and "live voice: microphone on " in log and "after the wake phrase" in log
+    assert rig.call_audio.conflicts == []  # the wake word let go of the microphone first
+    _hang_up_and_listen_again(robot)
+
+
 def test_wake_word_while_asleep(bot):
     robot = bot()
     ctx = robot.ctx
