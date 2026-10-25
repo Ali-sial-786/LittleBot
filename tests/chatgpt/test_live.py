@@ -1254,6 +1254,7 @@ async def test_a_baby_cant_talk_so_whoever_speaks_is_a_grown_up(live, ctx):
 
 async def test_the_voice_remembers_what_a_grown_up_asks_in_every_chat(live, ctx):
     svc, server, _audio, provider, _alerts = live
+    ctx.config.ai.creator = None  # "Ali" here is a family member; the creator line names Ali otherwise
     ctx.settings.set("profile", {"nickname": "Amara", "age_months": 10})
     await connect(svc, server)
     delegate(server, "r1", "remember: Ali is Amara's dad.")
@@ -1381,8 +1382,16 @@ async def test_the_voice_is_told_quietly_when_someone_new_arrives(live, ctx, qui
     assert svc.status()["active"]
 
 
+async def test_the_voice_knows_who_made_it(live, ctx):
+    svc, server, _audio, _provider, _alerts = live
+    await connect(svc, server)
+    text = server.requests[-1]["body"]["session"]["instructions"]
+    assert "built and programmed by Ali, the little one's dad" in text and "say Ali did" in text
+
+
 async def test_no_faces_line_or_notes_while_it_is_switched_off(live, ctx, quick_faces):
     svc, server, _audio, _provider, _alerts = live
+    ctx.config.ai.creator = None  # the creator line (brain/identity.py) would name Ali too
     seen = ctx.extras["faces"] = SeenFaces(person(1, "Ali", "dad"), reason="off")
     await connect(svc, server)
     text = server.requests[-1]["body"]["session"]["instructions"]
