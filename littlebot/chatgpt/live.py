@@ -287,6 +287,11 @@ INFO_WORDS = re.compile(r"\b(?:weather|forecasts?|hourly|rain(?:ing|y)?|snow(?:i
                         r"what time|what(?:'s| is) the time|time is it|what day|what date|(?:the|today'?s) date|"
                         r"news|headlines?|scores?)\b", re.I)
 CHECK_WINDOW = 320  # characters of a reply in progress checked at a time
+# The voice sometimes says the person's part ("Hi LittleBot, it's Ali, can you look up the weather?"): a line that
+# greets LittleBot by name gets this note (not "LittleBot here!").
+SPOKE_AS_THEM = ("You just spoke as if you were the person talking to you (\"{start}\"). You are {name}: never say "
+                 "their part. Say sorry in a few words, then answer what they actually said, or ask what they meant.")
+SPOKE_AS_THEM_NOTES = 2  # at most this many a call
 NOT_SURE = "LittleBot has no answer for that. Say briefly, in your own words, that you're not sure."
 LOOKUP_MAX_WORDS = 60  # a hand-off's answer: room for two to four sentences for a grown-up
 # Rule hits that don't end the call (the words were already said; ending it wouldn't take them back):
@@ -332,6 +337,8 @@ their sounds, animal noises, counting, colours, peekaboo, or a few lines of a we
 four sentences, and help them play with the child.
 - No lists, no reading out links (say the website's name), no emoji names, no stage directions.
 - You are a robot, not a person or a parent. If asked, say you are a robot.
+- Only ever speak as {name}. Never say the person's part or what they might say next (never "Hi {name}, it's \
+..." or "Can you look up..."): if you didn't catch them, say so and listen.
 
 Answering:
 - Answer what you are asked: facts, the weather, news, how-to, shows, videos, apps and products are all fine.
@@ -760,6 +767,7 @@ class LiveCall:
         self._sent: collections.deque[tuple[float, str, int]] = collections.deque(maxlen=4)  # (when, what, chars)
         self._grown_up_spoke_at: float | None = None  # their latest turn in words (a grown-up, while the child can't talk)
         self._name_fixes = 0  # times the voice was told it called a grown-up by the child's name
+        self._spoke_as_them = 0  # times the voice was told it said the person's part (SPOKE_AS_THEM)
         self._pulse_counts: tuple[int, int, int, int] | None = None  # for _pulse
         self._reopens = 0  # times a stopped microphone / speaker was opened again (_check_audio)
         self._reopen_job: asyncio.Future[Any] | None = None
@@ -1122,6 +1130,7 @@ class LiveCall:
                 text, self._assistant_turn = event.text, ""
                 self._caption("robot", text)
                 self._decider_heard_ai(text)
+                self._check_spoke_as_them(text)
                 self._check_names(text)
                 if self._director is not None:
                     self._director.said(text)
@@ -1388,6 +1397,17 @@ class LiveCall:
         text = " ".join(str(text).split())[:300]
         if text:
             self._captions.append({"who": who, "text": text})
+
+    def _check_spoke_as_them(self, text: str) -> None:
+        """The voice's line greets LittleBot by name ("Hi LittleBot, it's Ali..."): it said the person's part."""
+        if self._spoke_as_them >= SPOKE_AS_THEM_NOTES or not _greets_robot(text, self.ctx.config.robot_name):
+            return
+        self._spoke_as_them += 1
+        log.warning("live voice: the voice said the person's part (it greeted %s by name); it was told",
+                    self.ctx.config.robot_name)
+        start = " ".join(text.split()[:8])
+        self._note(SPOKE_AS_THEM.format(start=start + ("..." if len(text.split()) > 8 else ""),
+                                        name=self.ctx.config.robot_name))
 
     def _check_names(self, text: str) -> None:
         """The voice called the grown-up who just spoke by the child's name ("Hi Amara!"): put it right, quietly.
@@ -2584,6 +2604,14 @@ def _plain_words(text: str) -> str:
 
 
 USER_FACE_CUE = re.compile(r"\b(?:face|faces|wink\w*|peek[- ]?a[- ]?boo|peekaboo|spin\w*|eyes|smile|blink\w*)\b", re.I)
+
+
+def _greets_robot(text: str, robot: str) -> bool:
+    """ "Hi LittleBot, it's Ali..." / "Hey Little Bot, can you..." (the person's words), not "Hi, LittleBot here!"."""
+    parts = re.findall(r"[A-Z]?[a-z]+|[A-Z]+(?![a-z])|\d+", robot or "") or [robot or "LittleBot"]
+    name = r"[\s-]*".join(re.escape(p) for p in parts)
+    return re.match(rf"^\W*(?:(?:hi|hey|hello|okay|ok|so)\W+)+{name}\b(?!(?:'s)?\W*(?:here|speaking|is here)\b)", text,
+                    re.IGNORECASE) is not None
 
 
 def _face_request(text: str) -> Any:

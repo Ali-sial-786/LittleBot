@@ -146,3 +146,31 @@ async def test_concern_only_adds_an_alert_when_on(live, ctx, mode, alerted):
     await wait_for(lambda: get_decider(ctx).status()["features"]["concern"]["asked"] == 1)
     await asyncio.sleep(0.2)
     assert any(a.get("detail") == "decider" for a in alerts) is alerted
+
+
+# ---------------------------------------------------------------- the voice saying the person's part
+@pytest.mark.parametrize(("line", "hit"), [
+    ("Hi LittleBot, it's Ali, can you look up the weather?", True),  # from a real call
+    ("Hey Little Bot, what's the weather?", True),
+    ("Okay, little-bot, can you play a song?", True),
+    ("Hi, LittleBot here! What shall we do?", False),
+    ("Hello! LittleBot's here.", False),
+    ("Hi Ali! Want to hear about the weather?", False),
+    ("I'm LittleBot, your robot friend.", False),
+])
+def test_greeting_littlebot_by_name_is_the_persons_part(line, hit):
+    from littlebot.chatgpt.live import _greets_robot
+
+    assert _greets_robot(line, "LittleBot") is hit
+
+
+async def test_the_voice_is_told_when_it_says_the_persons_part(live, ctx):
+    svc, server, _audio, _provider, _alerts = live
+    await connect(svc, server)
+    for _ in range(3):
+        server.send({"type": "turn.done", "turn": {"role": "assistant",
+                                                   "transcript": "Hi LittleBot, it's Ali, can you look up the weather?"}})
+    await wait_for(lambda: any(n.startswith("You just spoke as if you were the person") for n in notes(server)))
+    await asyncio.sleep(0.2)
+    told = [n for n in notes(server) if n.startswith("You just spoke as if")]
+    assert len(told) == 2 and '("Hi LittleBot, it\'s Ali, can you look up...")' in told[0]  # at most 2

@@ -532,6 +532,30 @@ async def test_it_waits_for_the_voices_answer_not_its_filler(make):
     assert s.screens.shown and s.screens.shown[0][0]["card"] == "recipe"
 
 
+async def test_a_bare_sure_is_not_the_answer(make):
+    s = make(FACT, wait_for_answer=True)
+    s.director.heard("Can you tell me what the weather's like tomorrow?")
+    await asyncio.sleep(0.05)
+    s.director.said("Sure.")  # from a real call: the card was made from "Sure." before the forecast came
+    await asyncio.sleep(director_mod.SAID_GRACE_S + 0.2)
+    assert s.provider.calls == []
+    s.director.said("Tomorrow in Hamilton, it's cloudy with a high of about 12.")
+    await s.settle()
+    assert "LittleBot: Tomorrow in Hamilton" in s.provider.calls[0]["messages"][-1]["content"]
+
+
+@pytest.mark.parametrize("line", ["Sure.", "Sure!", "Okay, looking.", "Looking.", "Mm, sure thing.", "Hmm."])
+def test_a_line_that_is_only_sure_or_looking_is_filler(line):
+    assert director_mod.FILLER.match(line)
+
+
+@pytest.mark.parametrize("line", ["Sure! Genghis Khan was a leader a long time ago.",
+                                  "Looking. I can't read it clearly from here.", "He was, yeah.", "Yes.", "Okay, three fingers!",
+                                  "Surely not", "m" * 40 + "x"])
+def test_an_answer_that_starts_with_sure_is_not_filler(line):
+    assert not director_mod.FILLER.match(line)
+
+
 async def test_a_hand_off_answer_is_what_the_card_is_made_from(make):
     s = make(FACT, wait_for_answer=True)
     s.director.heard("What's the top-grossing movie of all time?")

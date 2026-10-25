@@ -91,7 +91,11 @@ FILLER = re.compile(
     r"^\W*(?:(?:ok(?:ay)?|sure|alright|all right|hmm+|um+|oh|great|good question|let'?s see)\W+)*"
     r"(?:(?:hold|hang) on|one (?:moment|sec(?:ond)?)|just a (?:moment|sec(?:ond)?)|give me a (?:moment|sec(?:ond)?)|"
     r"let me (?:check|see|look|find|think|get|ask)|i'?ll (?:check|look|find out|ask)|i'?m (?:checking|looking|thinking)|"
-    r"(?:still )?(?:thinking|checking|working on it)|(?:wait|bear with me))\b", re.IGNORECASE)
+    r"(?:still )?(?:thinking|checking|working on it)|(?:wait|bear with me))\b"
+    # a line that is only "Sure." / "Okay, looking." (the answer comes in its next line)
+    r"|^\W*(?:ok(?:ay)?|sure(?: thing)?|alright|all right|of course|mm+|hmm+|um+|oh|looking|on it)"
+    r"(?:\W+(?:ok(?:ay)?|sure(?: thing)?|alright|all right|of course|mm+|hmm+|um+|oh|looking|on it))*\W*$",
+    re.IGNORECASE)
 MAX_HISTORY = 20
 
 FIRST_NOTE = ("On your screen now: {what}. LittleBot puts cards like this on its screen by itself while you talk. "
