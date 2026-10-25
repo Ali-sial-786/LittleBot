@@ -2,6 +2,7 @@
 
 import { get, post, put } from '../api.js';
 import { banner, button, clear, fmtDuration, h, icon, pageHead, setText, switchRow, titleCase, toast } from '../ui.js';
+import { decidePanel } from './decide_panel.js';
 
 const PROVIDERS = [
   { value: 'mock', label: 'Built-in scripted replies (no internet)' },
@@ -93,6 +94,7 @@ export default {
     const lookState = h('div', { class: 'stack-sm' });
     const lookResult = h('div', { class: 'stack-sm', 'aria-live': 'polite' });
     const lookButton = button('Look and answer', { kind: 'primary', iconName: 'camera', onClick: runLook });
+    const decide = decidePanel(app);
     lookQuestion.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); lookButton.click(); } });
 
     const save = button('Save AI settings', {
@@ -169,7 +171,8 @@ export default {
             h('div', { class: 'btn-row mt-2' }, ptt), pttResult),
           h('section', { class: 'card' },
             h('div', { class: 'card-head' }, h('h2', {}, icon('history'), 'Usage today')),
-            usage, h('div', { class: 'divider mt-2' }), h('div', { class: 'mt-2' }, brainState)))));
+            usage, h('div', { class: 'divider mt-2' }), h('div', { class: 'mt-2' }, brainState))),
+        decide.el));
 
     function renderAccount(d) {
       const a = d.account || {};
@@ -371,6 +374,6 @@ export default {
     const timer = setInterval(() => { if (!document.hidden) get('/ai').then((d) => { data = d; kvRows(usage, d.brain?.usage); }).catch(() => {}); }, 15000);
     get('/chatgpt').then(fillChatGPT).catch((e) => { clear(account).append(banner('danger', 'alert', 'Could not load the ChatGPT account', e.message)); });
     schedule(10000);
-    return { destroy() { clearInterval(timer); clearTimeout(pollTimer); } };
+    return { destroy() { clearInterval(timer); clearTimeout(pollTimer); decide.destroy(); } };
   },
 };

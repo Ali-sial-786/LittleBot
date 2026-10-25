@@ -263,6 +263,45 @@ class FakeSpeakerEngine:
         return v / np.linalg.norm(v)
 
 
+class FakeDecisionModel:
+    """Stands in for a decision model (littlebot/decide): ``answer(state, questions) -> {name: Answer}``.
+    ``use_decision_model(ctx, model)`` puts it in (provider jev, cloud on)."""
+
+    name = "fake"
+
+    def __init__(self, answer: Any) -> None:
+        self.answer = answer
+        self.asked: list[tuple[Any, dict[str, Any]]] = []
+
+    async def ask(self, state: Any, questions: dict[str, Any], *, timeout: float) -> dict[str, Any]:
+        self.asked.append((state, questions))
+        return self.answer(state, questions)
+
+
+def decision_answers(value: str, confidence: float = 0.9) -> Any:
+    """For FakeDecisionModel: every choice answers ``value`` (with ``confidence``); every yes/no question answers
+    ``confidence`` as the probability of yes."""
+    from littlebot.decide.base import Answer, Choice  # noqa: PLC0415
+
+    def answer(state: Any, questions: dict[str, Any]) -> dict[str, Any]:
+        return {name: Answer("choice", value, confidence, {value: confidence}) if isinstance(q, Choice)
+                else Answer("yesno", confidence, abs(2 * confidence - 1)) for name, q in questions.items()}
+
+    return answer
+
+
+def use_decision_model(ctx: RobotContext, answer: Any, *, modes: dict[str, str] | None = None) -> FakeDecisionModel:
+    from littlebot.decide import get_decider  # noqa: PLC0415
+
+    ctx.privacy.set(cloud_enabled=True)
+    ctx.settings.set("decide.provider", "jev")
+    if modes is not None:
+        ctx.settings.set("decide.modes", modes)
+    model = FakeDecisionModel(answer)
+    get_decider(ctx).client = model
+    return model
+
+
 def make_test_config(**overrides: Any) -> LittleBotConfig:
     """Config for tests: offline-safe, headless, fast activity timing, no real devices."""
     base = {

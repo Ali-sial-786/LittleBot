@@ -485,3 +485,18 @@ def test_home_battery_card_with_a_battery_fitted(phone):
     card.locator("summary", has_text="Battery settings").click()
     expect(card.get_by_label("Low battery warning at")).to_have_value("20")
     assert "null" not in card.inner_text() and "undefined" not in card.inner_text()
+
+
+def test_ai_page_fast_decisions_panel_saves_the_provider_and_modes(phone):
+    page = phone.open("ai")
+    panel = page.locator("section.card", has_text="Fast decisions")
+    panel.scroll_into_view_if_needed()
+    expect(panel).to_be_visible()
+    expect(panel.locator("text=No TypeSafe key")).to_be_visible()
+    page.select_option("#decide-provider", "jev")
+    expect(panel.locator("text=TYPESAFE_API_KEY isn't set")).to_be_visible()  # the key belongs in .env
+    page.select_option("#decide-cards", "on")
+    expect(page.locator("#decide-cards")).to_have_value("on")
+    d = phone.api("GET", "/decide")
+    assert d["provider"] == "jev" and d["features"]["cards"]["chosen"] == "on"
+    phone.api("PUT", "/decide/settings", {"provider": "off", "modes": {"cards": "shadow"}})  # leave it as it was

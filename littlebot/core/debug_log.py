@@ -49,6 +49,11 @@ HINTS: tuple[tuple[re.Pattern[str], str], ...] = (
      "of clear speech)."),
     (re.compile(r"camera (?:lost|read failed)|no photo", re.I),
      "The camera stopped giving pictures; it is retried by itself (a loose USB cable can do this)."),
+    (re.compile(r"decide: .*(?:http_401|http_403|no_key|isn't set)", re.I),
+     ("The fast decision model (Jev or OpenAI's Decisions API) refused its key, or it isn't in .env: LittleBot "
+      "uses its own way meanwhile.")),
+    (re.compile(r"decide: .*(?:timeout|network|http_5|http_429)", re.I),
+     "The fast decision model was slow or unreachable, so LittleBot decided its own way that time."),
     (re.compile(r"microphone (?:unavailable|failed)|stopped \(nothing from it", re.I),
      "The microphone or speaker stopped working for a moment (USB audio); LittleBot tries to reopen it."),
 )

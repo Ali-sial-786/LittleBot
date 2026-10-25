@@ -1161,6 +1161,7 @@ class LiveCall:
                     log.warning("live voice: worrying words heard (category=%s)", concern.category)
                     self._publish(Topics.BRAIN_STATUS, {"provider": "live", "status": "attention",
                                                         "detail": concern.category})
+                self._ask_concern(event.text, concern is not None)
                 # The person's own words: only when clearly about the face, so everyday talk
                 # ("that makes me sad", "give me a hug") doesn't change it.
                 handled = self._video_words(event.text) or self._game_words(event.text)
@@ -1398,8 +1399,66 @@ class LiveCall:
         if age is None or age >= TALKS_FROM_MONTHS:
             return
         names = [n for n in (self._nickname(), "little one") if n]
-        if not any(_addresses(text, n) for n in names):
+        hit = any(_addresses(text, n) for n in names)
+        self._ask_naming(text, hit)
+        if hit:
+            self._fix_name()
+
+    def _ask_naming(self, text: str, hit: bool) -> None:
+        """Feature naming (littlebot/decide): the decision model also reads the reply, for the ways of talking to
+        the grown-up as the baby the word list misses ("Good job, sweetie!", "Amara, would you like..."). On: its
+        sure yes puts it right too; shadow: only compared."""
+        from littlebot.decide import get_decider  # noqa: PLC0415
+
+        nick = self._child_name()
+        mode = get_decider(self.ctx).mode("naming")
+        if mode == "off" or not nick:
             return
+        heard = [c["text"] for c in self._captions if c["who"] == "heard"]
+        if heard:
+            self._spawn(self._check_naming(text, heard[-1], nick, hit, mode))
+
+    async def _check_naming(self, text: str, said: str, nick: str, hit: bool, mode: str) -> None:
+        from littlebot.decide import get_decider, uses  # noqa: PLC0415
+
+        decider = get_decider(self.ctx)
+        answer = await uses.talked_as_if_baby(self.ctx, grown_up_said=said, reply=text, nick=nick,
+                                              robot=self.ctx.config.robot_name)
+        if answer is None:
+            return
+        yes = answer.p >= decider.yes_at()
+        theirs = "as_baby" if yes else "as_grown_up" if answer.p <= 1 - decider.yes_at() else "unsure"
+        use = mode == "on" and yes and not hit and self._grown_up_spoke_at is not None \
+            and self._name_fixes < NAME_FIXES
+        decider.compare("naming", mine="as_baby" if hit else "as_grown_up", theirs=theirs, used=use)
+        if use:
+            self._fix_name()
+
+    def _ask_concern(self, text: str, flagged: bool) -> None:
+        """Feature concern (littlebot/decide): the decision model also asks whether someone may be in danger. It
+        only ever adds the dashboard's alert (when sure, and the word lists found nothing); it never takes one
+        away, and the voice's own safety instructions are unchanged."""
+        from littlebot.decide import get_decider  # noqa: PLC0415
+
+        mode = get_decider(self.ctx).mode("concern")
+        if mode != "off" and len(_plain_words(text).split()) >= 2:
+            self._spawn(self._check_concern(text, flagged, mode))
+
+    async def _check_concern(self, text: str, flagged: bool, mode: str) -> None:
+        from littlebot.decide import get_decider, uses  # noqa: PLC0415
+
+        decider = get_decider(self.ctx)
+        answer = await uses.concern(self.ctx, said=text)
+        if answer is None:
+            return
+        theirs = "danger" if answer.p >= uses.CONCERN_AT else "ok" if answer.p <= 1 - decider.yes_at() else "unsure"
+        use = mode == "on" and theirs == "danger" and not flagged
+        decider.compare("concern", mine="danger" if flagged else "ok", theirs=theirs, used=use)
+        if use:
+            log.warning("live voice: the decision model thinks someone may be in danger (%.2f)", answer.p)
+            self._publish(Topics.BRAIN_STATUS, {"provider": "live", "status": "attention", "detail": "decider"})
+
+    def _fix_name(self) -> None:
         self._name_fixes += 1
         self._grown_up_spoke_at = None  # once for what they said
         nick = self._child_name() or "the little one"
@@ -1469,17 +1528,19 @@ class LiveCall:
                 return
             if await self._video_hand_off(d.id, question):
                 return
-            if self._who_asked(question):  # "who is here": face recognition answers, on the robot
-                log.info("live voice: hand-off received (kind=who)")
+            who = self._who_asked(question)  # "who is here": face recognition answers, on the robot
+            control = not who and self._is_control(question) and not (
+                seeing and SEE_FIRST.search(question) and not CONTROL_ACTS.search(question))
+            action = None if who or control or info else _face_request(question)
+            hinted = not (who or seeing or control or info or action is not None) and self._about_the_look(question)
+            kind = ("who" if who else "face" if action is not None else "empty" if not question else "control"
+                    if control else "info" if info else "look" if seeing or hinted else "lookup")
+            if kind != "empty":
+                kind, action = await self._route(question, kind, action)
+            log.info("live voice: hand-off received (kind=%s%s)", kind, ", from the person's words" if hinted else "")
+            if kind == "who":
                 await self._deliver(d.id, self._spawn(self._look_for_voice(question, kind="who")), "who")
                 return
-            control = self._is_control(question) and not (
-                seeing and SEE_FIRST.search(question) and not CONTROL_ACTS.search(question))
-            action = None if control or info else _face_request(question)
-            hinted = not (seeing or control or info or action is not None) and self._about_the_look(question)
-            kind = ("face" if action is not None else "empty" if not question else "control" if control
-                    else "info" if info else "look" if seeing or hinted else "lookup")
-            log.info("live voice: hand-off received (kind=%s%s)", kind, ", from the person's words" if hinted else "")
             if action is not None:
                 # Local and instant: answer first so the voice isn't kept waiting, then play it
                 # (not again if the person's or the voice's own words just played it).
@@ -1499,6 +1560,47 @@ class LiveCall:
             self._last_activity = self.svc._now()
             if self._director is not None:
                 self._director.handoff_done()
+
+    async def _route(self, question: str, kind: str, action: Any) -> tuple[str, Any]:
+        """Feature routing (littlebot/decide): the decision model's pick of what handles a hand-off (a face, a
+        camera look, who is here, or the text model with its tools) next to the word lists' ``kind``. On: its pick
+        is used when it is sure and the robot can do it; shadow: only compared. Returns (kind, action)."""
+        from littlebot.decide import get_decider, uses  # noqa: PLC0415
+
+        decider = get_decider(self.ctx)
+        mode = decider.mode("routing")
+        if mode == "off":
+            return kind, action
+        mine = kind if kind in ("face", "look", "who") else "robot"
+        heard = [c["text"] for c in self._captions if c["who"] == "heard"]
+        last = heard[-1] if heard else ""
+        if mode == "shadow":
+            self._spawn(self._compare_route(question, last, mine))
+            return kind, action
+        answer = await uses.route(self.ctx, question, last)
+        if answer is None:
+            return kind, action
+        theirs = str(answer.value)
+        new: tuple[str, Any] | None = None
+        if theirs != mine and answer.confidence >= decider.min_confidence():
+            if theirs == "face":
+                face = _face_request(question)
+                new = ("face", face) if face is not None else None  # no face named in it: the word lists' way
+            elif theirs == "look":
+                new = ("look", None)
+            elif theirs == "who":
+                new = ("who", None) if self._who_asked("who is here") else None  # needs face/voice recognition
+            else:
+                new = ("lookup", None)
+        decider.compare("routing", mine=mine, theirs=theirs, used=new is not None)
+        return new if new is not None else (kind, action)
+
+    async def _compare_route(self, question: str, last: str, mine: str) -> None:
+        from littlebot.decide import get_decider, uses  # noqa: PLC0415
+
+        answer = await uses.route(self.ctx, question, last)
+        if answer is not None:
+            get_decider(self.ctx).compare("routing", mine=mine, theirs=str(answer.value))
 
     def _remember(self, what: str, fact: str) -> str:
         from littlebot.brain import remembered  # noqa: PLC0415

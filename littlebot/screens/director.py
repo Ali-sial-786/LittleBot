@@ -86,6 +86,7 @@ RECENT_S = 10.0  # the same card shown this recently (by the director or a tool)
 ANSWER_WAIT_S = 25.0  # wait_for_answer: at most this long for LittleBot's answer (live.py HANDOFF_TIMEOUT_S)
 SAID_GRACE_S = 0.6  # a caption counts as the answer once this old with no hand-off opened after it
 ANSWER_CHARS = 600
+VERDICT_WAIT_S = 1.5  # the decider's "has it answered?" (feature answered, on): a caption waits this long for it
 FILLER = re.compile(
     r"^\W*(?:(?:ok(?:ay)?|sure|alright|all right|hmm+|um+|oh|great|good question|let'?s see)\W+)*"
     r"(?:(?:hold|hang) on|one (?:moment|sec(?:ond)?)|just a (?:moment|sec(?:ond)?)|give me a (?:moment|sec(?:ond)?)|"
@@ -121,6 +122,13 @@ personal details on the screen.
 
 The cards:
 {catalogue}"""
+
+
+def _label(decision: Decision) -> str:
+    """A decision as the decider's options name it (littlebot/decide/uses.py ``card_options``)."""
+    if decision.do == "show" and decision.spec is not None:
+        return f"show_{decision.spec.get('card')}"
+    return {"command": "steer", "close": "close"}.get(decision.do, "none")
 
 
 @dataclass
@@ -634,6 +642,7 @@ class ScreenDirector:
         self._handoffs = 0  # the voice's hand-offs open now
         self._handoff_said: tuple[float, str] | None = None  # (when, answer) of the latest hand-off answer
         self._changed = asyncio.Event()
+        self._verdicts: dict[tuple[float, str], float | None] = {}  # caption -> P(an answer); None: asking
         self._told_once = False  # the voice had the full note about cards
         self._closed = False
         self._system: str | None = None
@@ -656,7 +665,7 @@ class ScreenDirector:
         self._lines.append(("heard", text[:LINE_CHARS]))
         browser_turn = not handled and self._browser_turn(text)
         if not browser_turn:
-            self._browser_moved_on()
+            self._browser_moved_on(text)
         if handled or browser_turn or not self.enabled():
             return
         t0 = self._now()
@@ -719,11 +728,43 @@ class ScreenDirector:
         if self._handoffs > 0:
             return None  # the voice is saying "hold on": its words aren't the answer
         now = self._now()
-        words = [text for when, text in self._said if when >= t0 and not FILLER.match(text)]
+        candidates = [(when, text) for when, text in self._said if when >= t0 and not FILLER.match(text)]
+        if self._verdicts and any(self._verdicts.get(c, 0.0) is None and now - c[0] < VERDICT_WAIT_S
+                                  for c in candidates):
+            return None  # the decider is still saying whether this is the answer or "hold on"
+        words = [c[1] for c in candidates if not self._stalling(c)]
         newest = max((when for when, text in self._said if when >= t0), default=None)
         if words and newest is not None and now - newest >= SAID_GRACE_S:
             return "voice", " ".join(words)[:ANSWER_CHARS]
         return None
+
+    def _stalling(self, caption: tuple[float, str]) -> bool:
+        """The decider (feature answered, on) is sure this caption only says LittleBot is thinking."""
+        p = self._verdicts.get(caption)
+        if p is None:
+            return False
+        from littlebot.decide import get_decider  # noqa: PLC0415
+
+        return p <= 1 - get_decider(self.ctx).yes_at()
+
+    async def _check_answered(self, caption: tuple[float, str], asked: str, mode: str) -> None:
+        from littlebot.decide import get_decider, uses  # noqa: PLC0415
+
+        decider = get_decider(self.ctx)
+        try:
+            answer = await uses.answered(self.ctx, asked=asked, said=caption[1],
+                                         robot=getattr(self.ctx.config, "robot_name", "LittleBot"))
+        finally:
+            if mode == "on":
+                self._verdicts[caption] = answer.p if answer is not None else 1.0  # no verdict: the old way
+            else:
+                self._verdicts.pop(caption, None)
+            self._ping()
+        if answer is None:
+            return
+        yes = decider.yes_at()
+        theirs = "answer" if answer.p >= yes else "stalling" if answer.p <= 1 - yes else "unsure"
+        decider.compare("answered", mine="answer", theirs=theirs, used=mode == "on" and theirs == "stalling")
 
     async def _await_answer(self, turn: int, t0: float) -> tuple[str, str] | None:
         deadline = t0 + self.answer_wait_s
@@ -755,8 +796,32 @@ class ScreenDirector:
         text = " ".join(str(text or "").split())
         if text and not self._closed:
             self._lines.append(("robot", text[:LINE_CHARS]))
-            self._said.append((self._now(), text[:LINE_CHARS]))
+            caption = (self._now(), text[:LINE_CHARS])
+            self._said.append(caption)
+            self._ask_answered(caption)
             self._ping()
+
+    def _ask_answered(self, caption: tuple[float, str]) -> None:
+        """Feature answered: is this caption the answer, or a "hold on" the word list doesn't know?"""
+        if not self.wait_for_answer or FILLER.match(caption[1]) or not self.enabled():
+            return
+        from littlebot.decide import get_decider  # noqa: PLC0415
+
+        mode = get_decider(self.ctx).mode("answered")
+        if mode == "off":
+            return
+        asked = next((t for who, t in reversed(self._lines) if who == "heard"), "")
+        if not asked:
+            return
+        live = set(self._said)
+        for c in [c for c in self._verdicts if c not in live]:
+            self._verdicts.pop(c, None)  # forgotten captions
+        if mode == "on":
+            self._verdicts[caption] = None
+        try:
+            self._spawn(self._check_answered(caption, asked, mode))
+        except RuntimeError:  # no loop
+            self._verdicts.pop(caption, None)
 
     def close(self) -> None:
         """The call ended: forget the conversation; nothing more is decided."""
@@ -834,26 +899,87 @@ class ScreenDirector:
                 return
             how, answer = found
             log.debug("screen: deciding from LittleBot's answer (%s)", how)
+        from littlebot.decide import get_decider, uses  # noqa: PLC0415
+
+        decider = get_decider(self.ctx)
+        mode = decider.mode("cards")
+        shadow = asyncio.ensure_future(self._card_pick(answer)) if mode == "shadow" else None
+        pick, hint = None, None
         try:
-            reply = await asyncio.wait_for(self._ask(answer=answer), self.timeout)
+            if mode == "on":
+                pick = await self._card_pick(answer)
+                if turn != self._turn or self._closed:
+                    self._log("dropped", t0, "decider", "they said something else meanwhile")
+                    return
+                if pick is not None and pick.confidence >= decider.min_confidence():
+                    child = self._speaker(t0)
+                    if pick.value == uses.CARD_NONE:
+                        decider.used("cards", pick.value)
+                        self._log("none", t0, "decider", f"{decider.provider()}, confidence {pick.confidence:.2f}")
+                        return
+                    if pick.value == uses.CARD_CLOSE and self._current_kind() is not None and not child:
+                        decider.used("cards", pick.value)
+                        self._steer(Decision("close"), t0, "decider")
+                        return
+                    hint = pick.value[len("show_"):] if pick.value.startswith("show_") else \
+                        "steer" if pick.value == uses.CARD_STEER else None
+            label = await self._decide_model(turn, t0, answer, needs_grownup=needs_grownup, hint=hint)
+        except BaseException:
+            if shadow is not None:
+                shadow.cancel()
+            raise
+        if shadow is not None:
+            self._spawn(self._compare_cards(shadow, label))
+        elif pick is not None and label not in ("dropped", "failed"):
+            decider.compare("cards", mine=label, theirs=pick.value)
+
+    async def _card_pick(self, answer: str | None) -> Any:
+        from littlebot.decide import uses  # noqa: PLC0415
+
+        kind = self._current_kind()
+        kinds = {k: getattr(ct, "description", "") for k, ct in sorted(self._types().items())}
+        return await uses.card_pick(self.ctx, kinds=kinds, card_up=kind, actions=list(self._actions(kind)),
+                                    lines=list(self._lines), answer=answer,
+                                    robot=getattr(self.ctx.config, "robot_name", "LittleBot"))
+
+    async def _compare_cards(self, shadow: Any, label: str) -> None:
+        """Shadow mode: the decider's pick next to what the text model decided (logged, nothing changes)."""
+        try:
+            pick = await asyncio.wait_for(shadow, 5.0)
+        except asyncio.CancelledError:
+            shadow.cancel()
+            raise
+        except Exception:  # noqa: BLE001 - no pick: nothing to compare
+            return
+        if pick is not None and label not in ("dropped", "failed"):
+            from littlebot.decide import get_decider  # noqa: PLC0415
+
+            get_decider(self.ctx).compare("cards", mine=label, theirs=pick.value)
+
+    async def _decide_model(self, turn: int, t0: float, answer: str | None, *, needs_grownup: bool,
+                            hint: str | None = None) -> str:
+        """The text model's decision, acted on. Returns what it decided ("none", "close", "steer", "show_<kind>"),
+        or "dropped" / "failed"."""
+        try:
+            reply = await asyncio.wait_for(self._ask(answer=answer, hint=hint), self.timeout)
         except asyncio.CancelledError:
             raise
         except TimeoutError:
             self._log("none", t0, "model", "no answer in time")
-            return
+            return "failed"
         except Exception as e:  # noqa: BLE001 - a failed decision is simply no card
             self._log("none", t0, "model", f"the request failed ({getattr(e, 'kind', None) or type(e).__name__})")
-            return
+            return "failed"
         if turn != self._turn or self._closed:
             self._log("dropped", t0, "model", "they said something else meanwhile")
-            return
+            return "dropped"
         text = getattr(reply, "text", "") or ""
         obj = parse_decision(text)
         if obj is None:  # a fast model sometimes answers the question itself: ask once more, firmly
             log.info("screen: the answer had no JSON (%d characters%s); asking once more", len(text),
                      ", starts with text" if text.strip()[:1] not in ("{", "`", "") else "")
             try:
-                retry = await asyncio.wait_for(self._ask(retry=True, answer=answer), RETRY_TIMEOUT_S)
+                retry = await asyncio.wait_for(self._ask(retry=True, answer=answer, hint=hint), RETRY_TIMEOUT_S)
                 obj = parse_decision(getattr(retry, "text", "") or "")
             except asyncio.CancelledError:
                 raise
@@ -861,18 +987,20 @@ class ScreenDirector:
                 obj = None
             if turn != self._turn or self._closed:
                 self._log("dropped", t0, "model", "they said something else meanwhile")
-                return
+                return "dropped"
         decision = self._validate(obj)
+        label = _label(decision)
         child = self._speaker(t0)
         if decision.do != "none" and (child or (needs_grownup and child is not False)):
             self._log("none", t0, "model", "the child spoke" if child else "not known to be a grown-up")
-            return
+            return label
         if decision.do in ("command", "close"):
             self._steer(decision, t0, "model")
         elif decision.do == "show" and decision.spec is not None:
             await self._apply_show(decision.spec, t0, "model")
         else:
             self._log("none", t0, "model", decision.why)
+        return label
 
     async def _apply_show(self, spec: dict[str, Any], t0: float, path: str) -> None:
         clean, why = clean_spec(spec, self._types(), self._relaxed())
@@ -886,10 +1014,15 @@ class ScreenDirector:
         self._log(f"show {clean['card']}", t0, path,
                   "" if result.get("ok") else f"not shown ({result.get('error') or 'no card'})")
 
-    async def _ask(self, *, retry: bool = False, answer: str | None = None) -> Any:
+    async def _ask(self, *, retry: bool = False, answer: str | None = None, hint: str | None = None) -> Any:
         provider = self._provider_factory()
         opts = _reply_options(provider.reply, effort=self.effort)
-        content = f"{self._context(answer)}\n\n{RETRY_NOTE if retry else ANSWER_CUE}"
+        content = self._context(answer)
+        if hint == "steer":
+            content += "\n(A quick check says they are following up on the card on screen.)"
+        elif hint:
+            content += f"\n(A quick check says a {hint} card fits: use it, unless it really doesn't.)"
+        content = f"{content}\n\n{RETRY_NOTE if retry else ANSWER_CUE}"
         return await provider.reply([{"role": "user", "content": content}], system=self._prompt(),
                                     max_tokens=400, timeout=RETRY_TIMEOUT_S if retry else self.timeout, **opts)
 
@@ -1051,14 +1184,49 @@ class ScreenDirector:
         self._spawn(self._browse(rule, t0, self._turn))
         return True
 
-    def _browser_moved_on(self) -> None:
-        """A turn that isn't about the browser while it shows: it closes a little later unless used again."""
+    def _browser_moved_on(self, text: str = "") -> None:
+        """A turn that isn't about the browser while it shows: it closes a little later unless used again. With
+        the decider's ``browser`` feature on, a turn it is sure is still about the page doesn't count."""
         browser = self.browser
         try:
-            if browser is not None and browser.active:
-                browser.moved_on()
+            if browser is None or not browser.active:
+                return
+        except Exception:  # noqa: BLE001
+            return
+        from littlebot.decide import get_decider  # noqa: PLC0415
+
+        mode = get_decider(self.ctx).mode("browser") if text else "off"
+        if mode != "on":
+            self._tell_moved_on()
+        if mode != "off":
+            try:
+                self._spawn(self._check_page_turn(text, mode))
+            except RuntimeError:  # no loop (a test calling from outside one)
+                if mode == "on":
+                    self._tell_moved_on()
+
+    def _tell_moved_on(self) -> None:
+        try:
+            self.browser.moved_on()
         except Exception:  # noqa: BLE001 - a browser that can't be told stays until its other timers
             log.debug("screen: telling the browser they moved on failed", exc_info=True)
+
+    async def _check_page_turn(self, text: str, mode: str) -> None:
+        from littlebot.decide import get_decider, uses  # noqa: PLC0415
+
+        decider = get_decider(self.ctx)
+        try:
+            page = str((self.browser.status() or {}).get("showing") or "")
+        except Exception:  # noqa: BLE001
+            page = ""
+        answer = await uses.about_the_page(self.ctx, page=page, said=text)
+        about = answer is not None and answer.p >= decider.yes_at()
+        if mode == "on" and not about:
+            self._tell_moved_on()
+        if answer is None:
+            return
+        theirs = "about_the_page" if about else "moved_on" if answer.p <= 1 - decider.yes_at() else "unsure"
+        decider.compare("browser", mine="moved_on", theirs=theirs, used=mode == "on" and about)
 
     async def _browse(self, rule: Decision, t0: float, turn: int) -> None:
         browser = self.browser

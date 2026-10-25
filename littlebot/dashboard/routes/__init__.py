@@ -8,6 +8,7 @@ from littlebot.dashboard.routes.auth_routes import router as auth
 from littlebot.dashboard.routes.browser_routes import router as browser
 from littlebot.dashboard.routes.camera_routes import router as camera
 from littlebot.dashboard.routes.chatgpt_routes import router as chatgpt
+from littlebot.dashboard.routes.decide_routes import router as decide
 from littlebot.dashboard.routes.device_routes import router as devices
 from littlebot.dashboard.routes.face_routes import router as face
 from littlebot.dashboard.routes.games_routes import router as games
@@ -23,7 +24,7 @@ from littlebot.dashboard.routes.screens_routes import router as screens
 from littlebot.dashboard.routes.sim_routes import router as sim
 from littlebot.dashboard.routes.voice_routes import router as voice_lines
 
-ROUTERS = (auth, robot, face, camera, activities, games, screens, browser, media, profile, people, ai, chatgpt, info,
-           privacy, devices, motion, sim, voice_lines, power)
+ROUTERS = (auth, robot, face, camera, activities, games, screens, browser, media, profile, people, ai, chatgpt, decide,
+           info, privacy, devices, motion, sim, voice_lines, power)
 
 __all__ = ["ROUTERS"]

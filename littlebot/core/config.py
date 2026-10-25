@@ -345,6 +345,46 @@ class ScreensConfig(_Section):
     presenter_backing: bool = True  # the presenter's eyes sit on a little patch of LittleBot's pink face
 
 
+DecideFeature = Literal["cards", "routing", "answered", "browser", "naming", "videos", "names", "concern"]
+DecideMode = Literal["off", "shadow", "on"]
+
+
+class DecideConfig(_Section):
+    """Fast decision models for LittleBot's small multiple-choice calls (littlebot/decide, docs/DECISIONS.md).
+
+    ``provider``: off (nothing is sent), jev (TypeSafe's Jev, TYPESAFE_API_KEY) or openai (OpenAI's Decisions
+    API, OPENAI_API_KEY). Each feature is off, shadow (it decides alongside LittleBot's own way and only logs
+    both) or on (its answer is used when it is sure enough, else LittleBot's own way)."""
+
+    provider: Literal["off", "jev", "openai"] = "off"
+    jev_model: str = "jev-latest"
+    jev_base_url: str = "https://api.typesafe.ai"
+    openai_model: str = "gpt-6-luna"
+    openai_base_url: str = "https://api.openai.com/v1"
+    timeout_seconds: float = Field(default=2.0, ge=0.3, le=10.0)
+    # Feature -> mode; a feature not listed uses default_mode.
+    default_mode: DecideMode = "shadow"
+    modes: dict[DecideFeature, DecideMode] = Field(default_factory=dict)
+    min_confidence: float = Field(default=0.5, ge=0.0, le=1.0)  # a choice below this: LittleBot's own way
+    yes_at: float = Field(default=0.7, ge=0.5, le=1.0)  # a yes/no answer counts as yes from here (no below 1 - this)
+    max_requests_per_hour: int = Field(default=600, ge=1)
+    max_requests_per_day: int = Field(default=4000, ge=1)
+    failures_to_pause: int = Field(default=5, ge=1)  # this many failures in a row: no requests for pause_seconds
+    pause_seconds: float = Field(default=120.0, ge=5.0)
+
+    @field_validator("provider", "default_mode", mode="before")
+    @classmethod
+    def _yaml_switch(cls, v: Any) -> Any:  # YAML reads a bare on / off as true / false
+        return ("on" if v else "off") if isinstance(v, bool) else v
+
+    @field_validator("modes", mode="before")
+    @classmethod
+    def _yaml_switches(cls, v: Any) -> Any:
+        if isinstance(v, dict):
+            return {k: ("on" if m else "off") if isinstance(m, bool) else m for k, m in v.items()}
+        return v
+
+
 class BrowserConfig(_Section):
     """The browser view: Google (SafeSearch on) on LittleBot's screen when a grown-up asks for it
     (littlebot/browser, docs/BROWSER.md). Uses the same Chromium as the videos (``media.browser_command``).
@@ -536,6 +576,7 @@ class LittleBotConfig(BaseModel):
     info: InfoConfig = Field(default_factory=InfoConfig)
     screens: ScreensConfig = Field(default_factory=ScreensConfig)
     browser: BrowserConfig = Field(default_factory=BrowserConfig)
+    decide: DecideConfig = Field(default_factory=DecideConfig)
     power: PowerConfig = Field(default_factory=PowerConfig)
     media: MediaConfig = Field(default_factory=MediaConfig)
     motion: MotionConfig = Field(default_factory=MotionConfig)
@@ -547,6 +588,7 @@ class LittleBotConfig(BaseModel):
     # Secrets: populated from environment / .env only, never from YAML.
     anthropic_api_key: SecretStr | None = Field(default=None, exclude=True)
     openai_api_key: SecretStr | None = Field(default=None, exclude=True)
+    typesafe_api_key: SecretStr | None = Field(default=None, exclude=True)  # Jev (littlebot/decide)
 
     @field_validator("mode", mode="before")
     @classmethod
@@ -567,6 +609,7 @@ class LittleBotConfig(BaseModel):
         d = self.model_dump(mode="json")
         d["has_anthropic_key"] = bool(self.anthropic_api_key and self.anthropic_api_key.get_secret_value())
         d["has_openai_key"] = bool(self.openai_api_key and self.openai_api_key.get_secret_value())
+        d["has_typesafe_key"] = bool(self.typesafe_api_key and self.typesafe_api_key.get_secret_value())
         return d
 
 
@@ -669,6 +712,7 @@ def load_config(
     # Secrets never come from YAML.
     data.pop("anthropic_api_key", None)
     data.pop("openai_api_key", None)
+    data.pop("typesafe_api_key", None)
 
     cfg = LittleBotConfig.model_validate(data)
     if chosen != Mode.OFFLINE:
@@ -676,6 +720,8 @@ def load_config(
             cfg.anthropic_api_key = SecretStr(env["ANTHROPIC_API_KEY"])
         if env.get("OPENAI_API_KEY"):
             cfg.openai_api_key = SecretStr(env["OPENAI_API_KEY"])
+        if env.get("TYPESAFE_API_KEY"):
+            cfg.typesafe_api_key = SecretStr(env["TYPESAFE_API_KEY"])
     if chosen == Mode.OFFLINE:
         # Offline demo: never touch the network, whatever the overrides say.
         cfg.privacy.cloud_enabled = False

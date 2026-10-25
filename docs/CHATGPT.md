@@ -310,6 +310,10 @@ Google (SafeSearch on, no address bar) on the screen instead of a card, through 
 `search_in_browser` / `browser` tools; "scroll down", "open the first one", "what does it say?" and "close
 it" steer it. See [BROWSER.md](BROWSER.md).
 
+Optionally, a fast decision model (TypeSafe's Jev or OpenAI's Decisions API) can make the director's choice
+(no card, close, or which kind), say whether the voice has really answered yet, route hand-offs and more,
+first only in shadow (compared and logged). See [DECISIONS.md](DECISIONS.md).
+
 ### Wake word: "Hey LittleBot"
 
 Say **"Hey LittleBot"** (or **"Hey Bot"**) near the robot: its face starts listening, it plays a

@@ -107,6 +107,18 @@ screens:
   linger_seconds: 30       # a card stays this long after the voice chat ends (a running timer stays until done)
   presenter_backing: true  # the presenter's small eyes sit on a patch of LittleBot's pink face
 
+decide:  # fast decision models for small multiple-choice calls (littlebot/decide, docs/DECISIONS.md)
+  provider: "off"        # off | jev (TYPESAFE_API_KEY in .env) | openai (OPENAI_API_KEY); also on the dashboard
+  jev_model: jev-latest
+  openai_model: gpt-6-luna
+  timeout_seconds: 2.0
+  default_mode: shadow   # per feature: off | shadow (decide alongside, only log both) | on (use it when sure)
+  modes: {}              # e.g. {cards: on, routing: shadow}
+  min_confidence: 0.5
+  yes_at: 0.7
+  max_requests_per_hour: 600
+  max_requests_per_day: 4000
+
 browser:
   # Google (SafeSearch on) on LittleBot's screen when a grown-up says "google it" or "look it up online"
   # (docs/BROWSER.md). Same Chromium as the videos (media.browser_command); never at the same time as a video.

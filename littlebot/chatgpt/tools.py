@@ -528,6 +528,8 @@ class RobotToolbox:
             return _err("say which activity")
         act = self._find_activity(wanted)
         if act is None:
+            act = await self._which_one(wanted, [a for a in acts.list() if a.get("enabled", True)], "activity")
+        if act is None:
             return _err(f"there is no activity called {wanted[:60]}; list_activities shows them")
         aid, name = act["id"], act.get("name") or act["id"]
 
@@ -816,10 +818,52 @@ class RobotToolbox:
             return _err(problem)
         if not results:
             return _err("no videos found for that; try other words")
+        results = await self._decide_video(query, results)
         first = results[0]
         if first.get("approved_id") is not None:
             return await self._play_approved(str(first["approved_id"]))
         return await self._play_found(first, results[1:])
+
+    async def _decide_video(self, query: str, results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Feature videos (littlebot/decide): the decision model's pick of the search result that best fits what
+        was asked for and the child. On: when sure, it plays first (the rest stay the alternatives); shadow: only
+        compared. An approved video at the top always stays first."""
+        from littlebot.decide import get_decider, uses  # noqa: PLC0415
+
+        decider = get_decider(self.ctx)
+        mode = decider.mode("videos")
+        if mode == "off" or len(results) < 2 or results[0].get("approved_id") is not None:
+            return results
+        from littlebot.brain.prompts import age_description  # noqa: PLC0415
+
+        child = age_description(_safe(self.ctx.settings.child_age_months))
+        answer = await uses.best_video(self.ctx, query=query, results=results, child=child)
+        if answer is None:
+            return results
+        try:
+            n = int(str(answer.value).rsplit("_", 1)[1])
+        except (IndexError, ValueError):
+            return results
+        use = mode == "on" and 0 < n < len(results) and answer.confidence >= decider.min_confidence()
+        decider.compare("videos", mine="video_0", theirs=str(answer.value), used=use)
+        return [results[n], *results[:n], *results[n + 1:]] if use else results
+
+    async def _which_one(self, wanted: str, items: list[dict[str, Any]], what: str) -> dict[str, Any] | None:
+        """Feature names (littlebot/decide): no activity or game name matched closely; the decision model's pick
+        of the one they meant (on: used when sure; shadow: only logged)."""
+        from littlebot.decide import get_decider, uses  # noqa: PLC0415
+
+        decider = get_decider(self.ctx)
+        mode = decider.mode("names")
+        if mode == "off" or not wanted or not items:
+            return None
+        answer = await uses.which_one(self.ctx, wanted=wanted, items=items, what=what)
+        if answer is None:
+            return None
+        found = next((it for it in items if str(it.get("id")) == answer.value), None)
+        use = mode == "on" and found is not None and answer.confidence >= decider.min_confidence()
+        decider.compare("names", mine=uses.NO_MATCH, theirs=str(answer.value), used=use)
+        return found if use else None
 
     async def _play_found(self, found: dict[str, Any], others: list[dict[str, Any]]) -> str:
         media = self._media()
@@ -906,6 +950,8 @@ class RobotToolbox:
             return _err("games aren't available on this robot yet")
         wanted = str(args.get("game") or "").strip()
         game = _best_match(wanted, self._game_list()) if wanted else None
+        if game is None and wanted:
+            game = await self._which_one(wanted, self._game_list(), "game")
         if game is None:
             return _err(f"there is no game called {wanted[:60]}; list_games shows them" if wanted else "say which game")
         gid, name = game["id"], game.get("name") or game["id"]
