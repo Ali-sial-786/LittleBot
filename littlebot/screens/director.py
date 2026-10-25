@@ -29,9 +29,17 @@ that is up, close it, or nothing (most turns: chit-chat, songs, talking to the b
    fields, wrong types, oversized text and lists are dropped or trimmed) and every word of it goes through
    LittleBot's safety rules (``validate_reply``) before anything reaches the screen.
 
+**The card follows the answer** (``wait_for_answer``, on in live calls): the model request waits until LittleBot's
+answer is known, so the card agrees with what the voice says and never shows while it is still "thinking": the
+answer to the voice's hand-off (``handoff_started`` / ``handoff_answer`` / ``handoff_done``, from live.py; it is
+in the request as what LittleBot is saying), else the voice's first caption after their words that isn't a
+filler ("hold on, let me check"), ``SAID_GRACE_S`` old (a hand-off may still follow it). At most
+``ANSWER_WAIT_S``; no answer by then: no card. When the hand-off's own model put a card up for it (the tools'
+``show_on_screen``), nothing more is decided.
+
 Latency: the decision runs in the call's own tasks and never blocks it; it gets ``DECIDE_TIMEOUT_S`` and
-the card ``SHOW_TIMEOUT_S``. The target is a card within ~2 s of the question, while the voice is still
-talking. A decision for a turn that is no longer the newest (they said something else meanwhile) is dropped.
+the card ``SHOW_TIMEOUT_S``. The target is a card within ~2 s of the answer, while the voice is still
+saying it. A decision for a turn that is no longer the newest (they said something else meanwhile) is dropped.
 
 The voice is told once per call what a card is ("On your screen now: ... don't read it out"), then briefly
 on each new card or change. It must never read the card out word for word.
@@ -75,6 +83,14 @@ MAX_SPEC_CHARS = 3000
 CATALOGUE_LINE_CHARS = 1200
 NOTE_CHARS = 300
 RECENT_S = 10.0  # the same card shown this recently (by the director or a tool) isn't shown again
+ANSWER_WAIT_S = 25.0  # wait_for_answer: at most this long for LittleBot's answer (live.py HANDOFF_TIMEOUT_S)
+SAID_GRACE_S = 0.6  # a caption counts as the answer once this old with no hand-off opened after it
+ANSWER_CHARS = 600
+FILLER = re.compile(
+    r"^\W*(?:(?:ok(?:ay)?|sure|alright|all right|hmm+|um+|oh|great|good question|let'?s see)\W+)*"
+    r"(?:(?:hold|hang) on|one (?:moment|sec(?:ond)?)|just a (?:moment|sec(?:ond)?)|give me a (?:moment|sec(?:ond)?)|"
+    r"let me (?:check|see|look|find|think|get|ask)|i'?ll (?:check|look|find out|ask)|i'?m (?:checking|looking|thinking)|"
+    r"(?:still )?(?:thinking|checking|working on it)|(?:wait|bear with me))\b", re.IGNORECASE)
 MAX_HISTORY = 20
 
 FIRST_NOTE = ("On your screen now: {what}. LittleBot puts cards like this on its screen by itself while you talk. "
@@ -99,6 +115,7 @@ card (it replaces the old one); if the new thing isn't worth a card, answer "clo
 something else up.
 {{"do": "none"}} for everything else: chit-chat, songs, games, talking to the baby, or nothing worth showing.
 Never answer the question yourself: the voice does that. Your whole answer is the one JSON object.
+The card must agree with what {robot} says: take its numbers, names and facts from {robot}'s answer below, never from what you know yourself, and leave out anything it didn't say. When {robot} hasn't actually given the answer, answer {{"do": "none"}}.
 Use only the fields listed for the card, with short text (a few words per line, numbers as digits). Never put \
 personal details on the screen.
 
@@ -530,7 +547,7 @@ def clean_spec(spec: Any, types: dict[str, Any], relaxed: Any = ()) -> tuple[dic
     kind = str(spec.get("card") or spec.get("kind") or "").strip().lower()[:40]
     ct = types.get(kind)
     if ct is None:
-        return None, "unknown card"
+        return None, f"unknown card {re.sub(r'[^a-z0-9_ -]', '', kind)[:40]!r}"
     fields = ct.fields if isinstance(ct.fields, dict) else {}
     allowed = {"title": {"type": "string", "maxLength": 80}, **fields}
     out: dict[str, Any] = {"card": kind}
@@ -597,7 +614,8 @@ class ScreenDirector:
     def __init__(self, ctx: Any, provider_factory: Callable[[], Any], *, note: Callable[[str], Any],
                  spawn: Callable[[Any], Any] | None = None, types: Callable[[], dict[str, Any]] | None = None,
                  effort: str | None = FAST_EFFORT, timeout: float = DECIDE_TIMEOUT_S,
-                 now: Callable[[], float] = time.monotonic) -> None:
+                 now: Callable[[], float] = time.monotonic, wait_for_answer: bool = False,
+                 answer_wait_s: float = ANSWER_WAIT_S) -> None:
         self.ctx = ctx
         self._provider_factory = provider_factory
         self._note = note
@@ -609,6 +627,13 @@ class ScreenDirector:
         self._lines: collections.deque[tuple[str, str]] = collections.deque(maxlen=LINES)
         self._turn = 0  # final things the person said
         self._last_shown: tuple[str, str, float] | None = None  # (kind, place, when) of the latest card shown
+        self._last_tool_card = -1e9  # when a card asked for elsewhere in the call (the tools) was last shown
+        self.wait_for_answer = wait_for_answer
+        self.answer_wait_s = answer_wait_s
+        self._said: collections.deque[tuple[float, str]] = collections.deque(maxlen=LINES)  # (when, caption)
+        self._handoffs = 0  # the voice's hand-offs open now
+        self._handoff_said: tuple[float, str] | None = None  # (when, answer) of the latest hand-off answer
+        self._changed = asyncio.Event()
         self._told_once = False  # the voice had the full note about cards
         self._closed = False
         self._system: str | None = None
@@ -663,6 +688,59 @@ class ScreenDirector:
             return
         self._spawn(self._decide(self._turn, t0, needs_grownup=not grownup))
 
+    # ------------------------------------------------------------ LittleBot's answer (wait_for_answer)
+    def handoff_started(self) -> None:
+        """The voice handed something to LittleBot (it will say "hold on" until the answer comes)."""
+        self._handoffs += 1
+        self._ping()
+
+    def handoff_answer(self, text: str) -> None:
+        """What the voice was given to say for its hand-off (only real answers, never "say you're thinking")."""
+        text = " ".join(str(text or "").split())
+        if text and not self._closed:
+            self._handoff_said = (self._now(), text[:ANSWER_CHARS])
+            self._ping()
+
+    def handoff_done(self) -> None:
+        self._handoffs = max(0, self._handoffs - 1)
+        self._ping()
+
+    def _ping(self) -> None:
+        try:
+            self._changed.set()
+        except RuntimeError:  # no loop yet (a test without one): nothing waits
+            pass
+
+    def _answer_since(self, t0: float) -> tuple[str, str] | None:
+        """(how, text) of LittleBot's answer to the turn heard at ``t0``, or None while it isn't known yet."""
+        said = self._handoff_said
+        if said is not None and said[0] >= t0:
+            return "hand-off", said[1]
+        if self._handoffs > 0:
+            return None  # the voice is saying "hold on": its words aren't the answer
+        now = self._now()
+        words = [text for when, text in self._said if when >= t0 and not FILLER.match(text)]
+        newest = max((when for when, text in self._said if when >= t0), default=None)
+        if words and newest is not None and now - newest >= SAID_GRACE_S:
+            return "voice", " ".join(words)[:ANSWER_CHARS]
+        return None
+
+    async def _await_answer(self, turn: int, t0: float) -> tuple[str, str] | None:
+        deadline = t0 + self.answer_wait_s
+        while not self._closed and turn == self._turn:
+            found = self._answer_since(t0)
+            if found is not None:
+                return found
+            left = deadline - self._now()
+            if left <= 0:
+                return None
+            self._changed.clear()
+            try:
+                await asyncio.wait_for(self._changed.wait(), min(left, SAID_GRACE_S / 2))
+            except TimeoutError:
+                pass
+        return None
+
     async def warm(self) -> None:
         """Open the text model's connection ahead of the first decision (best effort)."""
         try:
@@ -677,6 +755,8 @@ class ScreenDirector:
         text = " ".join(str(text or "").split())
         if text and not self._closed:
             self._lines.append(("robot", text[:LINE_CHARS]))
+            self._said.append((self._now(), text[:LINE_CHARS]))
+            self._ping()
 
     def close(self) -> None:
         """The call ended: forget the conversation; nothing more is decided."""
@@ -731,14 +811,31 @@ class ScreenDirector:
             return {"ok": False, "error": "invalid", "detail": why}
         if self._up_already(clean):
             return {"ok": True, "showing": self._describe(), "already": True}
-        return await self._show(clean, source)
+        result = await self._show(clean, source)
+        if result.get("ok"):
+            self._last_tool_card = self._now()  # the director doesn't put up a second card for the same answer
+        return result
 
     # ------------------------------------------------------------ deciding
     async def _decide(self, turn: int, t0: float, *, needs_grownup: bool = False) -> None:
         """``needs_grownup``: a short turn that is a grown-up's only if voice recognition says so by the time the
         answer comes (it may identify them a moment after their words)."""
+        answer = None
+        if self.wait_for_answer:
+            found = await self._await_answer(turn, t0)
+            if turn != self._turn or self._closed:
+                self._log("dropped", t0, "model", "they said something else meanwhile")
+                return
+            if found is None:
+                self._log("none", t0, "model", "LittleBot's answer didn't come in time")
+                return
+            if self._last_tool_card >= t0:
+                self._log("none", t0, "model", "LittleBot put a card up for it already")
+                return
+            how, answer = found
+            log.debug("screen: deciding from LittleBot's answer (%s)", how)
         try:
-            reply = await asyncio.wait_for(self._ask(), self.timeout)
+            reply = await asyncio.wait_for(self._ask(answer=answer), self.timeout)
         except asyncio.CancelledError:
             raise
         except TimeoutError:
@@ -756,7 +853,7 @@ class ScreenDirector:
             log.info("screen: the answer had no JSON (%d characters%s); asking once more", len(text),
                      ", starts with text" if text.strip()[:1] not in ("{", "`", "") else "")
             try:
-                retry = await asyncio.wait_for(self._ask(retry=True), RETRY_TIMEOUT_S)
+                retry = await asyncio.wait_for(self._ask(retry=True, answer=answer), RETRY_TIMEOUT_S)
                 obj = parse_decision(getattr(retry, "text", "") or "")
             except asyncio.CancelledError:
                 raise
@@ -789,10 +886,10 @@ class ScreenDirector:
         self._log(f"show {clean['card']}", t0, path,
                   "" if result.get("ok") else f"not shown ({result.get('error') or 'no card'})")
 
-    async def _ask(self, *, retry: bool = False) -> Any:
+    async def _ask(self, *, retry: bool = False, answer: str | None = None) -> Any:
         provider = self._provider_factory()
         opts = _reply_options(provider.reply, effort=self.effort)
-        content = f"{self._context()}\n\n{RETRY_NOTE if retry else ANSWER_CUE}"
+        content = f"{self._context(answer)}\n\n{RETRY_NOTE if retry else ANSWER_CUE}"
         return await provider.reply([{"role": "user", "content": content}], system=self._prompt(),
                                     max_tokens=400, timeout=RETRY_TIMEOUT_S if retry else self.timeout, **opts)
 
@@ -811,7 +908,8 @@ class ScreenDirector:
             self._system = PROMPT.format(robot=robot, catalogue="\n".join(lines) or "(none)")
         return self._system
 
-    def _context(self) -> str:
+    def _context(self, answer: str | None = None) -> str:
+        """The card on screen and the conversation; ``answer``: what LittleBot is saying for their last words."""
         from littlebot.safety.content import sanitize_user_text  # noqa: PLC0415
 
         kind = self._current_kind()
@@ -822,12 +920,18 @@ class ScreenDirector:
             head = f"Card on screen: {kind}: \"{(self._describe() or kind)[:NOTE_CHARS]}\" (actions: {actions})."
         lines = list(self._lines)
         out = [head, "The conversation so far, latest last:"]
+        latest = max((i for i, (who, _t) in enumerate(lines) if who == "heard"), default=-1)
         for i, (who, text) in enumerate(lines):
             if who == "heard":
-                label = "They just said" if i == len(lines) - 1 else "Heard"
+                label = "They just said" if i == latest else "Heard"
                 out.append(f"{label}: {sanitize_user_text(text, max_chars=LINE_CHARS)}")
             else:
                 out.append(f"{getattr(self.ctx.config, 'robot_name', 'LittleBot')}: {text}")
+        robot = getattr(self.ctx.config, "robot_name", "LittleBot")
+        if answer and not any(who == "robot" and text in answer for who, text in lines[-2:]):
+            out.append(f"{robot}'s answer, being said now: {answer}")
+        elif answer is None and self.wait_for_answer:
+            out.append(f"({robot} hasn't answered yet.)")
         return "\n".join(out)
 
     def _validate(self, obj: dict[str, Any] | None) -> Decision:

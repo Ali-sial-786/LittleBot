@@ -165,11 +165,15 @@ async def test_a_question_puts_a_card_up_while_the_voice_talks(make_live, ctx):
         assert SCREEN_INSTRUCTIONS.strip() in server.requests[0]["body"]["session"]["instructions"]
         say(server, "Hello there!")
         hear(server, "What's the weather like tomorrow?")
+        await asyncio.sleep(0.8)
+        assert ctx.screens.shown == []  # the card waits for LittleBot's answer
+        say(server, "Tomorrow looks sunny, about 20 degrees.")
         await wait_for(lambda: ctx.screens.shown)
         assert ctx.screens.shown == [({"card": "weather", "days": 2}, "voice")]
         await wait_for(lambda: any(n.startswith("On your screen now: the weather card.") for n in notes(server)))
         content = provider.decisions[0]["content"]
         assert "LittleBot: Hello there!" in content and "They just said: What's the weather like tomorrow?\n" in content
+        assert "LittleBot: Tomorrow looks sunny, about 20 degrees." in content
         assert provider.decisions[0]["effort"] == "none"
         hear(server, "ba ba ba")  # the baby: nothing is asked
         await asyncio.sleep(0.2)
@@ -233,12 +237,14 @@ async def test_a_hand_offs_card_goes_through_the_director_once(make_live, ctx):
     svc, server = await make_live(provider)
     try:
         hear(server, "What's the weather like tomorrow?")
-        await wait_for(lambda: ctx.screens.shown)
         delegate(server, "w1", "What's the weather tomorrow?")
         await wait_for(lambda: provider.results)
         assert "show_on_screen" in provider.hand_offs[0]["tools"]
         assert provider.results[0].startswith("ok: on the screen now: the weather card")
-        assert len(ctx.screens.shown) == 1  # up already: not shown twice
         await wait_for(lambda: any(m.get("type") == "delegation.context.append" for m in server.received))
+        say(server, "Tomorrow looks sunny.")
+        await asyncio.sleep(1.0)
+        assert [src for _spec, src in ctx.screens.shown] == ["tool"]  # the hand-off's card: the director adds none
+        assert provider.decisions == []
     finally:
         await close(svc, server)

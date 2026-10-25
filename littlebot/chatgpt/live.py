@@ -922,7 +922,7 @@ class LiveCall:
 
             return director.ScreenDirector(self.ctx, self.svc.screen_provider, note=self._note, spawn=self._spawn,
                                            effort=getattr(self.cfg, "look_effort", None) or director.FAST_EFFORT,
-                                           now=self.svc._now)
+                                           now=self.svc._now, wait_for_answer=True)
         except Exception:  # noqa: BLE001 - no cards is fine; the call goes on
             log.warning("live voice: the screen director couldn't start", exc_info=True)
             return None
@@ -1441,6 +1441,8 @@ class LiveCall:
 
     async def _answer(self, d: wire.Delegation) -> None:
         self._delegations += 1
+        if self._director is not None:
+            self._director.handoff_started()  # its card waits for this answer, not for "hold on"
         try:
             question = d.prompt.strip()
             if not question:
@@ -1491,6 +1493,8 @@ class LiveCall:
         finally:
             self._delegations -= 1
             self._last_activity = self.svc._now()
+            if self._director is not None:
+                self._director.handoff_done()
 
     def _remember(self, what: str, fact: str) -> str:
         from littlebot.brain import remembered  # noqa: PLC0415
@@ -1534,14 +1538,21 @@ class LiveCall:
                 log.warning("live voice: hand-off failed (kind=%s); the voice was told", kind, exc_info=True)
                 self._note(LATE_FAILED)
                 return
+            self._answer_known(text)
             self._note(LATE_ANSWER.format(answer=text))
             self._arm_handover()
             return
         except Exception:  # noqa: BLE001
             log.warning("live voice: hand-off failed (kind=%s); answered anyway", kind, exc_info=True)
             text = wire.FAILED_RESULT
+        self._answer_known(text)
         self._send_result(delegation_id, text)
         self._arm_handover()
+
+    def _answer_known(self, text: str) -> None:
+        """What the voice is about to say for a hand-off: the screen's card is made to agree with it."""
+        if self._director is not None and text not in (wire.FAILED_RESULT, NOT_SURE, STILL_WORKING, LATE_FAILED):
+            self._director.handoff_answer(text)
 
     def _send_result(self, delegation_id: str, text: str) -> None:
         if not self._ended.is_set() and self.channel is not None and self.channel.readyState == "open":

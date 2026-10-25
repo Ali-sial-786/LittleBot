@@ -511,3 +511,71 @@ async def test_after_the_call_nothing_more_is_decided(make, ctx):
     assert s.screens.shown == [] and s.notes == [] and s.director._lines == director_mod.collections.deque(maxlen=6)
     ctx.bus.publish("voice.speaker", {"is_child": True})
     assert s.director._spoke is None  # no longer listening
+
+
+# ---------------------------------------------------------------- the card follows LittleBot's answer (live calls)
+FACT = {"do": "show", "spec": {"card": "recipe", "title": "Pancakes", "steps": ["Mix", "Fry"]}}
+
+
+async def test_it_waits_for_the_voices_answer_not_its_filler(make):
+    s = make(FACT, wait_for_answer=True)
+    s.director.heard("How do I make pancakes for breakfast?")
+    await asyncio.sleep(0.05)
+    s.director.said("Hold on, let me check.")
+    await asyncio.sleep(director_mod.SAID_GRACE_S + 0.2)
+    assert s.provider.calls == []  # "hold on" isn't the answer: no card while it's thinking
+    s.director.said("Mix the flour, eggs and milk, then fry them in a hot pan.")
+    await s.settle()
+    content = s.provider.calls[0]["messages"][-1]["content"]
+    assert "LittleBot: Mix the flour, eggs and milk" in content and "being said now" not in content
+    assert "take its numbers, names and facts from LittleBot's answer" in s.provider.calls[0]["system"]
+    assert s.screens.shown and s.screens.shown[0][0]["card"] == "recipe"
+
+
+async def test_a_hand_off_answer_is_what_the_card_is_made_from(make):
+    s = make(FACT, wait_for_answer=True)
+    s.director.heard("What's the top-grossing movie of all time?")
+    s.director.handoff_started()
+    s.director.said("Good question, it's interesting, give me a second to find out about that one.")
+    await asyncio.sleep(director_mod.SAID_GRACE_S + 0.2)
+    assert s.provider.calls == []  # the hand-off is open: the voice's words aren't the answer
+    s.director.handoff_answer("Avatar, with about 2.9 billion dollars.")
+    await s.settle()
+    s.director.handoff_done()
+    content = s.provider.calls[0]["messages"][-1]["content"]
+    assert content.splitlines()[-3] == "LittleBot's answer, being said now: Avatar, with about 2.9 billion dollars."
+
+
+async def test_a_hand_off_without_an_answer_falls_back_to_what_the_voice_says(make):
+    s = make(FACT, wait_for_answer=True)
+    s.director.heard("How do I make pancakes for breakfast?")
+    s.director.handoff_started()
+    s.director.said("You mix flour, eggs and milk and fry them.")
+    await asyncio.sleep(director_mod.SAID_GRACE_S + 0.2)
+    assert s.provider.calls == []
+    s.director.handoff_done()
+    await s.settle()
+    assert len(s.provider.calls) == 1
+
+
+async def test_no_second_card_when_the_hand_off_put_one_up(make):
+    s = make(FACT, wait_for_answer=True)
+    s.director.heard("How do I make pancakes for breakfast?")
+    s.director.handoff_started()
+    assert (await s.director.show_spec({"card": "recipe", "title": "Pancakes", "steps": ["Mix", "Fry"]}))["ok"]
+    s.director.handoff_answer("Mix flour, eggs and milk, then fry.")
+    await s.settle()
+    assert s.provider.calls == [] and len(s.screens.shown) == 1
+
+
+async def test_no_answer_in_time_means_no_card(make, caplog):
+    s = make(FACT, wait_for_answer=True, answer_wait_s=0.3)
+    with caplog.at_level(logging.INFO, logger="littlebot.screens.director"):
+        s.director.heard("How do I make pancakes for breakfast?")
+        await s.settle()
+    assert s.provider.calls == [] and s.screens.shown == []
+    assert "answer didn't come in time" in caplog.text
+
+
+def test_an_unknown_card_is_named_in_the_log_reason():
+    assert clean_spec({"card": "Movie<b>"}, TYPES) == (None, "unknown card 'movieb'")
