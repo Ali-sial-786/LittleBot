@@ -293,7 +293,15 @@ get one small request to the ChatGPT text model (the camera looks' fast model an
 `look_effort`) with the last few caption lines (personal details removed) and the cards it can show.
 Every word of a card passes the same safety rules as the voice's words. A turn voice recognition says was
 the child's, or one of fewer than three real words from someone it doesn't know, gets no card. The voice is
-told what is on the screen and never reads it out. Bus topics: `live.call_started` `{}` and
+told what is on the screen and never reads it out.
+
+**The card follows the answer.** In a live voice call the director waits for LittleBot's own answer before
+it picks a card (up to 25 s): the answer a hand-off brings back, or else what the voice says, once it isn't
+just "hold on" / "let me think" / "one moment". The card's numbers, names and facts are taken from that
+answer, never from the director's own knowledge, so the screen agrees with what is said; when the voice
+hasn't really answered, no card shows. A card the answer itself put up (`show_on_screen`) isn't followed by
+a second one. So a card now comes up as the answer is being said, not before it. A card kind the model
+names that doesn't exist is logged by name (`unknown card 'movie'`). Bus topics: `live.call_started` `{}` and
 `live.call_ended` `{reason}` around each call; a card's `screen.news` `{text}` ("the egg timer is done")
 is passed to the voice as a note.
 
@@ -470,7 +478,8 @@ in typed chat, with **Push to talk**, or during a **live voice** call. ChatGPT p
 | "Stop everything" | stops any video, activity or game. The conversation carries on (the red **STOP** still stops everything, the conversation too) |
 | "Keep watching", "stop the video" (a video paused for this chat) | carries on with the video where it stopped after the answer (in live voice: after a short goodbye, then the call ends), or stops it ([during a video](YOUTUBE_ON_PI.md#10-talking-to-littlebot-during-a-video)) |
 | "How hot are you?", "are you on Wi-Fi?", "what's connected?", "which ChatGPT plan?" | answers from its status: CPU temperature and load, memory, how long it has been running, Wi-Fi signal, camera / microphone / speaker / screen / motors, volume, the signed-in plan, live voice on or off, what is playing, the Privacy switches |
-| "What can you do?", "tell me about yourself" | a short summary of what it can do |
+| "What can you do?", "tell me about yourself", "who made you?" | a short summary of what it can do; it knows who built it (`ai.creator`, `ai.creator_relation`: Ali, the little one's dad), its version and what it runs on |
+| "What went wrong?", "why didn't the video play?", "check your debug log" | reads its own debug log for the last minutes (`read_debug_log`: what it did, warnings and errors, never what anyone said) and explains the likely cause and what might fix it |
 | Typed chat only: "what am I holding?" | one camera photo, if you allowed it in Privacy ([section 4](#4-letting-the-ai-see-camera)). In live voice the call's own camera look is used |
 | "What's the weather today?", "will it rain tomorrow?", "do we need coats?", "weather in Paris this weekend" | gets the real weather: now, today, tomorrow or up to 7 days, at home or anywhere ([Weather, time and finding things out](#weather-time-and-finding-things-out)) |
 | "What time is it?", "what day is it?", "what's the date?", "what time is it in Tokyo?" | reads its own clock (or that place's time zone) |

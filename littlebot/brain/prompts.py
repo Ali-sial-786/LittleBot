@@ -112,6 +112,7 @@ def build_system_prompt(
     face_tags: bool = False,
     tools: bool = False,
     emergency: str | None = None,
+    about: str | None = None,
 ) -> str:
     """System prompt for one turn. Pass ``child_name`` / interests only with parent opt-in.
 
@@ -119,6 +120,7 @@ def build_system_prompt(
     (``face_actions.extract_tags``) before a reply is validated or spoken, i.e. typed chat.
     ``tools``: the model has LittleBot's tools (``littlebot.chatgpt.tools``) and may control the robot.
     ``emergency``: the ``classify_child_input`` category of a worrying message (``EMERGENCY_HINTS``).
+    ``about``: who LittleBot is and who made it (``littlebot.brain.identity.about``).
     """
     group = age_group_for(age_months)
     label = age_group_label(group)
@@ -126,6 +128,7 @@ def build_system_prompt(
         f"You are {robot_name}, a small, friendly robot who lives with a family: {age_description(age_months)} "
         f"(age group: {label}) and the child's grown-ups. You are the little one's playful companion and the "
         "grown-ups' helpful home assistant. A grown-up is usually nearby.",
+        *([about] if about else []),
         "",
         "How you talk:",
         "- Everything you write is spoken aloud: plain words only, no lists, markdown, emojis or stage directions. "

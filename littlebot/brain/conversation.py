@@ -40,6 +40,7 @@ from typing import Any, Awaitable, Callable
 
 import httpx
 
+from littlebot.brain import identity
 from littlebot.brain.face_actions import FaceAction, extract_tags, perform
 from littlebot.brain.prompts import build_system_prompt, clean_profile_items
 from littlebot.brain.providers import (
@@ -680,6 +681,7 @@ class ConversationEngine(Service):
                 interests=profile.get("interests") if share_interests else None,
                 favourite_animals=profile.get("favourite_animals") if share_interests else None,
                 face_tags=True, tools=toolbox is not None, emergency=emergency,
+                about=identity.about(self.ctx.config, debug="tool" if toolbox is not None else ""),
             ) + (toolbox.instructions() if toolbox is not None else "")  # weather, time, web search
             messages = self._context_messages() + [{"role": "user", "content": sent}]
             projected = self.usage.estimate_cost(

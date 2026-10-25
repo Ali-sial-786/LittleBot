@@ -27,6 +27,12 @@ Hardware-specific advice is **UNVERIFIED** until the robot has been built.
 
 More detail: set `logging.level: DEBUG` in `config/local.yaml` or start with `--debug`.
 
+**Ask LittleBot.** With ChatGPT signed in and its tools on, ask "what went wrong?", "why didn't the camera
+work?" or "check your debug log" (typed chat or voice). It reads the last 15 minutes of this log (up to
+120; `littlebot/core/debug_log.py`, the same timeline as `scripts/log_timeline.py`, with plain-word notes
+for common lines such as HTTP 429) and says what most likely happened. The log never holds what anyone
+said, so it can tell you *that* a voice chat ended and why, not what was talked about.
+
 **It stops responding for a while.** `littlebot/core/stall_watch.py` asks the main loop to answer
 every second. When it doesn't within 2 s the log says `the main loop has been stuck for N s; it is
 busy in: <file:line function ...>` (and `answered again after N s` when it recovers): that names the

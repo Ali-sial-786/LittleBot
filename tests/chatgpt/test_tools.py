@@ -215,7 +215,7 @@ async def test_describe_yourself(robot):
     text = await run(RobotToolbox(robot), "describe_yourself")
     assert robot.config.robot_name in text and "peekaboo" in text and "3 activities" not in text
     assert "4 activities" in text and "find and play videos" in text and "Pop the Bubbles" in text
-    assert "robot, not a person" in text
+    assert "robot, not a person" in text and "Ali, the little one's dad built and programmed me" in text
 
 
 async def test_activities_list_start_later_and_stop(robot):

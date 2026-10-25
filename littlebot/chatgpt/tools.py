@@ -96,6 +96,14 @@ TOOLS: tuple[_Tool, ...] = (
           "moment.", _obj()),
     _Tool("describe_yourself", "What LittleBot is and everything it can do (faces, camera, activities, videos, "
           "games, volume, sleep...). Use it for 'what can you do?' or 'tell me about yourself'.", _obj()),
+    _Tool("read_debug_log", "LittleBot's own debug log for the last minutes: what it did and when, with every "
+          "warning and error (never what people said). Use it when a grown-up asks what went wrong, why something "
+          "didn't work or what happened, or to check your logs; then explain the most likely cause simply and what "
+          "might fix it.",
+          _obj({"minutes": {"type": "integer", "minimum": 1, "maximum": 120,
+                            "description": "how far back to look, default 15"},
+                "about": {**_STR, "description": "optional: a few words to look for, e.g. 'camera' or 'video, "
+                                                 "youtube' (warnings and errors always show)"}})),
     _Tool("list_activities", "The activities LittleBot can run (songs, stories, games, movement...), suitable "
           "ones for the child's age first.",
           _obj({"category": {**_STR, "description": "optional, e.g. music, story"}})),
@@ -430,6 +438,17 @@ class RobotToolbox:
             info["note"] = "the battery level isn't known right now"
         return _json(info)
 
+    async def _read_debug_log(self, args: dict[str, Any]) -> str:
+        from littlebot.core import debug_log  # noqa: PLC0415
+
+        try:
+            minutes = int(args.get("minutes") or 15)
+        except (TypeError, ValueError):
+            minutes = 15
+        result = await asyncio.to_thread(debug_log.read, self.ctx.config, minutes=minutes,
+                                         about=str(args.get("about") or ""))
+        return debug_log.as_text(result)
+
     async def _describe_yourself(self, args: dict[str, Any]) -> str:
         ctx = self.ctx
         try:
@@ -446,9 +465,13 @@ class RobotToolbox:
         games = self._games()
         game_names = [g.get("name") for g in (_safe(games.list) or []) if isinstance(g, dict)] if games else []
         ai_camera = bool(getattr(ctx.privacy, "ai_camera_enabled", False))
+        from littlebot.brain.identity import creator  # noqa: PLC0415
+
+        made_by = creator(ctx.config)
         lines = [
             f"I am {ctx.config.robot_name}, a small toy robot with an animated face on a screen, running on a "
-            "Raspberry Pi. A grown-up looks after my settings on my dashboard.",
+            "Raspberry Pi." + (f" {made_by[0].upper() + made_by[1:]} built and programmed me." if made_by else "")
+            + " A grown-up looks after my settings on my dashboard.",
             "I can talk: typed chat, push to talk, and live voice chats with ChatGPT.",
             f"Faces I can make: {faces}.",
             ("I have a camera; I can look and say what I see when asked (the grown-up has allowed it)." if ai_camera
@@ -468,6 +491,7 @@ class RobotToolbox:
             *(["When a grown-up asks me to google something, I show Google (SafeSearch on) on my screen."]
               if self._browser_view() is not None else []),
             *(["I run on a battery and can tell you how much is left."] if self._power() is not None else []),
+            "I keep a debug log, so when something goes wrong a grown-up can ask me what happened and I can look.",
             "I am a robot, not a person.",
         ]
         return " ".join(lines)

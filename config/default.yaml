@@ -82,6 +82,8 @@ ai:
   daily_budget_usd: 0.50
   min_age_months_for_cloud: 0   # 0: cloud AI at any age once a parent switches it on; e.g. 24 for 2 years+
   store_transcripts: false   # true AND the parent "record history" setting are both needed to keep transcripts
+  creator: Ali              # who made LittleBot (the AI knows; null: not said)
+  creator_relation: the little one's dad
   anthropic_model: claude-haiku-5-5   # fast, low-cost current Claude model
   openai_model: gpt-4o-mini
   anthropic_effort: low      # low | medium | high (thinking depth on current Claude models)

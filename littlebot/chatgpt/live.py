@@ -56,6 +56,7 @@ from typing import Any, Callable
 
 import httpx
 
+from littlebot.brain import identity
 from littlebot.brain.prompts import build_system_prompt
 from littlebot.brain.providers.base import BaseProvider, ProviderError
 from littlebot.chatgpt import get_auth, wire
@@ -276,7 +277,9 @@ LATE_FAILED = "What they asked a moment ago didn't work out this time. Say so br
 # ("start the peekaboo activity", "show me a video of a dog", "go to sleep"): LittleBot's tools answer them.
 CONTROL_WORDS = re.compile(r"\b(?:activit(?:y|ies)|games?|videos?|youtube|cartoons?|volume|louder|quieter|"
                            r"(?:go(?:es|ing)?|went|put \w+) to (?:sleep|bed)|wake (?:up|\w+ up)|temperature|"
-                           r"how hot|cpu|memory|wi-?fi|stop everything)\b", re.I)
+                           r"how hot|cpu|memory|wi-?fi|stop everything|debug(?:ging)?|(?:debug|your|the) logs?|"
+                           r"(?:went|go(?:es|ne)?|going) wrong|(?:didn'?t|did not|doesn'?t|wasn'?t|isn'?t|won'?t) "
+                           r"work(?:ing)?|not working)\b", re.I)
 # Hand-offs asking for live information: the text model answers them with its tools (get_weather, get_time,
 # web search), never the camera or a face ("what's the weather looking like?", "show me the weather").
 INFO_WORDS = re.compile(r"\b(?:weather|forecasts?|hourly|rain(?:ing|y)?|snow(?:ing|y)?|sunny|umbrella|windy|"
@@ -933,6 +936,7 @@ class LiveCall:
         age = self.ctx.settings.child_age_months()
         text = VOICE_INSTRUCTIONS.format(name=self.ctx.config.robot_name, child=age_description(age),
                                          faces=_face_menu())
+        text += "\n\n" + identity.about(self.ctx.config, debug="voice" if self._tools_on() else "")
         nickname = self._child_name()
         who = nickname or "the little one"
         if age is not None and age < TALKS_FROM_MONTHS:
@@ -1580,7 +1584,8 @@ class LiveCall:
                            screen=self._director.show_spec if self._director is not None else None)
         policy = self.ctx.age_policy()
         system = build_system_prompt(robot_name=self.ctx.config.robot_name, age_months=policy.age_months,
-                                     max_words=LOOKUP_MAX_WORDS, tools=True) + LOOKUP_NOTE + LIVE_TOOLS_NOTE \
+                                     max_words=LOOKUP_MAX_WORDS, tools=True,
+                                     about=identity.about(self.ctx.config)) + LOOKUP_NOTE + LIVE_TOOLS_NOTE \
             + box.instructions()
         history = []
         for c in [c for c in self._captions if c["who"] != "note"][-6:]:
@@ -2066,7 +2071,8 @@ class LiveCall:
     async def _look_up(self, question: str) -> str:
         policy = self.ctx.age_policy()
         system = build_system_prompt(robot_name=self.ctx.config.robot_name, age_months=policy.age_months,
-                                     max_words=LOOKUP_MAX_WORDS) + LOOKUP_NOTE
+                                     max_words=LOOKUP_MAX_WORDS,
+                                     about=identity.about(self.ctx.config, debug="")) + LOOKUP_NOTE
         history = []
         for c in [c for c in self._captions if c["who"] != "note"][-6:]:
             history.append({"role": "user" if c["who"] == "heard" else "assistant", "content": c["text"]})

@@ -235,6 +235,9 @@ class AIConfig(_Section):
     daily_budget_usd: float = 0.50
     min_age_months_for_cloud: int = 0  # below this, scripted responses only (0: any age, the parent decides)
     store_transcripts: bool = False
+    # Who made LittleBot, told to the AI so it knows (littlebot/brain/identity.py); None: not said.
+    creator: str | None = Field(default=None, max_length=40)
+    creator_relation: str | None = Field(default=None, max_length=60)  # e.g. "the little one's dad"
     # --- brain module extensions (see docs/modules/brain.md) ---
     # Anthropic request tuning. Current Claude models think adaptively by default and
     # thinking tokens count toward max_tokens, so we ask for low effort and add headroom.
