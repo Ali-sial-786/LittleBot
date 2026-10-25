@@ -49,6 +49,7 @@ class Answer:
     value: Any  # the option (choice), the probability of yes (yesno), the weighted level (score)
     confidence: float
     probabilities: dict[str, float] = field(default_factory=dict)
+    state: Any = field(default=None, repr=False, compare=False)  # what the decider was shown (for the log)
 
     @property
     def p(self) -> float:

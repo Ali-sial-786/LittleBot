@@ -852,3 +852,13 @@ async def test_the_one_grown_up_in_view(call):
     await c.check_at(103.0, sighting(AMARA, ALI, MUM))
     await c.check_at(106.0, sighting(AMARA, ALI, MUM))
     assert c.cf.grown_up() is None  # two grown-ups: can't tell which one is talking
+
+
+async def test_the_decision_log_summary_says_who_is_in_view(call):
+    cf = F.CallFaces(call.stub, tell=lambda t: True, hide="Amara", now=lambda: 0.0)
+    assert cf.summary() == "nobody it knows"
+    call.stub.next = sighting(AMARA, ALI, None)
+    await cf._check()
+    assert cf.summary() == "the little one (the baby) and Ali (dad), and 1 face(s) it doesn't know"
+    call.stub.reason = "off"
+    assert cf.summary() == "off"

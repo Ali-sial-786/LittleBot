@@ -58,8 +58,27 @@ async def test_shadow_routing_only_compares(ctx, make_live, caplog):
         await wait_for(lambda: answers(server, "r2"))
         assert answers(server, "r2")[0].startswith("Done") and provider.calls == []  # the face, as before
         await wait_for(lambda: "routing (shadow): LittleBot's way face, jev robot, different" in caplog.text)
+        line = next(r.getMessage() for r in caplog.records if "routing (shadow)" in r.getMessage())
+        assert "| handed_to_the_robot: face: happy |" in line and "confidence: 0.90" in line  # what it was shown
+        assert get_decider(ctx).sensors is not None  # the call adds who face / voice recognition found
     finally:
         await close(svc, server)
+    assert get_decider(ctx).sensors is None
+
+
+async def test_the_log_gets_the_last_thing_heard_and_who_was_recognised(live, ctx):
+    svc, server, _audio, _provider, _alerts = live
+    await connect(svc, server)
+    hear(server, "What is the weather like today?")
+    call = svc._call
+    await wait_for(lambda: any(c["who"] == "heard" for c in call._captions))
+    call._faces = type("F", (), {"summary": lambda self: "Ali (dad)"})()
+    call._voices = type("V", (), {"summary": lambda self: "Ali (dad), 0.90"})()
+    try:
+        assert call._sensed() == {"last_heard": "What is the weather like today?", "camera_sees": "Ali (dad)",
+                                  "voice_is": "Ali (dad), 0.90"}
+    finally:
+        call._faces = call._voices = None
 
 
 async def test_on_but_a_face_it_cant_name_stays_the_word_lists_way(ctx, make_live):

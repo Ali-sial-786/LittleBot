@@ -59,11 +59,30 @@ ChatGPT request (1-2 s) on every turn it says needs no card.
 To see how shadow is doing: the dashboard panel (agreement per feature), or
 `grep -a "decide:" ~/LittleBot/data/logs/littlebot.log | tail -40`.
 
-## What is sent, and when nothing is
+To judge who was right, each line also says what the decision was about (**Log what each decision was
+about**, on the panel; on by default, config `decide.log_context`): exactly what the decision model was shown
+(what LittleBot heard, with personal details removed, and what it said, the card on the screen, the
+conversation's newest lines, the videos' titles), its confidence and, during a voice call, the last thing heard
+and who face and voice recognition found:
+
+```
+decide: answered (shadow): LittleBot's way answer, openai stalling, different | they_asked: what's the weather
+tomorrow | LittleBot_said: Let me check that for you! | p_yes: 0.08 | camera_sees: Ali (dad) | voice_is: Ali (dad), 0.81
+```
+
+That puts names and what was said in the log on the robot (`data/logs`, rotated), only while a provider is
+chosen; switch it off and lines are labels only. Counts per feature and the latest disagreements:
+
+```
+L=~/LittleBot/data/logs/littlebot.log; grep -ah "decide:" $L* | sed -n 's/.*decide: \([a-z]*\) ([a-z]*): LittleBot.s way [^,]*, [a-z]* [^,|]*, \(same\|different\).*/\1 \2/p' | sort | uniq -c; grep -ahE "decide: [a-z]+ \([a-z]+\): LittleBot.s way [^,]*, [a-z]+ [^,|]*, different" $L* | sed 's/.*decide:/decide:/' | tail -30
+```
+
+## What is sent, what is logged, and when nothing is
 
 Only the few fields each question needs: for a card, the card on screen, the last few lines of the
 conversation and LittleBot's answer; for a hand-off, its words and the last thing heard. What people said goes
-through the same personal-details filter as every other cloud request. TypeSafe says it doesn't train on
+through the same personal-details filter as every other cloud request. Who face and voice recognition found is
+only written to the robot's log (above), never sent. TypeSafe says it doesn't train on
 customer data and keeps data as its Data Processing Agreement says; zero data retention is for its enterprise
 customers (typesafe.ai/legal). OpenAI offers zero data retention for eligible API accounts.
 

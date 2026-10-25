@@ -63,6 +63,17 @@ def test_about_keeps_matching_lines_and_every_warning(tmp_path: Path) -> None:
     assert not any("parent started" in ln for ln in lines)
 
 
+def test_a_decisions_context_never_reaches_the_text_model(tmp_path: Path) -> None:
+    logs = tmp_path / "logs"
+    logs.mkdir()
+    (logs / "littlebot.log").write_bytes(_line(
+        "21:05:00", "decide: answered (shadow): LittleBot's way answer, openai stalling, different | they_asked: "
+        "where is my secret diary | camera_sees: Ali (dad)", logger="littlebot.decide"))
+    text = debug_log.as_text(debug_log.read(_config(tmp_path), minutes=15, now=NOW))
+    assert "decide: answered (shadow): LittleBot's way answer, openai stalling, different" in text
+    assert "diary" not in text and "Ali" not in text
+
+
 def test_no_log_file(tmp_path: Path) -> None:
     result = debug_log.read(_config(tmp_path), now=NOW)
     assert result["ok"] is False and debug_log.as_text(result).startswith("error:")

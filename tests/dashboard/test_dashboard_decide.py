@@ -20,6 +20,9 @@ async def test_decide_status_and_settings(authed, dctx):
     assert d["features"]["routing"]["chosen"] == "shadow"  # the default
     r = await authed.put("/api/decide/settings", json={"modes": {"routing": "off"}})
     assert r.json()["features"]["cards"]["chosen"] == "on" and r.json()["features"]["routing"]["chosen"] == "off"
+    assert r.json()["log_context"] is True
+    r = await authed.put("/api/decide/settings", json={"log_context": False})
+    assert r.status_code == 200 and r.json()["log_context"] is False
 
 
 async def test_bad_settings_are_refused(authed):

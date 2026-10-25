@@ -156,3 +156,30 @@ def test_compare_counts_agreement(ctx, use_model, caplog) -> None:
     st = d.status()["features"]["cards"]
     assert (st["agreed"], st["differed"], st["used"], st["agreement"]) == (1, 1, 1, 0.5)
     assert "LittleBot's way none, jev show_weather, different" in caplog.text
+
+
+async def test_the_log_line_says_what_was_decided_about_and_who_was_recognised(ctx, use_model, caplog) -> None:
+    caplog.set_level("INFO", logger="littlebot.decide")
+    use_model(choose("x", 0.2))
+    d = get_decider(ctx)
+    state = {"they_asked": "what's the weather tomorrow", "LittleBot_said": "Let me check that for you!"}
+    answer = (await d.ask("answered", state, {"answered": YesNo("Answered?")}))["answered"]
+    d.sensors = lambda: {"last_heard": "what's the weather tomorrow", "camera_sees": "Ali (dad)",
+                         "voice_is": "Ali (dad), 0.81"}
+    d.compare("answered", mine="answer", theirs="stalling", answer=answer)
+    line = caplog.records[-1].getMessage()
+    assert line.startswith("decide: answered (shadow): LittleBot's way answer, jev stalling, different | ")
+    assert "they_asked: what's the weather tomorrow | LittleBot_said: Let me check that for you! | p_yes: 0.20" in line
+    assert "camera_sees: Ali (dad) | voice_is: Ali (dad), 0.81" in line
+    assert "last_heard" not in line  # already there as they_asked
+
+    convo = [f"They said: line {i} " + "x" * 100 for i in range(6)]
+    answer.state = {"conversation": convo}
+    d.sensors = None
+    d.compare("cards", mine="none", theirs="close", answer=answer)
+    assert "line 5" in caplog.records[-1].getMessage()  # a long conversation keeps its newest lines
+
+    ctx.settings.set("decide.log_context", False)  # the dashboard's switch
+    d.compare("answered", mine="answer", theirs="answer", answer=answer)
+    assert caplog.records[-1].getMessage() == "decide: answered (shadow): LittleBot's way answer, jev answer, same"
+    assert d.status()["log_context"] is False

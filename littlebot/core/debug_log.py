@@ -7,9 +7,11 @@ skipped, the voice's many "LISTENING -> SPEAKING" turns are folded into one line
 errors stand out (with the last lines of a traceback). ``about``: only lines with one of these words (warnings and
 errors always stay).
 
-What is in it: what LittleBot did, timings, warnings and errors. The log never holds what people said or what
-LittleBot answered (each module logs only kinds, counts and timings), and secrets are redacted as it is written
-(core/logging_setup.py). Reading changes nothing.
+What is in it: what LittleBot did, timings, warnings and errors. Modules log only kinds, counts and timings, not
+what people said or what LittleBot answered; the one exception, the fast decisions' context (``decide: ... |
+they_asked: ...``, littlebot/decide, ``decide.log_context``) for a parent to read, is cut off here, so none of it
+reaches the text model. Secrets are redacted as the log is written (core/logging_setup.py). Reading changes
+nothing.
 """
 
 from __future__ import annotations
@@ -107,6 +109,9 @@ def records(path: Path, since: dt.datetime) -> list[dict[str, Any]]:
         except (ValueError, KeyError, TypeError):
             continue
         if d["_t"] >= since:
+            msg = str(d.get("msg") or "")
+            if msg.startswith("decide: ") and " | " in msg:
+                d["msg"] = msg.split(" | ", 1)[0]  # a decision's context (what was heard and said) stays out
             out.append(d)
     return out
 

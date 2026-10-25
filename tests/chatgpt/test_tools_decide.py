@@ -27,11 +27,15 @@ async def test_on_the_best_fitting_video_plays_first(robot):
     assert '"Baby Shark | Kids Songs" by Other, 2 min' in questions["video"].options["video_1"]
 
 
-async def test_shadow_or_unsure_plays_the_first_result(robot):
+async def test_shadow_or_unsure_plays_the_first_result(robot, caplog):
+    caplog.set_level("INFO", logger="littlebot.decide")
     use_decision_model(robot, decision_answers("video_1"), modes={"videos": "shadow"})
     box = RobotToolbox(robot, defer=False)
     await run(box, "play_youtube", query="baby shark song")
     assert robot.media.played[0][1] == "XqZsoesa55w"
+    line = caplog.records[-1].getMessage()  # the log names both videos
+    assert "they_asked_for: baby shark song" in line and "jev_picks: Baby Shark | Kids Songs" in line
+    assert "littlebot_plays: " in line
     use_decision_model(robot, decision_answers("video_1", 0.2), modes={"videos": "on"})
     await run(RobotToolbox(robot, defer=False), "play_youtube", query="baby shark song")
     assert robot.media.played[1][1] == "XqZsoesa55w"

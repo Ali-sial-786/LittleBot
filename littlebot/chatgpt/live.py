@@ -828,6 +828,7 @@ class LiveCall:
             self._warm_camera(True)  # while connecting: the camera keeps a photo ready, ChatGPT's line opens
             self._director = self._make_director()
             self._watch_voices(True)  # who woke LittleBot, by voice, while it connects
+            self._decider_sensors(True)
             await self._connect()
             if not self._ended.is_set():
                 await self._watch()
@@ -1430,7 +1431,7 @@ class LiveCall:
         theirs = "as_baby" if yes else "as_grown_up" if answer.p <= 1 - decider.yes_at() else "unsure"
         use = mode == "on" and yes and not hit and self._grown_up_spoke_at is not None \
             and self._name_fixes < NAME_FIXES
-        decider.compare("naming", mine="as_baby" if hit else "as_grown_up", theirs=theirs, used=use)
+        decider.compare("naming", mine="as_baby" if hit else "as_grown_up", theirs=theirs, used=use, answer=answer)
         if use:
             self._fix_name()
 
@@ -1453,7 +1454,7 @@ class LiveCall:
             return
         theirs = "danger" if answer.p >= uses.CONCERN_AT else "ok" if answer.p <= 1 - decider.yes_at() else "unsure"
         use = mode == "on" and theirs == "danger" and not flagged
-        decider.compare("concern", mine="danger" if flagged else "ok", theirs=theirs, used=use)
+        decider.compare("concern", mine="danger" if flagged else "ok", theirs=theirs, used=use, answer=answer)
         if use:
             log.warning("live voice: the decision model thinks someone may be in danger (%.2f)", answer.p)
             self._publish(Topics.BRAIN_STATUS, {"provider": "live", "status": "attention", "detail": "decider"})
@@ -1592,7 +1593,7 @@ class LiveCall:
                 new = ("who", None) if self._who_asked("who is here") else None  # needs face/voice recognition
             else:
                 new = ("lookup", None)
-        decider.compare("routing", mine=mine, theirs=theirs, used=new is not None)
+        decider.compare("routing", mine=mine, theirs=theirs, used=new is not None, answer=answer)
         return new if new is not None else (kind, action)
 
     async def _compare_route(self, question: str, last: str, mine: str) -> None:
@@ -1600,7 +1601,7 @@ class LiveCall:
 
         answer = await uses.route(self.ctx, question, last)
         if answer is not None:
-            get_decider(self.ctx).compare("routing", mine=mine, theirs=str(answer.value))
+            get_decider(self.ctx).compare("routing", mine=mine, theirs=str(answer.value), answer=answer)
 
     def _remember(self, what: str, fact: str) -> str:
         from littlebot.brain import remembered  # noqa: PLC0415
@@ -2107,6 +2108,30 @@ class LiveCall:
         except Exception:  # noqa: BLE001 - knowing who is talking must never stop the call
             log.debug("live voice: voice recognition failed", exc_info=True)
 
+    def _decider_sensors(self, on: bool) -> None:
+        """While the call runs, each logged decision (littlebot/decide) also says who face and voice recognition
+        found, so a parent can judge whether LittleBot's way or the decision model was right."""
+        from littlebot.decide import get_decider  # noqa: PLC0415
+
+        decider = get_decider(self.ctx)
+        if on:
+            decider.sensors = self._sensed
+        elif decider.sensors == self._sensed:
+            decider.sensors = None
+
+    def _sensed(self) -> dict[str, str]:
+        from littlebot.safety.content import sanitize_user_text  # noqa: PLC0415
+
+        out = {}
+        heard = [c["text"] for c in self._captions if c["who"] == "heard"]
+        if heard:  # the decider's own state usually has it too (then it isn't repeated)
+            out["last_heard"] = sanitize_user_text(" ".join(heard[-1].split()), max_chars=300)
+        if self._faces is not None:
+            out["camera_sees"] = self._faces.summary()
+        if self._voices is not None:
+            out["voice_is"] = self._voices.summary()
+        return out
+
     def _voice_tap(self, mic: Any) -> Any:
         """The call's microphone, with a copy for voice recognition (only while it is on)."""
         return self._voices.tap(mic) if self._voices is not None else mic
@@ -2335,6 +2360,7 @@ class LiveCall:
         if self._director is not None:
             self._director.close()
         self._watch_voices(False)
+        self._decider_sensors(False)
         for t in list(self._tasks):
             t.cancel()
         if self._tasks:

@@ -845,7 +845,10 @@ class RobotToolbox:
         except (IndexError, ValueError):
             return results
         use = mode == "on" and 0 < n < len(results) and answer.confidence >= decider.min_confidence()
-        decider.compare("videos", mine="video_0", theirs=str(answer.value), used=use)
+        titles = {"littlebot_plays": results[0].get("title"),
+                  f"{decider.provider()}_picks": results[n].get("title") if 0 <= n < len(results) else None}
+        decider.compare("videos", mine="video_0", theirs=str(answer.value), used=use, answer=answer,
+                        extra={k: str(v)[:120] for k, v in titles.items() if v})
         return [results[n], *results[:n], *results[n + 1:]] if use else results
 
     async def _which_one(self, wanted: str, items: list[dict[str, Any]], what: str) -> dict[str, Any] | None:
@@ -862,7 +865,8 @@ class RobotToolbox:
             return None
         found = next((it for it in items if str(it.get("id")) == answer.value), None)
         use = mode == "on" and found is not None and answer.confidence >= decider.min_confidence()
-        decider.compare("names", mine=uses.NO_MATCH, theirs=str(answer.value), used=use)
+        decider.compare("names", mine=uses.NO_MATCH, theirs=str(answer.value), used=use, answer=answer,
+                        extra={f"{decider.provider()}_picks": found.get("name")} if found and found.get("name") else None)
         return found if use else None
 
     async def _play_found(self, found: dict[str, Any], others: list[dict[str, Any]]) -> str:

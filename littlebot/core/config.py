@@ -371,6 +371,9 @@ class DecideConfig(_Section):
     max_requests_per_day: int = Field(default=4000, ge=1)
     failures_to_pause: int = Field(default=5, ge=1)  # this many failures in a row: no requests for pause_seconds
     pause_seconds: float = Field(default=120.0, ge=5.0)
+    # Each logged decision also says what the decider was shown (what was heard and said) and who face / voice
+    # recognition saw, so a parent can judge who was right. Only while a provider is chosen.
+    log_context: bool = True
 
     @field_validator("provider", "default_mode", mode="before")
     @classmethod

@@ -855,6 +855,15 @@ class CallFaces:
             return None
         return look_context(s, self.hide)
 
+    def summary(self) -> str:
+        """For the decision log (littlebot/decide): who is in view now, by face ("Ali (dad)", "nobody it knows")."""
+        if self.closed or self.faces.blocked_reason() is not None:
+            return "off"
+        people = list(self.presence.here.values())
+        unknown = self.latest.unknown if self.latest is not None else 0
+        text = describe(people, self.hide) if people else "nobody it knows"
+        return text + (f", and {unknown} face(s) it doesn't know" if unknown else "")
+
     def grown_up(self) -> str | None:
         """The one grown-up in view now ("Ali (dad)"), when there is exactly one; else None."""
         child = (self.child or "").lower()

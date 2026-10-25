@@ -764,7 +764,8 @@ class ScreenDirector:
             return
         yes = decider.yes_at()
         theirs = "answer" if answer.p >= yes else "stalling" if answer.p <= 1 - yes else "unsure"
-        decider.compare("answered", mine="answer", theirs=theirs, used=mode == "on" and theirs == "stalling")
+        decider.compare("answered", mine="answer", theirs=theirs, used=mode == "on" and theirs == "stalling",
+                        answer=answer)
 
     async def _await_answer(self, turn: int, t0: float) -> tuple[str, str] | None:
         deadline = t0 + self.answer_wait_s
@@ -914,11 +915,11 @@ class ScreenDirector:
                 if pick is not None and pick.confidence >= decider.min_confidence():
                     child = self._speaker(t0)
                     if pick.value == uses.CARD_NONE:
-                        decider.used("cards", pick.value)
+                        decider.used("cards", pick.value, pick)
                         self._log("none", t0, "decider", f"{decider.provider()}, confidence {pick.confidence:.2f}")
                         return
                     if pick.value == uses.CARD_CLOSE and self._current_kind() is not None and not child:
-                        decider.used("cards", pick.value)
+                        decider.used("cards", pick.value, pick)
                         self._steer(Decision("close"), t0, "decider")
                         return
                     hint = pick.value[len("show_"):] if pick.value.startswith("show_") else \
@@ -931,7 +932,7 @@ class ScreenDirector:
         if shadow is not None:
             self._spawn(self._compare_cards(shadow, label))
         elif pick is not None and label not in ("dropped", "failed"):
-            decider.compare("cards", mine=label, theirs=pick.value)
+            decider.compare("cards", mine=label, theirs=pick.value, answer=pick)
 
     async def _card_pick(self, answer: str | None) -> Any:
         from littlebot.decide import uses  # noqa: PLC0415
@@ -954,7 +955,7 @@ class ScreenDirector:
         if pick is not None and label not in ("dropped", "failed"):
             from littlebot.decide import get_decider  # noqa: PLC0415
 
-            get_decider(self.ctx).compare("cards", mine=label, theirs=pick.value)
+            get_decider(self.ctx).compare("cards", mine=label, theirs=pick.value, answer=pick)
 
     async def _decide_model(self, turn: int, t0: float, answer: str | None, *, needs_grownup: bool,
                             hint: str | None = None) -> str:
@@ -1226,7 +1227,7 @@ class ScreenDirector:
         if answer is None:
             return
         theirs = "about_the_page" if about else "moved_on" if answer.p <= 1 - decider.yes_at() else "unsure"
-        decider.compare("browser", mine="moved_on", theirs=theirs, used=mode == "on" and about)
+        decider.compare("browser", mine="moved_on", theirs=theirs, used=mode == "on" and about, answer=answer)
 
     async def _browse(self, rule: Decision, t0: float, turn: int) -> None:
         browser = self.browser

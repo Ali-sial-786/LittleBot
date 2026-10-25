@@ -2,7 +2,7 @@
 // calls. The keys stay in .env on the robot; this page only learns whether one is set.
 
 import { get, put } from '../api.js';
-import { banner, clear, h, icon } from '../ui.js';
+import { banner, clear, h, icon, switchRow } from '../ui.js';
 
 const PROVIDERS = [
   { value: 'off', label: 'Off (nothing is sent)' },
@@ -39,6 +39,16 @@ export function decidePanel(app) {
     if (r) fill(r);
   });
 
+  const context = switchRow({
+    title: 'Log what each decision was about',
+    text: 'Each decision in LittleBot’s log also says what it heard and said, the card on the screen, and who face and voice recognition found, so you can judge which way was right. Stays on the robot (data/logs).',
+    onChange: async (v) => {
+      const r = await app.act(() => put('/decide/settings', { log_context: v }), v ? 'Decisions are logged with what they were about.' : 'Decisions are logged as labels only.');
+      if (r) fill(r);
+      return r !== null;
+    },
+  });
+
   for (const [key, [title, text]] of Object.entries(FEATURES)) {
     const sel = h('select', { id: `decide-${key}`, 'aria-label': `${title} mode` }, MODES.map((m) => h('option', { value: m.value, text: m.label })));
     sel.addEventListener('change', async () => {
@@ -59,10 +69,12 @@ export function decidePanel(app) {
     h('div', { class: 'stack mt-1' },
       h('div', { class: 'field' }, h('label', { for: 'decide-provider', text: 'Decision model' }), provider),
       h('div', { class: 'stack-sm' }, h('span', { class: 'muted', text: 'Keys on this robot' }), keys),
-      rows));
+      rows,
+      context.el));
 
   function fill(d) {
     if (document.activeElement !== provider) provider.value = d.provider || 'off';
+    context.set(d.log_context);
     clear(keys).append(
       h('span', { class: `badge ${d.has_typesafe_key ? 'ok' : ''}` }, icon(d.has_typesafe_key ? 'check' : 'key'), d.has_typesafe_key ? 'TypeSafe key configured' : 'No TypeSafe key'),
       h('span', { class: `badge ${d.has_openai_key ? 'ok' : ''}` }, icon(d.has_openai_key ? 'check' : 'key'), d.has_openai_key ? 'OpenAI key configured' : 'No OpenAI key'));

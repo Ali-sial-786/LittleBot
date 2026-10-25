@@ -499,4 +499,9 @@ def test_ai_page_fast_decisions_panel_saves_the_provider_and_modes(phone):
     expect(page.locator("#decide-cards")).to_have_value("on")
     d = phone.api("GET", "/decide")
     assert d["provider"] == "jev" and d["features"]["cards"]["chosen"] == "on"
-    phone.api("PUT", "/decide/settings", {"provider": "off", "modes": {"cards": "shadow"}})  # leave it as it was
+    switch = panel.get_by_role("switch", name="Log what each decision was about")
+    expect(switch).to_be_checked()
+    switch.click(force=True)
+    expect(switch).not_to_be_checked()
+    assert phone.api("GET", "/decide")["log_context"] is False
+    phone.api("PUT", "/decide/settings", {"provider": "off", "modes": {"cards": "shadow"}, "log_context": True})

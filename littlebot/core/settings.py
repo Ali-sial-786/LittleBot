@@ -93,6 +93,7 @@ def build_defaults(cfg: LittleBotConfig) -> dict[str, Any]:
         # (off | shadow | on); {} = the config's decide.modes / decide.default_mode
         "decide.provider": cfg.decide.provider,
         "decide.modes": {},
+        "decide.log_context": cfg.decide.log_context,  # each logged decision also says what was heard / recognised
         # the battery (littlebot/power; only used while a battery monitor is fitted): when LittleBot says it needs
         # charging (and whether it says it out loud), and when it says goodbye and shuts down cleanly
         "power.low_percent": cfg.power.low_percent,

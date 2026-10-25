@@ -124,6 +124,16 @@ class CallVoices:
     def _label(self, m: VoiceMatch) -> str:
         return _hidden(m.label, self.hide)
 
+    def summary(self) -> str:
+        """For the decision log (littlebot/decide): who the last turn's voice was ("Ali (dad), 0.82")."""
+        if self.closed or not self.active:
+            return "off"
+        if self.latest is None or self._now() - self.latest[1] > LATEST_FRESH_S:
+            return "no recent turn"
+        heard = self.latest[0]
+        return f"{self._label(heard.match)}, {heard.best:.2f}" if heard.match is not None else \
+            f"not sure ({heard.reason}, best {heard.best:.2f})"
+
     # ------------------------------------------------------------ the microphone
     def tap(self, mic: Any) -> VoiceTap:
         return VoiceTap(mic, self)

@@ -489,3 +489,18 @@ async def test_identify_takes_about_as_long_as_the_model(voices, family):
     for _ in range(20):
         await voices.identify(say(0, 1.5), 48000)
     assert (time.perf_counter() - t0) / 20 < 0.05
+
+
+async def test_the_decision_log_summary_says_who_the_last_turn_was(voices, family):
+    call = Call(voices, hide="Amara")
+    assert call.cv.summary() == "no recent turn"
+    await call.turn(say(0, 2.0))
+    assert call.cv.summary() == "Ali (dad), 1.00"
+    await call.turn(say(2, 2.0), "ba ba ba")
+    assert "Amara" not in call.cv.summary() and call.cv.summary().startswith("the little one")
+    await call.turn(say(4, 2.0))  # a visitor
+    assert call.cv.summary().startswith("not sure (")
+    call.cv.latest = (call.cv.latest[0], time.monotonic() - C.LATEST_FRESH_S - 1)
+    assert call.cv.summary() == "no recent turn"
+    call.cv.close()
+    assert call.cv.summary() == "off"

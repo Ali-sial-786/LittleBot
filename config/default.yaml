@@ -118,6 +118,7 @@ decide:  # fast decision models for small multiple-choice calls (littlebot/decid
   yes_at: 0.7
   max_requests_per_hour: 600
   max_requests_per_day: 4000
+  log_context: true      # each logged decision also says what was heard and said, and who was recognised
 
 browser:
   # Google (SafeSearch on) on LittleBot's screen when a grown-up says "google it" or "look it up online"
