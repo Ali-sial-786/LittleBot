@@ -53,8 +53,9 @@ with the browser still up).
 
 It closes on its ×, "close it" / "close the browser" (director, tools), STOP ALL, sleep, an error state, a
 video, game or activity starting, the dashboard's Close, the parent's switch or cloud communication going off,
-Chromium exiting, and ``browser.idle_seconds`` (120) after the voice chat ended with nobody touching the page
-(real touches are reported by the strip).
+Chromium exiting, ``browser.idle_seconds`` (120) after the voice chat ended with nobody touching the page
+(real touches are reported by the strip), and during the chat ``browser.moved_on_seconds`` (20) after they talked
+about something else (``moved_on``, from the screen director) without using it again.
 
 Logs: one INFO line per open, page and close: the source, the host, never the query or what a page says.
 Bus: ``browser.opened`` {source, host, search}, ``browser.navigated`` {host}, ``browser.closed`` {reason};
@@ -113,6 +114,7 @@ DEDUPE_S = 8.0  # the director and a tool asking for the same thing this close t
 CHILD_RECENT_S = 15.0  # voice recognition saying the child spoke this recently refuses the voice's requests
 WATCH_S = 0.5
 KEEP_AWAKE_EVERY_S = 30.0
+MOVED_ON_GRACE_S = 10.0  # a turn this soon after the browser was used is about it (the voice's tool may come first)
 READ_CACHE_S = 10.0  # read() again this soon: the same text (the director and a tool both asked)
 TEARDOWN_TIMEOUT_S = 6.0
 ZOOM_STEP = 0.15
@@ -199,6 +201,8 @@ class _Session:
     ended: bool = False
     reason: str = ""
     quiet_since: float | None = None  # when no voice chat was last seen (the idle timer)
+    moved_on: float | None = None  # when they last talked about something else in the chat (the moved-on timer)
+    used: float = 0.0  # when the browser was last opened, steered or touched
     last_awake: float = -1e9
     last_open: tuple[str, float] | None = None  # (source, when)
     last_action: tuple[str, str, float] | None = None  # (action key, source, when)
@@ -388,7 +392,7 @@ class BrowserView(Service):
         self._ids += 1
         now = self._clock()
         s = _Session(id=self._ids, source=source, started=now, zoom=float(self.cfg.zoom), query=q,
-                     last_open=(source, now))
+                     last_open=(source, now), used=now)
         # Taken like a video (a card or a game on the screen goes), then held lower so a game or video wins later.
         lease = self.ctx.arbiter.acquire(OWNER, [Resource.SCREEN], Priority.MEDIA, on_preempt=self._preempted(s))
         if lease is None:
@@ -902,10 +906,26 @@ class BrowserView(Service):
             elif now - s.quiet_since >= idle:
                 self.close("nobody used it")
                 return
+            if s.moved_on is not None and now - s.moved_on >= float(self.cfg.moved_on_seconds):
+                self.close("they moved on to something else")
+                return
+
+    def moved_on(self) -> None:
+        """A turn in the chat about something else (the screen director): it closes ``browser.moved_on_seconds``
+        later unless it is used again. A turn just after it was used is about it (the voice's tool may come first)."""
+        s = self._session
+        if s is None or s.ended or s.moved_on is not None:
+            return
+        now = self._clock()
+        if now - s.used >= MOVED_ON_GRACE_S:
+            s.moved_on = now
+            log.debug("browser: they talked about something else; closing in %.0f s unless it is used",
+                      float(self.cfg.moved_on_seconds))
 
     def _touch(self, s: _Session) -> None:
-        """Someone used the page (a real touch, or a request in the chat): the idle wait starts again."""
+        """Someone used the page (a real touch, or a request in the chat): the idle and moved-on waits start again."""
         now = self._clock()
+        s.used, s.moved_on = now, None
         if s.quiet_since is not None:
             s.quiet_since = now
         if now - s.last_awake >= KEEP_AWAKE_EVERY_S:
@@ -943,6 +963,9 @@ class BrowserView(Service):
             return out
         now = self._clock()
         closes_in = None if s.quiet_since is None else round(max(0.0, self.cfg.idle_seconds - (now - s.quiet_since)), 1)
+        if s.moved_on is not None:
+            left = round(max(0.0, float(self.cfg.moved_on_seconds) - (now - s.moved_on)), 1)
+            closes_in = left if closes_in is None else min(closes_in, left)
         out.update({"active": True, "showing": self.describe(), "host": s.host, "source": s.source,
                     "seconds": round(max(0.0, now - s.started), 1), "closes_in": closes_in, "zoom": s.zoom,
                     "voice_on": self._voice_on()})

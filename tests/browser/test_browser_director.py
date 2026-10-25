@@ -30,6 +30,7 @@ class FakeBrowser:
         self.reads = 0
         self.page_text = "Giraffes are the tallest land animals."
         self.open_result: dict[str, Any] | None = None
+        self.moved = 0  # moved_on() calls: turns about something else while it shows
 
     def offered(self) -> bool:
         return self.on
@@ -50,6 +51,9 @@ class FakeBrowser:
     async def read(self) -> dict:
         self.reads += 1
         return {"ok": True, "title": "Giraffe", "host": "en.wikipedia.org", "text": self.page_text}
+
+    def moved_on(self) -> None:
+        self.moved += 1
 
     def close(self, reason: str) -> bool:
         self.closed.append(reason)
@@ -167,6 +171,9 @@ def test_ordinary_turns_are_not_for_the_browser(text: str) -> None:
     ("close it", "close", {}),
     ("close the browser", "close", {}),
     ("we're done with google", "close", {}),
+    ("show me your face", "close", {}),
+    ("Let me see your face.", "close", {}),
+    ("can I see your face again please", "close", {}),
 ])
 def test_steering_while_it_shows(text: str, action: str, args: dict[str, Any]) -> None:
     rule = browser_rule(text, up=True)
@@ -233,6 +240,17 @@ async def test_close_it_closes_the_browser(make: Any) -> None:
     await s.heard("google giraffes")
     await s.heard("close it")
     assert s.browser.closed == ["asked in the voice chat"] and s.notes[-1] == CLOSED_NOTE
+
+
+async def test_talking_about_something_else_tells_the_browser(make: Any) -> None:
+    s = make({"do": "none"})
+    await s.heard("what's the weather like?")
+    assert s.browser.moved == 0  # nothing shows
+    await s.heard("google giraffes")
+    await s.heard("scroll down")
+    assert s.browser.moved == 0  # about the browser
+    await s.heard("what's the weather like?")
+    assert s.browser.moved == 1 and s.browser.closed == []  # it closes itself a little later (browser.moved_on_seconds)
 
 
 async def test_no_such_result(make: Any) -> None:

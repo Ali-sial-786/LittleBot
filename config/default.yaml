@@ -111,6 +111,7 @@ browser:
   # The parent can switch it off on the dashboard's Privacy page; it also needs Cloud communication on.
   enabled: true
   idle_seconds: 120        # closes this long after the voice chat ended with nobody touching the page
+  moved_on_seconds: 20     # ...and during the chat, this long after they moved on to something else
   zoom: 1.4                # pages are this much bigger on the small screen ("zoom in" / "zoom out" change it)
   mobile_layout: true      # ask sites for their phone layout
   kiosk: null              # null = full screen on the robot only (a 720x480 window on a desktop)

@@ -459,6 +459,28 @@ async def test_the_idle_wait_starts_when_the_voice_chat_ends(env: Any) -> None:
     await env.until(lambda: not env.browser.active)
 
 
+async def test_it_closes_a_while_after_they_moved_on_in_the_chat(env: Any) -> None:
+    env.ctx.arbiter.acquire("live_voice", [Resource.FACE, Resource.AUDIO_OUT, Resource.MICROPHONE], Priority.PARENT)
+    await env.open()
+    wait = env.ctx.config.browser.moved_on_seconds
+    env.browser.moved_on()  # just opened: that turn is about it (the voice's tool may have come first)
+    assert env.browser.status()["closes_in"] is None
+    env.clock.advance(service_mod.MOVED_ON_GRACE_S)
+    env.browser.moved_on()
+    assert env.browser.status()["closes_in"] == wait
+    env.clock.advance(wait - 5)
+    env.browser.moved_on()  # another turn about something else doesn't start the wait again
+    await asyncio.sleep(0.05)
+    assert env.browser.active and env.browser.status()["closes_in"] == 5
+    await env.devtools.emit("Runtime.bindingCalled", {"name": scripts.BINDING, "payload": '{"type": "touch"}'})
+    await env.until(lambda: env.browser.status().get("closes_in") is None)  # used again: it stays
+    env.clock.advance(service_mod.MOVED_ON_GRACE_S)
+    env.browser.moved_on()
+    env.clock.advance(wait + 1)
+    await env.until(lambda: not env.browser.active)
+    assert env.last(CLOSED).data == {"reason": "they moved on to something else"}
+
+
 # ---------------------------------------------------------------- the rest of its lifetime
 async def test_a_video_taking_the_screen_closes_the_browser(env: Any) -> None:
     await env.open()

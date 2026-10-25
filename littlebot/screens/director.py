@@ -127,6 +127,7 @@ CLOSE_WORDS = re.compile(
     rf"(?:close|hide|clear|remove|dismiss)(?: (?:it|that|this|the {_CARD_NOUN}))?(?: (?:off|away|down))?|"
     r"(?:take|put|get) (?:it|that|this) (?:away|off(?: the screen)?|down)|get rid of (?:it|that|this)|"
     r"(?:show me |show |bring back |back to |go back to )your face(?: again| back)?|"
+    r"(?:(?:let me|can i|could i|i want to|i wanna|i'?d like to) )?see your (?:face|eyes)(?: again)?|"
     rf"(?:i'?m|we'?re) (?:done|finished) with (?:it|that|this|the {_CARD_NOUN})"
     rf"){_TAIL}$")
 NEXT_WORDS = re.compile(
@@ -628,7 +629,10 @@ class ScreenDirector:
             return
         self._turn += 1
         self._lines.append(("heard", text[:LINE_CHARS]))
-        if handled or self._browser_turn(text) or not self.enabled():
+        browser_turn = not handled and self._browser_turn(text)
+        if not browser_turn:
+            self._browser_moved_on()
+        if handled or browser_turn or not self.enabled():
             return
         t0 = self._now()
         child = self._speaker(t0)
@@ -942,6 +946,15 @@ class ScreenDirector:
             return True
         self._spawn(self._browse(rule, t0, self._turn))
         return True
+
+    def _browser_moved_on(self) -> None:
+        """A turn that isn't about the browser while it shows: it closes a little later unless used again."""
+        browser = self.browser
+        try:
+            if browser is not None and browser.active:
+                browser.moved_on()
+        except Exception:  # noqa: BLE001 - a browser that can't be told stays until its other timers
+            log.debug("screen: telling the browser they moved on failed", exc_info=True)
 
     async def _browse(self, rule: Decision, t0: float, turn: int) -> None:
         browser = self.browser

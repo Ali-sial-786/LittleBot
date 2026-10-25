@@ -352,6 +352,8 @@ class BrowserConfig(_Section):
     enabled: bool = True
     # After the voice chat ends the browser stays this long with nobody touching the page.
     idle_seconds: float = Field(default=120.0, ge=10.0, le=1800.0)
+    # During the chat: closes this long after they talked about something else (no browser words, no touch).
+    moved_on_seconds: float = Field(default=20.0, ge=5.0, le=600.0)
     zoom: float = Field(default=1.4, ge=0.75, le=2.5)  # pages are this much bigger (720x480 screen: 514x343 px)
     mobile_layout: bool = True  # ask sites for their phone layout (fits the small screen)
     kiosk: bool | None = None  # full screen; None = on the robot (Raspberry Pi) only, a 720x480 window elsewhere
