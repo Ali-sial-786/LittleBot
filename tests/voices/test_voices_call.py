@@ -408,6 +408,17 @@ async def test_answer_now_uses_what_they_are_saying_or_their_last_turn(voices, f
     assert "Ali (dad)" in await call.cv.answer_now(None)  # the turn that just ended
 
 
+async def test_answer_now_unsure_just_now_falls_back_to_their_last_turn(voices, family, caplog):
+    call = Call(voices)
+    await call.turn(say(0, 2.0))  # Ali, recognised
+    call.speak(say(7, 2.0))  # since then: a voice nobody recorded (in a real call: LittleBot's own echo, a cut-in)
+    with caplog.at_level(logging.INFO, logger="littlebot.voices"):
+        text = await call.cv.answer_now(None)
+    assert "Ali (dad)" in text and "their last turn is used" in caplog.text
+    call.cv.latest = (call.cv.latest[0], time.monotonic() - C.LATEST_FRESH_S - 1)  # too long ago: just now counts
+    assert "doesn't recognise this voice" in await call.cv.answer_now(None)
+
+
 async def test_answer_now_combines_with_faces(voices, family):
     class Faces:
         def __init__(self) -> None:

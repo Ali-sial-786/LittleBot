@@ -318,18 +318,29 @@ class CallVoices:
         return text
 
     async def _now_heard(self) -> Heard | None:
-        """Who is talking: what they are saying right now (enough of it), else their last turn (if recent)."""
+        """Who is talking: what they are saying right now when that names someone, else their last turn (if
+        recent), else what they are saying now. What was heard since their last turn often has the end of
+        LittleBot's own voice or a cut-in in it, so an "unsure" there doesn't outweigh a turn just recognised."""
+        now_heard = None
         frames = list(self._frames)
         if frames:
             pcm = np.concatenate(frames)
             heard = await self.voices.analyse(pcm, CALL_RATE, take="last")
             del pcm
-            if heard.reason != "too_short":
+            if heard.match is not None:
                 return heard
+            if heard.reason != "too_short":
+                now_heard = heard
         async with self._lock:  # a turn that just ended is identified first
             latest = self.latest
-        if latest is not None and self._now() - latest[1] <= LATEST_FRESH_S:
-            return latest[0]
+        fresh = latest[0] if latest is not None and self._now() - latest[1] <= LATEST_FRESH_S else None
+        if fresh is not None and (fresh.match is not None or now_heard is None):
+            if now_heard is not None:
+                log.info("live voice: \"who am I?\": not sure from just now (%s); their last turn is used",
+                         now_heard.reason)
+            return fresh
+        if now_heard is not None:
+            return now_heard
         return Heard("too_short") if self.voices.store.has_samples() else Heard("nobody")
 
     # ------------------------------------------------------------ notes, events
