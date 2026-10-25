@@ -638,7 +638,9 @@ def _read_yaml(path: Path) -> dict[str, Any]:
 
 
 def load_dotenv(path: Path, environ: dict[str, str] | None = None) -> dict[str, str]:
-    """Minimal .env parser (KEY=VALUE lines). Existing environment wins."""
+    """Minimal .env parser (KEY=VALUE lines). A set (non-empty) environment variable wins. A key listed twice
+    takes its last non-empty value, so ``echo 'OPENAI_API_KEY=sk-...' >> .env`` works even when the file
+    copied from .env.example already has an empty ``OPENAI_API_KEY=`` line."""
     env = os.environ if environ is None else environ
     loaded: dict[str, str] = {}
     if not path.is_file():
@@ -653,7 +655,9 @@ def load_dotenv(path: Path, environ: dict[str, str] | None = None) -> dict[str, 
         key, value = key.strip(), value.strip()
         if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
             value = value[1:-1]
-        if key and key not in env:
+        if not key or (env.get(key) and key not in loaded):
+            continue  # set before this file was read
+        if value or key not in loaded:
             env[key] = value
             loaded[key] = value
     return loaded

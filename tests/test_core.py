@@ -70,6 +70,19 @@ def test_dotenv_parser(tmp_path):
     assert env == {"A": "keep", "B": "two", "C": "3"}
 
 
+def test_dotenv_key_added_below_the_empty_example_line(tmp_path):
+    # .env copied from .env.example has "OPENAI_API_KEY=", then the key is appended with echo >>
+    f = tmp_path / ".env"
+    f.write_text("OPENAI_API_KEY=\nTYPESAFE_API_KEY=ts-1\nOPENAI_API_KEY=sk-new\nTYPESAFE_API_KEY=\n"
+                 "ANTHROPIC_API_KEY=sk-ant\nX=file\n")
+    env: dict[str, str] = {"ANTHROPIC_API_KEY": "", "X": "kept"}  # an empty variable doesn't block the file
+    load_dotenv(f, env)
+    assert env == {"OPENAI_API_KEY": "sk-new", "TYPESAFE_API_KEY": "ts-1", "ANTHROPIC_API_KEY": "sk-ant",
+                   "X": "kept"}
+    cfg = load_config("simulation", environ=env, use_dotenv=False, include_local=False)
+    assert cfg.openai_api_key.get_secret_value() == "sk-new"
+
+
 # ----------------------------------------------------------------- events
 def test_bus_patterns_and_cancel():
     bus = EventBus()
