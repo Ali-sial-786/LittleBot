@@ -11,7 +11,9 @@ or the day's requests are used up, or the provider failed ``failures_to_pause`` 
 agree (the dashboard's Decisions panel shows it). With ``decide.log_context`` on (the default; the dashboard can
 switch it off) the line also says what the decider was shown (what LittleBot heard and said, the card on the
 screen...) and, during a voice call, who face and voice recognition said was there (``sensors``), so a parent can
-judge who was right. Only while a provider is chosen: nothing is logged with the provider off.
+judge who was right. After a decision whose line doesn't hold LittleBot's reply (routing, concern, browser,
+videos, names), what it said next is logged too (``ai_replied``). Only while a provider is chosen: nothing is
+logged with the provider off.
 
 Settings (dashboard): ``decide.provider`` and ``decide.modes`` ({feature: mode}) override the config
 (``decide.provider``, ``decide.modes``, ``decide.default_mode``).
@@ -31,6 +33,10 @@ log = logging.getLogger("littlebot.decide")
 
 STATS_KEYS = ("asked", "failed", "ms", "agreed", "differed", "used")
 CONTEXT_CHARS = 240  # one value in a logged decision's context
+# Features whose line doesn't hold LittleBot's reply (it comes after): its next words are logged too (ai_replied).
+REPLY_AFTER = ("routing", "concern", "browser", "videos", "names")
+REPLY_LINES = 3  # at most this many of its lines after one decision ("hold on" lines don't end the wait)
+REPLY_CHARS = 400
 
 
 def _key(config: Any, name: str) -> str:
@@ -56,6 +62,7 @@ class Decider:
         self.last_error = ""
         self.stats: dict[str, dict[str, Any]] = {f: dict.fromkeys(STATS_KEYS, 0) for f in FEATURES}
         self.sensors: Any = None  # a voice call sets this: () -> {"last_heard", "camera_sees", "voice_is"} for the log
+        self._reply_for: dict[str, int] = {}  # features waiting for LittleBot's next words -> lines still to log
 
     # ------------------------------------------------------------ settings
     @property
@@ -148,6 +155,34 @@ class Decider:
         log.info("decide: %s (%s): LittleBot's way %s, %s %s, %s%s%s", feature, self.mode(feature) or "off", mine,
                  self.provider(), theirs, "same" if same else "different", "; the decider's answer was used"
                  if used and not same else "", self._context(answer, extra))
+        if feature in REPLY_AFTER and self.sensors is not None and self.log_context():
+            self._reply_for[feature] = REPLY_LINES
+
+    def watch_call(self, sensors: Any) -> None:
+        """A voice call starts (``sensors``: who face / voice recognition found) or ends (None)."""
+        self.sensors = sensors
+        self._reply_for.clear()
+
+    def ai_replied(self, text: str, *, filler: bool = False) -> None:
+        """A voice call's final caption of LittleBot's words: logged after a decision whose line doesn't hold its
+        reply (REPLY_AFTER), so a parent sees what it did with it. ``filler``: only "hold on" (keeps waiting)."""
+        if not self._reply_for:
+            return
+        if not self.log_context():
+            self._reply_for.clear()
+            return
+        text = " ".join(str(text or "").split())
+        if not text:
+            return
+        after = ", ".join(self._reply_for)
+        log.info("decide: LittleBot then said (after %s): %s%s", after, text[:REPLY_CHARS],
+                 "..." if len(text) > REPLY_CHARS else "")
+        for f in list(self._reply_for):
+            left = 0 if not filler else self._reply_for[f] - 1
+            if left > 0:
+                self._reply_for[f] = left
+            else:
+                del self._reply_for[f]
 
     def used(self, feature: str, theirs: str, answer: Answer | None = None) -> None:
         """The decider's answer was acted on without LittleBot's own way (e.g. no card, without a text-model

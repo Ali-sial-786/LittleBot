@@ -1121,6 +1121,7 @@ class LiveCall:
             if event.final:
                 text, self._assistant_turn = event.text, ""
                 self._caption("robot", text)
+                self._decider_heard_ai(text)
                 self._check_names(text)
                 if self._director is not None:
                     self._director.said(text)
@@ -2115,9 +2116,19 @@ class LiveCall:
 
         decider = get_decider(self.ctx)
         if on:
-            decider.sensors = self._sensed
+            decider.watch_call(self._sensed)
         elif decider.sensors == self._sensed:
-            decider.sensors = None
+            decider.watch_call(None)
+
+    def _decider_heard_ai(self, text: str) -> None:
+        """LittleBot's words, for the decision log (after a routing, concern... decision: what it did with it)."""
+        from littlebot.decide import get_decider  # noqa: PLC0415
+        from littlebot.screens.director import FILLER  # noqa: PLC0415
+
+        try:
+            get_decider(self.ctx).ai_replied(text, filler=bool(FILLER.match(text)))
+        except Exception:  # noqa: BLE001 - the log must never break the call
+            log.debug("live voice: logging the reply for a decision failed", exc_info=True)
 
     def _sensed(self) -> dict[str, str]:
         from littlebot.safety.content import sanitize_user_text  # noqa: PLC0415
@@ -2126,6 +2137,9 @@ class LiveCall:
         heard = [c["text"] for c in self._captions if c["who"] == "heard"]
         if heard:  # the decider's own state usually has it too (then it isn't repeated)
             out["last_heard"] = sanitize_user_text(" ".join(heard[-1].split()), max_chars=300)
+        said = [c["text"] for c in self._captions if c["who"] == "robot"]
+        if said:
+            out["littlebot_said_last"] = said[-1]
         if self._faces is not None:
             out["camera_sees"] = self._faces.summary()
         if self._voices is not None:

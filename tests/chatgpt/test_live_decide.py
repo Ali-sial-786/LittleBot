@@ -81,6 +81,22 @@ async def test_the_log_gets_the_last_thing_heard_and_who_was_recognised(live, ct
         call._faces = call._voices = None
 
 
+async def test_after_a_decision_the_log_gets_what_littlebot_said_next(live, ctx, caplog):
+    caplog.set_level(logging.INFO, logger="littlebot.decide")
+    svc, server, _audio, _provider, _alerts = live
+    use_decision_model(ctx, decision_answers("x", 0.05), modes={"concern": "shadow", "naming": "off"})
+    await connect(svc, server)
+    hear(server, "she climbed up on the kitchen counter")
+    await wait_for(lambda: "concern (shadow)" in caplog.text)
+    for line in ("Hold on, one moment!", "Please help her down, counters are high!", "Anything else?"):
+        server.send({"type": "turn.done", "turn": {"role": "assistant", "transcript": line}})
+    await wait_for(lambda: "counters are high" in caplog.text)
+    await asyncio.sleep(0.1)
+    said = [r.getMessage() for r in caplog.records if "LittleBot then said" in r.getMessage()]
+    assert said == ["decide: LittleBot then said (after concern): Hold on, one moment!",  # "hold on" keeps waiting
+                    "decide: LittleBot then said (after concern): Please help her down, counters are high!"]
+
+
 async def test_on_but_a_face_it_cant_name_stays_the_word_lists_way(ctx, make_live):
     provider = ToolProvider(text="Sure.")
     svc, server, _audio = await make_live(provider)

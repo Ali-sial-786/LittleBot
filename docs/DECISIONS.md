@@ -70,6 +70,13 @@ decide: answered (shadow): LittleBot's way answer, openai stalling, different | 
 tomorrow | LittleBot_said: Let me check that for you! | p_yes: 0.08 | camera_sees: Ali (dad) | voice_is: Ali (dad), 0.81
 ```
 
+A decision made before LittleBot answers (routing, concern, browser, videos, names) is followed by what it said
+next, so you see what it did with it (a "hold on" line doesn't end the wait; at most 3 lines):
+
+```
+decide: LittleBot then said (after routing): I can see a red toy car in your hand!
+```
+
 That puts names and what was said in the log on the robot (`data/logs`, rotated), only while a provider is
 chosen; switch it off and lines are labels only. Counts per feature and the latest disagreements:
 
