@@ -148,8 +148,8 @@ class Decision:
 
 # ---------------------------------------------------------------- words
 _LEAD = (r"(?:(?:ok|okay|right|alright|all right|and|so|then|now|great|good|done|thanks|thank you|cool|yes|yeah|"
-         r"please|wait|sorry|oops|no|hey|littlebot|little bot|robot|can you|could you|you can) )*")
-_TAIL = r"(?: (?:please|now|thanks|thank you|littlebot|little bot|robot))*"
+         r"please|wait|sorry|oops|no|hey|littlebot|little bot|lil bot|robot|can you|could you|you can) )*")
+_TAIL = r"(?: (?:please|now|thanks|thank you|littlebot|little bot|lil bot|robot))*"
 _CARD_NOUN = r"(?:card|screen|picture|page|recipe|timer|weather|forecast|clock|list|sum|word|fact|facts)"
 CLOSE_WORDS = re.compile(
     rf"^{_LEAD}(?:"

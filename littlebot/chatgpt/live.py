@@ -137,8 +137,8 @@ SEE_SENTENCES = re.compile(r"what (?:is|are) (?:(?:this|these)(?: (?:thing|thing
                            r"(?:that|those) (?:thing|things|one|ones))")
 FOLLOW_UPS = re.compile(r"(?:and|what about|how about) (?:this|that|these|those|now)(?: one| ones| time)?|"
                         r"how many (?:now|this time)|(?:what about|how about|and) (?:this|that) (?:one )?now")
-_FILLERS = re.compile(r"^(?:(?:hey|hi|oh|ooh|wow|look|so|ok|okay|um|uh|littlebot|little bot|robot) )+|"
-                      r"(?: (?:littlebot|little bot|robot|please))+$")
+_FILLERS = re.compile(r"^(?:(?:hey|hi|oh|ooh|wow|look|so|ok|okay|um|uh|littlebot|little bot|lil bot|robot) )+|"
+                      r"(?: (?:littlebot|little bot|lil bot|robot|please))+$")
 # "Do you know who I am?", "who's this?": answered by face recognition (littlebot/vision/faces.py), when it's on.
 # Whole sentences (after _sentences), so "who is this song by" or "who is the president" never count.
 WHO_SENTENCES = re.compile(
@@ -172,9 +172,9 @@ HUSH_QUIET_LEVEL = 0.01  # RMS (full scale 1.0) below which a 20 ms frame is qui
 # ("stop", "be quiet", "shh") makes the voice go quiet and wait for them (QUIET_END_S: then the call ends),
 # except as their first words in a call (a wake word heard by mistake): then it ends too. The wake word
 # listens again after a call.
-_STOP_LEAD = (r"(?:ok|okay|oh|um+|uh+|no|hey|please|just|alright|all right|littlebot|little bot|bot|robot|"
+_STOP_LEAD = (r"(?:ok|okay|oh|um+|uh+|no|hey|please|just|alright|all right|littlebot|little bot|lil bot|bot|robot|"
               r"(?:can|could|would|will) you(?: please)?|you can|i want you to|i need you to)")
-_STOP_TAIL = r"(?: (?:please|now|thanks|thank you|littlebot|little bot|bot|robot))*$"
+_STOP_TAIL = r"(?: (?:please|now|thanks|thank you|littlebot|little bot|lil bot|bot|robot))*$"
 _HUSH_WHAT = (r"(?:stop(?: (?:talking|it|now|that|for now))*|stop talking to me|be quiet|quiet|shh+|hush|shush|"
               r"shut up|that'?s enough|enough)")
 _END_WHAT = (r"(?:stop(?: (?:talking|it|now|that|for now))* and (?:stop )?listening|"
@@ -2609,7 +2609,7 @@ USER_FACE_CUE = re.compile(r"\b(?:face|faces|wink\w*|peek[- ]?a[- ]?boo|peekaboo
 def _greets_robot(text: str, robot: str) -> bool:
     """ "Hi LittleBot, it's Ali..." / "Hey Little Bot, can you..." (the person's words), not "Hi, LittleBot here!"."""
     parts = re.findall(r"[A-Z]?[a-z]+|[A-Z]+(?![a-z])|\d+", robot or "") or [robot or "LittleBot"]
-    name = r"[\s-]*".join(re.escape(p) for p in parts)
+    name = r"[\s-]*".join("(?:little|lil)" if p.lower() == "little" else re.escape(p) for p in parts)
     return re.match(rf"^\W*(?:(?:hi|hey|hello|okay|ok|so)\W+)+{name}\b(?!(?:'s)?\W*(?:here|speaking|is here)\b)", text,
                     re.IGNORECASE) is not None
 

@@ -296,7 +296,7 @@ class BargeInDetector:
 
 _GA_LEAD = (r"(?:oops|whoops|oopsie|oh|ah|uh|um|erm|hmm|sorry|so sorry|i'?m sorry|my bad|my mistake|pardon(?: me)?|"
             r"excuse me|no|nope|never ?mind|ok|okay|it'?s (?:ok|okay|fine|all right|alright)|all right|alright|sure|"
-            r"yes|yeah|littlebot|little bot|robot|bot)")
+            r"yes|yeah|littlebot|little bot|lil bot|robot|bot)")
 _GA_WHAT = (r"(?:go ahead|go on|carry on|keep going|keep talking|continue|(?:please |you can |you )continue|"
             r"you go(?: ahead| on)?|you first|after you|as you were|(?:please )?finish(?: what you were saying| your "
             r"sentence| it| that)?|go for it|(?:what )?you were saying|what were you saying|sorry (?:to interrupt|for "

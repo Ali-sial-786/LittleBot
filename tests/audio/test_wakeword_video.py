@@ -73,14 +73,14 @@ async def test_a_video_keeps_the_wake_word_listening_with_stricter_rules(vrig, c
     r = await vrig()
     await _listening(r)
     st = r.wake.status()
-    assert st["during_video"] is True and st["video_phrases"] == ["hey little bot"]
-    assert st["detail"] == "Listening for “hey little bot” (a video is playing)."
+    assert st["during_video"] is True and st["video_phrases"] == ["hey little bot", "hey lil bot"]
+    assert st["detail"] == "Listening for “hey little bot” or “hey lil bot” (a video is playing)."
     r.rec.say("hey bot")  # "hey, but ..." / "hey buddy" in videos: not while a video plays
     r.rec.say("hey little bot", conf=0.6)  # below wake.video_min_confidence (0.7)
     await until(lambda: r.wake.video_ignored == 2, what="both ignored")
     await asyncio.sleep(0.2)
     assert r.live.calls == [] and r.wake.triggers == 0 and r.ctx.state.state == RobotState.PLAYING_MEDIA
-    assert "wake word: 'hey bot' ignored while a video plays (only 'hey little bot' counts then)" in caplog.text
+    assert "wake word: 'hey bot' ignored while a video plays (only 'hey little bot' / 'hey lil bot' counts then)" in caplog.text
     assert "'hey little bot' ignored while a video plays (word confidence below wake.video_min_confidence 0.7)" \
         in caplog.text
     assert r.wake.status()["video_ignored"] == 2

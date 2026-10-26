@@ -204,7 +204,7 @@ async def _not_listening(r: Any, paused: str | None = None) -> None:
 # ------------------------------------------------------------------ pure helpers
 @pytest.mark.parametrize("raw,norm", [
     ("Hey LittleBot!", "hey little bot"), ("hey littlebot", "hey little bot"), ("HEY, Little  Bot.", "hey little bot"),
-    ("Hey Bot", "hey bot"), ("", ""),
+    ("Hey Bot", "hey bot"), ("Hey LilBot", "hey lil bot"), ("hey lil' bot", "hey lil' bot"), ("", ""),
 ])
 def test_normalise_phrase(raw, norm):
     assert normalise_phrase(raw) == norm
@@ -679,7 +679,7 @@ async def test_wake_enabled_defaults_on():
     ctx = make_test_context()
     try:
         assert ctx.settings.get("wake.enabled") is True
-        assert ctx.config.wake.phrases == ["hey little bot", "hey littlebot", "hey bot"]
+        assert ctx.config.wake.phrases == ["hey little bot", "hey littlebot", "hey lil bot", "hey bot"]
     finally:
         ctx.db.close()
 

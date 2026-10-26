@@ -194,9 +194,9 @@ class WakeConfig(_Section):
     Recognised on the robot with Vosk (offline); nothing is sent anywhere until a phrase is heard."""
 
     enabled: bool = True  # default of the parent's dashboard switch (setting ``wake.enabled``)
-    # Words the model knows; "littlebot" is heard as "little bot". Two-word phrases ("hey bot")
-    # trigger by mistake more often (e.g. on "hey but"): remove it here if that happens.
-    phrases: list[str] = Field(default_factory=lambda: ["hey little bot", "hey littlebot", "hey bot"])
+    # Words the model knows; "littlebot" is heard as "little bot", "lilbot" as "lil bot". Two-word phrases
+    # ("hey bot") trigger by mistake more often (e.g. on "hey but"): remove it here if that happens.
+    phrases: list[str] = Field(default_factory=lambda: ["hey little bot", "hey littlebot", "hey lil bot", "hey bot"])
     model_path: str = "models/vosk-model-small-en-us-0.15"  # scripts/download_models.py vosk-en
     min_confidence: float = Field(default=0.5, ge=0.0, le=1.0)  # per word; higher = fewer false triggers
     distractors: bool = True  # also offer common words to the recogniser: far fewer false triggers
@@ -208,7 +208,7 @@ class WakeConfig(_Section):
     during_videos: bool = True  # False: not listening while a video plays
     # Only these count while a video plays ([] = all of ``phrases``): "hey bot" alone is what videos say
     # by mistake most ("hey, but...", "hey buddy"); measured: about 4x fewer false triggers.
-    video_phrases: list[str] = Field(default_factory=lambda: ["hey little bot"])
+    video_phrases: list[str] = Field(default_factory=lambda: ["hey little bot", "hey lil bot"])
     video_min_confidence: float = Field(default=0.7, ge=0.0, le=1.0)  # stricter than min_confidence
     # Turn the video down after a "hey ..." so the rest of the phrase is heard over loud videos. Off by
     # default: videos say "hey" often, and every one dips the sound for video_duck_seconds.

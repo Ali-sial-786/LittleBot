@@ -33,7 +33,7 @@ _LEAD = r"(?:(?:it'?s|it is) me,?|it'?s|it is|this is|i'?m|i am|my name is|here'
 _TAIL = r"(?:,? (?:here|speaking|again|now|talking|by the way|back))?"
 _CLAIM = re.compile(
     rf"{_LEAD} (?:(?:{_POSS} )?(?P<role>{_ROLE_RE})(?:,? (?P<name1>{_NAME}))?|(?P<name2>{_NAME})(?:,? (?:{_POSS} )?(?P<role2>{_ROLE_RE}))?){_TAIL}", re.IGNORECASE)
-_LEADING = re.compile(r"^(?:(?:hi|hello|hey|oh|okay|ok|yes|yeah|well|so|um+|uh+|littlebot|little bot|robot|"
+_LEADING = re.compile(r"^(?:(?:hi|hello|hey|oh|okay|ok|yes|yeah|well|so|um+|uh+|littlebot|little bot|lil bot|robot|"
                       r"good morning|good night|good evening|no)[ ,]+)+", re.IGNORECASE)
 # Words that can follow "I'm" / "it's" / "this is" at the start of a sentence but aren't names.
 NOT_NAMES = frozenset("""

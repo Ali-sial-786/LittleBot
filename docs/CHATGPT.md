@@ -355,7 +355,9 @@ as if you had pressed **Start live voice**.
   "uh-oh", the status line says why and the log has `wake word: live voice could not start (...)`.
   It listens again after 4 seconds (`wake.cooldown_seconds`); it never retries by itself.
 * **False starts.** "Hey Bot" is short and sounds like "hey but", "hey bud" or "hey boss";
-  "Hey LittleBot" is much safer. With synthetic voices and 69 deliberately similar phrases
+  "Hey LittleBot" is much safer. "Hey Lil Bot" works too: with 8 synthetic voices at 2 speeds it was heard
+  15 times of 16 (13 before it was a phrase, as "hey little bot" or "hey bot"), and of 20 similar phrases
+  ("hey lil buddy", "hey kill bot" …) it added 4 false starts in 320 tries. With synthetic voices and 69 deliberately similar phrases
   ("hey there little guy", "little bottle", "hey bob" …) "Hey LittleBot" never started by mistake,
   "Hey Bot" did for a handful. If it happens to you, keep only the long phrase:
   `wake: {phrases: ["hey little bot"]}` in `config/local.yaml`. Real children's voices, accents and
@@ -377,13 +379,13 @@ as if you had pressed **Start live voice**.
 ```yaml
 wake:                                # config/local.yaml
   enabled: true                      # default of the dashboard switch
-  phrases: ["hey little bot", "hey littlebot", "hey bot"]   # "littlebot" is heard as "little bot"
+  phrases: ["hey little bot", "hey littlebot", "hey lil bot", "hey bot"]   # "littlebot" is heard as "little bot"
   model_path: models/vosk-model-small-en-us-0.15
   min_confidence: 0.5                # per word, 0..1: higher = fewer false starts, more misses
   distractors: true                  # common words the recogniser may pick instead: fewer false starts
   cooldown_seconds: 4
   during_videos: true                # listen while a video plays (with the stricter rules below)
-  video_phrases: ["hey little bot"]  # only these count during a video ([] = all phrases)
+  video_phrases: ["hey little bot", "hey lil bot"]  # only these count during a video ([] = all phrases)
   video_min_confidence: 0.7
   video_duck: false                  # turn the video down for a moment after "hey ..." (off: videos say "hey" a lot)
   video_no_words_seconds: 15         # a call that paused a video and nobody talks: back to the video
@@ -901,7 +903,7 @@ choice on the dashboard (settings `info.location`, `info.units`) wins over `loca
 Wake word (`wake:` section, `WakeConfig`): `enabled` (`true`, the switch's default), `phrases`,
 `model_path` (`models/vosk-model-small-en-us-0.15`), `min_confidence` (`0.5`), `distractors`
 (`true`), `cooldown_seconds` (`4`), `sound` (`listen`); during a video: `during_videos` (`true`),
-`video_phrases` (`["hey little bot"]`), `video_min_confidence` (`0.7`), `video_duck` (`false`),
+`video_phrases` (`["hey little bot", "hey lil bot"]`), `video_min_confidence` (`0.7`), `video_duck` (`false`),
 `video_duck_volume` (`0.3`), `video_duck_seconds` (`2`), `video_pause_wait_seconds` (`1`),
 `video_no_words_seconds` (`15`); and `media.chat_pause_minutes` (`2`). See [Wake word](#wake-word-hey-littlebot)
 and [YOUTUBE_ON_PI.md section 10](YOUTUBE_ON_PI.md#10-talking-to-littlebot-during-a-video).

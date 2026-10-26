@@ -156,8 +156,8 @@ _VERBS = frozenset("""
 """.split())
 
 _PREFIXES = re.compile(
-    r"^(?:(?:hey|hi|ok|okay|now|so|and|then|also|please|littlebot|little bot|robot|bot)\b ?"
-    r"|(?:tell|ask|get|have) (?:littlebot|little bot|the robot|the toy|it|yourself) (?:to )?"
+    r"^(?:(?:hey|hi|ok|okay|now|so|and|then|also|please|littlebot|little bot|lil bot|robot|bot)\b ?"
+    r"|(?:tell|ask|get|have) (?:littlebot|little bot|lil bot|the robot|the toy|it|yourself) (?:to )?"
     r"|(?:can|could|would|will) you (?:please )?|you should |you can |i want you to |i'd like you to "
     r"|try to |go ahead and |time to |let's |lets |let us |quickly |just )"
 )

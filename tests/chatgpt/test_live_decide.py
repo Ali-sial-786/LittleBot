@@ -153,6 +153,7 @@ async def test_concern_only_adds_an_alert_when_on(live, ctx, mode, alerted):
     ("Hi LittleBot, it's Ali, can you look up the weather?", True),  # from a real call
     ("Hey Little Bot, what's the weather?", True),
     ("Okay, little-bot, can you play a song?", True),
+    ("Hey Lil Bot, can you look up the weather?", True),
     ("Hi, LittleBot here! What shall we do?", False),
     ("Hello! LittleBot's here.", False),
     ("Hi Ali! Want to hear about the weather?", False),

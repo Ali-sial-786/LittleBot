@@ -1,4 +1,4 @@
-"""Wake word: say "Hey LittleBot" (or "Hey Bot") and LittleBot starts a live voice call, hands-free.
+"""Wake word: say "Hey LittleBot" (or "Hey Lil Bot", "Hey Bot") and LittleBot starts a live voice call, hands-free.
 
 Keyword spotting runs on the robot with Vosk (offline Kaldi speech recognition) and its small
 English model (``vosk-model-small-en-us-0.15``: 40 MB download, ~130 MB RAM, shared with the
@@ -134,7 +134,7 @@ bought boot bud pot hot top tot pop dot bobby bob baby buddy mom dad look robot 
 
 _CAMEL = re.compile(r"(?<=[a-z])(?=[A-Z])")
 _NON_WORD = re.compile(r"[^a-z' ]+")
-_COMPOUNDS = {"littlebot": "little bot"}  # words the model doesn't know, as it hears them
+_COMPOUNDS = {"littlebot": "little bot", "lilbot": "lil bot"}  # words the model doesn't know, as it hears them
 
 PAUSE_TEXT: dict[str, str] = {
     "starting": "Starting…",
