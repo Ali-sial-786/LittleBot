@@ -125,7 +125,15 @@ def _weather(text: str) -> Asked | None:
         if not kept:
             return None  # "in paris" (not capitalised): can't tell; the text model reads it
         place = " ".join(kept)
-    return Asked("weather", {"place": place, "days": 7 if _WEEK.search(text) else 2})
+    from littlebot.screens.weather_words import weather_view  # noqa: PLC0415
+
+    view, day = weather_view(text)  # "the hourly": the card goes up hour by hour
+    args: dict[str, Any] = {"place": place, "days": 7 if _WEEK.search(text) or view == "week" else 2}
+    if view:
+        args["view"] = view
+    if day:
+        args["day"] = day
+    return Asked("weather", args)
 
 
 def _time(text: str) -> Asked | None:
@@ -266,7 +274,10 @@ async def _answer_weather(args: dict[str, Any], box: Any, question: str,
     from littlebot.info.weather import WeatherError, get_weather  # noqa: PLC0415
 
     place, days = args.get("place"), int(args.get("days") or 2)
-    card = box.weather_card(place, days) if spawn is not None and box.screen_cards() else None
+    if args.get("day") not in (None, "today", "tomorrow"):
+        days = 7  # a weekday: the forecast has to reach it
+    card = box.weather_card(place, days, view=args.get("view"), day=args.get("day")) \
+        if spawn is not None and box.screen_cards() else None
     if card is not None:
         spawn(card)  # the forecast card goes up while the voice says it (not after)
     try:

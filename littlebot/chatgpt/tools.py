@@ -1139,8 +1139,9 @@ class RobotToolbox:
         """The screen can show cards now (quick answers, littlebot/chatgpt/quick.py)."""
         return bool(self._card_types())
 
-    def weather_card(self, place: str | None, days: int) -> Awaitable[str | None]:
-        return self._weather_card(place, days)
+    def weather_card(self, place: str | None, days: int, *, view: str | None = None,
+                     day: str | None = None) -> Awaitable[str | None]:
+        return self._weather_card(place, days, view=view, day=day)
 
     def _zoom_card(self, level: str) -> bool:
         """"Zoom into that" with a card's picture up and no browser: the picture full screen / zoomed."""
@@ -1164,8 +1165,11 @@ class RobotToolbox:
         await browser.aclose("a card was asked for")
         return True
 
-    async def _weather_card(self, place: str | None, days: int) -> str | None:
-        """The weather asked about goes on the screen too, when there is a weather card; what it shows, or None."""
+    async def _weather_card(self, place: str | None, days: int, *, view: str | None = None,
+                            day: str | None = None) -> str | None:
+        """The weather asked about goes on the screen too, when there is a weather card; what it shows, or None.
+        ``view`` / ``day``: the card's view ("hours", "week") and day ("tomorrow"); a weather card already up
+        is switched to them."""
         ct = self._card_types().get("weather")
         if ct is None:
             return None
@@ -1178,8 +1182,25 @@ class RobotToolbox:
             spec[key] = place
         if "days" in fields:
             spec["days"] = days
+        if view is None and days >= 3:
+            view = "week"
+        if view and "view" in fields:
+            spec["view"] = view
+        if day and "day" in fields:
+            spec["day"] = day
         result = await self._show_card(spec)
+        if result.get("ok") and result.get("already") and (view or day):
+            self._steer_weather(view, day)  # it is up from a moment ago: show what was asked on it
         return str(result.get("showing") or "the weather")[:200] if result.get("ok") else None
+
+    def _steer_weather(self, view: str | None, day: str | None) -> None:
+        screens = self._screens()
+        try:
+            if screens is not None:
+                args = {"view": view or "day", **({"day": day} if day else {})}
+                screens.command("view", args)
+        except Exception:  # noqa: BLE001
+            log.debug("steering the weather card failed", exc_info=True)
 
     # ------------------------------------------------------------ the browser view (littlebot/browser)
     def _browser_view(self) -> Any:

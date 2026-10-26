@@ -399,6 +399,10 @@ def local_rule(text: str, kind: str | None, actions: dict[str, Any] | None = Non
         view = next((v for v, words in _PICTURE_VIEWS if words.match(plain)), None)
         if view is not None:
             return Decision("command", action=PICTURE_ACTION, args={"view": view})
+    if kind == "weather" and "view" in actions:
+        steer = _weather_steer(plain)
+        if steer is not None:
+            return steer
     if CLOSE_WORDS.match(plain):
         return Decision("close", why="close words")
     if NEXT_WORDS.match(plain):
@@ -413,6 +417,21 @@ def local_rule(text: str, kind: str | None, actions: dict[str, Any] | None = Non
             return Decision("command", action=act)
         return Decision("close", why="timer stop words") if kind == "timer" else None
     return None
+
+
+_WEATHER_ASK = re.compile(r"\b(?:show|switch|go|change|put|see|what about|how about|and|weather|forecast|"
+                          r"looks?|look like|will it|is it|going to|gonna)\b")
+WEATHER_STEER_WORDS = 5  # this short, the view words alone steer it ("the hourly", "and tomorrow?")
+
+
+def _weather_steer(plain: str) -> Decision | None:
+    """The weather card is up: "show me the hourly", "what about Saturday?", "the week" switch its view at once."""
+    from littlebot.screens.weather_words import weather_view  # noqa: PLC0415
+
+    view, day = weather_view(plain)
+    if view is None or not (_WEATHER_ASK.search(plain) or len(plain.split()) <= WEATHER_STEER_WORDS):
+        return None
+    return Decision("command", action="view", args={"view": view, **({"day": day} if day else {})})
 
 
 # ---------------------------------------------------------------- the model's answer
