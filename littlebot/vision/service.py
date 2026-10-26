@@ -60,6 +60,7 @@ from littlebot.vision.imaging import RateMeter, brighten_if_dark, get_cv2, resiz
 from littlebot.vision.tracker import FaceTracker, TrackedFace, TrackerUpdate
 
 CameraFactory = Callable[[str], CameraDevice]
+BROWSER_OPENED, BROWSER_CLOSED = "browser.opened", "browser.closed"  # littlebot/browser/service.py OPENED, CLOSED
 
 MAX_FACES_EVENT_HZ = 15.0  # hard cap for vision.faces events
 IDLE_WAIT = 1.0  # longest sleep when nothing is going on (events wake the thread earlier)
@@ -164,7 +165,8 @@ class VisionService(Service):
         # gestures (experimental)
         self._gestures_on = bool(self.vis_cfg.gestures_enabled)  # parent setting
         self._gestures_reset = False
-        # robot-state dependent work level: active | reduced (SLEEPING) | paused (PLAYING_MEDIA)
+        # robot-state dependent work level: active | reduced (SLEEPING, the browser open) | paused (PLAYING_MEDIA)
+        self._browser_open = False  # browser.opened / browser.closed (littlebot/browser)
         self._robot_state = ctx.state.state.value
         self._mode = self._mode_for(self._robot_state)
         # publishing
@@ -211,6 +213,8 @@ class VisionService(Service):
             return "paused"  # the video player needs the CPU; camera stays open, nothing is decoded
         if robot_state == "SLEEPING":
             return "reduced"  # still notice a person arriving (wakes the robot), at a low rate
+        if self._browser_open:
+            return "reduced"  # Chromium needs the CPU and memory; photos for camera looks still work
         return "active"
 
     @staticmethod
@@ -256,7 +260,9 @@ class VisionService(Service):
             bus = self.ctx.bus
             self._subs = [bus.subscribe(Topics.PRIVACY_CHANGED, self._on_privacy),
                           bus.subscribe(Topics.SETTINGS_CHANGED, self._on_setting),
-                          bus.subscribe(Topics.STATE_CHANGED, self._on_state)]
+                          bus.subscribe(Topics.STATE_CHANGED, self._on_state),
+                          bus.subscribe(BROWSER_OPENED, self._on_browser),
+                          bus.subscribe(BROWSER_CLOSED, self._on_browser)]
         if run_thread:
             self._thread = threading.Thread(target=self._run, name="littlebot-vision", daemon=True)
             self._thread.start()
@@ -335,6 +341,12 @@ class VisionService(Service):
         if new and new != self._robot_state:
             self._robot_state = str(new)
             self._wake.set()  # the vision thread applies the new work level on its next cycle
+
+    def _on_browser(self, event: Event) -> None:
+        open_ = event.topic == BROWSER_OPENED
+        if open_ != self._browser_open:
+            self._browser_open = open_
+            self._wake.set()
 
     def _on_setting(self, event: Event) -> None:
         if event.get("key") == "vision.gestures_enabled":
@@ -743,7 +755,8 @@ class VisionService(Service):
         if mode == self._mode:
             return
         old, self._mode = self._mode, mode
-        self.log.info("vision %s -> %s (robot %s, detection %.1f/s)", old, mode, self._robot_state,
+        self.log.info("vision %s -> %s (robot %s%s, detection %.1f/s)", old, mode, self._robot_state,
+                      ", the browser is open" if self._browser_open and self._robot_state != "SLEEPING" else "",
                       0.0 if mode == "paused" else self.effective_detect_fps)
         self._tracker.gap_tolerance = self._gap_tolerance(self.effective_detect_fps)
         self._gestures.reset()

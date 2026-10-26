@@ -42,6 +42,7 @@ from typing import Any
 
 import numpy as np
 
+from littlebot.core import memory
 from littlebot.core.events import Event, Topics
 from littlebot.core.service import Service, ServiceStatus
 from littlebot.voices import store as vstore
@@ -80,7 +81,9 @@ ENROL_MAX_SAMPLES = 4  # ...at most this many per recording
 ENROL_CONSISTENT = 0.30  # every two pieces must sound alike (one voice; real speech: one person >= ~0.5, two <= ~0.2)
 ENROL_MAX_ODD = 1 / 3  # up to this share of the pieces may be left out for sounding unlike the rest (a cough, the baby)
 WAKE_TOPIC = "audio.wake_word"  # littlebot.audio.wakeword.WAKE_TOPIC: "Hey LittleBot" was heard
-UNLOAD_IDLE_S = 600.0  # the model (~75 MB) is dropped after this long without use
+# The model (~75 MB) is dropped after this long without use: a chat started again soon after keeps it; later,
+# the next chat loads it again (~0.4-1.1 s on a Pi 5, while who woke it is told a moment later).
+UNLOAD_IDLE_S = 120.0
 RECORD_SECONDS = 20.0  # the dashboard's recording
 SENTENCES = (
     "Hello LittleBot, it's me. I'm reading this so that you can learn my voice.",
@@ -291,6 +294,7 @@ class VoiceRecognition(Service):
         if self._injected or self._engine is None:
             return
         self._engine = None
+        memory.give_back_soon()
         log.info("voice recognition: model unloaded (%s)", why)
 
     def _remember_loop(self) -> None:

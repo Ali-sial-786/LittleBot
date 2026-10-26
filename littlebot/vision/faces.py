@@ -30,7 +30,8 @@ Privacy:
   ``ai.share_child_name`` off, the child's nickname in them becomes "the little one";
 * switched off: nothing is recognised and the models are unloaded; the samples stay until deleted.
 
-Cost on a Pi 5 (2 GB): SFace needs ~110 MB of RAM once loaded (only while it is used; dropped after
+Cost on a Pi 5 (2 GB): SFace needs ~110 MB of RAM once loaded (only while it is used; dropped, and given back
+to the system (littlebot/core/memory.py), after
 ``UNLOAD_IDLE_S`` without use or when switched off). One check (YuNet on a 640x480 photo, then SFace
 for each face) took ~0.1 s per face on an x86 VM, so expect ~0.2-0.3 s on the Pi; it runs in a worker
 thread every ``CHECK_EVERY_S`` (3 s) during a live call, and never otherwise.
@@ -57,6 +58,7 @@ from typing import Any, Callable, Iterable, Sequence
 
 import numpy as np
 
+from littlebot.core import memory
 from littlebot.core.events import Event, Topics
 from littlebot.vision.imaging import get_cv2, quiet_opencv
 
@@ -82,7 +84,9 @@ MAX_SAMPLES = 10  # per person; the oldest goes when a new one would make more
 SUGGESTED_SAMPLES = 5
 RETAKE_DAYS = 30  # babies' faces change fast: new samples every month or so
 LABEL_MAX = 30
-UNLOAD_IDLE_S = 600.0  # the models (~110 MB) are dropped after this long without use
+# The models (~110 MB) are dropped after this long without use: a chat started again soon after keeps them;
+# later, the next chat loads them again (~0.4-1 s on a Pi 5; the call connects without waiting for them).
+UNLOAD_IDLE_S = 120.0
 # During a live call: a check every CHECK_EVERY_S. Someone counts as arrived after ARRIVE_SIGHTINGS
 # sightings within ARRIVE_WINDOW_S (the very first check of a call counts on its own) and as gone
 # LEAVE_AFTER_S after they were last seen (a baby turning away for a moment hasn't left). The voice is
@@ -581,6 +585,7 @@ class FaceRecognition:
         if self._injected or self._engine is None:
             return
         self._engine = None
+        memory.give_back_soon()
         log.info("face recognition: models unloaded (%s)", why)
 
     def _used(self) -> None:

@@ -47,4 +47,9 @@ def give_back() -> None:
             log.debug("giving memory back failed", exc_info=True)
 
 
-__all__ = ["give_back"]
+def give_back_soon() -> None:
+    """``give_back`` on a thread of its own (it takes ~25 ms: not on the event loop)."""
+    threading.Thread(target=give_back, name="give-back-memory", daemon=True).start()
+
+
+__all__ = ["give_back", "give_back_soon"]

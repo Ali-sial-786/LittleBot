@@ -661,3 +661,21 @@ async def test_threaded_state_change_pauses_capture(make_ctx):
         assert await wait_until(lambda: cam.frames_read > n + 2, timeout=1.0)
     finally:
         await svc.stop()
+
+
+async def test_the_browser_open_reduces_detection_but_photos_still_work(make_ctx):
+    ctx = make_ctx(camera={"detect_fps": 6.0}, vision={"sleep_detect_fps": 1.5})
+    det = MockDetector()
+    svc, cam, clock = build(ctx, detector=det)
+    await svc.start(run_thread=False)
+    try:
+        ctx.bus.publish("browser.opened", {"source": "tool", "host": "www.google.com", "search": True})
+        calls = det.calls
+        run_for(svc, clock, 4.0)
+        assert svc.status()["detect_mode"] == "reduced" and det.calls - calls in (6, 7)  # 1.5 Hz, not 6
+        assert svc._mode_for(svc._robot_state) != "paused"  # a camera look during the chat still gets a photo
+        ctx.bus.publish("browser.closed", {"reason": "nobody used it"})
+        run_for(svc, clock, 1.0)
+        assert svc.status()["detect_mode"] == "active"
+    finally:
+        await svc.stop()
