@@ -34,6 +34,7 @@ from __future__ import annotations
 import asyncio
 import collections
 import dataclasses
+import functools
 import logging
 import math
 import re
@@ -381,6 +382,7 @@ class LiveAudio:
         self._queue_cap_s = MAX_QUEUED_S
         self._played: collections.deque[tuple[float, float]] = collections.deque(maxlen=48)  # (heard at, RMS)
         self._identify: Callable[..., Any] | None = None  # ctx.voices.identify (optional)
+        self._talking_with: Callable[[], Any] | None = None  # the call's current grown-up (optional)
         self._on_barge: Callable[[str, dict[str, Any]], None] | None = None
         self._id_tasks: set[asyncio.Future[Any]] = set()
         self._barge_at = 0.0
@@ -466,12 +468,16 @@ class LiveAudio:
         return f"{ec}: one at a time (half-duplex; barge-in off, {why})"
 
     def setup_barge_in(self, *, identify: Callable[..., Any] | None = None,
-                       on_change: Callable[[str, dict[str, Any]], None] | None = None) -> None:
+                       on_change: Callable[[str, dict[str, Any]], None] | None = None,
+                       talking_with: Callable[[], Any] | None = None) -> None:
         """The call's hooks: ``identify(samples, rate)`` (ctx.voices, optional) and ``on_change(what, info)``
         with what = "interrupted" (the voice stopped for them), "heard" (ChatGPT has their words) or
-        "carried_on" (a false alarm: the voice plays on). Called in the event loop."""
+        "carried_on" (a false alarm: the voice plays on). ``talking_with()``: the person_id of the grown-up
+        the voice is talking with, or None: someone else recognised cutting in doesn't stop the voice (they
+        were talking to each other). Called in the event loop."""
         self._identify = identify if callable(identify) else None
         self._on_barge = on_change
+        self._talking_with = talking_with if callable(talking_with) else None
 
     def _start_streams(self, sd: Any) -> tuple[dict[str, Any], dict[str, Any]]:
         import av  # noqa: PLC0415  (comes with aiortc)
@@ -745,8 +751,24 @@ class LiveAudio:
             run.vetoed = True
             if self._bstate == _HELD and self._barge_run is run:
                 self._carry_on("voice recognition says it was a child")
-        else:
-            run.grown_up = True
+            return
+        partner = self._partner()
+        who = getattr(match, "person_id", None)
+        if partner is not None and who is not None and who != partner:
+            run.vetoed = True  # someone else in the room, not the grown-up it is talking with
+            if self._bstate == _HELD and self._barge_run is run:
+                self._carry_on(f"voice recognition says it was {run.voice or 'someone else'}, not who it is "
+                               "talking with")
+            return
+        run.grown_up = True
+
+    def _partner(self) -> Any:
+        if self._talking_with is None:
+            return None
+        try:
+            return self._talking_with()
+        except Exception:  # noqa: BLE001 - optional: anyone may cut in then
+            return None
 
     def _interrupt(self, now: float) -> None:
         """A grown-up is talking over the voice: fade it out and hold it, send them from their first word."""
@@ -865,6 +887,20 @@ class LiveAudio:
             log.debug("barge-in callback failed", exc_info=True)
 
     # ------------------------------------------------------------ speaker
+    def play_thinking(self) -> bool:
+        """A soft "thinking" sound (two quiet notes, falling; 0.4 s) while LittleBot works on a hand-off, played
+        through the call's own speaker stream. Only into silence: never over the voice or someone talking.
+        True: queued."""
+        if self._muted or self._hold or self._bstate != _WATCH or self.speaking:
+            return False
+        pcm = _thinking_sound(self.out_rate)
+        with self._lock:
+            if self._out_queued:
+                return False
+            self._out.append(pcm.copy())
+            self._out_queued += len(pcm)
+        return True
+
     def play_frame(self, frame: Any) -> None:
         """Queue one decoded frame of the model's voice (an av.AudioFrame from the remote track)."""
         if self._muted:
@@ -950,6 +986,20 @@ class LiveAudio:
             self._played.append((now + self._output_delay(time_info), rms * self._vol))
         y = y * self._vol
         outdata[:] = np.repeat(y[:, None], self._out_channels, axis=1) if self._out_channels > 1 else y[:, None]
+
+
+THINKING_GAIN = 0.3  # of full scale: a hint, quieter than the voice
+
+
+@functools.lru_cache(maxsize=2)
+def _thinking_sound(rate: int) -> np.ndarray:
+    """Two soft sine notes, D5 then A4 (falling, unlike the rising "listen" earcon), with gentle edges."""
+    def note(freq: float, dur: float) -> np.ndarray:
+        t = np.arange(int(dur * rate)) / rate
+        edge = np.minimum(1.0, np.minimum(t / 0.02, (dur - t) / 0.06))
+        return np.sin(2 * math.pi * freq * t) * np.exp(-t / 0.25) * edge
+    gap = np.zeros(int(0.05 * rate))
+    return (np.concatenate([note(587.33, 0.15), gap, note(440.0, 0.2)]) * THINKING_GAIN).astype(np.float32)
 
 
 class CarryFeed:

@@ -639,7 +639,10 @@ class FaceRecognition:
             image = decode_jpeg(jpeg)
             return image, engine.look(image, min_score=min_score, min_px=min_px)
 
-        return await asyncio.to_thread(run)  # the photo goes with this call: nothing keeps it
+        try:
+            return await asyncio.to_thread(run)  # the photo goes with this call: nothing keeps it
+        finally:
+            self._used()  # the idle time counts from the end of a check, not its start
 
     async def who_is_there(self) -> Sighting | None:
         """Who is in front of the camera now (one photo, then dropped), or None when nobody is enrolled.

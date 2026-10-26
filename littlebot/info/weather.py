@@ -355,6 +355,10 @@ class WeatherService:
         choice = str(self.ctx.settings.get("info.units", self.cfg.units) or "auto")
         return choice if choice in ("auto", "celsius", "fahrenheit") else "auto"
 
+    def home_set(self) -> bool:
+        """Home was chosen on the dashboard (no lookup needed to know where it is)."""
+        return self._stored_home() is not None
+
     async def home(self) -> tuple[Place | None, str]:
         """(home, where it came from: dashboard | config | internet | none). May raise WeatherError."""
         stored = self._stored_home()

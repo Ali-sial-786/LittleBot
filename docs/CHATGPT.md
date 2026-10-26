@@ -143,7 +143,10 @@ word. The face goes from speaking to listening at once.
   (about 80-260 Hz) that is clearly louder than what is left of its own voice. The baby's babbling
   (300-600 Hz), a cough, a short "mm" or a TV quieter than you don't. When voice recognition knows
   who is talking (`ctx.voices`, if set up), a known grown-up interrupts a little sooner (0.25 s) and
-  a child never.
+  a child never. Once it knows which grown-up it is talking with (their last turn's voice), someone
+  else it recognises talking over it doesn't stop it either: they are talking to each other, and the
+  voice carries on with its answer ("false alarm (voice recognition says it was Ira, not who it is
+  talking with)" in the journal).
 * **Didn't mean to?** Say only "oops, go ahead", "sorry, carry on", "never mind, keep going" or
   similar, and it carries on from where it stopped, without starting over.
 * **Just a noise?** If no words of yours reach ChatGPT within 1.2 s (for example someone laughed),
@@ -330,9 +333,16 @@ as if you had pressed **Start live voice**.
   [Vosk](https://alphacephei.com/vosk/) and a small English model (40 MB). Microphone audio is
   processed in memory; only the sentence the recogniser is still deciding on is kept (at most
   8 seconds) and it is forgotten as soon as that sentence turns out not to hold the phrase.
-  **Nothing is sent anywhere until it hears the phrase**; then the rest of that sentence goes
+  **Nothing is sent anywhere until it hears the phrase** (or a follow-up, below); then the rest of that sentence goes
   into the call. It is never written to disk, and it is dropped if live voice can't start or
   connect. From then on it is a normal live voice call (privacy above).
+* **"Hey Bot" is stricter.** The short phrase is what starts calls by mistake most, so it needs a
+  surer hearing (`wake.short_min_confidence`, 0.7) unless someone's face was in front of the camera in
+  the last 10 s. The longer phrases work as before.
+* **Follow-up without the wake word.** For 8 s after a chat ended by itself (its time limit, a quiet
+  hang-up, a lost connection; not after "goodbye", "stop" or a video starting), a few words said by
+  someone facing the camera start the next chat, and those words are its first turn. This is the one
+  exception to "nothing is sent until it hears the phrase". `wake.follow_up_seconds: 0` turns it off.
 * **The switch:** **AI** → **Live voice** → **Wake word: say "Hey LittleBot" to start live voice**
   (on by default). The line under it says "Listening for …", why it is paused or what is missing,
   and what happened the last time it heard you. Saying the phrase counts as a grown-up starting
@@ -382,6 +392,10 @@ wake:                                # config/local.yaml
   phrases: ["hey little bot", "hey littlebot", "hey lil bot", "hey bot"]   # "littlebot" is heard as "little bot"
   model_path: models/vosk-model-small-en-us-0.15
   min_confidence: 0.5                # per word, 0..1: higher = fewer false starts, more misses
+  short_min_confidence: 0.7          # "hey bot" (two words) needs this, or a face in front of the camera
+  short_face_seconds: 10             # ...seen this recently
+  follow_up_seconds: 8               # after a chat ended by itself: talking while facing it starts a new one (0 = off)
+  follow_up_words: 2                 # ...with at least this many words
   distractors: true                  # common words the recogniser may pick instead: fewer false starts
   cooldown_seconds: 4
   during_videos: true                # listen while a video plays (with the stricter rules below)
@@ -526,6 +540,10 @@ it was handed, so LittleBot answers as early as it can:
   whose picture is still loading after 0.4 s goes up by itself while the voice speaks.
 * The text model's connection is opened while the call connects, so the first hand-off doesn't pay
   for it.
+
+While it works and the voice is quiet, a soft two-note "thinking" sound plays (after 1.5 s, then every
+3 s, at most 4 times; `chatgpt.live_thinking_sound: false` turns it off). When home is set on the
+dashboard, its forecast is fetched while a call connects, so the first weather question is instant.
 
 If no answer (or first sentence) is ready within **3.5 seconds**, the voice is told straight away to
 say it's thinking, and the answer follows when it comes (25 s at most; after that the voice says
@@ -692,7 +710,7 @@ All keys and defaults are listed in the [technical section](#configuration).
 | Wake word: **The wake-word model is missing** / **isn't available** | The vosk library or its model is not installed | `.venv/bin/python -m pip install --prefer-binary -e '.[local-stt]'` and `.venv/bin/python scripts/download_models.py vosk-en`, then `systemctl --user restart littlebot` |
 | Wake word: "uh-oh" after the listening sound | Live voice couldn't start; the status line under the switch says why (often: not signed in, or cloud communication off) | Fix that reason, then say it again |
 | Wake word: nothing happens | Paused (the status line says why), too far away, or the microphone is too quiet | Speak within about a metre; raise **Audio & devices → Microphone level**; check **Audio & devices** → test the microphone |
-| Live voice starts by itself | A false start on "Hey Bot" | Set `wake.phrases: ["hey little bot"]`, or raise `wake.min_confidence` (for example 0.8) |
+| Live voice starts by itself | A false start on "Hey Bot" | "Hey bot" already needs `wake.short_min_confidence` (0.7) or a face in front of the camera; the journal says "'hey bot' ignored" for the ones it skipped. Raise it (0.85), or set `wake.phrases: ["hey little bot", "hey lil bot"]` |
 | A video pauses by itself and the voice says hello | The wake word heard something like "hey little bot" in the video | Nobody answering, the video carries on after `wake.video_no_words_seconds` (15 s); say "keep watching" to carry on at once. If it happens often: raise `wake.video_min_confidence` (0.85), or `wake.during_videos: false` |
 | Wake word: nothing happens during a video | The video is louder than you at the microphone, or you said "Hey Bot" (only "Hey LittleBot" counts during a video) | Say "Hey LittleBot" louder or closer; lower the video volume; try `wake.video_duck: true`. The log shows what was heard and ignored ("ignored while a video plays") |
 | "Keep watching" doesn't carry on | The video stopped meanwhile (2 minutes after the chat: `media.chat_pause_minutes`, or the day's video time ran out) | Start it again from the Videos page |
@@ -907,6 +925,7 @@ back to text-to-speech; the index is re-read when the file changes. Dashboard: `
 | `live_barge_in_min_level` | `0.008` | and at least this loud (microphone RMS, full scale 1.0) |
 | `live_barge_in_max_pitch_hz` | `260.0` | (150-400) voiced above this counts as a child and doesn't interrupt |
 | `live_barge_in_false_alarm_ms` | `2500` | (300-5000) no words of theirs from ChatGPT by then: the voice carries on |
+| `live_thinking_sound` | `true` | a soft sound while a hand-off is worked on and the voice is quiet |
 | `live_voice_level` | `0.012` | speaker RMS (0..1) above which the voice counts as speaking |
 | `live_volume` | `null` | `null` = the speaker volume setting. Always capped at `audio.speaker.max_volume` |
 | `tools_enabled` | `true` | ChatGPT may control LittleBot when asked: typed chat, push to talk and live-voice hand-offs ([section 5](#5-asking-littlebot-to-do-things)) |

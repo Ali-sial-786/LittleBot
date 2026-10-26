@@ -173,6 +173,7 @@ class VisionService(Service):
         self._last_faces_pub = -1e9
         self._faces_visible = False
         self._last_faces_count = 0
+        self._face_at = -1e9  # monotonic time a face was last seen (face_seen_within)
         self._snapshot: dict[str, Any] = {}
         # one-shot photo requests, fulfilled by the vision thread from the next frame (guarded by _lock)
         self._photo_requests: list[PhotoRequest] = []
@@ -692,6 +693,10 @@ class VisionService(Service):
         for _vid, fut in waiters:
             _resolve(fut, (data, seq))
 
+    def face_seen_within(self, seconds: float) -> bool:
+        """Someone's face was in front of the camera in the last ``seconds`` (the wake word's "hey bot" check)."""
+        return time.monotonic() - self._face_at <= seconds
+
     def status(self) -> dict[str, Any]:
         with self._lock:
             out = dict(self._snapshot)
@@ -970,6 +975,7 @@ class VisionService(Service):
         fw, fh = self._frame_size
         self._last_faces_count = len(upd.faces)
         if upd.faces:
+            self._face_at = time.monotonic()
             if now - self._last_faces_pub >= 1.0 / MAX_FACES_EVENT_HZ:
                 self._last_faces_pub = now
                 self._faces_visible = True

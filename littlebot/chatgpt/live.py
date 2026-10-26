@@ -258,6 +258,9 @@ GOODBYE_MAX_S = 10.0
 FIRST_WORDS_MIN_S = 30.0
 MAX_CAPTIONS = 8
 HANDOFF_INTERIM_S = 3.5  # no answer yet: the voice is told to say it's thinking (the answer follows as a note)
+THINKING_AFTER_S = 1.5  # a hand-off still being worked on this long: the soft "thinking" sound (if the voice is quiet)
+THINKING_EVERY_S = 3.0
+THINKING_TIMES = 4
 QUICK_TIMEOUT_S = 3.0  # a quick answer (the weather, the time, quick.py) that takes longer: the text model answers
 HANDOFF_TIMEOUT_S = 25.0  # a hand-off the voice waits on always gets an answer (or a "didn't work" note) within this
 HANDOVER_MAX_S = 15.0  # a video / activity / sleep was promised: the call ends this long after, at the latest
@@ -961,6 +964,7 @@ class LiveCall:
         if self._director is not None:
             self._spawn(self._director.warm())  # the screen's first decision doesn't wait for a connection
         self._spawn(self._warm_text_model())  # nor the first hand-off
+        self._spawn(self._warm_forecast())  # nor "what's the weather like?"
 
     def _make_director(self) -> Any:
         """The screen director for this call, when there is a screen service and its cards are switched on."""
@@ -1246,7 +1250,18 @@ class LiveCall:
         setup = getattr(self.audio, "setup_barge_in", None)
         if callable(setup):
             voices = getattr(self.ctx, "voices", None)
-            setup(identify=getattr(voices, "identify", None), on_change=self._barge_in_changed)
+            hooks: dict[str, Any] = {"identify": getattr(voices, "identify", None), "on_change": self._barge_in_changed}
+            try:
+                if "talking_with" in inspect.signature(setup).parameters:
+                    hooks["talking_with"] = self._talking_with  # only they cut in; others talk to each other
+            except (TypeError, ValueError):
+                pass
+            setup(**hooks)
+
+    def _talking_with(self) -> int | None:
+        """The grown-up the voice is talking with (voice recognition's last sure turn), or None."""
+        voices = self._voices
+        return voices.talking_with() if voices is not None and hasattr(voices, "talking_with") else None
 
     def _barge_in_instructions(self) -> str:
         return "\n" + BARGE_IN_INSTRUCTION if getattr(self.audio, "barge_in_on", False) else ""
@@ -1734,6 +1749,8 @@ class LiveCall:
         ``early``: the answer's first sentence, while the rest is still being written: it is the answer then,
         and the rest follows as a note (``_tell_more``)."""
         first = interim = min(HANDOFF_INTERIM_S, HANDOFF_TIMEOUT_S)
+        if getattr(self.cfg, "live_thinking_sound", False):
+            self._spawn(self._think_aloud(task, early))
         if early is not None:
             t0 = time.monotonic()
             waiting = asyncio.ensure_future(early.ready.wait())
@@ -1781,6 +1798,22 @@ class LiveCall:
         self._send_result(delegation_id, text)
         self._arm_handover()
 
+    async def _think_aloud(self, task: "asyncio.Task[str]", early: "_Early | None") -> None:
+        """The soft "thinking" sound while a hand-off is worked on and the voice has nothing to say."""
+        play = getattr(self.audio, "play_thinking", None)
+        if play is None:
+            return
+        await asyncio.sleep(THINKING_AFTER_S)
+        for _ in range(THINKING_TIMES):
+            if task.done() or (early is not None and early.first) or self._ended.is_set():
+                return
+            try:
+                play()
+            except Exception:  # noqa: BLE001 - only a hint
+                log.debug("live voice: the thinking sound failed", exc_info=True)
+                return
+            await asyncio.sleep(THINKING_EVERY_S)
+
     async def _tell_more(self, task: "asyncio.Task[str]", early: "_Early", kind: str, timeout: float) -> None:
         """The rest of a hand-off's answer whose first sentence the voice already has (a note, once)."""
         try:
@@ -1808,6 +1841,22 @@ class LiveCall:
                 await warm()
         except Exception:  # noqa: BLE001
             log.debug("live voice: warming the text model's connection failed", exc_info=True)
+
+    async def _warm_forecast(self) -> None:
+        """Fetch home's forecast while the call connects (kept 10 minutes, ``info.cache_minutes``): a weather
+        question is then answered at once. Only where the weather may be asked for anyway (cloud on, tools on)
+        and home is set on the dashboard."""
+        if not self.cfg.tools_enabled:
+            return
+        try:
+            from littlebot.info.weather import get_weather  # noqa: PLC0415
+
+            weather = get_weather(self.ctx)
+            if weather.blocked_reason() or not weather.home_set():
+                return  # (home from the internet connection: the question looks it up, as before)
+            await weather.report(None, days=2)
+        except Exception:  # noqa: BLE001 - best effort: the question fetches it otherwise
+            log.debug("live voice: fetching the forecast ahead failed", exc_info=True)
 
     async def _quick_answer(self, delegation_id: str, question: str) -> bool:
         """The weather, the time, the volume, a timer: LittleBot answers itself, with no text model in between

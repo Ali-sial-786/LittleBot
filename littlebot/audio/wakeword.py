@@ -84,6 +84,12 @@ from littlebot.core.state import RobotState
 log = logging.getLogger("littlebot.wake")
 
 WAKE_TOPIC = "audio.wake_word"  # {phrase} published when a wake phrase was heard
+CALL_ENDED_TOPIC = "live.call_ended"  # littlebot/chatgpt/live.py CALL_ENDED: {reason}
+FOLLOW_UP = "follow-up"  # the "phrase" of a chat started by a follow-up (no wake word)
+# Calls that ended by themselves (live.py end reasons): a follow-up may come. Not "goodbye", "asked to stop",
+# a safety rule or a hand-over to a video: they meant it to end.
+FOLLOW_UP_AFTER = ("time limit reached", "hung up after", "connection lost")
+FOLLOW_UP_FACE_S = 1.5  # ...from someone whose face is in front of the camera this recently
 
 READ_SECONDS = 0.1  # microphone read timeout
 FEED_SAMPLES = 1600  # hand the recogniser 0.1 s at a time (16 kHz)
@@ -309,6 +315,9 @@ class WakeWordService(Service):
         self.triggers = 0
         self.last_heard: dict[str, Any] | None = None
         self.video_ignored = 0  # phrases heard while a video played that didn't count (stricter rules)
+        self.short_ignored = 0  # "hey bot" heard but not sure enough, with nobody in front of the camera
+        self.follow_ups = 0
+        self._follow_up_until = 0.0  # monotonic: a follow-up (no wake word) counts until then
         self.ducks = 0
         self._duck_until = 0.0
         self._last_partial = ""
@@ -324,6 +333,7 @@ class WakeWordService(Service):
                 bus.subscribe(Topics.SETTINGS_CHANGED, self._on_setting),
                 bus.subscribe(Topics.PRIVACY_CHANGED, lambda _e: self._poke()),
                 bus.subscribe(Topics.STATE_CHANGED, lambda _e: self._poke()),
+                bus.subscribe(CALL_ENDED_TOPIC, self._on_call_ended),
             ]
         audio = self.ctx.audio
         if audio is not None and hasattr(audio, "attach_background_listener"):
@@ -681,7 +691,9 @@ class WakeWordService(Service):
                 self._last_partial = ""
                 phrase = self._match(result, video)
                 if phrase is None and not video:
-                    self._note_unsure(result)
+                    phrase = FOLLOW_UP if self._follow_up(result) else None
+                    if phrase is None:
+                        self._note_unsure(result)
                 if phrase is not None and not self._audio_busy and not self._stop.is_set():
                     # Not during a video: its soundtrack reaches the microphone and would be sent as their words.
                     carry = None if video else self._carry_from(heard, result, phrase, rec.sample_rate)
@@ -701,7 +713,8 @@ class WakeWordService(Service):
     def _match(self, result: dict[str, Any], video: bool) -> str | None:
         """The wake phrase in a final result; while a video plays only the video phrases, more confident."""
         if not video:
-            return match_wake_phrase(result, self._phrases, self.cfg.min_confidence)
+            phrase = match_wake_phrase(result, self._phrases, self.cfg.min_confidence)
+            return phrase if phrase is None or len(phrase.split()) > 2 else self._short_ok(result, phrase)
         phrase = match_wake_phrase(result, self._video_phrases, self.cfg.video_min_confidence)
         if phrase is None:
             heard = match_wake_phrase(result, self._phrases, 0.0)
@@ -712,6 +725,49 @@ class WakeWordService(Service):
                        else f"word confidence below wake.video_min_confidence {self.cfg.video_min_confidence:g}")
                 log.info("wake word: '%s' ignored while a video plays (%s)", heard, why)
         return phrase
+
+    def _on_call_ended(self, event: Event) -> None:
+        """A chat ended by itself (not "goodbye", "stop" or a hand-over): a follow-up may come for a moment."""
+        reason = str(event.get("reason") or "")
+        secs = float(self.cfg.follow_up_seconds)
+        if secs > 0 and reason.startswith(FOLLOW_UP_AFTER):
+            self._follow_up_until = time.monotonic() + secs
+
+    def _follow_up(self, result: dict[str, Any]) -> bool:
+        """Within ``wake.follow_up_seconds`` of a chat that ended by itself: a few words said by someone facing
+        the camera start the next chat without the wake word."""
+        if time.monotonic() > self._follow_up_until:
+            return False
+        if len(str(result.get("text", "")).split()) < int(self.cfg.follow_up_words):
+            return False
+        seen = getattr(getattr(self.ctx, "vision", None), "face_seen_within", None)
+        try:
+            facing = bool(seen(FOLLOW_UP_FACE_S)) if seen is not None else False
+        except Exception:  # noqa: BLE001 - no camera: no follow-ups
+            facing = False
+        if not facing:
+            return False
+        self._follow_up_until = 0.0  # once
+        self.follow_ups += 1
+        log.info("wake word: a follow-up (words right after the last chat, someone facing the camera)")
+        return True
+
+    def _short_ok(self, result: dict[str, Any], phrase: str) -> str | None:
+        """"hey bot": sure enough (``wake.short_min_confidence``), or someone's face is in front of the camera."""
+        if match_wake_phrase(result, [(phrase, tuple(phrase.split()))], self.cfg.short_min_confidence) == phrase:
+            return phrase
+        seen = getattr(getattr(self.ctx, "vision", None), "face_seen_within", None)
+        try:
+            face = bool(seen(self.cfg.short_face_seconds)) if seen is not None else False
+        except Exception:  # noqa: BLE001 - no camera: only a sure "hey bot" counts
+            face = False
+        if face:
+            log.info("wake word: '%s' (not so sure, but someone is in front of the camera)", phrase)
+            return phrase
+        self.short_ignored += 1
+        log.info("wake word: '%s' ignored (word confidence below wake.short_min_confidence %.2f and nobody in "
+                 "front of the camera)", phrase, self.cfg.short_min_confidence)
+        return None
 
     def _output_note(self) -> str:
         fn = getattr(self.ctx.audio, "output_note", None)
@@ -770,8 +826,8 @@ class WakeWordService(Service):
         words = dict(self._phrases).get(phrase) or tuple(phrase.split())
         end, after = wake_phrase_end(result, words, self.cfg.min_confidence)
         cut = None if end is None else max(0, int((end - WAKE_CUT_MARGIN) * rate))
-        carry = SpeechCarry(rate, phrase=phrase, quiet_level=self._quiet_level(), kept_talking=after > 0,
-                            keep_voice=self._voices_on())
+        carry = SpeechCarry(rate, phrase=phrase, quiet_level=self._quiet_level(),
+                            kept_talking=after > 0 or phrase == FOLLOW_UP, keep_voice=self._voices_on())
         carry.keep_wake_phrase(heard.before(cut))  # who said it (littlebot/voices/call.py); only with keep_voice
         for block in heard.since(cut):
             carry.add(block)
@@ -1165,6 +1221,8 @@ class WakeWordService(Service):
             "during_video": video,
             "video_phrases": [p for p, _ in self._video_phrases] if self.cfg.during_videos else [],
             "video_ignored": self.video_ignored,
+            "short_ignored": self.short_ignored,
+            "follow_ups": self.follow_ups,
             "ducks": self.ducks,
             "triggers": self.triggers,
             "last_heard": dict(self.last_heard) if self.last_heard else None,

@@ -43,6 +43,7 @@ class FakeScreens:
 @pytest.fixture
 def cards(ctx, monkeypatch):
     """Two card types (standing in for the real ones) and a screen service."""
+    import littlebot.screens.cards  # noqa: F401 - the real ones first, or they'd replace these on first use
     monkeypatch.setitem(base._TYPES, "weather", CardType(
         "weather", "The weather.", {"place": {"type": "string"}, "days": {"type": "integer", "maximum": 7}}, _build))
     monkeypatch.setitem(base._TYPES, "recipe", CardType(

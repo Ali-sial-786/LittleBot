@@ -199,6 +199,15 @@ class WakeConfig(_Section):
     phrases: list[str] = Field(default_factory=lambda: ["hey little bot", "hey littlebot", "hey lil bot", "hey bot"])
     model_path: str = "models/vosk-model-small-en-us-0.15"  # scripts/download_models.py vosk-en
     min_confidence: float = Field(default=0.5, ge=0.0, le=1.0)  # per word; higher = fewer false triggers
+    # Two-word phrases ("hey bot") are what triggers by mistake most: they need this word confidence, or
+    # a face in front of the camera within short_face_seconds (someone is there, likely talking to it).
+    short_min_confidence: float = Field(default=0.7, ge=0.0, le=1.0)
+    short_face_seconds: float = Field(default=10.0, ge=0.0)
+    # Follow-up: this soon after a chat ended by itself (time limit, quiet, a lost connection; not "goodbye" or
+    # "stop"), someone saying a few words while facing the camera starts a new chat without the wake word, and
+    # what they said is its first turn (0 = off).
+    follow_up_seconds: float = Field(default=8.0, ge=0.0, le=60.0)
+    follow_up_words: int = Field(default=2, ge=1, le=10)
     distractors: bool = True  # also offer common words to the recogniser: far fewer false triggers
     cooldown_seconds: float = Field(default=4.0, ge=0.0)  # no new trigger this soon after the last one
     sound: str = "listen"  # earcon played when a phrase is heard
@@ -307,6 +316,9 @@ class ChatGPTConfig(_Section):
     live_barge_in_max_pitch_hz: float = Field(default=260.0, ge=150.0, le=400.0)  # higher voices: a child's
     live_barge_in_false_alarm_ms: int = Field(default=2500, ge=300, le=5000)  # no words from ChatGPT by then: carry on
     live_volume: float | None = None  # None = the speaker volume setting (always capped at max_volume)
+    # A soft two-note sound while a hand-off is being worked on and the voice is quiet (after 1.5 s, then every
+    # 3 s, at most 4 times), like smart speakers' "thinking" sound.
+    live_thinking_sound: bool = True
     # --- asking LittleBot to do things (function calling, littlebot/chatgpt/tools.py) ---
     # Typed / push-to-talk chat and live-voice hand-offs may control the robot: volume, faces,
     # videos (YouTube search), activities, games, sleep, status ("how hot are you?").

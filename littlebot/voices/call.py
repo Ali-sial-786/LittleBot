@@ -134,6 +134,17 @@ class CallVoices:
         return f"{self._label(heard.match)}, {heard.best:.2f}" if heard.match is not None else \
             f"not sure ({heard.reason}, best {heard.best:.2f})"
 
+    def talking_with(self) -> int | None:
+        """The grown-up LittleBot is talking with: the last turn's voice (or the wake phrase's), when it was
+        sure and recent. Barge-in lets only them cut in (littlebot/chatgpt/live_audio.py)."""
+        if self.closed or not self.active:
+            return None
+        if self.latest is not None and self._now() - self.latest[1] <= LATEST_FRESH_S:
+            m = self.latest[0].match
+            return m.person_id if m is not None and not m.is_child else None
+        m = self.wake.match if self.wake is not None else None
+        return m.person_id if m is not None and not m.is_child else None
+
     # ------------------------------------------------------------ the microphone
     def tap(self, mic: Any) -> VoiceTap:
         return VoiceTap(mic, self)
