@@ -41,6 +41,12 @@ BODY_PX = 32
 SMALL_PX = 26  # the smallest text anywhere (labels under a number, a source line)
 STEP_PX = 42
 MAX_LINES = 5
+# Every card with a picture (a ``slot``, littlebot/screens/cards/_kit.py PictureSlot) understands this action:
+# the screen service shows its picture full screen, zoomed ("zoom in", "make the picture fill the screen").
+PICTURE_ACTION = "picture"
+PICTURE_ACTION_HELP = ("the picture full screen or zoomed: {\"view\": \"fill\" | \"in\" | \"out\" | \"back\"} (back: "
+                       "the whole card again)")
+PICTURE_ZOOMS = (1.0, 1.5, 2.25, 3.0)  # fill the screen, then "in" steps (the picture's middle)
 # Where the presenter's eyes sit by default: top-left, (x, y, w, h) on the canvas. A card may move it
 # (presenter_box) but keeps it on screen: the eyes are what make it LittleBot presenting.
 PRESENTER_BOX = (12, 10, 150, 86)

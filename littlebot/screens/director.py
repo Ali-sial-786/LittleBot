@@ -64,6 +64,8 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from littlebot.screens.base import PICTURE_ACTION
+
 log = logging.getLogger("littlebot.screens.director")
 
 SOURCE = "voice"  # ScreenService.show(source=...) for the director's own cards; the tools use "tool"
@@ -159,6 +161,20 @@ CLOSE_WORDS = re.compile(
     r"(?:(?:let me|can i|could i|i want to|i wanna|i'?d like to) )?see your (?:face|eyes)(?: again)?|"
     rf"(?:i'?m|we'?re) (?:done|finished) with (?:it|that|this|the {_CARD_NOUN})"
     rf"){_TAIL}$")
+# The card's picture full screen / zoomed (cards with a picture: base.PICTURE_ACTION). "Can you zoom into that",
+# "just make the image take over the screen" (from a real call).
+_PIC = r"(?:it|that|this|the (?:picture|image|photo|drawing|pic))"
+_PICTURE_VIEWS = (
+    ("in", re.compile(rf"^{_LEAD}(?:just )?(?:zoom (?:in(?:to {_PIC})?|into {_PIC}|on {_PIC})|(?:get |go )?closer)"
+                      rf"(?: (?:more|a bit|a little|a lot|further))*{_TAIL}$")),
+    ("out", re.compile(rf"^{_LEAD}(?:just )?(?:zoom (?:out|back)|make {_PIC} smaller)(?: (?:more|a bit|a little|again))*{_TAIL}$")),
+    ("fill", re.compile(rf"^{_LEAD}(?:just )?(?:(?:make|put|show) {_PIC} (?:bigger|big|full ?screen|on the whole "
+                        r"screen|fill the (?:whole )?screen|take (?:over|up) the (?:whole )?screen)|"
+                        rf"(?:make|show) {_PIC} (?:as big as|the size of) the screen|full ?screen(?: {_PIC})?|"
+                        rf"(?:show me |let me see )?(?:a )?bigger (?:picture|image|one))" + rf"{_TAIL}$")),
+    ("back", re.compile(rf"^{_LEAD}(?:just )?(?:back to the card|show (?:me )?the (?:whole )?card(?: again)?|"
+                        rf"show (?:me )?the words(?: again)?){_TAIL}$")),
+)
 NEXT_WORDS = re.compile(
     rf"^{_LEAD}(?:next(?: (?:step|one|page|bit|card|fact))?|what'?s next|what is next|(?:and )?then what|what now|"
     r"show (?:me )?the next (?:step|one|page|fact)|(?:go )?(?:to|on to) the next (?:step|one|page|fact))"
@@ -379,6 +395,10 @@ def local_rule(text: str, kind: str | None, actions: dict[str, Any] | None = Non
     if not kind:
         return None
     actions = actions or {}
+    if PICTURE_ACTION in actions:
+        view = next((v for v, words in _PICTURE_VIEWS if words.match(plain)), None)
+        if view is not None:
+            return Decision("command", action=PICTURE_ACTION, args={"view": view})
     if CLOSE_WORDS.match(plain):
         return Decision("close", why="close words")
     if NEXT_WORDS.match(plain):

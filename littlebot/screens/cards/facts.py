@@ -23,6 +23,7 @@ from typing import Any
 import pygame
 
 from littlebot.games import art
+from littlebot.screens import base
 from littlebot.screens.base import (
     BODY_PX,
     MAX_LINES,
@@ -436,7 +437,8 @@ register(CardType(
                                                            "Wikipedia-style subject for a picture (\"Eiffel Tower\")"},
     },
     required=("layout",),
-    actions={"next": "the next page (list, compare, profile)", "prev": "the page before",
+    actions={base.PICTURE_ACTION: base.PICTURE_ACTION_HELP,
+             "next": "the next page (list, compare, profile)", "prev": "the page before",
              "page": "go to page n (1-based): {n}"},
     build=_build,
 ))

@@ -406,7 +406,7 @@ it. Never read a card out or describe it word for word: say the answer in your o
 delegate it to the client as "show on the screen: <what, with the details>" (for example "show on the screen: 2 + \
 2 = 4" or "show on the screen: why New York is called the Big Apple"), wait, then carry on. Never say you can't \
 show things on your screen. If they ask to change or close what is on the screen ("next step", "tomorrow", "by \
-the hour", "close it"), just say okay in a few words: LittleBot does it."""
+the hour", "zoom in", "make the picture bigger", "close it"), just say okay in a few words: LittleBot does it."""
 SCREEN_NEWS = "screen.news"  # {text}: a card wants the voice to say something ("the egg timer is done")
 POWER_NOTE = Topics.POWER_NOTE  # {text, goodbye}: the battery is low (a note) or empty / too hot (goodbye, then end)
 # Published by live voice for whoever needs to know a call is on (the screen service: a card's presenter talks).

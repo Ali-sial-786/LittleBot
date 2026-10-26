@@ -16,6 +16,7 @@ from typing import Any
 import pygame
 
 from littlebot.games import art
+from littlebot.screens import base
 from littlebot.screens.base import MAX_LINES, Card, CardType, register
 from littlebot.screens.cards import _kit as kit
 
@@ -207,7 +208,8 @@ register(CardType(
                                                   "about how long you speak per point"},
     },
     required=("title", "points"),
-    actions={"next": "show the next point now", "prev": "go back one point", "point": "show point n (1-based): {n}",
+    actions={base.PICTURE_ACTION: base.PICTURE_ACTION_HELP,
+             "next": "show the next point now", "prev": "go back one point", "point": "show point n (1-based): {n}",
              "all": "show every point"},
     build=_build,
 ))

@@ -23,6 +23,7 @@ from typing import Any
 import pygame
 
 from littlebot.games import art
+from littlebot.screens import base
 from littlebot.screens.base import (
     BODY_PX,
     MAX_LINES,
@@ -495,7 +496,8 @@ register(CardType(
                                          "picture (\"giraffe\", \"accordion\"). Leave out for abstract words"},
     },
     required=("word",),
-    actions={"next": "the next page of meanings (spell: show all letters now)", "prev": "the page before",
+    actions={base.PICTURE_ACTION: base.PICTURE_ACTION_HELP,
+             "next": "the next page of meanings (spell: show all letters now)", "prev": "the page before",
              "again": "spell: pop the letters in again from the start"},
     build=_build,
 ))

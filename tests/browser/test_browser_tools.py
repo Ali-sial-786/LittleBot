@@ -102,3 +102,18 @@ async def test_a_card_asked_for_takes_the_browsers_place_unless_this_turn_opened
     out = await run(later, "show_on_screen", **card)
     assert out.startswith("ok: on the screen now: a facts card") and not env.browser.active
     assert env.browser.status()["last"]["reason"] == "a card was asked for"
+
+
+async def test_zoom_with_no_browser_open_zooms_the_cards_picture(env: Any) -> None:
+    class Screens:
+        def __init__(self) -> None:
+            self.commands: list[tuple[str, dict[str, Any]]] = []
+
+        def command(self, action: str, args: dict[str, Any]) -> bool:
+            self.commands.append((action, args))
+            return True
+
+    env.ctx.screens = Screens()
+    out = await run(RobotToolbox(env.ctx, mode="live"), "browser", action="zoom", level="in")  # from a real call
+    assert out.startswith("ok: the picture on the card is bigger now")
+    assert env.ctx.screens.commands == [("picture", {"view": "in"})]

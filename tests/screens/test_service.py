@@ -439,3 +439,46 @@ async def test_a_swipe_turns_the_weather_day(svc, sctx):
     svc.handle_press(0.8, 0.6)  # a tap without moving: the right side, the next day too
     svc.handle_release(0.8, 0.6)
     assert card.day == day + 2
+
+
+# ---------------------------------------------------------------- a card's picture full screen ("zoom into that")
+class _Pic:
+    ready, credit = True, ""
+
+    def __init__(self, surface):
+        self.surface = surface
+
+
+def _picture_card():
+    """A card with a picture: a red left half and a blue right half, 200x100."""
+    img = pygame.Surface((200, 100))
+    img.fill((220, 30, 30), pygame.Rect(0, 0, 100, 100))
+    img.fill((30, 30, 220), pygame.Rect(100, 0, 100, 100))
+    card = DummyCard({"title": "Bucephalus"})
+    card.slot = type("Slot", (), {"shown": True, "picture": _Pic(img)})()
+    return card
+
+
+def test_a_cards_picture_fills_the_screen_zooms_and_a_tap_brings_the_card_back(svc, clock):
+    assert svc.command("picture", {"view": "fill"}) is False  # no card
+    svc.show_card(DummyCard({"title": "no picture"}))
+    assert svc.command("picture", {"view": "fill"}) is False  # a card without a picture
+    svc.show_card(_picture_card())
+    surf = pygame.Surface((W, H))
+    assert svc.command("picture", {"view": "fill"}) is True and svc.status()["card"]["picture_zoom"] == 1.0
+    svc.render(surf, surf.get_rect(), 0.03)
+    assert tuple(surf.get_at((200, 300)))[:3] == (220, 30, 30) and tuple(surf.get_at((520, 300)))[:3] == (30, 30, 220)
+    assert tuple(surf.get_at((W - 5, H // 2)))[:3] != CARD_RGB  # the card isn't drawn under it
+    assert svc.command("picture", {"view": "in"}) is True and svc.status()["card"]["picture_zoom"] == 1.5
+    assert svc.command("picture", {"view": "in"}) is True  # heard twice (hand-off and director): once
+    assert svc.status()["card"]["picture_zoom"] == 1.5
+    clock.advance(3)
+    svc.command("picture", {"view": "in"})
+    assert svc.status()["card"]["picture_zoom"] == 2.25
+    svc.render(surf, surf.get_rect(), 0.03)  # zoomed in on the middle: both halves still there
+    assert tuple(surf.get_at((300, 240)))[:3] == (220, 30, 30) and tuple(surf.get_at((420, 240)))[:3] == (30, 30, 220)
+    assert svc.command("picture", {"view": "sideways"}) is False
+    assert svc.handle_tap(600 / W, 400 / H) is True
+    assert "picture_zoom" not in svc.status()["card"] and svc.current.taps == []  # the tap only brought it back
+    svc.render(surf, surf.get_rect(), 0.03)
+    assert tuple(surf.get_at((W - 10, H - 10)))[:3] == CARD_RGB

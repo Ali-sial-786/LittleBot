@@ -1108,6 +1108,18 @@ class RobotToolbox:
             return _err(f"that card couldn't be made ({str(result.get('detail') or 'unusable')[:120]})")
         return _err("no card could be shown; just say the answer")
 
+    def _zoom_card(self, level: str) -> bool:
+        """"Zoom into that" with a card's picture up and no browser: the picture full screen / zoomed."""
+        from littlebot.screens.base import PICTURE_ACTION  # noqa: PLC0415
+
+        screens = self._screens()
+        view = {"out": "out", "reset": "back"}.get(level.strip().lower(), "in")
+        try:
+            return screens is not None and bool(screens.command(PICTURE_ACTION, {"view": view}))
+        except Exception:  # noqa: BLE001
+            log.debug("zooming the card's picture failed", exc_info=True)
+            return False
+
     async def _browser_makes_way(self) -> bool:
         """A card was asked for while the browser has the screen ("why are you not showing it on the screen?"):
         the browser closes for it, unless this turn opened it (then the search is what they asked for)."""
@@ -1169,6 +1181,8 @@ class RobotToolbox:
             return _err("the browser isn't available on this robot")
         action = str(args.get("action") or "").strip().lower()
         if not getattr(browser, "active", False):
+            if action == "zoom" and self._zoom_card(str(args.get("level") or "in")):
+                return _ok("the picture on the card is bigger now. Say so in a few words.")
             return _err("the browser isn't open; use search_in_browser if they asked to google something")
         extra = {k: args[k] for k in ("direction", "amount", "n", "level") if args.get(k) is not None}
         result = await browser.control(action, extra, source="tool")

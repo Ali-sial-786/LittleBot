@@ -65,6 +65,13 @@ A card takes only the screen (`Resource.SCREEN`, at conversation priority). The 
 with the voice, so a card never stops the voice; a game or a video simply takes the screen from it.
 Other taps go to the card (next page, next step).
 
+**A card's picture, full screen.** On a card with a picture (explain, facts, a word's meaning), "zoom into
+that", "make the picture bigger" or "make the image take over the screen" show the picture on the whole
+screen; "zoom in" again goes closer (1.5x, 2.25x, 3x: the middle of the picture), "zoom out" steps back, and
+"back to the card" or a tap shows the whole card again. The screen service does it for every such card
+(action `picture`, `base.PICTURE_ACTION`; words in `director._PICTURE_VIEWS`); the same command heard twice
+within 2.5 s (the voice's hand-off and the screen director) counts once.
+
 ## The parent's switches
 
 Dashboard → **Privacy** → *LittleBot's screen*:

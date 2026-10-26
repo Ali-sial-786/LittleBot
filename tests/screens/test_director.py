@@ -603,3 +603,22 @@ async def test_no_answer_in_time_means_no_card(make, caplog):
 
 def test_an_unknown_card_is_named_in_the_log_reason():
     assert clean_spec({"card": "Movie<b>"}, TYPES) == (None, "unknown card 'movieb'")
+
+
+@pytest.mark.parametrize(("words", "view"), [
+    ("Can you zoom into that", "in"),  # from a real call
+    ("Can you just make the image take over the screen", "fill"),  # from a real call
+    ("make the picture bigger please", "fill"),
+    ("full screen", "fill"),
+    ("zoom in a bit more", "in"),
+    ("zoom out", "out"),
+    ("back to the card", "back"),
+    ("zoom in on the weather map", None),  # not the card's picture words
+])
+def test_picture_words_steer_a_cards_picture(words, view):
+    from littlebot.screens.base import card_types
+
+    rule = local_rule(words, "explain", card_types()["explain"].actions)
+    got = rule.args.get("view") if rule is not None and rule.action == "picture" else None
+    assert got == view
+    assert local_rule(words, "weather", card_types()["weather"].actions) is None or view is None  # no picture there

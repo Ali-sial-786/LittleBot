@@ -73,7 +73,9 @@ from littlebot.core.arbiter import Lease, Priority, Resource
 from littlebot.core.events import Event, Subscription, Topics
 from littlebot.core.service import Service, ServiceStatus
 from littlebot.core.state import RobotState
-from littlebot.screens.base import Card, H, W
+from littlebot.screens.base import PICTURE_ACTION, PICTURE_ZOOMS, Card, H, W
+
+PICTURE_REPEAT_S = 2.5  # "zoom in" heard by the hand-off and the screen director: zoomed once
 
 log = logging.getLogger("littlebot.screens")
 
@@ -135,6 +137,9 @@ class _Session:
     dragging: bool = False
     loop: asyncio.AbstractEventLoop | None = None
     task: Any = None
+    zoom: int = -1  # the card's picture full screen: an index into PICTURE_ZOOMS (-1: the card itself)
+    zoom_cmd: tuple[str, float] | None = None  # the last picture command and when (the same one twice: once)
+    zoomed: tuple[tuple[int, float], Any] | None = None  # (zoom, picture id) -> the scaled picture
 
 
 class _Host:
@@ -341,13 +346,72 @@ class ScreenService(Service):
             if s is None or s.ended:
                 return False
             try:
-                ok = bool(s.card.command(str(action or ""), dict(args or {})))
+                if str(action or "") == PICTURE_ACTION:
+                    ok = self._picture_command(s, str((args or {}).get("view") or "fill"))
+                else:
+                    ok = bool(s.card.command(str(action or ""), dict(args or {})))
             except Exception:  # noqa: BLE001
                 log.exception("card %s command %r failed", s.card.kind, action)
                 return False
         if ok:
             self._check(s, force=True)
         return ok
+
+    def _picture_command(self, s: _Session, view: str) -> bool:
+        """"fill" / "in" / "out" / "back" for the card's picture (caller holds the lock). The same command again
+        within PICTURE_REPEAT_S counts as done once: the voice's hand-off and the screen director may both hear
+        "zoom in"."""
+        slot = getattr(s.card, "slot", None)
+        if slot is None or not getattr(slot, "shown", False):
+            return False
+        view = view.strip().lower()
+        now = self._clock()
+        if s.zoom_cmd is not None and s.zoom_cmd[0] == view and now - s.zoom_cmd[1] < PICTURE_REPEAT_S:
+            return True
+        s.zoom_cmd = (view, now)
+        top = len(PICTURE_ZOOMS) - 1
+        if view in ("fill", "full", "full screen", "fullscreen", "big", "bigger"):
+            s.zoom = max(0, s.zoom)
+        elif view in ("in", "zoom in", "closer", "more"):
+            s.zoom = min(top, s.zoom + 1)
+        elif view in ("out", "zoom out", "smaller", "less"):
+            s.zoom -= 1
+        elif view in ("back", "reset", "card", "normal"):
+            s.zoom = -1
+        else:
+            return False
+        if s.zoom < 0:
+            s.zoomed = None
+        log.info("card %s: picture %s", s.card.kind, "back on the card" if s.zoom < 0 else
+                 f"full screen x{PICTURE_ZOOMS[s.zoom]:g}")
+        return True
+
+    def _draw_picture(self, s: _Session, canvas: Any) -> bool:
+        """The card's picture filling the screen at s.zoom (centred, the middle when zoomed in), or False."""
+        import pygame  # noqa: PLC0415
+
+        slot = getattr(s.card, "slot", None)
+        pic = getattr(slot, "picture", None) if slot is not None and getattr(slot, "shown", False) else None
+        src = getattr(pic, "surface", None)
+        if s.zoom < 0 or src is None:
+            return False
+        key = (s.zoom, id(src))
+        if s.zoomed is None or s.zoomed[0] != key:
+            w, h = src.get_size()
+            k = min(W / max(1, w), H / max(1, h)) * PICTURE_ZOOMS[s.zoom]
+            size = (max(1, int(w * k)), max(1, int(h * k)))
+            try:
+                img = pygame.transform.smoothscale(src, size)
+            except (ValueError, pygame.error):
+                img = pygame.transform.scale(src, size)
+            if size[0] > W or size[1] > H:  # zoomed in: keep only the middle (less memory than the whole)
+                img = img.subsurface(pygame.Rect((size[0] - min(W, size[0])) // 2, (size[1] - min(H, size[1])) // 2,
+                                                 min(W, size[0]), min(H, size[1]))).copy()
+            s.zoomed = (key, img)
+        img = s.zoomed[1]
+        canvas.fill((24, 20, 28))
+        canvas.blit(img, img.get_rect(center=(W // 2, H // 2)))
+        return True
 
     def close(self, reason: str = "closed") -> bool:
         """Take the card off the screen (the face comes back). Safe from any thread."""
@@ -406,6 +470,8 @@ class ScreenService(Service):
             closes_in = None
             if not s.card.sticky and s.quiet_since is not None:
                 closes_in = round(max(0.0, self._linger(s) - (now - s.quiet_since)), 1)
+            if s.zoom >= 0:
+                card["picture_zoom"] = PICTURE_ZOOMS[s.zoom]
             out.update({"active": True, "card": card, "showing": self.describe(), "source": s.source,
                         "seconds": round(max(0.0, now - s.shown), 1), "sticky": bool(s.card.sticky),
                         "closes_in": closes_in, "voice_on": self.voice_on(), "drawn": now - s.last_render < 2.0})
@@ -523,6 +589,9 @@ class ScreenService(Service):
         """A tap for the card (caller holds the lock)."""
         s.taps += 1
         self._touched(s)
+        if s.zoom >= 0:  # the picture full screen: a tap shows the whole card again
+            s.zoom, s.zoomed, s.zoom_cmd = -1, None, None
+            return
         try:
             s.card.tap(x, y)
         except Exception:  # noqa: BLE001
@@ -602,8 +671,9 @@ class ScreenService(Service):
             if self._canvas is None:
                 self._canvas = pygame.Surface((W, H), 0, 32)
             canvas = self._canvas
-        canvas.blit(art.background((W, H)), (0, 0))  # the same calm pink under every card
-        s.card.draw(canvas)
+        if not self._draw_picture(s, canvas):
+            canvas.blit(art.background((W, H)), (0, 0))  # the same calm pink under every card
+            s.card.draw(canvas)
         backing = bool(getattr(getattr(self.ctx.config, "screens", None), "presenter_backing", True))
         presenter.draw(canvas, _box(s.card), mood=str(s.card.mood or "neutral"), mouth=s.mouth, shape=s.shape,
                        color=s.host.eye_color, t=s.t, backing=backing)
