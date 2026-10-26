@@ -18,6 +18,7 @@ Text is at least BODY_PX, at most MAX_LINES lines a page; "next" / "prev" (or a 
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import pygame
@@ -33,6 +34,8 @@ from littlebot.screens.base import (
     register,
 )
 from littlebot.screens.cards import _kit as kit
+
+log = logging.getLogger("littlebot.screens")
 
 LAYOUTS = ("number", "list", "compare", "profile", "score", "item")
 VALUE_SIZES = (132, 116, 100, 84, 68, 56, TITLE_PX)
@@ -381,17 +384,41 @@ class FactsCard(Card):
             self.slot.draw(surf, self._pic_rect(), self.t)
 
 
-async def _build(spec: dict[str, Any], ctx: Any, host: Any) -> Card | None:
-    card = FactsCard(spec, host)
-    ok = {
+def _fits(card: FactsCard, pic: bool) -> bool:
+    """The card has what its layout shows (``pic``: a picture was asked for)."""
+    return {
         "number": bool(card.value),
         "list": bool(card.items),
         "compare": len(card.columns) >= 2 and any(c["facts"] for c in card.columns),
-        "profile": bool(card.title and (card.facts or card.slot.picture is not None)),
+        "profile": bool(card.title and (card.facts or pic)),
         "score": len(card.teams) == 2,
         "item": bool(card.text),
     }[card.layout]
-    return card if ok else None
+
+
+FALLBACK_LAYOUTS = ("profile", "list", "item", "number")
+
+
+async def _build(spec: dict[str, Any], ctx: Any, host: Any) -> Card | None:
+    """The card, or None when it has nothing to show. A layout without its content but with another's (a
+    "profile" whose facts came as "items", an "item" with only a note) is shown in the layout that fits,
+    rather than not at all: the model often mixes them up, and then no card at all came (and it tried again)."""
+    pic = bool(kit.clean(spec.get("picture_query"), 80))
+    card = FactsCard(spec, None)  # (no host yet: nothing is fetched while it is checked)
+    if _fits(card, pic):
+        return FactsCard(spec, host)
+    given = dict(spec)
+    given.setdefault("items", list(card.facts))
+    given.setdefault("facts", list(card.items[:3]))
+    if not card.text:
+        given["text"] = card.note or (card.facts[0] if card.facts else card.items[0] if card.items else "")
+    for layout in dict.fromkeys((card.layout, *FALLBACK_LAYOUTS)):  # its own layout first, with what was given
+        if _fits(FactsCard({**given, "layout": layout}, None), pic):
+            log.info("facts card: the %s layout was missing its part; shown as %s", card.layout, layout)
+            return FactsCard({**given, "layout": layout}, host)
+    fields = ", ".join(sorted(k for k, v in spec.items() if v not in (None, "", [], {}))) or "none"
+    log.info("facts card not made: the %s layout had nothing to show (fields given: %s)", card.layout, fields[:200])
+    return None
 
 
 register(CardType(

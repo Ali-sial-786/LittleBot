@@ -1121,6 +1121,9 @@ class RobotToolbox:
             return _err("the screen is busy (a game or a video); just say the answer")
         if error == "invalid":
             return _err(f"that card couldn't be made ({str(result.get('detail') or 'unusable')[:120]})")
+        if error == "no_card":
+            return _err("that card had nothing to show: fill in the fields its layout needs (a facts profile: "
+                        "title and facts; a list: items; an item: text), or just say the answer")
         return _err("no card could be shown; just say the answer")
 
     def _soon(self, coro: Awaitable[Any]) -> "asyncio.Task[Any]":
