@@ -25,6 +25,7 @@ const FEATURES = {
   videos: ['Which video', 'Which YouTube result fits what was asked for and your child best.'],
   names: ['Which activity or game', 'Which one was meant when the name matches none closely.'],
   concern: ['Danger check', 'Could someone be in danger? Only ever adds an alert to LittleBot’s own safety check.'],
+  addressed: ['Talk in the room', 'When someone talks over LittleBot: was it to LittleBot, or to someone else (then it carries on)?'],
 };
 
 export function decidePanel(app) {

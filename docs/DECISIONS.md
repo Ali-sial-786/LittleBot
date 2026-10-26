@@ -48,6 +48,7 @@ decide:
 | `videos` | Which YouTube search result best fits what was asked for and the child | That one plays first (an approved video at the top always stays first) |
 | `names` | Which activity or game they meant, when no name matches closely | That one starts ("the one with the cows" → Old MacDonald) |
 | `concern` | Could someone be in danger right now | Only **adds** the dashboard's attention alert when it is very sure (0.85) and the word lists found nothing; never removes one, never changes the voice |
+| `addressed` | Someone talked over LittleBot: was it said to LittleBot, or to someone else in the room | Its sure answer decides instead of the word rules (`_for_robot` in live.py); room talk makes the voice carry on instead of dropping its answer |
 
 "Sure" is `decide.min_confidence` (0.5) for a choice and `decide.yes_at` (0.7) for a yes/no question. Below
 that, LittleBot does what it always did.

@@ -203,3 +203,26 @@ async def test_the_voice_is_told_when_it_says_the_persons_part(live, ctx):
     await asyncio.sleep(0.2)
     told = [n for n in notes(server) if n.startswith("You just spoke as if")]
     assert len(told) == 2 and '("Hi LittleBot, it\'s Ali, can you look up...")' in told[0]  # at most 2
+
+
+# ---------------------------------------------------------------- talk in the room over the voice (addressed)
+@pytest.mark.parametrize(("words", "p_to_robot", "carries_on"), [
+    ("Yeah, same. I'm just putting in the salt", 0.95, False),  # the decision model knows better: for it
+    ("Can you pass me the salt, love?", 0.05, True),  # the rules took it for LittleBot
+    ("Can you show me the recipe?", 0.5, False),  # not sure: the rules' way
+])
+async def test_on_the_decision_model_says_whether_room_talk_was_for_littlebot(live, ctx, caplog, words,
+                                                                              p_to_robot, carries_on):
+    from littlebot.chatgpt.live import BARGE_IN_ROOM_TALK
+
+    caplog.set_level(logging.INFO, logger="littlebot.decide")
+    svc, server, _audio, _provider, _alerts = live
+    model = use_decision_model(ctx, only("to_robot", p_to_robot), modes={"addressed": "on", "concern": "off",
+                                                                          "naming": "off"})
+    await connect(svc, server)
+    svc._call._check_room_talk(words)
+    await wait_for(lambda: get_decider(ctx).status()["features"]["addressed"]["asked"] == 1)
+    await asyncio.sleep(0.2)
+    assert (BARGE_IN_ROOM_TALK in notes(server)) is carries_on
+    assert model.asked[0][0]["said_while_it_talked"] == words
+    assert "decide: addressed (on)" in caplog.text

@@ -34,7 +34,7 @@ log = logging.getLogger("littlebot.decide")
 STATS_KEYS = ("asked", "failed", "ms", "agreed", "differed", "used")
 CONTEXT_CHARS = 240  # one value in a logged decision's context
 # Features whose line doesn't hold LittleBot's reply (it comes after): its next words are logged too (ai_replied).
-REPLY_AFTER = ("routing", "concern", "browser", "videos", "names")
+REPLY_AFTER = ("routing", "concern", "browser", "videos", "names", "addressed")
 REPLY_LINES = 3  # at most this many of its lines after one decision ("hold on" lines don't end the wait)
 REPLY_CHARS = 400
 

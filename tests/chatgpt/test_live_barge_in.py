@@ -12,7 +12,13 @@ pytest.importorskip("aiortc")
 
 from chatgpt_helpers import FakeLiveAudio, FakeOpenAI, FakeProvider, signed_in_auth  # noqa: E402
 
-from littlebot.chatgpt.live import BARGE_IN_GO_AHEAD, BARGE_IN_INSTRUCTION, LiveVoiceService  # noqa: E402
+from littlebot.chatgpt.live import (  # noqa: E402
+    BARGE_IN_GO_AHEAD,
+    BARGE_IN_INSTRUCTION,
+    BARGE_IN_ROOM_TALK,
+    LiveVoiceService,
+    _for_robot,
+)
 from littlebot.chatgpt.live_audio import is_go_ahead  # noqa: E402
 from littlebot.core.events import Topics  # noqa: E402
 from littlebot.core.state import RobotState  # noqa: E402
@@ -127,3 +133,46 @@ async def test_cutting_in_listens_at_once_and_oops_go_ahead_carries_on(ctx, tmp_
     finally:
         await svc.stop()
         await server.close()
+
+
+async def test_room_talk_over_the_voice_lets_it_carry_on(ctx, tmp_path):
+    audio = BargeAudio()
+    svc, server = await start_call(ctx, tmp_path, audio)
+    try:
+        audio.speaking = True
+        audio.interrupt()
+        server.send({"type": "turn.done", "turn": {"role": "user", "transcript": "Yeah, same. I'm just putting in "
+                                                                                  "the salt"}})  # from a real call
+        await wait_for(lambda: BARGE_IN_ROOM_TALK in notes(server))
+        audio.interrupt()
+        server.send({"type": "turn.done", "turn": {"role": "user", "transcript": "Can you show me the recipe?"}})
+        await wait_for(lambda: len(audio.heard) == 2)
+        server.send({"type": "turn.done", "turn": {"role": "user", "transcript": "We're leaving in two minutes"}})
+        await wait_for(lambda: len(audio.heard) == 3)  # nobody cut in this time: an ordinary turn
+        await asyncio.sleep(0.2)
+        assert notes(server).count(BARGE_IN_ROOM_TALK) == 1
+    finally:
+        await svc.stop()
+        await server.close()
+
+
+@pytest.mark.parametrize(("words", "for_it"), [
+    # from real calls, said over the voice
+    ("Yeah, same. I'm just putting in the salt Ah, I don't like this. It makes it too much pressure", False),
+    (". I thought cold anyway Yeah, yeah, let's not, it's not, leave, yeah, leave it. We're leaving in two minutes",
+     False),
+    ("Hassan, come here please", False),
+    ("Why are you not showing it on the screen", True),
+    ("Can you, can you show me the, uh, precipitation on an hourly basis for Hamilton", True),
+    ("the weather by hour", False),  # a fragment: room talk to the rules (the decision model may know better)
+    ("Show me the hourly weather", True),
+    ("Hey LittleBot, are you there", True),
+    ("Lil Bot, wait", True),
+    ("No, that's fine.", True),
+    ("Stop", True),
+    ("Next step", True),
+    ("Okay, what about tomorrow?", True),
+    ("Ali, can you hold her for a second?", False),
+])
+def test_what_counts_as_said_to_littlebot(words, for_it):
+    assert _for_robot(words, "LittleBot") is for_it

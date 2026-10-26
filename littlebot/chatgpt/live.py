@@ -337,6 +337,9 @@ their sounds, animal noises, counting, colours, peekaboo, or a few lines of a we
 four sentences, and help them play with the child.
 - No lists, no reading out links (say the website's name), no emoji names, no stage directions.
 - You are a robot, not a person or a parent. If asked, say you are a robot.
+- The family also talks to each other near you. When words are clearly not for you (they talk to each other, \
+on the phone, or about cooking or plans), don't answer them: stay quiet and listen. When they might be for you, \
+answer.
 - Only ever speak as {name}. Never say the person's part or what they might say next (never "Hi {name}, it's \
 ..." or "Can you look up..."): if you didn't catch them, say so and listen.
 
@@ -414,6 +417,11 @@ BARGE_IN_INSTRUCTION = ("If someone talks while you are speaking, stop and liste
                         "something like \"oops, go ahead\" or \"sorry, carry on\", carry on from where you stopped, "
                         "without starting over.")
 BARGE_IN_GO_AHEAD = "They didn't mean to interrupt: carry on from where you stopped, without starting over."
+# Someone talked over the voice, but to someone else in the room ("I'm just putting in the salt", "Hassan, come
+# here"): the voice carries on instead of answering it (feature "addressed": LittleBot's word rules, or the
+# decision model, littlebot/decide).
+BARGE_IN_ROOM_TALK = ("That was people in the room talking to each other, not to you: don't answer it. Carry on "
+                      "from where you stopped, without starting over.")
 
 LOOKUP_NOTE = f"""
 You are answering a question that LittleBot's voice will say out loud to a family with a very young child; \
@@ -768,6 +776,7 @@ class LiveCall:
         self._grown_up_spoke_at: float | None = None  # their latest turn in words (a grown-up, while the child can't talk)
         self._name_fixes = 0  # times the voice was told it called a grown-up by the child's name
         self._spoke_as_them = 0  # times the voice was told it said the person's part (SPOKE_AS_THEM)
+        self._cut_in = False  # someone talked over the voice: their first final words decide (_check_room_talk)
         self._pulse_counts: tuple[int, int, int, int] | None = None  # for _pulse
         self._reopens = 0  # times a stopped microphone / speaker was opened again (_check_audio)
         self._reopen_job: asyncio.Future[Any] | None = None
@@ -1215,6 +1224,8 @@ class LiveCall:
 
     def _barge_in_changed(self, what: str, info: dict[str, Any]) -> None:
         """The audio stopped the voice for someone talking over it (or let it carry on after a false alarm)."""
+        if what in ("interrupted", "carried_on"):
+            self._cut_in = what == "interrupted"
         if what == "interrupted" and not self._ended.is_set():
             self._last_activity = self.svc._now()
             self.phase = "listening"  # the face listens at once, not at the next poll
@@ -1228,8 +1239,47 @@ class LiveCall:
         if not isinstance(event, wire.UserText) or not callable(heard):
             return
         if heard(event.text, event.final) == "go ahead":
+            self._cut_in = False
             log.info("live voice: they didn't mean to interrupt (\"go ahead\"); the voice carries on")
             self._note(BARGE_IN_GO_AHEAD)
+        elif event.final and self._cut_in:
+            self._cut_in = False
+            self._check_room_talk(event.text)
+
+    def _check_room_talk(self, text: str) -> None:
+        """Their first words after talking over the voice: to LittleBot, or to someone else in the room? Room
+        talk: the voice carries on (BARGE_IN_ROOM_TALK). LittleBot's way is _for_robot; the decision model
+        (feature addressed), when on and sure, decides instead."""
+        from littlebot.decide import get_decider  # noqa: PLC0415
+
+        mine = "robot" if _for_robot(text, self.ctx.config.robot_name) else "room"
+        mode = get_decider(self.ctx).mode("addressed")
+        if mode == "off":
+            self._room_talk(mine == "room", text)
+            return
+        if mode == "shadow":
+            self._room_talk(mine == "room", text)
+        self._spawn(self._ask_addressed(text, mine, mode))
+
+    async def _ask_addressed(self, text: str, mine: str, mode: str) -> None:
+        from littlebot.decide import get_decider, uses  # noqa: PLC0415
+
+        decider = get_decider(self.ctx)
+        said = next((c["text"] for c in reversed(self._captions) if c["who"] == "robot"), "")
+        answer = await uses.addressed(self.ctx, said=text, robot_said=said, robot=self.ctx.config.robot_name)
+        theirs = None
+        if answer is not None:
+            yes = decider.yes_at()
+            theirs = "robot" if answer.p >= yes else "room" if answer.p <= 1 - yes else "unsure"
+            decider.compare("addressed", mine=mine, theirs=theirs, used=mode == "on" and theirs in ("robot", "room")
+                            and theirs != mine, answer=answer)
+        if mode == "on":
+            self._room_talk((theirs if theirs in ("robot", "room") else mine) == "room", text)
+
+    def _room_talk(self, room: bool, text: str) -> None:
+        if room and not self._ended.is_set():
+            log.info("live voice: they talked over the voice, but to someone else in the room; the voice carries on")
+            self._note(BARGE_IN_ROOM_TALK)
 
     # ------------------------------------------------------------ a video paused for this chat
     def _held_video(self) -> dict[str, Any] | None:
@@ -2615,6 +2665,37 @@ def _greets_robot(text: str, robot: str) -> bool:
 
 
 _GREETING_NAME = re.compile(r"^\W*(?i:(?:hi|hey|hello|oh|ooh|welcome(?: back)?)\W+)*([A-Z][a-z]+)\b")
+
+
+# Said to LittleBot: a question or a request, or an answer to it ("no", "yes please") when that is about all.
+_LEAD = r"^(?:(?:oh|um+|uh+|ok|okay|so|and|but|hey|hi|well|wait|sorry|please|actually|also|now|then)\b\W*)*"
+_ASKS = re.compile(
+    _LEAD + r"(?:what|what's|whats|how|why|when|where|who|which|is|are|was|can|could|would|will|do|does|did|should|"
+    r"tell|show|play|stop|start|open|close|turn|make|put|find|search|look|help|give|read|say|sing|count|go|next|"
+    r"back|again|repeat|louder|quieter|let's|lets|i want|i'd like|i need|i meant|i mean|i asked|i said|you|your|"
+    r"zoom|scroll|pause|resume|skip|more|less)\b")
+_ANSWERS = re.compile(_LEAD + r"(?:no|nope|yes|yeah|yep|not|that's|thats|okay|ok|sure|thanks|thank you)\b")
+ANSWER_WORDS = 5  # "No, that's fine": an answer to LittleBot; "Yeah, same. I'm just putting in the salt": not
+_VOCATIVE = re.compile(r"^\W*([A-Z][a-z]+)\s*,")  # "Hassan, come here": to someone by name
+_NOT_NAMES = {"hey", "hi", "oh", "ok", "okay", "so", "well", "wait", "sorry", "no", "yes", "yeah", "now", "and",
+              "littlebot", "robot", "bot", "please", "right", "look", "see", "thanks"}
+
+
+def _for_robot(text: str, robot: str) -> bool:
+    """LittleBot's way of telling whether words said over its voice were for it (else: people in the room talking
+    to each other, "I'm just putting in the salt"). Its name, a question or request, a short answer like "no",
+    and anything very short count as for it; a name other than its own first ("Hassan, ...") doesn't."""
+    plain = _plain_words(text)
+    words = plain.split()
+    if not words:
+        return False
+    if re.search(r"\b(?:little ?bot|lil ?bot|robot|bot)\b", plain) or _greets_robot(text, robot):
+        return True
+    name = _VOCATIVE.match(text or "")
+    if name is not None and name.group(1).lower() not in _NOT_NAMES:
+        return False
+    return (len(words) <= 2 or _ASKS.match(plain) is not None
+            or (len(words) <= ANSWER_WORDS and _ANSWERS.match(plain) is not None))
 
 
 def _greets_named(reply: str, said: str, child: str) -> bool:

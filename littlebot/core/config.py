@@ -345,7 +345,8 @@ class ScreensConfig(_Section):
     presenter_backing: bool = True  # the presenter's eyes sit on a little patch of LittleBot's pink face
 
 
-DecideFeature = Literal["cards", "routing", "answered", "browser", "naming", "videos", "names", "concern"]
+DecideFeature = Literal["cards", "routing", "answered", "browser", "naming", "videos", "names", "concern",
+                        "addressed"]
 DecideMode = Literal["off", "shadow", "on"]
 
 

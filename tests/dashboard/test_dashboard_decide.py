@@ -11,7 +11,8 @@ async def test_decide_status_and_settings(authed, dctx):
     assert r.status_code == 200
     d = r.json()
     assert d["provider"] == "off" and d["why_off"] == "the provider is off" and d["has_typesafe_key"] is True
-    assert set(d["features"]) == {"cards", "routing", "answered", "browser", "naming", "videos", "names", "concern"}
+    assert set(d["features"]) == {"cards", "routing", "answered", "browser", "naming", "videos", "names", "concern",
+                                  "addressed"}
     assert "ts-secret-key-123" not in r.text
     r = await authed.put("/api/decide/settings", json={"provider": "jev", "modes": {"cards": "on"}})
     assert r.status_code == 200

@@ -153,6 +153,19 @@ async def which_one(ctx: Any, *, wanted: str, items: list[dict[str, Any]], what:
     return (answers or {}).get("which")
 
 
+# ---------------------------------------------------------------- said to the robot, or room talk? (live)
+async def addressed(ctx: Any, *, said: str, robot_said: str = "", robot: str = "LittleBot") -> Answer | None:
+    state = {"said_while_it_talked": _clean(said), f"{robot}_was_saying": robot_said[:TEXT]}
+    q = YesNo(f"Someone in a family's room talked while {robot}, their home robot, was speaking. Were these words "
+              f"said to {robot}?",
+              yes=f"Said to {robot}: a question or request for it, an answer to what it said, or telling it to "
+                  "stop, wait or change something.",
+              no="Said to someone else in the room (family talking to each other, to the baby, on the phone), or "
+                 "talking to themselves.")
+    answers = await get_decider(ctx).ask("addressed", state, {"to_robot": q}, timeout=1.5)
+    return (answers or {}).get("to_robot")
+
+
 # ---------------------------------------------------------------- someone in danger? (live; raise-only)
 CONCERN_AT = 0.85  # only adds an alert (never removes one), and only when this sure
 
@@ -168,5 +181,5 @@ async def concern(ctx: Any, *, said: str) -> Answer | None:
     return (answers or {}).get("danger")
 
 
-__all__ = ["CARD_CLOSE", "CARD_NONE", "CARD_STEER", "CONCERN_AT", "NO_MATCH", "ROUTES", "about_the_page", "answered",
-           "best_video", "card_options", "card_pick", "concern", "route", "talked_as_if_baby", "which_one"]
+__all__ = ["CARD_CLOSE", "CARD_NONE", "CARD_STEER", "CONCERN_AT", "NO_MATCH", "ROUTES", "about_the_page", "addressed",
+           "answered", "best_video", "card_options", "card_pick", "concern", "route", "talked_as_if_baby", "which_one"]

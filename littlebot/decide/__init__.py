@@ -13,6 +13,8 @@ both logged, nothing changes) or on (its answer is used when it is sure enough):
 * ``videos``   - which YouTube search result best fits what was asked for, and the child
 * ``names``    - which activity or game they meant, when the name matches none closely
 * ``concern``  - could someone be in danger (only ever adds an alert to LittleBot's own safety check)
+* ``addressed`` - words said over the voice: to LittleBot, or people in the room talking to each other (the voice
+  then carries on)
 
 * ``base``    - the questions (Choice, YesNo, Score) and answers
 * ``jev``     - TypeSafe's ``POST /v1/systemone`` (TYPESAFE_API_KEY)
