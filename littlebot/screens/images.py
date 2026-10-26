@@ -157,6 +157,13 @@ _CACHE: OrderedDict[str, tuple[Any, str, str]] = OrderedDict()  # key -> (surfac
 _IN_FLIGHT: dict[str, WebPicture] = {}
 
 
+def cache_bytes() -> int:
+    """About how much memory the cached pictures hold (their pixels)."""
+    with _LOCK:
+        surfaces = [v[0] for v in _CACHE.values()]
+    return sum(s.get_width() * s.get_height() * s.get_bytesize() for s in surfaces if hasattr(s, "get_bytesize"))
+
+
 def clear_cache() -> None:
     with _LOCK:
         _CACHE.clear()
@@ -441,5 +448,5 @@ def _decode(data: bytes, ctype: str) -> Any:
     return img
 
 
-__all__ = ["CACHE_ITEMS", "MAX_BYTES", "MAX_SIZE", "WebPicture", "blocked_reason", "clear_cache", "explicit",
+__all__ = ["CACHE_ITEMS", "MAX_BYTES", "MAX_SIZE", "WebPicture", "blocked_reason", "cache_bytes", "clear_cache", "explicit",
            "fetch", "unsafe"]

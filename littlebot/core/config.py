@@ -397,8 +397,9 @@ class BrowserConfig(_Section):
     switches the feature off whatever the parent chose."""
 
     enabled: bool = True
-    # After the voice chat ends the browser stays this long with nobody touching the page.
-    idle_seconds: float = Field(default=120.0, ge=10.0, le=1800.0)
+    # After the voice chat ends the browser stays this long with nobody touching the page (like a card's linger:
+    # Chromium is the biggest thing on the Pi).
+    idle_seconds: float = Field(default=30.0, ge=10.0, le=1800.0)
     # During the chat: closes this long after they talked about something else (no browser words, no touch).
     moved_on_seconds: float = Field(default=20.0, ge=5.0, le=600.0)
     zoom: float = Field(default=1.4, ge=0.75, le=2.5)  # pages are this much bigger (720x480 screen: 514x343 px)

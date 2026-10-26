@@ -223,6 +223,7 @@ class ScreenService(Service):
         self.last_error: str | None = None
         self._voice: tuple[float, str, float] = (0.0, "", -1e9)  # (level, shape, when)
         self._canvas: Any = None
+        self._freeing: threading.Thread | None = None  # giving a closed card's memory back (_free_memory)
         self._scaled: Any = None
         bus = ctx.bus
         self._subs: list[Subscription] = [
@@ -748,7 +749,45 @@ class ScreenService(Service):
                       "source": s.source, "ended_at": time.time()}
         log.info("card %s closed (%s) after %.0fs", s.card.kind, reason, seconds)
         self._publish(CARD_CLOSED, {"kind": s.card.kind, "reason": reason})
+        s.zoomed = None
+        self._free_memory()
         return True
+
+    def _free_memory(self) -> None:
+        """No card on the screen any more: its drawings (text, panels, the presenter), its pictures and the
+        canvas are let go at once, not kept for a next card (tens of MB on a 2 GB Pi; a new card draws its own
+        in a few ms), and the memory is given back to the system (littlebot/core/memory.py; ~25 ms, so on a
+        thread of its own). Not while another card took its place or a game (which shares the drawings) is on."""
+        with self._lock:
+            if self._session is not None:
+                return
+            self._canvas = self._scaled = None
+        games = getattr(self.ctx, "games", None)
+        try:
+            if games is not None and games.active:
+                return
+        except Exception:  # noqa: BLE001
+            return
+        self._freeing = threading.Thread(target=self._free_now, name="card-memory", daemon=True)
+        self._freeing.start()
+
+    def _free_now(self) -> None:
+        try:
+            from littlebot.core import memory  # noqa: PLC0415
+            from littlebot.games import art  # noqa: PLC0415
+            from littlebot.screens import images  # noqa: PLC0415
+            from littlebot.screens.cards import _kit  # noqa: PLC0415
+        except Exception:  # noqa: BLE001 - pygame not there (a headless robot): nothing was drawn
+            return
+        with self._lock:
+            if self._session is not None:  # a new card came meanwhile: it is drawing with them
+                return
+            freed = art.cache_bytes() + images.cache_bytes()
+            art.clear_caches()
+            images.clear_cache()
+            _kit.wrap.cache_clear()
+        memory.give_back()
+        log.info("card memory freed (%.1f MB of drawings and pictures)", freed / 1e6)
 
     def _start_watch(self, s: _Session) -> None:
         try:

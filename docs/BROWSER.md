@@ -78,7 +78,7 @@ Two paths ask for it, and the browser does each thing once even when both fire:
 * STOP ALL, LittleBot going to sleep, an error.
 * A **video**, **game** or **activity** starting (they take the screen). Starting the browser stops a
   playing video first (one Chromium at a time); a video paused for the chat stays paused.
-* **2 minutes** (`browser.idle_seconds`) after the voice chat ended with nobody touching the page. During
+* **30 seconds** (`browser.idle_seconds`) after the voice chat ended with nobody touching the page. During
   a chat it stays; a touch starts the wait again (and keeps LittleBot from dozing off).
 * The parent's switch or cloud communication going off, Chromium exiting.
 
@@ -101,7 +101,7 @@ Config (`config/default.yaml`, `browser:`):
 | Key | Default | What |
 |---|---|---|
 | `enabled` | `true` | `false`: no browser view at all, whatever the parent's switch says |
-| `idle_seconds` | `120` | how long it stays after the chat with nobody touching it |
+| `idle_seconds` | `30` | how long it stays after the chat with nobody touching it |
 | `moved_on_seconds` | `20` | during the chat: how long it stays after they talked about something else |
 | `zoom` | `1.4` | how big pages are drawn (0.75 to 2.5) |
 | `mobile_layout` | `true` | ask sites for their phone layout (fits the small screen) |

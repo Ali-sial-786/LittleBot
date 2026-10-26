@@ -53,7 +53,7 @@ with the browser still up).
 
 It closes on its ×, "close it" / "close the browser" (director, tools), STOP ALL, sleep, an error state, a
 video, game or activity starting, the dashboard's Close, the parent's switch or cloud communication going off,
-Chromium exiting, ``browser.idle_seconds`` (120) after the voice chat ended with nobody touching the page
+Chromium exiting, ``browser.idle_seconds`` (30) after the voice chat ended with nobody touching the page
 (real touches are reported by the strip), and during the chat ``browser.moved_on_seconds`` (20) after they talked
 about something else (``moved_on``, from the screen director) without using it again.
 
@@ -138,6 +138,20 @@ EXTRA_SWITCHES = (
     "--deny-permission-prompts",
     "--disable-notifications",
     "--touch-events=enabled",
+    # Lighter on a 2 GB Pi (measured with a page and two cross-site frames, desktop Chromium 140 headless: 11
+    # processes and 327 MB PSS -> 7 and 296 MB). One renderer for every site: it only shows Google's results
+    # and the pages a grown-up opens from them, in incognito, with no passwords; site isolation's extra
+    # processes buy it little. Background services it never uses are off.
+    "--renderer-process-limit=1",
+    "--disable-site-isolation-trials",
+    "--disable-background-networking",
+    "--disable-component-update",
+    "--disable-default-apps",
+    "--disable-domain-reliability",
+    "--disable-breakpad",
+    # (repeats the kiosk's own list: Chromium keeps only the last --disable-features)
+    "--disable-features=Translate,MediaRouter,GlobalMediaControls,OptimizationHints,AutofillServerCommunication,"
+    "BackForwardCache,SpareRendererForSitePerProcess",
 )
 
 ERRORS = {
@@ -870,6 +884,9 @@ class BrowserView(Service):
         if s.tmpdir is not None:
             await asyncio.to_thread(shutil.rmtree, s.tmpdir, True)
             _LIVE_DIRS.discard(str(s.tmpdir))
+        from littlebot.core import memory  # noqa: PLC0415
+
+        await asyncio.to_thread(memory.give_back)  # what LittleBot itself held for the page (screenshots, text)
 
     def _teardown_now(self, s: _Session) -> None:
         """No loop any more (interpreter shutdown): signal Chromium and delete the profile."""

@@ -482,3 +482,28 @@ def test_a_cards_picture_fills_the_screen_zooms_and_a_tap_brings_the_card_back(s
     assert "picture_zoom" not in svc.status()["card"] and svc.current.taps == []  # the tap only brought it back
     svc.render(surf, surf.get_rect(), 0.03)
     assert tuple(surf.get_at((W - 10, H - 10)))[:3] == CARD_RGB
+
+
+def test_a_closed_card_lets_its_drawings_and_pictures_go(svc, sctx, monkeypatch):
+    from littlebot.core import memory
+    from littlebot.games import art
+    from littlebot.screens import images
+
+    given: list[int] = []
+    monkeypatch.setattr(memory, "give_back", lambda: given.append(1))
+    surf = pygame.Surface((W, H))
+    svc.show_card(DummyCard({"title": "one"}))
+    art.cached(("test", 1), lambda: pygame.Surface((300, 200)))  # what drawing a card leaves behind
+    images._cache_put("a giraffe", (pygame.Surface((100, 100)), "", "wikipedia"))
+    svc.render(surf, surf.get_rect(), 0.03)
+    assert art.cache_bytes() >= 300 * 200 * 4 and images.cache_bytes() > 0
+    svc.show_card(DummyCard({"title": "two"}))  # replaced: the new card keeps them
+    assert svc._freeing is None and art.cache_bytes() > 0
+    sctx.games = type("G", (), {"active": True})()
+    svc.close("test")  # a game is on: it draws with them too
+    assert svc._freeing is None and art.cache_bytes() > 0
+    sctx.games = None
+    svc.show_card(DummyCard({"title": "three"}))
+    svc.close("test")
+    svc._freeing.join(5)
+    assert art.cache_bytes() == 0 and images.cache_bytes() == 0 and svc._canvas is None and given == [1]

@@ -133,6 +133,15 @@ def clear_caches() -> None:
     _TEXT.clear()
 
 
+def cache_bytes() -> int:
+    """About how much memory the cached sprites and texts hold (their pixels); 0 while being drawn into."""
+    try:
+        values = [*_SPRITES.values(), *_TEXT.values()]
+    except RuntimeError:  # the display thread added one meanwhile
+        return 0
+    return sum(v.get_width() * v.get_height() * v.get_bytesize() for v in values if isinstance(v, pygame.Surface))
+
+
 def _fast(surf: pygame.Surface) -> pygame.Surface:
     """Convert to the display's pixel format (faster blits) when a window exists."""
     try:
