@@ -41,7 +41,7 @@ import re
 import time
 import uuid
 from dataclasses import dataclass, field
-from typing import Any, AsyncIterator, Awaitable, Callable
+from typing import Any, AsyncIterator, Awaitable, Callable, Collection
 
 import httpx
 
@@ -170,7 +170,8 @@ class ChatGPTProvider(BaseProvider):
                     images: list[bytes] | None = None, tools: list[dict[str, Any]] | None = None,
                     run_tool: ToolRunner | None = None, max_tool_rounds: int = MAX_TOOL_ROUNDS,
                     detail: str | None = None, effort: str | None = None,
-                    on_delta: Callable[[str], Any] | None = None) -> ProviderReply:
+                    on_delta: Callable[[str], Any] | None = None,
+                    final_tools: Collection[str] = ()) -> ProviderReply:
         """``images``: JPEG bytes added to the LAST user message (sent once, never kept here).
 
         ``tools`` + ``run_tool``: function calling. ``timeout`` applies to each request; a reply
@@ -180,6 +181,8 @@ class ChatGPTProvider(BaseProvider):
         endpoint rejects it for the model (400), the next costlier one is used (and remembered).
         ``on_delta(text)``: called with each piece of answer text as it streams in, before the
         reply is complete (unchecked text: the caller validates whatever it uses).
+        ``final_tools``: tools whose result the answer doesn't need ("show_on_screen"): a reply that has its
+        answer text and calls only these runs them and is the answer, with no second request for words.
 
         Hosted tools in ``tools`` (``{"type": "web_search", ...}``) are offered even without ``run_tool``;
         if the endpoint refuses one, the request is sent again without it (see the module docstring)."""
@@ -261,6 +264,13 @@ class ChatGPTProvider(BaseProvider):
                 log.info("chatgpt: answered with a web search")
             tokens_in += int(result.usage.get("input_tokens") or 0)
             tokens_out += int(result.usage.get("output_tokens") or 0)
+            if result.calls and run_tool is not None and final_tools and _is_answer(result.text) \
+                    and all(call.name in final_tools for call in result.calls):
+                for call in result.calls:  # the answer is written: these only go alongside it
+                    await _run_tool(run_tool, call)
+                return ProviderReply(text=result.text.strip(), input_tokens=tokens_in, output_tokens=tokens_out,
+                                     model=model, latency_ms=int((time.monotonic() - t0) * 1000),
+                                     stop_reason=result.stop)
             if result.calls and run_tool is not None and rounds < max(0, int(max_tool_rounds)):
                 # Stateless endpoint: replay the model's items, then the results, and ask again.
                 rounds += 1
@@ -445,6 +455,18 @@ def _replayable(item: dict[str, Any]) -> dict[str, Any] | None:
             out["status"] = item["status"]
         return out
     return None  # anything else isn't ours to replay
+
+
+# Words before a tool call that only say what's coming ("Let me put that on the screen."): not an answer.
+_PREAMBLE = re.compile(r"^\W*(?:(?:ok(?:ay)?|sure|alright|right)\W+)?(?:let me|let's|i'?ll|i will|i'?m going to|"
+                       r"one (?:moment|sec)|just a (?:moment|sec)|hold on|give me|checking|looking|putting|showing|"
+                       r"here(?:'s| is| are) (?:a|the) (?:card|picture))\b", re.I)
+ANSWER_MIN_WORDS = 6
+
+
+def _is_answer(text: str) -> bool:
+    """``text`` (a reply's words next to its tool calls) is an answer, not a preamble."""
+    return len(text.split()) >= ANSWER_MIN_WORDS and not _PREAMBLE.match(text)
 
 
 async def _run_tool(run_tool: ToolRunner, call: FunctionCall) -> str:

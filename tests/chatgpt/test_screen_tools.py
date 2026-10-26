@@ -113,3 +113,67 @@ async def test_get_weather_without_cards_is_as_before(ctx):
     ctx.privacy.set(cloud_enabled=True)
     weather_service(ctx, FakeWeb())
     assert "on_screen" not in json.loads(await run(RobotToolbox(ctx, mode="live"), "get_weather"))
+
+
+async def test_in_a_voice_chat_a_slow_card_doesnt_hold_the_answer(ctx, cards, monkeypatch):
+    import asyncio
+    import time
+
+    from littlebot.chatgpt import tools
+
+    slow = asyncio.Event()
+
+    async def show(spec: dict[str, Any], *, source: str = "voice") -> dict[str, Any]:
+        await slow.wait()  # its picture is still loading
+        cards.shown.append((spec, source))
+        return {"ok": True, "showing": "recipe for home"}
+
+    monkeypatch.setattr(cards, "show", show)
+    box = RobotToolbox(ctx, mode="live")
+    t0 = time.monotonic()
+    out = await run(box, "show_on_screen", card="recipe", title="Pancakes", steps=["Mix", "Fry"])
+    assert time.monotonic() - t0 < tools.CARD_WAIT_S + 0.3
+    assert out.startswith("ok: a recipe card is going on the screen now") and cards.shown == []
+    slow.set()  # the picture came: the card goes up by itself
+    for _ in range(50):
+        if cards.shown:
+            break
+        await asyncio.sleep(0.01)
+    assert [src for _spec, src in cards.shown] == ["tool"] and box.done == ["the screen shows recipe for home"]
+    # typed chat waits for the card, as before
+    slow.clear()
+    chat = RobotToolbox(ctx, mode="chat")
+    waiting = asyncio.ensure_future(run(chat, "show_on_screen", card="recipe", title="Tea", steps=["Boil"]))
+    await asyncio.sleep(tools.CARD_WAIT_S + 0.2)
+    assert not waiting.done()
+    slow.set()
+    assert (await waiting).startswith("ok: on the screen now")
+
+
+async def test_the_weather_card_goes_up_while_the_forecast_is_fetched(ctx, cards, monkeypatch):
+    import asyncio
+
+    ctx.privacy.set(cloud_enabled=True)
+    web = FakeWeb()
+    weather_service(ctx, web)
+    order: list[str] = []
+    real_show = cards.show
+
+    async def show(spec: dict[str, Any], *, source: str = "voice") -> dict[str, Any]:
+        order.append("card asked")
+        return await real_show(spec, source=source)
+
+    monkeypatch.setattr(cards, "show", show)
+    from littlebot.info import weather
+
+    real_report = weather.WeatherService.report
+
+    async def report(self, place=None, *, days=2):
+        await asyncio.sleep(0.05)
+        out = await real_report(self, place, days=days)
+        order.append("forecast came")
+        return out
+
+    monkeypatch.setattr(weather.WeatherService, "report", report)
+    out = json.loads(await run(RobotToolbox(ctx, mode="live"), "get_weather"))
+    assert out["on_screen"].startswith("weather for home") and order == ["card asked", "forecast came"]

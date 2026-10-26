@@ -236,8 +236,8 @@ async def test_a_hand_offs_card_goes_through_the_director_once(make_live, ctx):
                         script=[("show_on_screen", {"card": "weather"})])
     svc, server = await make_live(provider)
     try:
-        hear(server, "What's the weather like tomorrow?")
-        delegate(server, "w1", "What's the weather tomorrow?")
+        hear(server, "Will it be nice for the park tomorrow?")
+        delegate(server, "w1", "Will it be nice for the park tomorrow?")  # (not plain weather: the text model)
         await wait_for(lambda: provider.results)
         assert "show_on_screen" in provider.hand_offs[0]["tools"]
         assert provider.results[0].startswith("ok: on the screen now: the weather card")

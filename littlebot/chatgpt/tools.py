@@ -55,6 +55,9 @@ log = logging.getLogger("littlebot.chatgpt.tools")
 
 MAX_LISTED = 40
 VOLUME_STEP = 10  # percent
+# In a voice chat a card that takes longer than this to go up (its picture still loading) carries on by itself:
+# the answer is written, and said, meanwhile (the card and the answer come together, not one after the other).
+CARD_WAIT_S = 0.4
 SOURCE = "chatgpt"  # recorded as the activity / media source
 
 
@@ -231,6 +234,7 @@ class RobotToolbox:
         self.pending: list[Pending] = []
         self._found: list[dict[str, Any]] = []  # the last search results (titles for play_youtube)
         self._opened_browser = False  # search_in_browser ran in this turn: a card doesn't take its place
+        self._going_up: set[asyncio.Task[Any]] = set()  # cards still going up after their tool call answered
 
     # ------------------------------------------------------------ the model's side
     def specs(self) -> list[dict[str, Any]]:
@@ -1006,11 +1010,14 @@ class RobotToolbox:
             days = max(1, min(7, int(args.get("days") or 2)))
         except (TypeError, ValueError):
             days = 2
+        card = self._soon(self._weather_card(place, days))  # goes up while the forecast is fetched
         try:
             report = await get_weather(self.ctx).report(place, days=days)
         except WeatherError as e:
+            card.cancel()
             return _err(f"{e}. Say so briefly; don't guess the weather.")
-        shown = await self._weather_card(place, days)
+        done, _ = await asyncio.wait({card}, timeout=CARD_WAIT_S if self.mode == "live" else None)
+        shown = (card.result() if not card.cancelled() else None) if done else "the weather (going up now)"
         return _json({**report, "on_screen": shown} if shown else report)
 
     async def _get_time(self, args: dict[str, Any]) -> str:
@@ -1094,6 +1101,14 @@ class RobotToolbox:
             return _err("LittleBot's screen can't show cards right now; just say the answer")
         fields = args.get("fields") if isinstance(args.get("fields"), dict) else {}
         spec = {**fields, **{k: v for k, v in args.items() if k != "fields"}}
+        putting = self._soon(self._put_up(spec))
+        done, _ = await asyncio.wait({putting}, timeout=CARD_WAIT_S if self.mode == "live" else None)
+        if done:
+            return putting.result()
+        return _ok(f"a {str(spec.get('card'))[:40]} card is going on the screen now (its picture is still loading). "
+                   "Don't read it out; say the gist.")
+
+    async def _put_up(self, spec: dict[str, Any]) -> str:
         result = await self._show_card(spec)
         if result.get("error") == "busy" and await self._browser_makes_way():
             result = await self._show_card(spec)
@@ -1107,6 +1122,25 @@ class RobotToolbox:
         if error == "invalid":
             return _err(f"that card couldn't be made ({str(result.get('detail') or 'unusable')[:120]})")
         return _err("no card could be shown; just say the answer")
+
+    def _soon(self, coro: Awaitable[Any]) -> "asyncio.Task[Any]":
+        """``coro`` as a task that may outlive its tool call (kept until done; its errors only logged)."""
+        task = asyncio.ensure_future(coro)
+        self._going_up.add(task)
+
+        def done(t: "asyncio.Task[Any]") -> None:
+            self._going_up.discard(t)
+            if not t.cancelled() and t.exception() is not None:
+                log.warning("a card going up failed", exc_info=t.exception())
+        task.add_done_callback(done)
+        return task
+
+    def screen_cards(self) -> bool:
+        """The screen can show cards now (quick answers, littlebot/chatgpt/quick.py)."""
+        return bool(self._card_types())
+
+    def weather_card(self, place: str | None, days: int) -> Awaitable[str | None]:
+        return self._weather_card(place, days)
 
     def _zoom_card(self, level: str) -> bool:
         """"Zoom into that" with a card's picture up and no browser: the picture full screen / zoomed."""

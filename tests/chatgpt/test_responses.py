@@ -258,6 +258,40 @@ async def test_a_tool_call_runs_and_the_answer_continues_with_its_result(tmp_pat
     assert second["tools"] == first["tools"]
 
 
+SCREEN_TOOL = {"name": "show_on_screen", "description": "Show a card.",
+               "parameters": {"type": "object", "properties": {"card": {"type": "string"}}, "required": ["card"]}}
+
+
+@pytest.mark.parametrize(("words", "requests"), [
+    ("Giraffes are about five metres tall, the tallest animals on land.", 1),  # written: no second request
+    ("Let me put that on the screen for you now.", 2),  # only a preamble: the answer still has to come
+    ("", 2),
+])
+async def test_an_answer_written_next_to_a_card_needs_no_second_request(tmp_path, words, requests):
+    bodies: list[dict] = []
+    first = sse(*([{"type": "response.output_text.delta", "delta": words}] if words else []),
+                {"type": "response.output_item.done", "item": call_item("c1", "show_on_screen", {"card": "facts"})},
+                {"type": "response.completed", "response": {"usage": {"input_tokens": 100, "output_tokens": 20}}})
+    rounds = [first, OK]
+
+    def handler(r: httpx.Request) -> httpx.Response:
+        bodies.append(json.loads(r.content))
+        return httpx.Response(200, text=rounds[len(bodies) - 1])
+
+    ran: list[str] = []
+
+    async def run_tool(name: str, args: str) -> str:
+        ran.append(name)
+        return "ok: on the screen now"
+
+    p = provider(tmp_path, handler)
+    reply = await p.reply([{"role": "user", "content": "how tall is a giraffe? show me"}], system="x",
+                          max_tokens=50, timeout=5, tools=[SCREEN_TOOL, VOLUME_TOOL], run_tool=run_tool,
+                          final_tools={"show_on_screen"})
+    assert len(bodies) == requests and ran == ["show_on_screen"]
+    assert reply.text == (words if requests == 1 else "Moo! Cows say moo.")
+
+
 async def test_tool_rounds_are_capped(tmp_path):
     n = {"requests": 0}
 

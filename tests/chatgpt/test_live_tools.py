@@ -1,10 +1,11 @@
-"""Live voice: hand-offs answered with LittleBot's tools, the 5 s interim answer, and the hand-over
+"""Live voice: hand-offs answered with LittleBot's tools, the interim answer, and the hand-over
 to a video / activity / sleep after the call (local WebRTC peer standing in for OpenAI)."""
 
 from __future__ import annotations
 
 import asyncio
 import json
+import re
 from types import SimpleNamespace
 from typing import Any
 
@@ -148,15 +149,33 @@ async def test_volume_hand_off_is_done_with_the_tools(ctx, make_live):
     provider = ToolProvider([("volume_up", {})], text="It's louder now!")
     svc, server, _audio = await make_live(provider)
     try:
-        delegate(server, "v1", "Turn the volume up")
+        delegate(server, "v1", "Make it louder for the song")  # (a plain "louder": quick.py, below)
         await wait_for(lambda: answers(server, "v1"))
         assert answers(server, "v1") == ["It's louder now!"]
         assert ctx.settings.get("audio.volume") == pytest.approx(0.6)  # the live call plays at this volume
         call = provider.calls[0]
         assert "volume_up" in call["tools"] and "look_through_camera" not in call["tools"]
         assert "Things you can do (tools)" in call["system"] and "use your tools" in call["system"]
-        assert call["messages"][-1] == {"role": "user", "content": "Turn the volume up"}
+        assert call["messages"][-1] == {"role": "user", "content": "Make it louder for the song"}
         assert svc.status()["active"]
+    finally:
+        await close(svc, server)
+
+
+async def test_a_plain_volume_hand_off_needs_no_text_model(ctx, make_live, caplog):
+    import logging
+
+    caplog.set_level(logging.INFO, logger="littlebot.chatgpt.live")
+    provider = ToolProvider()
+    svc, server, _audio = await make_live(provider)
+    try:
+        delegate(server, "v1", "Turn the volume up")
+        await wait_for(lambda: answers(server, "v1"))
+        assert answers(server, "v1") == ["Done: LittleBot's speaker volume is now 60%. Tell them in a few words."]
+        delegate(server, "v2", "Set the volume to 30 percent")
+        await wait_for(lambda: answers(server, "v2"))
+        assert ctx.settings.get("audio.volume") == pytest.approx(0.3)
+        assert provider.calls == [] and "kind=quick:volume" in caplog.text
     finally:
         await close(svc, server)
 
@@ -334,20 +353,29 @@ async def test_weather_hand_offs_get_the_tools_not_the_camera_and_answer_in_time
     svc, server, _audio = await make_live(provider)
     loop = asyncio.get_running_loop()
     try:
-        # "looking" and "show" are camera words: before, this took a photo (or said it couldn't see)
+        # "looking" and "show" are camera words: before, this took a photo (or said it couldn't see).
+        # Plain weather questions: LittleBot asks the weather service itself (quick.py), no text model.
         for i, question in enumerate(("What's the weather looking like today?", "Show me the weather for tomorrow")):
             t0 = loop.time()
             delegate(server, f"w{i}", question)
             await wait_for(lambda: answers(server, f"w{i}"))
-            assert answers(server, f"w{i}") == ["It's sunny and 12 degrees!"]  # no "still thinking" first
-            assert loop.time() - t0 < live_mod.HANDOFF_INTERIM_S
+            text = "".join(answers(server, f"w{i}"))
+            assert text.startswith(f"Answer what they asked (\"{question}\") from the weather service's answer")
+            data = json.loads(text.split("The weather service says: ", 1)[1])
+            assert data["place"] == "Toronto, Ontario" and data["now"]["temperature"] and data["forecast"][0]["high"]
+            assert loop.time() - t0 < 1.0
+        assert provider.calls == []
+        assert web.count("api.open-meteo.com") == 1  # the second question used the cached forecast
+        assert caplog.text.count("hand-off received (kind=quick:weather)") == 2 and "kind=look" not in caplog.text
+        assert svc.status()["photos"] == 0
+        # Not plain weather: the text model, with its tools
+        delegate(server, "w2", "Will it be nice enough for the park today?")
+        await wait_for(lambda: answers(server, "w2"))
+        assert answers(server, "w2") == ["It's sunny and 12 degrees!"]  # no "still thinking" first
         call = provider.calls[0]
         assert {"get_weather", "get_time", "web_search"} <= set(call["tools"])
         assert "call get_weather" in call["system"] and "use web search first" in call["system"]
         assert json.loads(provider.results[0])["place"] == "Toronto, Ontario"
-        assert web.count("api.open-meteo.com") == 1  # the second question used the cached forecast
-        assert caplog.text.count("hand-off received (kind=info)") == 2 and "kind=look" not in caplog.text
-        assert svc.status()["photos"] == 0
     finally:
         await close(svc, server)
 
@@ -382,14 +410,17 @@ async def test_time_and_news_hand_offs_get_the_tools(ctx, make_live, caplog):
     provider = ToolProvider([("get_time", {})], text="It's half past nine.")
     svc, server, _audio = await make_live(provider)
     try:
-        delegate(server, "t1", "What time is it?")
+        delegate(server, "t1", "What time is it?")  # LittleBot's own clock, no text model (quick.py)
         await wait_for(lambda: answers(server, "t1"))
-        assert answers(server, "t1") == ["It's half past nine."] and json.loads(provider.results[0])["day"]
+        assert re.match(r"It is \d{1,2}:\d\d [ap]m on \w+day \d", answers(server, "t1")[0]) and provider.calls == []
+        delegate(server, "t2", "What time is it in Tokyo?")  # another place: the text model and its tools
+        await wait_for(lambda: answers(server, "t2"))
+        assert answers(server, "t2") == ["It's half past nine."] and json.loads(provider.results[0])["day"]
         provider.script = []
         provider.text = "The Leafs won 3 to 2."
         delegate(server, "n1", "Who won the hockey game last night?")  # "game" is a control word: tools too
         await wait_for(lambda: answers(server, "n1"))
         assert answers(server, "n1") == ["The Leafs won 3 to 2."] and "web_search" in provider.calls[-1]["tools"]
-        assert "kind=info" in caplog.text and "kind=control" in caplog.text
+        assert "kind=quick:time" in caplog.text and "kind=info" in caplog.text and "kind=control" in caplog.text
     finally:
         await close(svc, server)

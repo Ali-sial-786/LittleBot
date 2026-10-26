@@ -25,9 +25,11 @@ Safety, enforced here in code (docs/AI_SAFETY.md, "Live voice"):
   ``chatgpt.tools_enabled`` that model may also act on the robot (volume, videos, activities, games,
   sleep, its own status: littlebot/chatgpt/tools.py). A video, an activity or sleep starts only after
   the voice has said its line; the call then ends ("handed over"), as they need the speaker and screen;
-* every hand-off is answered within ``HANDOFF_INTERIM_S`` (5 s): if the answer isn't ready, the voice
+* every hand-off is answered within ``HANDOFF_INTERIM_S`` (3.5 s): if the answer isn't ready, the voice
   is told to say it's thinking, and the answer follows as a note when it comes (at most
-  ``HANDOFF_TIMEOUT_S`` in all, else a short "that didn't work" note);
+  ``HANDOFF_TIMEOUT_S`` in all, else a short "that didn't work" note). The weather, the time, the volume
+  and timers are answered without the text model (quick.py); otherwise the answer's first sentence is
+  given as soon as it is written and the rest follows as a note;
 * a photo is taken only for a question that needs it (the voice's hand-off, or the person's own
   words when the voice doesn't hand it over), only if the parent allows it in Privacy, and at
   most one per question; when looking isn't allowed the voice is told why instead of guessing;
@@ -48,6 +50,7 @@ import collections
 import dataclasses
 import datetime as _dt
 import fractions
+import inspect
 import logging
 import time
 import re
@@ -254,7 +257,8 @@ GOODBYE_QUIET_S = 0.8
 GOODBYE_MAX_S = 10.0
 FIRST_WORDS_MIN_S = 30.0
 MAX_CAPTIONS = 8
-HANDOFF_INTERIM_S = 5.0  # no answer yet: the voice is told to say it's thinking (the answer follows as a note)
+HANDOFF_INTERIM_S = 3.5  # no answer yet: the voice is told to say it's thinking (the answer follows as a note)
+QUICK_TIMEOUT_S = 3.0  # a quick answer (the weather, the time, quick.py) that takes longer: the text model answers
 HANDOFF_TIMEOUT_S = 25.0  # a hand-off the voice waits on always gets an answer (or a "didn't work" note) within this
 HANDOVER_MAX_S = 15.0  # a video / activity / sleep was promised: the call ends this long after, at the latest
 HANDOVER_REASON = "handed over to what was asked for"
@@ -273,6 +277,29 @@ NAMING_WINDOW_S = 20.0  # the voice's reply this soon after it counts as talking
 NAME_FIXES = 3  # at most this many "you called the grown-up by the child's name" notes a call
 LATE_ANSWER = "Here is the answer to what they asked a moment ago: {answer} Tell them now, in your own words."
 LATE_FAILED = "What they asked a moment ago didn't work out this time. Say so briefly; they can ask again."
+# A hand-off's first sentence goes to the voice as soon as the text model has written it (camera looks do the
+# same, look.py); the rest follows as this note. Words that only say what's coming ("Let me check.") wait.
+MORE_ANSWER = ("More of the answer to what they asked (you have said its first sentence already): {rest} Say this "
+               "next, carrying on from it.")
+PREAMBLE = re.compile(r"^\W*(?:(?:ok(?:ay)?|sure|alright|right|hmm+|oh)\W+)*(?:let me|let'?s see|i'?ll|i will|"
+                      r"i'?m going to|one (?:moment|sec)|just a (?:moment|sec)|hold on|give me a|checking|looking "
+                      r"(?:it|that) up|searching|good question|great question)\b", re.I)
+FIRST_MIN_WORDS = 2  # "Sure!" alone is not worth passing on early
+# Simple questions ("how tall is a giraffe?", "what's the capital of Peru?") get a faster answer: less reasoning
+# (LIGHT_EFFORT; the endpoint falls back to a costlier effort if a model refuses it) and no web search. Anything
+# about what changes or is current (these words) keeps the full search.
+LIGHT_EFFORT = "minimal"
+LIGHT_MAX_WORDS = 14
+NEEDS_LOOKUP = re.compile(r"\b(?:news|headlines?|today|tonight|yesterday|tomorrow|this (?:week|weekend|month|year|"
+                          r"morning|afternoon|evening)|(?:last|next) (?:night|week|weekend|month|year)|latest|"
+                          r"current(?:ly)?|recent(?:ly)?|now|still|any ?more|open(?:ing)?|clos(?:e|es|ed|ing)|hours|"
+                          r"prices?|costs?|how much|scores?|won|win(?:ning|s)?|lost|beat|match(?:es)?|playing|plays|"
+                          r"elections?|president|prime minister|king|queen|ceo|leader|weather|forecast|traffic|"
+                          r"stocks?|shares|bitcoin|released?|coming out|new|upcoming|(?:19|20)\d\d|look(?:ing)? "
+                          r"(?:it |that |this )?up|search|google|online|internet|web|check|near (?:me|here|us)|nearby|"
+                          r"around here|how old|ages?|born|died|dead|alive|married|tickets?|events?|schedule|"
+                          r"showing|on tv)\b", re.I)
+FINAL_TOOLS = frozenset({"show_on_screen"})  # a reply that wrote its answer and calls only these needs no more words
 # Hand-offs that ask LittleBot to do something with the robot or the app, not to make a face or to look
 # ("start the peekaboo activity", "show me a video of a dog", "go to sleep"): LittleBot's tools answer them.
 CONTROL_WORDS = re.compile(r"\b(?:activit(?:y|ies)|games?|videos?|youtube|cartoons?|volume|louder|quieter|"
@@ -434,8 +461,9 @@ Use your tools for live information (the weather and forecast, the date and time
 anything current): look it up and answer with what you found; never say you can't check it. The hand-off may also \
 ask LittleBot to do something (the volume, a video, an activity, a game, sleep) or ask about LittleBot itself (how \
 hot it is, its memory, Wi-Fi, what it can do): use your tools for that too, then answer with one short sentence \
-for the voice to say. When it asks to show something on the screen, call show_on_screen with the card that fits \
-best (an explain card with a picture for an explanation, a maths card for a sum), then answer briefly."""
+for the voice to say. When it asks to show something on the screen, write your spoken answer first and then, in \
+the same reply, call show_on_screen with the card that fits best (an explain card with a picture for an \
+explanation, a maths card for a sum): the card goes up while your answer is said."""
 HANDOVER_WHAT = {"video": "the video starts", "activity": "the activity starts", "sleep": "LittleBot goes to sleep"}
 # A video paused for this chat ("Hey LittleBot" while it played: littlebot/audio/wakeword.py, MediaController.hold).
 # The person's own words, or the voice's hand-off, carry on with it (once the voice said goodbye, as a hand-over)
@@ -932,6 +960,7 @@ class LiveCall:
         self._publish(CALL_STARTED, {})
         if self._director is not None:
             self._spawn(self._director.warm())  # the screen's first decision doesn't wait for a connection
+        self._spawn(self._warm_text_model())  # nor the first hand-off
 
     def _make_director(self) -> Any:
         """The screen director for this call, when there is a screen service and its cards are switched on."""
@@ -1600,6 +1629,8 @@ class LiveCall:
                 return
             if await self._video_hand_off(d.id, question):
                 return
+            if await self._quick_answer(d.id, question):
+                return
             who = self._who_asked(question)  # "who is here": face recognition answers, on the robot
             control = not who and self._is_control(question) and not (
                 seeing and SEE_FIRST.search(question) and not CONTROL_ACTS.search(question))
@@ -1622,11 +1653,14 @@ class LiveCall:
             if kind == "empty":
                 self._send_result(d.id, wire.NO_INPUT_RESULT)
                 return
+            early = None
             if kind == "look":
                 work = self._look_for_voice(question)
             else:
-                work = self._ask_robot(sanitize_user_text(question, max_chars=600))
-            await self._deliver(d.id, self._spawn(work), kind)
+                early = _Early(relaxed=self.ctx.config.ai.relaxed_rules) if kind in ("lookup", "info") else None
+                work = self._ask_robot(sanitize_user_text(question, max_chars=600), early=early,
+                                       light=kind == "lookup" and _light_question(question))
+            await self._deliver(d.id, self._spawn(work), kind, early)
         finally:
             self._delegations -= 1
             self._last_activity = self.svc._now()
@@ -1691,23 +1725,43 @@ class LiveCall:
         log.info("live voice: remembering a note (%d kept)", len(remembered.notes(self.ctx.settings)))
         return f"Saved: LittleBot will remember this in every chat from now on: {note}."
 
-    async def _deliver(self, delegation_id: str, task: "asyncio.Task[str]", kind: str) -> None:
+    async def _deliver(self, delegation_id: str, task: "asyncio.Task[str]", kind: str,
+                       early: "_Early | None" = None) -> None:
         """Answer a hand-off. The voice waits silently until a hand-off is answered, so: the answer if
         it's ready within HANDOFF_INTERIM_S; else "say you're thinking" right away, and the answer
-        follows as a note when it comes (HANDOFF_TIMEOUT_S in all, else a short "didn't work" note)."""
-        first = min(HANDOFF_INTERIM_S, HANDOFF_TIMEOUT_S)
+        follows as a note when it comes (HANDOFF_TIMEOUT_S in all, else a short "didn't work" note).
+
+        ``early``: the answer's first sentence, while the rest is still being written: it is the answer then,
+        and the rest follows as a note (``_tell_more``)."""
+        first = interim = min(HANDOFF_INTERIM_S, HANDOFF_TIMEOUT_S)
+        if early is not None:
+            t0 = time.monotonic()
+            waiting = asyncio.ensure_future(early.ready.wait())
+            try:
+                await asyncio.wait({task, waiting}, timeout=first, return_when=asyncio.FIRST_COMPLETED)
+            finally:
+                waiting.cancel()
+            spent = time.monotonic() - t0
+            if early.first and not task.done():
+                log.info("live voice: hand-off answered with its first sentence at +%d ms (kind=%s); the rest "
+                         "follows", int(spent * 1000), kind)
+                self._answer_known(early.first)  # the screen's card is decided now, while the voice says it
+                self._send_result(delegation_id, early.first)
+                self._spawn(self._tell_more(task, early, kind, HANDOFF_TIMEOUT_S - spent))
+                return
+            first = max(0.0, first - spent)
         try:
             text = await asyncio.wait_for(asyncio.shield(task), first)
         except asyncio.TimeoutError:
-            if task.done() or first >= HANDOFF_TIMEOUT_S:
+            if task.done() or interim >= HANDOFF_TIMEOUT_S:
                 task.cancel()
                 log.warning("live voice: hand-off took too long (kind=%s); answered anyway", kind)
                 self._send_result(delegation_id, wire.FAILED_RESULT)
                 return
-            log.info("live voice: hand-off not ready after %.0f s (kind=%s); the voice was told to wait", first, kind)
+            log.info("live voice: hand-off not ready after %.1f s (kind=%s); the voice was told to wait", interim, kind)
             self._send_result(delegation_id, STILL_WORKING)
             try:
-                text = await asyncio.wait_for(task, HANDOFF_TIMEOUT_S - first)
+                text = await asyncio.wait_for(task, HANDOFF_TIMEOUT_S - interim)
             except asyncio.TimeoutError:
                 log.warning("live voice: hand-off took too long (kind=%s); the voice was told", kind)
                 self._note(LATE_FAILED)
@@ -1726,6 +1780,67 @@ class LiveCall:
         self._answer_known(text)
         self._send_result(delegation_id, text)
         self._arm_handover()
+
+    async def _tell_more(self, task: "asyncio.Task[str]", early: "_Early", kind: str, timeout: float) -> None:
+        """The rest of a hand-off's answer whose first sentence the voice already has (a note, once)."""
+        try:
+            text = await asyncio.wait_for(task, max(0.1, timeout))
+        except Exception:  # noqa: BLE001 - incl. the timeout: the voice said the first sentence, that's all
+            log.warning("live voice: the rest of a hand-off's answer didn't come (kind=%s)", kind)
+            return
+        if self._ended.is_set():
+            return
+        if early.more is None:  # it didn't go on from that sentence (it looked something up first): all of it
+            if text not in (wire.FAILED_RESULT, NOT_SURE):
+                self._answer_known(text)
+                self._note(LATE_ANSWER.format(answer=text))
+        elif early.more:
+            self._answer_known(f"{early.first} {early.more}")
+            self._note(MORE_ANSWER.format(rest=early.more))
+        self._arm_handover()
+
+    async def _warm_text_model(self) -> None:
+        """Open the text model's connection while the call connects (best effort): the first hand-off doesn't
+        pay for DNS, TCP and TLS."""
+        try:
+            warm = getattr(self.svc.provider(), "warm", None) if self._tools_on() else None
+            if warm is not None:
+                await warm()
+        except Exception:  # noqa: BLE001
+            log.debug("live voice: warming the text model's connection failed", exc_info=True)
+
+    async def _quick_answer(self, delegation_id: str, question: str) -> bool:
+        """The weather, the time, the volume, a timer: LittleBot answers itself, with no text model in between
+        (littlebot/chatgpt/quick.py). False: not one of those, or its tool couldn't answer (the text model does)."""
+        if not question or not self.cfg.tools_enabled:
+            return False
+        from littlebot.chatgpt import quick  # noqa: PLC0415
+
+        asked = quick.match(question)
+        if asked is None:
+            return False
+        t0 = time.monotonic()
+        text = await quick.run_with_timeout(asked, self._toolbox(), question, QUICK_TIMEOUT_S, spawn=self._spawn)
+        if text is None:
+            return False
+        log.info("live voice: hand-off received (kind=quick:%s); answered in %d ms without the text model",
+                 asked.what, int((time.monotonic() - t0) * 1000))
+        self._send_result(delegation_id, text)
+        return True
+
+    def _toolbox(self) -> Any:
+        from littlebot.chatgpt.tools import RobotToolbox  # noqa: PLC0415
+
+        return RobotToolbox(self.ctx, mode="live", defer=True,
+                            screen=self._director.show_spec if self._director is not None else None)
+
+    def _reply_options(self, **wanted: Any) -> dict[str, Any]:
+        """The per-call options the text model's ``reply`` takes (a plain provider gets none of them)."""
+        try:
+            params = inspect.signature(self.svc.provider().reply).parameters
+        except (TypeError, ValueError):
+            return {}
+        return {k: v for k, v in wanted.items() if v is not None and k in params}
 
     def _answer_known(self, text: str) -> None:
         """What the voice is about to say for a hand-off: the screen's card is made to agree with it."""
@@ -1746,16 +1861,17 @@ class LiveCall:
         """A hand-off (or the person's words) asking LittleBot to do something with the robot / app."""
         return bool(text and CONTROL_WORDS.search(text)) and self._tools_on()
 
-    async def _ask_robot(self, question: str) -> str:
+    async def _ask_robot(self, question: str, *, early: "_Early | None" = None, light: bool = False) -> str:
         """A hand-off for the text model, which may also act on the robot with LittleBot's tools
-        (volume, videos, activities, games, sleep, its own status). Without tools: ``_look_up``."""
+        (volume, videos, activities, games, sleep, its own status). Without tools: ``_look_up``.
+
+        ``early``: gets the answer's first sentence while the rest is written (``_deliver``). ``light``: a simple
+        question: less reasoning and no web search (LIGHT_EFFORT)."""
         if not self._tools_on():
             return await self._look_up(question)
         from littlebot.brain.face_actions import extract_tags  # noqa: PLC0415
-        from littlebot.chatgpt.tools import RobotToolbox  # noqa: PLC0415
 
-        box = RobotToolbox(self.ctx, mode="live", defer=True,
-                           screen=self._director.show_spec if self._director is not None else None)
+        box = self._toolbox()
         policy = self.ctx.age_policy()
         system = build_system_prompt(robot_name=self.ctx.config.robot_name, age_months=policy.age_months,
                                      max_words=LOOKUP_MAX_WORDS, tools=True,
@@ -1767,14 +1883,31 @@ class LiveCall:
         while history and history[0]["role"] != "user":
             history.pop(0)
         answer, failed = None, False
+        specs = box.specs()
+        if light:
+            specs = [s for s in specs if s.get("type") != "web_search"]
+
+        async def run_tool(name: str, arguments: Any = None) -> str:
+            if early is not None:
+                early.restart()  # words before a tool call were only a preamble
+            return await box.run(name, arguments)
+
+        options = self._reply_options(on_delta=early.feed if early is not None else None,
+                                      effort=LIGHT_EFFORT if light else None, final_tools=FINAL_TOOLS)
+        t0 = time.monotonic()
         try:
             reply = await self.svc.provider().reply(
                 history + [{"role": "user", "content": question}], system=system, max_tokens=200, timeout=15.0,
-                tools=box.specs(), run_tool=box.run, max_tool_rounds=self.cfg.max_tool_rounds)
+                tools=specs, run_tool=run_tool, max_tool_rounds=self.cfg.max_tool_rounds, **options)
             text, _ = extract_tags(reply.text)  # a stray [face: ...] tag must never be read out
             answer = _speakable(text, self.ctx.config.ai.relaxed_rules)
+            if early is not None:
+                early.finish(reply.text)
         except (ProviderError, asyncio.TimeoutError):
             failed = True
+        log.info("live voice: the text model answered in %d ms (%s%s)", int((time.monotonic() - t0) * 1000),
+                 f"light: {LIGHT_EFFORT} effort, no web search" if light else "full",
+                 f"; first sentence at +{early.at_ms} ms" if early is not None and early.at_ms is not None else "")
         if box.calls:
             log.info("live voice: tools used: %s", ",".join(box.calls))
         if not answer and box.done:  # the words didn't pass, but something was done: say that much
@@ -1782,8 +1915,11 @@ class LiveCall:
         if box.pending:
             self._handover = box  # runs once the voice has said this (the newest request wins)
             label = box.pending[-1].label.split(" ", 1)[0]
-            answer = (answer or "Done.") + (f" After you say this, this voice chat ends and "
-                                            f"{HANDOVER_WHAT.get(label, 'it starts')}, so finish with a short goodbye.")
+            then = (f" After you say this, this voice chat ends and {HANDOVER_WHAT.get(label, 'it starts')}, so "
+                    f"finish with a short goodbye.")
+            answer = (answer or "Done.") + then
+            if early is not None and early.more is not None:
+                early.more = (early.more + then).strip()
         return answer or (wire.FAILED_RESULT if failed else NOT_SURE)
 
     def _arm_handover(self) -> None:
@@ -2572,6 +2708,72 @@ def _look_note(code: str) -> str:
     except ImportError:
         ERRORS = {}  # noqa: N806
     return ERRORS.get(code) or f"ChatGPT could not look ({code})."
+
+
+@dataclasses.dataclass(eq=False)
+class _Early:
+    """A hand-off answer's first sentence, handed over while the text model is still writing the rest."""
+
+    relaxed: Any = ()
+    raw: str = ""  # the words streamed since the last tool call
+    skip: int = 0  # ...of which a preamble ("Let me check.") is this long
+    first: str | None = None  # the first sentence, checked (what the voice is given)
+    head: str = ""  # ...as it was written
+    closed: bool = False  # nothing is handed over early (the first sentence didn't pass the checks)
+    more: str | None = None  # finish(): what the answer says after ``first``; None: it didn't start with it
+    at_ms: int | None = None
+    started: float = dataclasses.field(default_factory=time.monotonic)
+    ready: asyncio.Event = dataclasses.field(default_factory=asyncio.Event)
+
+    def feed(self, piece: str) -> None:
+        if self.first is not None or self.closed:
+            return
+        self.raw += piece
+        from littlebot.brain.face_actions import extract_tags  # noqa: PLC0415
+        from littlebot.chatgpt.look import _SENTENCE_END  # noqa: PLC0415
+
+        while True:
+            rest = self.raw[self.skip:]
+            m = next((m for m in _SENTENCE_END.finditer(rest) if len(rest[:m.end()].split()) >= FIRST_MIN_WORDS),
+                     None)
+            if m is None:
+                return
+            sentence = rest[:m.end()]
+            if not PREAMBLE.match(sentence):
+                break
+            self.skip += m.end()  # "Let me check." is no answer: the next sentence may be
+        checked = _speakable(extract_tags(sentence)[0], self.relaxed)
+        if checked is None:
+            self.closed = True
+            return
+        self.first, self.head = checked, sentence.strip()
+        self.at_ms = int((time.monotonic() - self.started) * 1000)
+        self.ready.set()
+
+    def restart(self) -> None:
+        """A tool is called: the words so far were a preamble (unless a sentence was handed over already)."""
+        if self.first is None:
+            self.raw, self.skip = "", 0
+
+    def finish(self, full: str) -> None:
+        """The whole answer: ``more`` is what it says after the sentence handed over."""
+        if self.first is None:
+            self.closed = True  # too late now: the whole answer goes as it is
+            return
+        i = full.find(self.head)
+        if i < 0:
+            self.more = None
+            return
+        from littlebot.brain.face_actions import extract_tags  # noqa: PLC0415
+
+        rest = extract_tags(full[i + len(self.head):])[0].strip()
+        self.more = (_speakable(rest, self.relaxed) or "") if rest else ""
+
+
+def _light_question(question: str) -> bool:
+    """A simple question the text model knows the answer to (no web search, less reasoning: LIGHT_EFFORT)."""
+    words = question.split()
+    return 0 < len(words) <= LIGHT_MAX_WORDS and not NEEDS_LOOKUP.search(question)
 
 
 @dataclasses.dataclass(eq=False)

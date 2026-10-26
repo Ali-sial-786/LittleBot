@@ -165,7 +165,7 @@ async def test_a_weather_hand_off_answer_is_passed_on_as_it_is(live):
     svc, server, _audio, provider, _alerts = live
     provider.text = "It's 18 degrees and sunny in Leeds today; the Met Office website says showers after 4pm."
     await connect(svc, server)
-    delegate(server, "w1", "What's the weather like today?")
+    delegate(server, "w1", "Will it be nice for a picnic in Leeds today?")  # (plain weather: quick.py answers it)
     await wait_for(lambda: answers(server, "w1"))
     assert answers(server, "w1") == [provider.text]
     assert "never make up live facts" in provider.calls[0]["system"]

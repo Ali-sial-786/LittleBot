@@ -502,9 +502,34 @@ The last call then shows "handed over". The red **STOP** before that cancels it.
 speaker with a conversation, so they start at once and the call carries on.
 
 **Waiting for an answer (live voice).** The voice waits in silence while LittleBot works on what
-it was handed. If the answer isn't ready within **5 seconds**, the voice is told straight away to
+it was handed, so LittleBot answers as early as it can:
+
+* **The weather, the time, the volume and timers need no text model.** "What's the weather like?",
+  "will it rain this weekend?", "what time is it?", "louder", "set the volume to 40", "set a timer
+  for 5 minutes" are matched on their words (`littlebot/chatgpt/quick.py`) and LittleBot runs the
+  tool itself: the voice gets the weather service's facts (or the time, or "done") in a few hundred
+  milliseconds, and the forecast or timer card goes up at the same time. Only clear, simple requests
+  match: another place's time, "why does it rain?", "cancel the egg timer" or "play baby shark
+  louder" go to the text model as before, and so does one whose tool fails or takes over 3 s. The
+  journal then says something like `hand-off received (kind=quick:weather); answered in 160 ms without the text model`.
+* **The first sentence goes to the voice as soon as it is written** (camera looks already did this):
+  the voice starts saying it while the text model writes the rest, which follows as a note ("More of
+  the answer ..."). Words that only say what's coming ("Let me check.") are skipped; if the answer
+  then turns out different (it looked something up first), the whole answer follows instead.
+* **Simple questions get a lighter request**: a short question about something that doesn't change
+  ("how tall is a giraffe?", "facts about Kublai Khan") is asked with less reasoning (`minimal`) and
+  without web search. Anything about what's current (news, today, scores, opening hours, prices, who
+  someone is now, ages, "look it up") keeps the full request with web search. The journal says, e.g.,
+  `the text model answered in 1840 ms (light: minimal effort, no web search; first sentence at +950 ms)`.
+* **A card doesn't hold the answer up.** The text model is asked to write its answer and call
+  `show_on_screen` in the same reply; then no second request is needed for the words, and a card
+  whose picture is still loading after 0.4 s goes up by itself while the voice speaks.
+* The text model's connection is opened while the call connects, so the first hand-off doesn't pay
+  for it.
+
+If no answer (or first sentence) is ready within **3.5 seconds**, the voice is told straight away to
 say it's thinking, and the answer follows when it comes (25 s at most; after that the voice says
-it didn't work out). Faces, the volume and status answers usually come back in a second or two.
+it didn't work out).
 
 ### YouTube videos
 
@@ -569,8 +594,8 @@ else °C and km/h (mph in the UK). Weather somewhere else is given in your units
 **Speed.** Each weather answer gets at most 3 s for its requests (`info.timeout_seconds`); a request
 that runs out of time carries on in the background, so asking again finds it ready. A forecast is
 reused for 10 minutes (`info.cache_minutes`), so a second weather question is instant, and in a live
-call the answer usually comes well within the voice's 5 s (the weather service itself answers in
-under a second).
+call a plain weather question is answered without the text model (see "Waiting for an answer"), in
+well under a second.
 
 **Web search caveat.** Web search is sent the way the Codex CLI sends it (`{"type": "web_search"}` in
 the request's tools), but it has **not been tried against OpenAI's real endpoint yet**. If the endpoint
@@ -724,7 +749,7 @@ after the call ends with "handed over" (`LiveCall._handover_due`: the voice spok
 and `AudioService.speaker_back()`: that opens the speaker and plays 0.2 s of silence, retrying every
 0.1 s for up to 3 s while the device still fails, then lets it go again (a video may need it). Without
 it, a first sound that hit the just-released device failed part-way, and the failure marked the speaker
-as unplugged, so everything for the next `reconnect_seconds` (5 s) played silently. Hand-off timing: `HANDOFF_INTERIM_S` (5 s) then `STILL_WORKING`, the answer later
+as unplugged, so everything for the next `reconnect_seconds` (5 s) played silently. Hand-off timing: `HANDOFF_INTERIM_S` (3.5 s) then `STILL_WORKING`, the answer later
 as a `session.context.append` note, `HANDOFF_TIMEOUT_S` (25 s) in all.
 
 | HTTP / stream error | Provider error `kind` |
@@ -975,7 +1000,8 @@ YouTube search (`media:` section, `MediaConfig`): `allow_search` (`true`: any vi
   `test_live_tools.py`, `tests/brain/test_brain_tools.py`, `tests/media/test_media_search.py`): every
   tool against fakes; the function-call loop against mocked event streams (the replayed items, the
   round cap, a crashing tool); chat turns that queue a video / sleep until the reply is spoken; live
-  hand-offs answered with tools, the 5 s interim answer and late note, the hand-over after the call
+  hand-offs answered with tools, the interim answer and late note, quick answers, the first sentence early
+  (`test_live_fast.py`), the hand-over after the call
   and STOP ALL cancelling it; search results playing in the real media controller (limits, age gate,
   next result on errors 101/150, skip); the yt-dlp child process with a stand-in script. One real
   search through yt-dlp worked from a development machine (2 s); not from the Pi, and the found
