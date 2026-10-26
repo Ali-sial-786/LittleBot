@@ -89,6 +89,9 @@ def build_defaults(cfg: LittleBotConfig) -> dict[str, Any]:
         "screens.web_pictures": True,
         # the browser view: Google (SafeSearch on) on the screen when a grown-up explicitly asks (littlebot/browser)
         "browser.enabled": True,
+        # ... and whether it keeps its cookies (Google's "you're a person"), history and cache between searches
+        # (data/browser-profile); off: a fresh browser that is deleted afterwards
+        "browser.keep_signins": False,
         # fast decision models (littlebot/decide): the provider (off | jev | openai) and each feature's mode
         # (off | shadow | on); {} = the config's decide.modes / decide.default_mode
         "decide.provider": cfg.decide.provider,

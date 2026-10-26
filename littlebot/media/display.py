@@ -179,7 +179,7 @@ def find_browser(preferred: str | None = None, which: Callable[[str], str | None
 
 def build_kiosk_command(
     browser: str, url: str, *, user_data_dir: str | Path, width: int = 480, height: int = 320,
-    extra_args: Sequence[str] = (), kiosk: bool = True,
+    extra_args: Sequence[str] = (), kiosk: bool = True, incognito: bool = True,
 ) -> list[str]:
     """Chromium command line for a locked-down, full-screen player window (``kiosk=False``: an app window of
     ``width`` x ``height`` instead, for the desktop simulator's browser view). Later switches in ``extra_args``
@@ -204,7 +204,7 @@ def build_kiosk_command(
         "--disable-features=Translate,MediaRouter,GlobalMediaControls",
         "--disable-pinch",
         "--overscroll-history-navigation=0",
-        "--incognito",  # no cookies / history persisted on the robot
+        *(["--incognito"] if incognito else []),  # no cookies / history persisted on the robot
         "--password-store=basic",
         "--disk-cache-size=33554432",  # 32 MB cap, protects the SD card
         "--check-for-update-interval=31536000",
@@ -230,10 +230,12 @@ class BrowserKioskBackend(DisplayBackend):
         terminate_timeout: float = 2.0,  # SIGTERM -> wait -> SIGKILL -> wait 1 s: < 5 s shutdown budget
         kiosk: bool = True,
         label: str = "player kiosk",  # for the log ("browser view" for littlebot/browser)
+        incognito: bool = True,  # False: the browser view's saved profile (browser.keep_signins)
     ) -> None:
         super().__init__()
         self.browser = browser
         self.kiosk = kiosk
+        self.incognito = incognito
         self.label = label
         self.user_data_dir = Path(user_data_dir)
         self.width, self.height = width, height
@@ -253,7 +255,8 @@ class BrowserKioskBackend(DisplayBackend):
         if self.browser is None:
             raise PlayerBackendError("Chromium is not installed, so videos can't be shown on LittleBot's screen")
         return build_kiosk_command(self.browser, url, user_data_dir=self.user_data_dir, width=self.width,
-                                   height=self.height, extra_args=self.extra_args, kiosk=self.kiosk)
+                                   height=self.height, extra_args=self.extra_args, kiosk=self.kiosk,
+                                   incognito=self.incognito)
 
     def is_running(self) -> bool | None:
         return self._proc is not None and self._proc.returncode is None

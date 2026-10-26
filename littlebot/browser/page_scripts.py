@@ -151,6 +151,34 @@ RESULTS_SCRIPT = """(() => {
   return out;
 })()"""
 
+# Google's captcha ("I'm not a robot") on its "unusual traffic" page: where the box is, or the picture challenge once
+# it opens, in CSS pixels, and the viewport's size; ``center`` scrolls it to the middle of the screen. The service
+# zooms the page so it fills the small screen (littlebot/browser/service.py ``_captcha_watch``).
+CAPTCHA_SCRIPT = """((center) => {
+  let kind = null, el = null;
+  for (const f of document.querySelectorAll('iframe')) {
+    const src = f.src || '';
+    if (!/\\/recaptcha\\//.test(src)) continue;
+    const k = /bframe/.test(src) ? 'challenge' : /anchor/.test(src) ? 'box' : null;
+    const r = f.getBoundingClientRect(), st = getComputedStyle(f);
+    if (!k || r.width < 40 || r.height < 40 || st.visibility === 'hidden' || st.display === 'none') continue;
+    if (k === 'challenge' || kind === null) { kind = k; el = f; }
+  }
+  if (!el) return {kind: null};
+  if (center) el.scrollIntoView({block: 'center', inline: 'center', behavior: 'instant'});
+  const r = el.getBoundingClientRect();
+  return {kind, w: r.width, h: r.height, iw: window.innerWidth, ih: window.innerHeight};
+})"""
+
+# The captcha page zoomed ``z`` times (CSS zoom on the whole page, Google's captcha frames included); LittleBot's strip
+# keeps its own size. A new page starts unzoomed again.
+CAPTCHA_ZOOM_SCRIPT = """((z) => {
+  document.documentElement.style.zoom = z === 1 ? '' : String(z);
+  const strip = document.querySelector('littlebot-strip');
+  if (strip) strip.style.zoom = z === 1 ? '' : String(1 / z);
+  return true;
+})"""
+
 # Scroll by a share of the screen (negative: up), or to the top / bottom; says where it ended up.
 SCROLL_SCRIPT = """((share, edge) => {
   const el = document.scrollingElement || document.documentElement;

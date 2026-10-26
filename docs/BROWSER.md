@@ -7,9 +7,20 @@ pink strip in the top-right corner with LittleBot's mini eyes (blinking, glancin
 to close it. Ordinary questions ("how tall are giraffes?") still get the voice's answer and, maybe, an
 info card ([SCREENS.md](SCREENS.md)).
 
-When Google answers with its "unusual traffic" captcha page (`google.com/sorry/...`), LittleBot shows the
-same search on Bing instead, with SafeSearch strict (`adlt=strict`), and keeps using Bing for an hour
-(`service.GOOGLE_RESTS_S`) before trying Google again.
+**Google's "I'm not a robot" check.** When Google answers with its "unusual traffic" page
+(`google.com/sorry/...`), LittleBot zooms the page so the box fills the screen (CSS zoom on the page, its own
+strip kept at its size; `page_scripts.CAPTCHA_SCRIPT` / `CAPTCHA_ZOOM_SCRIPT`), and the voice asks the grown-up to
+tick it. If Google then shows its picture challenge, that is fitted to the screen instead, so all of it shows. A
+person solves it; LittleBot never does. Once ticked, Google goes on to the results. If nobody ticks the box within
+25 s (`CAPTCHA_TAP_S`), nobody finishes the pictures within 150 s (`CAPTCHA_PICTURES_S`), or voice recognition
+says a child is talking, LittleBot shows the same search on Bing instead, with SafeSearch strict (`adlt=strict`),
+and keeps using Bing for an hour (`GOOGLE_RESTS_S`) before trying Google again.
+
+Two things make the check rarer. The browser says what it is (Chromium on Linux) instead of claiming to be an
+Android phone (`browser.mobile_layout`, now off by default). And the parent can let it **remember Google**
+(Privacy page, `browser.keep_signins`, off by default): the browser then keeps its cookies, history and cache in
+`data/browser-profile` between searches, not in incognito, so after one check Google usually stops asking.
+"Forget what the browser kept" (or switching it off) deletes that folder.
 
 Code: `littlebot/browser/` (`service.py` the `BrowserView`, `ctx.browser`; `policy.py` where it may go;
 `page_scripts.py` the strip and the page scripts; `cdp.py` the DevTools client).
@@ -66,7 +77,8 @@ Two paths ask for it, and the browser does each thing once even when both fire:
   location, ...) denied, pop-ups and new windows closed at once, file pickers and dialogs dismissed, sound
   muted (videos go through LittleBot's YouTube player, never in here), no autoplay without a tap.
 * **Nothing is kept**: each time is a new incognito Chromium with a throwaway profile folder, deleted when
-  it closes (left-overs from a crash are deleted at the next start).
+  it closes (left-overs from a crash are deleted at the next start). The exception is the parent's "remember
+  Google" switch (above): then one saved profile in `data/browser-profile`, until they forget it.
 * **Needs** the parent's switch, *Cloud communication* on (Privacy) and not offline mode. Cloud
   communication switched off closes it.
 * **Logs**: one INFO line when it opens (where from; "a search" or the host), one per page (the host) and
@@ -108,7 +120,7 @@ Config (`config/default.yaml`, `browser:`):
 | `idle_seconds` | `30` | how long it stays after the chat with nobody touching it |
 | `moved_on_seconds` | `20` | during the chat: how long it stays after they talked about something else |
 | `zoom` | `1.4` | how big pages are drawn (0.75 to 2.5) |
-| `mobile_layout` | `true` | ask sites for their phone layout (fits the small screen) |
+| `mobile_layout` | `false` | claim to be an Android phone so sites send their phone layout (Google then asks "are you a robot?" more often) |
 | `kiosk` | (Pi only) | full-screen kiosk window; off: an app window (the desktop simulator) |
 | `read_chars` | `3000` | how much of a page "what does it say?" gives the voice |
 | `start_timeout_seconds` | `20` | how long Chromium may take to start |

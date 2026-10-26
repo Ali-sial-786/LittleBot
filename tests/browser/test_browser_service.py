@@ -98,9 +98,7 @@ async def test_setup_locks_the_page_down_before_it_loads(env: Any) -> None:
     assert dt.last("Page.setInterceptFileChooserDialog") == {"enabled": True}
     assert dt.last("Emulation.setDeviceMetricsOverride") == {"width": 0, "height": 0, "deviceScaleFactor": 1.4,
                                                              "mobile": False}
-    ua = dt.last("Emulation.setUserAgentOverride")
-    assert "Mobile" in ua["userAgent"] and "Chrome/141.0.0.0" in ua["userAgent"]
-    assert ua["userAgentMetadata"]["mobile"] is True
+    assert dt.last("Emulation.setUserAgentOverride") is None  # it says what it is (browser.mobile_layout off)
     # everything for the page is in place before the first real page is asked for
     assert page_calls.index("Fetch.enable") < page_calls.index("Page.navigate")
     assert page_calls.index("Page.addScriptToEvaluateOnNewDocument") < page_calls.index("Page.navigate")
@@ -240,17 +238,75 @@ async def test_closed_while_starting_stops_chromium_again(make_env: Any) -> None
     assert out["ok"] is False and env.launcher.proc.terminated and env.profiles() == []
 
 
-async def test_googles_captcha_gives_way_to_bings_safe_results(env: Any, caplog: pytest.LogCaptureFixture) -> None:
-    """From a real call: "it showed Google, which brought up a captcha"."""
+SORRY = "https://www.google.com/sorry/index?continue=https://www.google.com/search%3Fq%3Dgiraffes&q=EgQ"
+
+
+def _ran(env: Any, script: str) -> list[str]:
+    return [p["expression"] for p in env.devtools.params("Runtime.evaluate") if p["expression"].startswith(script)]
+
+
+async def test_the_phone_layout_is_asked_for_only_when_switched_on(tmp_path: Any) -> None:
+    from browser_testkit import build_env, close_env  # type: ignore[import-not-found]
+
+    env = await build_env(tmp_path, browser={"mobile_layout": True})
+    try:
+        await env.open(QUERY)
+        ua = env.devtools.last("Emulation.setUserAgentOverride")
+        assert "Mobile" in ua["userAgent"] and "Chrome/141.0.0.0" in ua["userAgent"]
+        assert ua["userAgentMetadata"]["mobile"] is True
+    finally:
+        await close_env(env)
+
+
+async def test_googles_captcha_is_shown_big_for_a_grownup(env: Any, caplog: pytest.LogCaptureFixture) -> None:
+    """From a real call: "it showed Google, which brought up a captcha", a small box on the 3.5" screen."""
+    caplog.set_level(logging.INFO, logger="littlebot.browser")
+    found = {"kind": "box", "w": 304, "h": 78, "iw": 514, "ih": 343}  # in CSS pixels, before the zoom
+
+    def page(expr: str) -> Any:  # what the page reports: the frame as big as the zoom makes it
+        if not expr.startswith(scripts.CAPTCHA_SCRIPT):
+            return True
+        z = env.browser._session.captcha_zoom
+        return {**found, "w": found["w"] * z, "h": found["h"] * z}
+
+    env.devtools.eval_value = page
+    await env.open(QUERY)
+    await env.devtools.emit("Page.frameNavigated", {"frame": {"id": PAGE_TARGET, "url": SORRY}})
+    await env.until(lambda: bool(_ran(env, scripts.CAPTCHA_ZOOM_SCRIPT)))
+    assert _ran(env, scripts.CAPTCHA_ZOOM_SCRIPT) == [f"{scripts.CAPTCHA_ZOOM_SCRIPT}(1.59)"]  # 304 px -> the width
+    note = env.last(service_mod.SCREEN_NEWS)
+    assert note is not None and note.data["text"] == service_mod.CAPTCHA_NOTE and "I'm not a robot" in note.data["text"]
+    assert env.browser.describe() == "Google's “I'm not a robot” check"
+    assert "waiting for a grown-up" in caplog.text and "giraffes" not in caplog.text
+    await env.until(lambda: any(e.endswith("(true)") for e in _ran(env, scripts.CAPTCHA_SCRIPT)))  # centred
+    # the picture challenge opens: it is fitted instead (smaller, so all of it shows)
+    found.update(kind="challenge", w=400, h=580)
+    await env.until(lambda: len(_ran(env, scripts.CAPTCHA_ZOOM_SCRIPT)) == 2)
+    assert _ran(env, scripts.CAPTCHA_ZOOM_SCRIPT)[-1] == f"{scripts.CAPTCHA_ZOOM_SCRIPT}(0.6)"
+    # solved: Google goes on to the results, and nothing falls back to Bing
+    await env.devtools.emit("Page.frameNavigated", {"frame": {"id": PAGE_TARGET, "url": google_url(QUERY)}})
+    await env.until(lambda: not env.browser._session.captcha)
+    assert env.browser.describe() == f"Google results for “{QUERY}”"
+    env.clock.advance(service_mod.CAPTCHA_TAP_S + 1)
+    await asyncio.sleep(service_mod.CAPTCHA_POLL_S * 2)
+    assert "bing" not in _navigations(env)[-1] and "the captcha was solved" in caplog.text
+
+
+async def test_nobody_ticks_the_box_so_bing_shows_the_results(env: Any) -> None:
     from littlebot.browser.policy import bing_url
 
-    caplog.set_level(logging.INFO, logger="littlebot.browser")
+    env.devtools.eval_value = lambda expr: ({"kind": "box", "w": 304, "h": 78, "iw": 514, "ih": 343}
+                                            if expr.startswith(scripts.CAPTCHA_SCRIPT) else True)
     await env.open(QUERY)
-    sorry = "https://www.google.com/sorry/index?continue=https://www.google.com/search%3Fq%3Dgiraffes&q=EgQ"
-    await env.devtools.emit("Page.frameNavigated", {"frame": {"id": PAGE_TARGET, "url": sorry}})
-    await env.until(lambda: _navigations(env)[-1] == bing_url(QUERY))
+    await env.devtools.emit("Page.frameNavigated", {"frame": {"id": PAGE_TARGET, "url": SORRY}})
+    await env.until(lambda: env.browser._session.captcha)
+    env.clock.advance(service_mod.CAPTCHA_TAP_S - 5)
+    await asyncio.sleep(service_mod.CAPTCHA_POLL_S * 2)
+    assert _navigations(env)[-1] == google_url(QUERY)  # still waiting
+    env.clock.advance(6)
+    await env.until(lambda: _navigations(env)[-1] == bing_url(QUERY), timeout=3)
     assert bing_url(QUERY) == "https://www.bing.com/search?q=how+tall+are+giraffes&adlt=strict"
-    assert "Google asked for a captcha" in caplog.text and "giraffes" not in caplog.text
+    assert env.last(service_mod.SCREEN_NEWS).data["text"] == service_mod.CAPTCHA_GAVE_UP_NOTE
     await env.devtools.emit("Page.frameNavigated", {"frame": {"id": PAGE_TARGET, "url": bing_url(QUERY)}})
     await env.until(lambda: env.browser.describe() == f"Bing results for “{QUERY}”")
     env.clock.advance(service_mod.DEDUPE_S + 1)
@@ -261,7 +317,53 @@ async def test_googles_captcha_gives_way_to_bings_safe_results(env: Any, caplog:
     assert _navigations(env)[-1] == google_url("cats")
 
 
-# ---------------------------------------------------------------- open again, dedupe
+async def test_a_child_talking_never_gets_googles_captcha(env: Any) -> None:
+    from littlebot.browser.policy import bing_url
+
+    await env.open(QUERY)
+    env.ctx.bus.publish("voice.speaker", {"is_child": True})
+    await env.until(lambda: env.browser._child_spoke())
+    await env.devtools.emit("Page.frameNavigated", {"frame": {"id": PAGE_TARGET, "url": SORRY}})
+    await env.until(lambda: _navigations(env)[-1] == bing_url(QUERY))
+    assert not env.browser._session.captcha and env.last(service_mod.SCREEN_NEWS) is None
+
+
+@pytest.mark.parametrize(("found", "zoom", "want"), [
+    ({"kind": "box", "w": 304, "h": 78, "iw": 514, "ih": 343}, 1.0, 1.59),  # the box fills the width
+    ({"kind": "box", "w": 483, "h": 124, "iw": 514, "ih": 343}, 1.59, None),  # near enough already
+    ({"kind": "challenge", "w": 400, "h": 580, "iw": 720, "ih": 480}, 1.0, 0.78),  # all of it fits the height
+    ({"kind": "box", "w": 30, "h": 10, "iw": 720, "ih": 480}, 1.0, service_mod.CAPTCHA_MAX_ZOOM),
+    ({"kind": "box", "w": 0, "h": 78, "iw": 514, "ih": 343}, 1.0, None),
+    ({"kind": "box"}, 1.0, None),
+])
+def test_how_big_the_captcha_is_made(found: dict[str, Any], zoom: float, want: float | None) -> None:
+    assert service_mod.captcha_zoom(found, zoom) == want
+
+
+async def test_the_saved_browser_is_kept_and_forgotten(env: Any) -> None:
+    saved = env.tmp / "saved-browser"
+    assert env.browser.status()["keep_signins"] is False and env.browser.status()["saved"] is False
+    env.ctx.settings.set("browser.keep_signins", True)
+    saved.mkdir()
+    (saved / "DevToolsActivePort").write_text("1\n/devtools/browser/stale\n")  # left by an earlier run
+    (saved / "Cookies").write_text("google")
+    out = await env.open(QUERY)
+    assert out["ok"], out
+    argv = env.launcher.argv
+    assert "--incognito" not in argv and f"--user-data-dir={saved}" in argv
+    env.browser.close("test")
+    await env.settle()
+    assert (saved / "Cookies").read_text() == "google" and env.profiles() == []  # kept; no throwaway one made
+    assert env.browser.status()["saved"] is True
+    await env.open(QUERY)
+    assert await env.browser.forget() is True  # closes the browser that uses it, then deletes it
+    assert not env.browser.active and not saved.exists() and await env.browser.forget() is False
+    env.ctx.settings.set("browser.keep_signins", False)
+    await env.open(QUERY)
+    assert "--incognito" in env.launcher.argv and not saved.exists()
+
+
+# ---------------------------------------------------------------- open again, dedupe# ---------------------------------------------------------------- open again, dedupe
 async def test_the_director_and_a_tool_asking_together_open_once(env: Any) -> None:
     await env.open(QUERY, source="director")
     again = await env.open(QUERY, source="tool")

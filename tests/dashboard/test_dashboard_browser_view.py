@@ -20,6 +20,14 @@ class FakeBrowser:
         was, self.active = self.active, False
         return was
 
+    forgot = 0
+    saved = True
+
+    async def forget(self) -> bool:
+        self.forgot += 1
+        was, self.saved = self.saved, False
+        return was
+
 
 async def test_status_without_the_service(authed: Any) -> None:
     d = (await authed.get("/api/browser")).json()
@@ -48,11 +56,24 @@ async def test_the_parents_switch(authed: Any, dctx: Any) -> None:
         assert (await authed.put("/api/browser/settings", json=bad)).status_code in (400, 422), bad
 
 
+async def test_remembering_google_and_forgetting_it(authed: Any, dctx: Any) -> None:
+    dctx.browser = FakeBrowser(dctx)
+    assert dctx.settings.get("browser.keep_signins") is False  # off by default
+    r = await authed.put("/api/browser/settings", json={"keep_signins": True})
+    assert r.status_code == 200 and dctx.settings.get("browser.keep_signins") is True and dctx.browser.forgot == 0
+    r = await authed.post("/api/browser/forget")
+    assert r.status_code == 200 and r.json()["forgot"] is True and dctx.browser.forgot == 1
+    assert (await authed.post("/api/browser/forget")).json()["forgot"] is False
+    r = await authed.put("/api/browser/settings", json={"keep_signins": False})  # off: what was kept goes
+    assert dctx.settings.get("browser.keep_signins") is False and dctx.browser.forgot == 3
+
+
 async def test_parents_only(client: Any, dctx: Any) -> None:
     dctx.browser = FakeBrowser(dctx)
     assert (await client.get("/api/browser")).status_code in (401, 403)
     assert (await client.post("/api/browser/close")).status_code in (401, 403)
     assert (await client.put("/api/browser/settings", json={"enabled": False})).status_code in (401, 403)
+    assert (await client.post("/api/browser/forget")).status_code in (401, 403)
     assert dctx.browser.closed == [] and dctx.settings.get("browser.enabled") is True
 
 
@@ -61,3 +82,4 @@ async def test_the_privacy_page_has_the_switch(authed: Any) -> None:
     assert r.status_code == 200
     assert "Allow the browser view (Google with SafeSearch, grown-ups only)" in r.text
     assert "/browser/close" in r.text
+    assert "Let the browser remember Google" in r.text and "/browser/forget" in r.text

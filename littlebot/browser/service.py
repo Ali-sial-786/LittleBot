@@ -124,7 +124,16 @@ MIN_ZOOM, MAX_ZOOM = 0.75, 2.5
 MAX_RESULT = 20
 SCROLL_SHARES = {"page": 0.85, "screen": 0.85, "half": 0.5, "little": 0.3, "bit": 0.3, "lot": 1.7}
 TMP_PREFIX = "littlebot-browser-"
-GOOGLE_RESTS_S = 3600.0  # after Google asks for a captcha, searches go to Bing (SafeSearch strict) this long
+GOOGLE_RESTS_S = 3600.0  # after nobody solved Google's captcha, searches go to Bing (SafeSearch strict) this long
+# Google's "unusual traffic" captcha: shown zoomed to fill the screen for a grown-up to solve, else Bing's results.
+CAPTCHA_TAP_S = 25.0  # nobody ticked the box (no picture challenge open) in this long: Bing instead
+CAPTCHA_PICTURES_S = 150.0  # the picture challenge open this long (Google's own expires in 2 minutes): Bing instead
+CAPTCHA_POLL_S = 0.5
+CAPTCHA_FILL = 0.94  # of the screen the box (or the picture challenge) fills
+CAPTCHA_MIN_ZOOM, CAPTCHA_MAX_ZOOM = 0.6, 3.0
+SAVED_PROFILE = "browser-profile"  # under data_dir: the browser kept between searches (``browser.keep_signins``)
+_STALE_PROFILE_FILES = ("DevToolsActivePort", "SingletonLock", "SingletonSocket", "SingletonCookie")
+SCREEN_NEWS = "screen.news"  # {kind, title, text}: a quiet note for the live voice (littlebot/screens/service.py)
 FETCH_PATTERNS = [
     {"urlPattern": "*", "resourceType": "Document", "requestStage": "Request"},
     {"urlPattern": "*google.*/search*", "resourceType": "XHR", "requestStage": "Request"},
@@ -179,6 +188,10 @@ OPEN_NOTE = ("The browser on your screen shows {what}. Don't read it out; you ca
 READ_NOTE = "The page on your screen says: {text}\nSummarise it in a few words; don't read it out."
 REFUSED_NOTE = "The browser couldn't open: {why} Say so briefly, kindly."
 CLOSED_NOTE = "The browser is closed now; your face is back on the screen."
+CAPTCHA_NOTE = ("Google wants to check that a person is searching: ask the grown-up, in a few words, to tap the box on "
+                "your screen that says \"I'm not a robot\" (and to pick the pictures if it asks). If nobody does, "
+                "the screen shows Bing's results instead.")
+CAPTCHA_GAVE_UP_NOTE = "Nobody ticked Google's box, so your screen shows Bing's results instead."
 # Added to the live voice's instructions while there is a browser view (littlebot/chatgpt/live.py).
 VOICE_INSTRUCTIONS = """
 Your screen can also show Google, in a browser, but only when a grown-up explicitly asks: "google it", "look it up \
@@ -228,6 +241,12 @@ class _Session:
     blocked: list[str] = field(default_factory=list)  # addresses replaced by the "won't open" page
     tasks: set[asyncio.Task[Any]] = field(default_factory=set)
     watch: asyncio.Task[Any] | None = None
+    saved_profile: bool = False  # tmpdir is the saved browser (browser.keep_signins): never deleted on close
+    captcha: bool = False  # Google's captcha page is up, waiting for a grown-up
+    captcha_since: float = 0.0
+    captcha_seen: float = 0.0  # when the picture challenge opened (0: it isn't open)
+    captcha_zoom: float = 1.0
+    captcha_kind: str | None = None  # "box" | "challenge": what the zoom fits
 
 
 class BrowserView(Service):
@@ -237,7 +256,7 @@ class BrowserView(Service):
                  connect: Callable[[str], Coroutine[Any, Any, Any]] | None = None,
                  clock: Callable[[], float] = time.monotonic, kiosk: bool | None = None,
                  tmp_root: str | Path | None = None, insecure_hosts: tuple[str, ...] = (),
-                 extra_args: tuple[str, ...] = ()) -> None:
+                 extra_args: tuple[str, ...] = (), profile_dir: str | Path | None = None) -> None:
         """``launcher`` / ``connect``: how Chromium is started and DevTools reached (tests fake both).
         ``browser_path``: the Chromium binary (default: ``media.browser_command`` or the first one found, and
         none in a headless run). ``insecure_hosts``: hosts allowed over plain http (tests' local pages only)."""
@@ -260,7 +279,8 @@ class BrowserView(Service):
         self._teardowns: set[asyncio.Future[Any]] = set()
         self._spoke: tuple[bool, float] | None = None  # (is_child, when) from voice recognition
         self._last: dict[str, Any] | None = None
-        self._google_off_until = -1e18  # Google asked for a captcha: Bing until then (GOOGLE_RESTS_S)
+        self._google_off_until = -1e18  # nobody solved Google's captcha: Bing until then (GOOGLE_RESTS_S)
+        self._profile_dir = Path(profile_dir) if profile_dir is not None else ctx.config.data_path / SAVED_PROFILE
         self.last_error: str | None = None
         self._subs: list[Subscription] = []
 
@@ -384,8 +404,8 @@ class BrowserView(Service):
             return await self._launch(target, q, source)
 
     def _search_url(self, q: str) -> str:
-        """Google's results for ``q``, or Bing's while Google wants a captcha (from a real call: "Google brought
-        up a captcha")."""
+        """Google's results for ``q``, or Bing's for a while after nobody solved Google's captcha (from a real call:
+        "Google brought up a captcha")."""
         return bing_url(q) if self._clock() < self._google_off_until else google_url(q)
 
     async def _open_again(self, s: _Session, target: str, q: str, source: str) -> dict[str, Any]:
@@ -426,13 +446,16 @@ class BrowserView(Service):
         with self._lock:
             self._session = s
         try:
-            s.tmpdir = Path(await asyncio.to_thread(tempfile.mkdtemp, prefix=TMP_PREFIX, dir=self._tmp_root))
-            _LIVE_DIRS.add(str(s.tmpdir))
+            if self.keeps_signins():
+                s.tmpdir, s.saved_profile = await asyncio.to_thread(self._saved_profile), True
+            else:
+                s.tmpdir = Path(await asyncio.to_thread(tempfile.mkdtemp, prefix=TMP_PREFIX, dir=self._tmp_root))
+                _LIVE_DIRS.add(str(s.tmpdir))
             width, height = self.ctx.config.display.width, self.ctx.config.display.height
             s.backend = BrowserKioskBackend(
                 self._path, user_data_dir=s.tmpdir, width=width, height=height,
                 extra_args=[*EXTRA_SWITCHES, *self.cfg.extra_args, *self._extra], launcher=self._launcher,
-                kiosk=self._use_kiosk(), label="browser view")
+                kiosk=self._use_kiosk(), label="browser view", incognito=not s.saved_profile)
             await s.backend.open(scripts.loading_url())
             port, path = await self._devtools_address(s)
             s.cdp = await self._connect(f"ws://127.0.0.1:{port}{path}")
@@ -456,6 +479,34 @@ class BrowserView(Service):
         log.info("browser: opened (from %s; %s)", source, "a search" if q else f"a page on {host_of(target)}")
         self._publish(OPENED, {"source": source, "host": host_of(target), "search": bool(q)})
         return self._ok(s)
+
+    # ================================================================ the saved browser (browser.keep_signins)
+    def keeps_signins(self) -> bool:
+        """The parent's switch: the browser keeps its cookies (Google's "you're a person" among them), history and
+        cache between searches, in ``data/browser-profile``. Off (the default): a fresh browser every time."""
+        return bool(self.ctx.settings.get("browser.keep_signins", False))
+
+    def _saved_profile(self) -> Path:
+        d = self._profile_dir
+        d.mkdir(parents=True, exist_ok=True, mode=0o700)
+        for name in _STALE_PROFILE_FILES:  # left by an earlier run: a new port is written, and no lock holds it
+            (d / name).unlink(missing_ok=True)
+        return d
+
+    def saved(self) -> bool:
+        """A saved browser is on the robot (cookies, history, cache)."""
+        return self._profile_dir.is_dir()
+
+    async def forget(self) -> bool:
+        """Delete the saved browser (closing the browser first if it uses it). True if there was one."""
+        s = self._session
+        if s is not None and not s.ended and s.saved_profile:
+            await self.aclose("forgetting the saved browser")
+        existed = self.saved()
+        await asyncio.to_thread(shutil.rmtree, self._profile_dir, True)
+        if existed:
+            log.info("browser: the saved browser (cookies, history, cache) was deleted")
+        return existed
 
     def _use_kiosk(self) -> bool:
         choice = self._kiosk if self._kiosk is not None else self.cfg.kiosk
@@ -659,20 +710,77 @@ class BrowserView(Service):
         except CDPError:
             log.debug("browser: the backstop failed", exc_info=True)
             return
-        if is_google_captcha(url) and s.query:
-            self._google_off_until = self._clock() + GOOGLE_RESTS_S
-            log.info("browser: Google asked for a captcha; showing Bing's results instead (SafeSearch strict)")
-            try:
-                await self._page(s, "Page.navigate", {"url": bing_url(s.query)})
-            except CDPError:
-                log.debug("browser: going to Bing failed", exc_info=True)
-            return
+        if is_google_captcha(url):
+            if self._child_spoke():
+                await self._captcha_give_up(s, "a child is talking")
+                return
+            if not same_document:
+                self._captcha_shown(s)
+        elif s.captcha and not same_document:
+            s.captcha = False
+            log.info("browser: the captcha was solved")
         if same_document and host_of(url) == s.host:
             s.url = url
             return
         s.url, s.host = url, host_of(url)
         log.info("browser: page opened (%s)", s.host or "no host")
         self._publish(NAVIGATED, {"host": s.host})
+
+    # ================================================================ Google's captcha
+    def _captcha_shown(self, s: _Session) -> None:
+        """Google's "unusual traffic" page: zoomed so its box fills the screen, for a grown-up to tick (the voice
+        asks them). A new captcha page (a wrong answer) is fitted again; the watch is already running."""
+        s.captcha_zoom, s.captcha_kind = 1.0, None
+        if s.captcha:
+            return
+        s.captcha, s.captcha_since, s.captcha_seen = True, self._clock(), 0.0
+        log.info("browser: Google asked for a captcha; waiting for a grown-up to tick the box")
+        self._publish(SCREEN_NEWS, {"kind": "browser", "title": "Google", "text": CAPTCHA_NOTE})
+        self._spawn(s, self._captcha_watch(s))
+
+    async def _captcha_watch(self, s: _Session) -> None:
+        """While the captcha shows: keep the box (or, once it opens, the picture challenge) filling the screen, and
+        go to Bing when nobody ticks it, nobody finishes the pictures, or a child talks."""
+        center = False
+        while s.captcha and not s.ended:
+            found = await self._quietly(self._eval(s, f"{scripts.CAPTCHA_SCRIPT}({'true' if center else 'false'})"))
+            center = False
+            kind = found.get("kind") if isinstance(found, dict) else None
+            now = self._clock()
+            if kind is not None:
+                target = captcha_zoom(found, s.captcha_zoom)
+                if target is not None:
+                    s.captcha_zoom = target
+                    await self._quietly(self._eval(s, f"{scripts.CAPTCHA_ZOOM_SCRIPT}({target})"))
+                center = target is not None or kind != s.captcha_kind  # (on the next look, laid out again)
+                s.captcha_kind = kind
+            if kind == "challenge":
+                s.captcha_seen = s.captcha_seen or now
+            elif kind is not None and s.captcha_seen:
+                s.captcha_seen = 0.0
+                s.captcha_since = now  # the pictures closed (a wrong answer, or cancelled): time to tick again
+            if self._child_spoke():
+                await self._captcha_give_up(s, "a child is talking")
+                return
+            if s.captcha_seen and now - s.captcha_seen > CAPTCHA_PICTURES_S:
+                await self._captcha_give_up(s, "the pictures weren't finished", tell=True)
+                return
+            if not s.captcha_seen and now - s.captcha_since > CAPTCHA_TAP_S:
+                await self._captcha_give_up(s, "nobody ticked the box", tell=True)
+                return
+            await asyncio.sleep(CAPTCHA_POLL_S)
+
+    async def _captcha_give_up(self, s: _Session, why: str, *, tell: bool = False) -> None:
+        """Bing's results (SafeSearch strict) instead of Google's captcha; Google rests a while (GOOGLE_RESTS_S)."""
+        s.captcha = False
+        self._google_off_until = self._clock() + GOOGLE_RESTS_S
+        log.info("browser: showing Bing's results instead of Google's captcha (%s)", why)
+        if tell:
+            self._publish(SCREEN_NEWS, {"kind": "browser", "title": "Bing", "text": CAPTCHA_GAVE_UP_NOTE})
+        try:
+            await self._page(s, "Page.navigate", {"url": bing_url(s.query)})
+        except CDPError:
+            log.debug("browser: going to Bing failed", exc_info=True)
 
     async def _refresh_title(self, s: _Session) -> None:
         info = await self._quietly(s.cdp.send("Target.getTargetInfo", {"targetId": s.target_id}))
@@ -898,7 +1006,7 @@ class BrowserView(Service):
             except Exception:  # noqa: BLE001
                 log.exception("browser: closing Chromium failed")
                 s.backend.terminate_now()
-        if s.tmpdir is not None:
+        if s.tmpdir is not None and not s.saved_profile:
             await asyncio.to_thread(shutil.rmtree, s.tmpdir, True)
             _LIVE_DIRS.discard(str(s.tmpdir))
         from littlebot.core import memory  # noqa: PLC0415
@@ -909,7 +1017,7 @@ class BrowserView(Service):
         """No loop any more (interpreter shutdown): signal Chromium and delete the profile."""
         if s.backend is not None:
             s.backend.terminate_now()
-        if s.tmpdir is not None:
+        if s.tmpdir is not None and not s.saved_profile:
             shutil.rmtree(s.tmpdir, ignore_errors=True)
             _LIVE_DIRS.discard(str(s.tmpdir))
 
@@ -980,6 +1088,8 @@ class BrowserView(Service):
         s = self._session
         if s is None or s.ended:
             return None
+        if s.captcha:
+            return "Google's “I'm not a robot” check"
         shown = _search_words(s.url) if s.url else s.query
         if shown is not None and (not s.url or _is_google(s.host) or _is_bing(s.host)):
             engine = "Bing" if _is_bing(s.host) else "Google"
@@ -992,7 +1102,8 @@ class BrowserView(Service):
         why = self.unavailable_reason()
         out: dict[str, Any] = {"available": why is None, "enabled": self.switched_on, "detail": why,
                                "active": False, "showing": None, "last": dict(self._last) if self._last else None,
-                               "last_error": self.last_error, "idle_seconds": float(self.cfg.idle_seconds)}
+                               "last_error": self.last_error, "idle_seconds": float(self.cfg.idle_seconds),
+                               "keep_signins": self.keeps_signins(), "saved": self.saved()}
         s = self._session
         if s is None or s.ended:
             return out
@@ -1109,6 +1220,19 @@ def _title(info: dict[str, Any]) -> str:
 
 def _is_google(host: str) -> bool:
     return bool(re.match(r"^(?:www\.)?google\.[a-z.]+$", host or ""))
+
+
+def captcha_zoom(found: dict[str, Any], zoom: float) -> float | None:
+    """The zoom at which the captcha box (or picture challenge) ``found`` ({w, h, iw, ih}: its size on the screen at
+    ``zoom``, and the screen's) fills the screen, or None when ``zoom`` is near enough already."""
+    try:
+        w, h, iw, ih = (float(found[k]) for k in ("w", "h", "iw", "ih"))
+    except (KeyError, TypeError, ValueError):
+        return None
+    if min(w, h, iw, ih) <= 0 or zoom <= 0:
+        return None
+    target = round(max(CAPTCHA_MIN_ZOOM, min(CAPTCHA_MAX_ZOOM, zoom * min(iw / w, ih / h) * CAPTCHA_FILL)), 2)
+    return target if abs(target - zoom) / zoom > 0.08 else None
 
 
 def _is_bing(host: str) -> bool:

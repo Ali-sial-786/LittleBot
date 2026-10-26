@@ -280,7 +280,7 @@ async def build_env(tmp: Path, *, cloud: bool = True, launcher_kw: dict[str, Any
     launcher = FakeLauncher(devtools, **(launcher_kw or {}))
     clock = Clock()
     kw: dict[str, Any] = {"launcher": launcher, "browser_path": "/usr/bin/chromium", "clock": clock,
-                          "kiosk": True, "tmp_root": tmp}
+                          "kiosk": True, "tmp_root": tmp, "profile_dir": tmp / "saved-browser"}
     kw.update(browser_kw or {})
     browser = BrowserView(ctx, **kw)
     ctx.browser = browser

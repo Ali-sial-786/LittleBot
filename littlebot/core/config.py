@@ -415,7 +415,9 @@ class BrowserConfig(_Section):
     # During the chat: closes this long after they talked about something else (no browser words, no touch).
     moved_on_seconds: float = Field(default=20.0, ge=5.0, le=600.0)
     zoom: float = Field(default=1.4, ge=0.75, le=2.5)  # pages are this much bigger (720x480 screen: 514x343 px)
-    mobile_layout: bool = True  # ask sites for their phone layout (fits the small screen)
+    # Claim to be an Android phone so sites send their phone layout. Off: LittleBot says what it is (Chromium on
+    # Linux); Google asks fewer "are you a robot?" questions of a browser that doesn't pretend.
+    mobile_layout: bool = False
     kiosk: bool | None = None  # full screen; None = on the robot (Raspberry Pi) only, a 720x480 window elsewhere
     start_timeout_seconds: float = Field(default=20.0, ge=2.0, le=120.0)  # Chromium's DevTools must answer by then
     read_chars: int = Field(default=3000, ge=200, le=10000)  # page text handed to the voice ("what does it say?")

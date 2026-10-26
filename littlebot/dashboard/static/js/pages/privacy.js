@@ -54,12 +54,25 @@ export default {
     // The browser view (littlebot/browser): Google on the screen when a grown-up explicitly asks for it.
     const browser = switchRow({
       title: 'Allow the browser view (Google with SafeSearch, grown-ups only)',
-      text: 'When a grown-up says “google it”, “look it up online” or “search that in the browser”, LittleBot shows Google on its screen - with SafeSearch always on, no address bar, and its own little eyes and a big × in the corner. Ordinary questions still get info cards. Only the search words go to Google; nothing is kept (each time is a fresh browser that is deleted afterwards). Needs Cloud communication on. It closes on the ×, “close it”, a video or game, or two minutes after the chat with nobody touching it. On by default.',
+      text: 'When a grown-up says “google it”, “look it up online” or “search that in the browser”, LittleBot shows Google on its screen - with SafeSearch always on, no address bar, and its own little eyes and a big × in the corner. Ordinary questions still get info cards. Only the search words go to Google; nothing is kept (each time is a fresh browser that is deleted afterwards), unless you let it remember Google below. Needs Cloud communication on. It closes on the ×, “close it”, a video or game, or two minutes after the chat with nobody touching it. On by default.',
       onChange: async (v) => {
         const r = await app.act(() => put('/browser/settings', { enabled: v }), v ? 'The browser view is on.' : 'The browser view is off.');
         if (r) fillBrowser(r);
         return r !== null;
       },
+    });
+    const keepSignins = switchRow({
+      title: 'Let the browser remember Google (fewer “I\'m not a robot” checks)',
+      text: 'Google sometimes asks “are you a robot?” before showing its results; LittleBot then shows that check big on its screen for a grown-up to tick (or Bing\'s results if nobody does). On: the browser keeps its cookies, history and cache on the robot between searches, so after one check Google usually stops asking. Nothing is sent anywhere else. Off: a fresh browser every time, deleted afterwards, and switching it off deletes what was kept. Off by default.',
+      onChange: async (v) => {
+        const r = await app.act(() => put('/browser/settings', { keep_signins: v }), v ? 'The browser will remember Google.' : 'The browser no longer keeps anything; what it kept is deleted.');
+        if (r) fillBrowser(r);
+        return r !== null;
+      },
+    });
+    const browserForget = button('Forget what the browser kept', {
+      kind: 'danger-outline', iconName: 'trash',
+      onClick: async () => { const r = await app.act(() => post('/browser/forget'), (d) => (d?.forgot ? 'The browser\'s cookies, history and cache are deleted.' : 'The browser had nothing kept.')); if (r) fillBrowser(r); },
     });
     const browserShowing = h('p', { class: 'muted' });
     const browserClose = button('Close the browser', {
@@ -82,7 +95,8 @@ export default {
             h('section', { class: 'card' },
               h('div', { class: 'card-head' }, h('h2', {}, icon('face'), 'LittleBot\'s screen')),
               cards.el, pictures.el, showing, h('div', { class: 'mt-2' }, closeBtn),
-              browser.el, browserShowing, h('div', { class: 'mt-2' }, browserClose)),
+              browser.el, browserShowing, h('div', { class: 'mt-2' }, browserClose),
+              keepSignins.el, h('div', { class: 'mt-2' }, browserForget)),
             h('section', { class: 'card' },
               h('div', { class: 'card-head' }, h('h2', {}, icon('history'), 'Clear history')),
               h('p', { class: 'muted', text: 'Removes any stored activity history and conversation memory from the robot.' }),
@@ -125,6 +139,8 @@ export default {
       else if (d.available === false) browserShowing.textContent = `The browser view isn't available here${d.detail ? ` (${d.detail})` : ''}.`;
       else browserShowing.textContent = 'The browser is closed.';
       browserClose.disabled = !d.active;
+      keepSignins.set(!!d.keep_signins);
+      browserForget.disabled = !d.saved;
     }
 
     get('/screens').then(fillScreens).catch(() => { showing.textContent = 'Info card status is unavailable.'; });
