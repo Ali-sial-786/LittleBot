@@ -165,7 +165,9 @@ TOOLS: tuple[_Tool, ...] = (
     _Tool("search_in_browser", "Open Google (SafeSearch on) in the browser on LittleBot's screen, showing the results "
           "for the query. Use it ONLY when the grown-up explicitly asks for it: to google something, to look it up "
           "online or on the internet, to search or check in the browser or on the web, or to see the web page. Never "
-          "for ordinary questions: answer those yourself (info cards show on the screen by themselves).",
+          "for ordinary questions: answer those yourself (info cards show on the screen by themselves). \"Pull up\", "
+          "\"show me\" or \"tell me facts about\" something is not a browser request: answer it and use "
+          "show_on_screen.",
           _obj({"query": {**_STR, "description": "what to search Google for, in a few words"}}, ("query",))),
     _Tool("browser", "Steer the browser on LittleBot's screen while it shows a page, ONLY when the grown-up asks: "
           "scroll (direction down, up, top or bottom; amount page, half or little), open_result (n: the n-th search "
@@ -228,6 +230,7 @@ class RobotToolbox:
         self.done: list[str] = []  # short confirmations of what was done or queued
         self.pending: list[Pending] = []
         self._found: list[dict[str, Any]] = []  # the last search results (titles for play_youtube)
+        self._opened_browser = False  # search_in_browser ran in this turn: a card doesn't take its place
 
     # ------------------------------------------------------------ the model's side
     def specs(self) -> list[dict[str, Any]]:
@@ -1092,6 +1095,8 @@ class RobotToolbox:
         fields = args.get("fields") if isinstance(args.get("fields"), dict) else {}
         spec = {**fields, **{k: v for k, v in args.items() if k != "fields"}}
         result = await self._show_card(spec)
+        if result.get("error") == "busy" and await self._browser_makes_way():
+            result = await self._show_card(spec)
         if result.get("ok"):
             showing = str(result.get("showing") or spec.get("card"))[:200]
             self.done.append(f"the screen shows {showing}")
@@ -1102,6 +1107,16 @@ class RobotToolbox:
         if error == "invalid":
             return _err(f"that card couldn't be made ({str(result.get('detail') or 'unusable')[:120]})")
         return _err("no card could be shown; just say the answer")
+
+    async def _browser_makes_way(self) -> bool:
+        """A card was asked for while the browser has the screen ("why are you not showing it on the screen?"):
+        the browser closes for it, unless this turn opened it (then the search is what they asked for)."""
+        browser = self._browser_view()
+        if browser is None or self._opened_browser or not getattr(browser, "active", False):
+            return False
+        log.info("tools: the browser makes way for a card")
+        await browser.aclose("a card was asked for")
+        return True
 
     async def _weather_card(self, place: str | None, days: int) -> str | None:
         """The weather asked about goes on the screen too, when there is a weather card; what it shows, or None."""
@@ -1137,6 +1152,7 @@ class RobotToolbox:
         if not query:
             return _err("say what to search for")
         result = await browser.open(query, source="tool")
+        self._opened_browser = self._opened_browser or bool(result.get("ok"))
         if not result.get("ok"):
             return _err(_browser_error(result))
         showing = str(result.get("showing") or "Google")[:200]

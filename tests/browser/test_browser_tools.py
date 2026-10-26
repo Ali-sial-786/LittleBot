@@ -81,3 +81,24 @@ async def test_status_and_stop_everything(env: Any) -> None:
     assert json.loads(await run(box, "get_robot_status"))["browser"] == "Google results for “giraffes”"
     out = await run(box, "stop_everything")
     assert "the browser" in out and not env.browser.active
+
+
+async def test_a_card_asked_for_takes_the_browsers_place_unless_this_turn_opened_it(env: Any) -> None:
+    shown: list[dict[str, Any]] = []
+
+    async def screen(spec: dict[str, Any], source: str = "tool") -> dict[str, Any]:
+        if env.browser.active:  # the browser holds the screen (Priority.MEDIA): cards can't go up
+            return {"ok": False, "error": "busy"}
+        shown.append(spec)
+        return {"ok": True, "showing": f"a {spec['card']} card"}
+
+    env.ctx.screens = object()
+    card = {"card": "facts", "fields": {"title": "Kublai Khan", "facts": ["Genghis Khan's grandson"]}}
+    box = RobotToolbox(env.ctx, mode="live", screen=screen)
+    await run(box, "search_in_browser", query="kublai khan")
+    out = await run(box, "show_on_screen", **card)
+    assert out.startswith("error: the screen is busy") and env.browser.active  # the search they just asked for
+    later = RobotToolbox(env.ctx, mode="live", screen=screen)  # "why are you not showing it on the screen?"
+    out = await run(later, "show_on_screen", **card)
+    assert out.startswith("ok: on the screen now: a facts card") and not env.browser.active
+    assert env.browser.status()["last"]["reason"] == "a card was asked for"
