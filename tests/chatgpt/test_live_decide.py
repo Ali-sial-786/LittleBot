@@ -123,6 +123,34 @@ async def test_on_talking_to_the_grown_up_as_the_baby_is_put_right(live, ctx):
     assert state["the_baby"] == "Amara, too young to talk" and "sweetie" in state["LittleBot_replied"]
 
 
+async def test_on_greeting_someone_they_just_named_is_not_put_right(live, ctx, caplog):
+    caplog.set_level(logging.INFO, logger="littlebot.decide")
+    svc, server, _audio, _provider, _alerts = live
+    ctx.settings.set("profile", {"nickname": "Amara", "age_months": 10})
+    use_decision_model(ctx, only("as_baby", 0.95), modes={"naming": "on", "concern": "off"})
+    await connect(svc, server)
+    hear(server, "That wasn't Ali, that was Ali's wife, Amara's mom Ira")  # from a real call
+    server.send({"type": "turn.done", "turn": {"role": "assistant", "transcript": "Ira! Hi. Welcome back!"}})
+    await wait_for(lambda: get_decider(ctx).status()["features"]["naming"]["differed"] == 1)
+    await asyncio.sleep(0.1)
+    assert not any(n.startswith("Careful") for n in notes(server))
+    assert get_decider(ctx).status()["features"]["naming"]["used"] == 0
+
+
+@pytest.mark.parametrize(("reply", "said", "hit"), [
+    ("Ira! Hi. Welcome back!", "that was Amara's mom Ira", True),
+    ("Hi Ira, nice to meet you!", "this is Ira", True),
+    ("Good job, sweetie!", "that was Ira", False),
+    ("Amara, look!", "Amara is here", False),  # the child's name: the word list's business
+    ("Hi there!", "hi", False),
+    ("Ira! Hi.", "what's the weather", False),  # a name they didn't say
+])
+def test_greeting_a_name_they_said(reply, said, hit):
+    from littlebot.chatgpt.live import _greets_named
+
+    assert _greets_named(reply, said, "Amara") is hit
+
+
 async def test_shadow_naming_says_nothing(live, ctx):
     svc, server, _audio, _provider, _alerts = live
     ctx.settings.set("profile", {"nickname": "Amara", "age_months": 10})

@@ -1451,7 +1451,7 @@ class LiveCall:
         yes = answer.p >= decider.yes_at()
         theirs = "as_baby" if yes else "as_grown_up" if answer.p <= 1 - decider.yes_at() else "unsure"
         use = mode == "on" and yes and not hit and self._grown_up_spoke_at is not None \
-            and self._name_fixes < NAME_FIXES
+            and self._name_fixes < NAME_FIXES and not _greets_named(text, said, nick)
         decider.compare("naming", mine="as_baby" if hit else "as_grown_up", theirs=theirs, used=use, answer=answer)
         if use:
             self._fix_name()
@@ -2612,6 +2612,18 @@ def _greets_robot(text: str, robot: str) -> bool:
     name = r"[\s-]*".join("(?:little|lil)" if p.lower() == "little" else re.escape(p) for p in parts)
     return re.match(rf"^\W*(?:(?:hi|hey|hello|okay|ok|so)\W+)+{name}\b(?!(?:'s)?\W*(?:here|speaking|is here)\b)", text,
                     re.IGNORECASE) is not None
+
+
+_GREETING_NAME = re.compile(r"^\W*(?i:(?:hi|hey|hello|oh|ooh|welcome(?: back)?)\W+)*([A-Z][a-z]+)\b")
+
+
+def _greets_named(reply: str, said: str, child: str) -> bool:
+    """The reply greets someone by a name the grown-up just said, not the child's ("Ira! Hi. Welcome back!" after
+    "...that was Amara's mom Ira"): it talked to that person, not to the grown-up as if they were the child."""
+    m = _GREETING_NAME.match(reply or "")
+    if m is None or m.group(1).lower() in {"hi", "hey", "hello", "oh", "ooh", "welcome", (child or "").lower()}:
+        return False
+    return re.search(rf"\b{re.escape(m.group(1))}\b", said or "", re.IGNORECASE) is not None
 
 
 def _face_request(text: str) -> Any:
