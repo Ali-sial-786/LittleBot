@@ -123,20 +123,22 @@ MAIN_WORLD_SCRIPT = """(() => {
   } catch (e) {}
 })();"""
 
-# The page's main text for the voice: on Google the results column, else <main> / <article> / the body.
+# The page's main text for the voice: on Google (or Bing) the results column, else <main> / <article> / the body.
 READ_SCRIPT = """(() => {
   const google = /(^|\\.)google\\.[a-z.]+$/.test(location.hostname);
+  const bing = /(^|\\.)bing\\.com$/.test(location.hostname);
   const pick = (sels) => { for (const s of sels) { const el = document.querySelector(s); if (el) return el; } return null; };
-  const el = (google && pick(['#center_col', '#search', '#rso', '#main'])) ||
+  const el = (google && pick(['#center_col', '#search', '#rso', '#main'])) || (bing && pick(['#b_results'])) ||
     pick(['main', 'article', '[role=main]']) || document.body;
   const text = el ? (el.innerText || el.textContent || '') : '';
   return {title: document.title || '', host: location.hostname, google, text};
 })()"""
 
-# The organic results on a Google results page, in order (ads left out): [{href, title}].
+# The organic results on a Google (or Bing) results page, in order (ads left out): [{href, title}].
 RESULTS_SCRIPT = """(() => {
   const out = [], seen = new Set();
-  const heads = document.querySelectorAll('#rso a h3, #search a h3, #rso a [role=heading], #main a h3, #main a [role=heading]');
+  const heads = document.querySelectorAll('#rso a h3, #search a h3, #rso a [role=heading], #main a h3, ' +
+                                          '#main a [role=heading], #b_results li.b_algo h2 a');
   for (const h of heads) {
     const a = h.closest('a');
     if (!a || !a.href || a.closest('#tads, #tadsb, #bottomads, [data-text-ad], [aria-label="Ads"]')) continue;

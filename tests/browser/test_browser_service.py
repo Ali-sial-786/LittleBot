@@ -240,6 +240,27 @@ async def test_closed_while_starting_stops_chromium_again(make_env: Any) -> None
     assert out["ok"] is False and env.launcher.proc.terminated and env.profiles() == []
 
 
+async def test_googles_captcha_gives_way_to_bings_safe_results(env: Any, caplog: pytest.LogCaptureFixture) -> None:
+    """From a real call: "it showed Google, which brought up a captcha"."""
+    from littlebot.browser.policy import bing_url
+
+    caplog.set_level(logging.INFO, logger="littlebot.browser")
+    await env.open(QUERY)
+    sorry = "https://www.google.com/sorry/index?continue=https://www.google.com/search%3Fq%3Dgiraffes&q=EgQ"
+    await env.devtools.emit("Page.frameNavigated", {"frame": {"id": PAGE_TARGET, "url": sorry}})
+    await env.until(lambda: _navigations(env)[-1] == bing_url(QUERY))
+    assert bing_url(QUERY) == "https://www.bing.com/search?q=how+tall+are+giraffes&adlt=strict"
+    assert "Google asked for a captcha" in caplog.text and "giraffes" not in caplog.text
+    await env.devtools.emit("Page.frameNavigated", {"frame": {"id": PAGE_TARGET, "url": bing_url(QUERY)}})
+    await env.until(lambda: env.browser.describe() == f"Bing results for “{QUERY}”")
+    env.clock.advance(service_mod.DEDUPE_S + 1)
+    await env.open("why is the sky blue")  # Google rests a while: straight to Bing
+    assert _navigations(env)[-1] == bing_url("why is the sky blue")
+    env.clock.advance(service_mod.GOOGLE_RESTS_S)
+    await env.open("cats")
+    assert _navigations(env)[-1] == google_url("cats")
+
+
 # ---------------------------------------------------------------- open again, dedupe
 async def test_the_director_and_a_tool_asking_together_open_once(env: Any) -> None:
     await env.open(QUERY, source="director")

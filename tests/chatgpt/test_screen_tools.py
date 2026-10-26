@@ -178,3 +178,74 @@ async def test_the_weather_card_goes_up_while_the_forecast_is_fetched(ctx, cards
     monkeypatch.setattr(weather.WeatherService, "report", report)
     out = json.loads(await run(RobotToolbox(ctx, mode="live"), "get_weather"))
     assert out["on_screen"].startswith("weather for home") and order == ["card asked", "forecast came"]
+
+
+class PictureScreens(FakeScreens):
+    """An explain card with its picture showing (from a real call: "show the picture full screen" made a new card,
+    and asked again it opened Google)."""
+
+    active = True
+
+    def __init__(self, picture: bool = True) -> None:
+        super().__init__()
+        from types import SimpleNamespace
+
+        self.current = SimpleNamespace(kind="explain", title="Alexander the Great",
+                                       slot=SimpleNamespace(shown=picture),
+                                       describe=lambda: "Alexander the Great: point 1 of 3")
+        self.commands: list[tuple[str, dict[str, Any]]] = []
+        self.closed: list[str] = []
+
+    def describe(self) -> str | None:
+        return "Alexander the Great: point 1 of 3"
+
+    def command(self, action: str, args: dict[str, Any]) -> bool:
+        self.commands.append((action, args))
+        return True
+
+    def close(self, reason: str = "") -> bool:
+        self.closed.append(reason)
+        return True
+
+
+def test_change_card_is_offered_only_with_a_card_up(ctx, cards):
+    assert "change_card" not in {s.get("name") for s in RobotToolbox(ctx, mode="live").specs()}
+    ctx.screens = PictureScreens()
+    spec = next(s for s in RobotToolbox(ctx, mode="live").specs() if s.get("name") == "change_card")
+    assert "explain (Alexander the Great: point 1 of 3), with a picture; actions: picture, next" in spec["description"]
+    assert spec["description"].endswith(", close.")
+    browser = [s for s in RobotToolbox(ctx, mode="live").specs() if s.get("name") == "search_in_browser"]
+    assert not browser or "that is change_card" in browser[0]["description"]
+
+
+async def test_change_card_shows_the_picture_full_screen(ctx, cards):
+    ctx.screens = PictureScreens()
+    out = await run(RobotToolbox(ctx, mode="live"), "change_card", action="picture", args={"view": "fill"})
+    assert out.startswith("ok: the screen shows the picture full screen now")
+    assert ctx.screens.commands == [("picture", {"view": "fill"})]
+    out = await run(RobotToolbox(ctx, mode="live"), "change_card", action="next")
+    assert out.startswith("ok: the screen shows Alexander the Great") and ctx.screens.commands[-1] == ("next", {})
+    out = await run(RobotToolbox(ctx, mode="live"), "change_card", action="close")
+    assert out.startswith("ok:") and ctx.screens.closed == ["asked to"]
+
+
+async def test_change_card_says_when_it_cant(ctx, cards):
+    out = await run(RobotToolbox(ctx, mode="live"), "change_card", action="picture")
+    assert out.startswith("error: no card is on the screen")
+    ctx.screens = PictureScreens(picture=False)
+    out = await run(RobotToolbox(ctx, mode="live"), "change_card", action="picture", args={"view": "fill"})
+    assert out.startswith("error: the card on the screen has no picture") and ctx.screens.commands == []
+    out = await run(RobotToolbox(ctx, mode="live"), "change_card", action="dance")
+    assert out == "error: the explain card can't do that; it can: next, prev, point, all, close"
+
+
+async def test_show_the_picture_full_screen_needs_no_text_model(ctx, cards):
+    from littlebot.chatgpt import quick
+
+    ctx.screens = PictureScreens()
+    question = "Show the picture in full screen"
+    text = await quick.answer(quick.match(question), RobotToolbox(ctx, mode="live", defer=True), question)
+    assert text is not None and text.startswith("Done: the screen shows the picture full screen now")
+    assert ctx.screens.commands == [("picture", {"view": "fill"})]
+    ctx.screens = PictureScreens(picture=False)  # no picture: the text model says so
+    assert await quick.answer(quick.match(question), RobotToolbox(ctx, mode="live", defer=True), question) is None

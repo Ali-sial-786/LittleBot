@@ -68,7 +68,6 @@ async def test_describe(spec: dict[str, Any], said: str) -> None:
     {"layout": "list", "items": []},
     {"layout": "compare", "columns": [{"name": "A", "facts": ["1"]}]},
     {"layout": "compare", "columns": [{"name": "A"}, {"name": "B"}]},
-    {"layout": "profile", "facts": ["a"]},
     {"layout": "profile", "title": "Giraffe"},
     {"layout": "score", "teams": [{"name": "A", "score": 1}]},
     {"layout": "item", "kicker": "Today"},
@@ -76,6 +75,11 @@ async def test_describe(spec: dict[str, Any], said: str) -> None:
 ])
 async def test_what_each_layout_needs(spec: dict[str, Any]) -> None:
     assert await base.build({"card": "facts", **spec}, None, base.RecordingHost()) is None
+
+
+async def test_a_profile_without_its_title_shows_its_facts_as_a_list() -> None:
+    card = await base.build({"card": "facts", "layout": "profile", "facts": ["a"]}, None, base.RecordingHost())
+    assert card is not None and card.layout == "list"
 
 
 async def test_unknown_layout_is_an_item() -> None:

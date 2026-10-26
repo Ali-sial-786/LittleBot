@@ -1,4 +1,5 @@
-"""Hand-offs LittleBot answers itself, without asking the text model: the weather, the time, the volume, timers.
+"""Hand-offs LittleBot answers itself, without asking the text model: the weather, the time, the volume, timers,
+and a card's picture full screen or zoomed.
 
 The live voice hands these over as often as anything ("what's the weather like?", "louder", "set a timer for
 five minutes"), and each used to cost a text-model request just to call one tool (two, with its answer): in a
@@ -91,7 +92,8 @@ MAX_TIMER_S = 24 * 3600
 
 @dataclasses.dataclass(frozen=True)
 class Asked:
-    """What a hand-off asks for: ``what`` is weather | time | volume | timer; ``args`` the tool's arguments."""
+    """What a hand-off asks for: ``what`` is weather | time | volume | timer | picture; ``args`` the tool's
+    arguments."""
 
     what: str
     args: dict[str, Any]
@@ -102,7 +104,7 @@ def match(question: str) -> Asked | None:
     text = " ".join(str(question or "").split())
     if not text or len(text.split()) > MAX_WORDS:
         return None
-    for find in (_volume, _timer, _time, _weather):
+    for find in (_volume, _timer, _picture, _time, _weather):
         asked = find(text)
         if asked is not None:
             return asked
@@ -134,6 +136,14 @@ def _weather(text: str) -> Asked | None:
     if day:
         args["day"] = day
     return Asked("weather", args)
+
+
+def _picture(text: str) -> Asked | None:
+    """"Show the picture full screen", "zoom in": the card's picture (only done when a card with one is up)."""
+    from littlebot.screens.picture_words import picture_view  # noqa: PLC0415
+
+    view = picture_view(text)
+    return Asked("picture", {"view": view}) if view else None
 
 
 def _time(text: str) -> Asked | None:
@@ -229,7 +239,16 @@ async def answer(asked: Asked, box: Any, question: str, *,
         return await _answer_timer(asked.args, box)
     if asked.what == "weather":
         return await _answer_weather(asked.args, box, asked_for, spawn)
+    if asked.what == "picture":
+        return await _answer_picture(asked.args, box)
     return None
+
+
+async def _answer_picture(args: dict[str, Any], box: Any) -> str | None:
+    result = await box.run("change_card", {"action": "picture", "args": {"view": args["view"]}})
+    if not result.startswith("ok:"):
+        return None  # no card with a picture up: the text model says what it can
+    return f"Done: {result[3:].strip()}"
 
 
 async def _answer_volume(args: dict[str, Any], box: Any) -> str | None:

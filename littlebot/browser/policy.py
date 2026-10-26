@@ -19,6 +19,7 @@ from typing import Any
 from urllib.parse import parse_qsl, quote_plus, urlencode, urlsplit, urlunsplit
 
 GOOGLE = "https://www.google.com"
+BING = "https://www.bing.com"  # when Google asks for a captcha ("unusual traffic"): its results, SafeSearch strict
 MAX_QUERY = 200  # characters sent to Google
 MAX_URL = 4096
 
@@ -55,6 +56,23 @@ def google_url(query: str | None = None) -> str:
     if not q:
         return f"{GOOGLE}/?safe=active"
     return f"{GOOGLE}/search?q={quote_plus(q)}&safe=active"
+
+
+def bing_url(query: str | None = None) -> str:
+    """Bing with SafeSearch strict: the results for ``query``, or the start page."""
+    q = clean_query(query)
+    if not q:
+        return f"{BING}/?adlt=strict"
+    return f"{BING}/search?q={quote_plus(q)}&adlt=strict"
+
+
+def is_google_captcha(url: str) -> bool:
+    """``url`` is Google's "unusual traffic" page (a captcha: www.google.com/sorry/...)."""
+    try:
+        parts = urlsplit(str(url or ""))
+    except ValueError:
+        return False
+    return bool(_GOOGLE_HOST.match((parts.hostname or "").lower())) and parts.path.startswith("/sorry")
 
 
 def host_of(url: str) -> str:
@@ -130,5 +148,5 @@ def query_blocked(query: str, relaxed: Iterable[str] = ()) -> list[str]:
     return [c for c in find_blocked(query) if c not in allow]
 
 
-__all__ = ["GOOGLE", "OK", "Verdict", "check", "clean_query", "google_url", "host_of", "is_safe_search",
-           "query_blocked"]
+__all__ = ["BING", "GOOGLE", "OK", "Verdict", "bing_url", "check", "clean_query", "google_url", "host_of",
+           "is_google_captcha", "is_safe_search", "query_blocked"]

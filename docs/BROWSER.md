@@ -7,6 +7,10 @@ pink strip in the top-right corner with LittleBot's mini eyes (blinking, glancin
 to close it. Ordinary questions ("how tall are giraffes?") still get the voice's answer and, maybe, an
 info card ([SCREENS.md](SCREENS.md)).
 
+When Google answers with its "unusual traffic" captcha page (`google.com/sorry/...`), LittleBot shows the
+same search on Bing instead, with SafeSearch strict (`adlt=strict`), and keeps using Bing for an hour
+(`service.GOOGLE_RESTS_S`) before trying Google again.
+
 Code: `littlebot/browser/` (`service.py` the `BrowserView`, `ctx.browser`; `policy.py` where it may go;
 `page_scripts.py` the strip and the page scripts; `cdp.py` the DevTools client).
 

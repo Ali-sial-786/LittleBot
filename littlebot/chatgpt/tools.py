@@ -165,12 +165,19 @@ TOOLS: tuple[_Tool, ...] = (
           "a word's meaning, key points, a recipe, a timer, a sum, a list), not the words. Cards (* required):",
           _obj({"card": {**_STR, "description": "the card's kind"},
                 "fields": {"type": "object", "description": "that card's fields"}}, ("card",))),
+    _Tool("change_card", "Change the card that is on LittleBot's screen now, instead of making a new one, when they "
+          "ask: its picture full screen or zoomed (action picture, args {\"view\": \"fill\" | \"in\" | \"out\" | "
+          "\"back\"}: fill for \"show the picture full screen\" or \"make it bigger\", back for the whole card "
+          "again), the next or previous step or point (next, prev), or close it (close). Card on the screen:",
+          _obj({"action": {**_STR, "description": "picture, next, prev, close, or another of the card's actions"},
+                "args": {"type": "object", "description": "the action's arguments, e.g. {\"view\": \"fill\"}"}},
+               ("action",))),
     _Tool("search_in_browser", "Open Google (SafeSearch on) in the browser on LittleBot's screen, showing the results "
           "for the query. Use it ONLY when the grown-up explicitly asks for it: to google something, to look it up "
           "online or on the internet, to search or check in the browser or on the web, or to see the web page. Never "
           "for ordinary questions: answer those yourself (info cards show on the screen by themselves). \"Pull up\", "
           "\"show me\" or \"tell me facts about\" something is not a browser request: answer it and use "
-          "show_on_screen.",
+          "show_on_screen. Neither is \"show the picture full screen\" or \"make it bigger\": that is change_card.",
           _obj({"query": {**_STR, "description": "what to search Google for, in a few words"}}, ("query",))),
     _Tool("browser", "Steer the browser on LittleBot's screen while it shows a page, ONLY when the grown-up asks: "
           "scroll (direction down, up, top or bottom; amount page, half or little), open_result (n: the n-th search "
@@ -185,6 +192,7 @@ TOOLS: tuple[_Tool, ...] = (
 )
 TOOL_NAMES = frozenset(t.name for t in TOOLS)
 SCREEN_TOOL = "show_on_screen"  # offered only while the screen can show cards (RobotToolbox.specs)
+CARD_TOOL = "change_card"  # offered only while a card is on the screen
 BROWSER_TOOLS = frozenset({"search_in_browser", "browser"})  # offered only while ctx.browser can open
 BATTERY_TOOL = "battery"  # offered only while a battery monitor is fitted (littlebot/power)
 
@@ -248,6 +256,11 @@ class RobotToolbox:
                 cards = self._card_menu()
                 if cards:
                     out.append({"name": t.name, "description": f"{t.description} {cards}.", "parameters": t.parameters})
+                continue
+            if t.name == CARD_TOOL:  # with what the card on the screen is and can do
+                card = self._card_now()
+                if card:
+                    out.append({"name": t.name, "description": f"{t.description} {card}.", "parameters": t.parameters})
                 continue
             if t.name in BROWSER_TOOLS and self._browser_view() is None:
                 continue
@@ -1072,6 +1085,67 @@ class RobotToolbox:
             names = [f"{n}*" if n in ct.required else n for n in (ct.fields or {})][:8]
             parts.append(f"{kind} ({', '.join(names)})" if names else kind)
         return "; ".join(parts)
+
+    def _card_up(self) -> tuple[Any, Any]:
+        """(screens, the card on the screen), or (screens or None, None) when there is none."""
+        screens = self._screens()
+        try:
+            card = screens.current if screens is not None and screens.active else None
+        except Exception:  # noqa: BLE001
+            card = None
+        return screens, card
+
+    def _card_actions(self, card: Any) -> list[str]:
+        """What change_card can do with ``card``: its type's actions, picture when its picture shows, close."""
+        from littlebot.screens.base import PICTURE_ACTION  # noqa: PLC0415
+
+        ct = self._card_types().get(getattr(card, "kind", ""))
+        names = [a for a in (getattr(ct, "actions", None) or {}) if a not in (PICTURE_ACTION, "close")]
+        if getattr(getattr(card, "slot", None), "shown", False):
+            names.insert(0, PICTURE_ACTION)
+        return [*names, "close"]
+
+    def _card_now(self) -> str:
+        """For change_card's description: "explain (Alexander the Great), with a picture; actions: picture, next,
+        close". Empty: no card is up (the tool isn't offered)."""
+        _screens, card = self._card_up()
+        if card is None:
+            return ""
+        try:
+            showing = str(card.describe() or card.title or "")[:80]
+        except Exception:  # noqa: BLE001
+            showing = str(getattr(card, "title", ""))[:80]
+        acts = self._card_actions(card)
+        pic = ", with a picture" if acts and acts[0] == "picture" else ", no picture"
+        return f"{card.kind} ({showing}){pic}; actions: {', '.join(acts)}"
+
+    async def _change_card(self, args: dict[str, Any]) -> str:
+        from littlebot.screens.base import PICTURE_ACTION  # noqa: PLC0415
+
+        screens, card = self._card_up()
+        if card is None:
+            return _err("no card is on the screen now; to show something, use show_on_screen")
+        action = str(args.get("action") or "").strip().lower()
+        given = args.get("args") if isinstance(args.get("args"), dict) else {}
+        acts = self._card_actions(card)
+        if action == "close":
+            screens.close("asked to")
+            self.done.append("closed the card on the screen")
+            return _ok("the card is off the screen; the face is back")
+        if action == PICTURE_ACTION and PICTURE_ACTION not in acts:
+            return _err("the card on the screen has no picture showing; just say so")
+        if action == PICTURE_ACTION:
+            given = {"view": str(given.get("view") or "fill")}
+        if action not in acts or not screens.command(action, given):
+            return _err(f"the {card.kind} card can't do that; it can: {', '.join(acts)}")
+        if action == PICTURE_ACTION:
+            view = given["view"]
+            done = ("the card again" if view == "back" else "the picture smaller" if view == "out"
+                    else "the picture zoomed in" if view == "in" else "the picture full screen")
+        else:
+            done = str(screens.describe() or card.kind)[:120]
+        self.done.append(f"the screen shows {done}")
+        return _ok(f"the screen shows {done} now. Say okay in a few words.")
 
     async def _show_card(self, spec: dict[str, Any]) -> dict[str, Any]:
         """Show a card (through the call's screen director when there is one); never raises."""

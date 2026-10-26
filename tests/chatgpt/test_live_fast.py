@@ -166,8 +166,10 @@ def test_which_questions_are_simple(question, light):
 
 @pytest.mark.parametrize(("question", "what", "args"), [
     ("What's the weather like today?", "weather", {"place": None, "days": 2}),
-    ("What's the weather in Toronto tomorrow?", "weather", {"place": "Toronto", "days": 2}),
-    ("Is it going to be sunny in New York City this week?", "weather", {"place": "New York City", "days": 7}),
+    ("What's the weather in Toronto tomorrow?", "weather", {"place": "Toronto", "days": 2, "view": "day",
+                                                                    "day": "tomorrow"}),
+    ("Is it going to be sunny in New York City this week?", "weather", {"place": "New York City", "days": 7,
+                                                                                   "view": "week"}),
     ("Should I take an umbrella?", "weather", {"place": None, "days": 2}),
     ("weather in paris", None, None),  # a place it can't be sure of: the text model
     ("Why does it rain?", None, None),
@@ -191,6 +193,9 @@ def test_which_questions_are_simple(question, light):
     ("set a timer for 2 minutes 30 seconds for the pasta", "timer", {"seconds": 150, "label": "pasta"}),
     ("cancel the timer", None, None),
     ("How much time is left on the timer?", None, None),
+    ("Show the picture in full screen", "picture", {"view": "fill"}),  # from a real call
+    ("zoom in on the picture", "picture", {"view": "in"}),
+    ("Make the text bigger", None, None),
 ])
 def test_what_littlebot_answers_without_the_text_model(question, what, args):
     asked = quick.match(question)

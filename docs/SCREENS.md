@@ -69,8 +69,12 @@ Other taps go to the card (next page, next step).
 that", "make the picture bigger" or "make the image take over the screen" show the picture on the whole
 screen; "zoom in" again goes closer (1.5x, 2.25x, 3x: the middle of the picture), "zoom out" steps back, and
 "back to the card" or a tap shows the whole card again. The screen service does it for every such card
-(action `picture`, `base.PICTURE_ACTION`; words in `director._PICTURE_VIEWS`); the same command heard twice
-within 2.5 s (the voice's hand-off and the screen director) counts once.
+(action `picture`, `base.PICTURE_ACTION`; words in `director._PICTURE_VIEWS` and, looser, in
+`screens/picture_words.py`: "show the picture in full screen", "can I see it bigger?", "exit full screen"); the
+same command heard twice within 2.5 s (the voice's hand-off and the screen director) counts once. When the voice
+hands such a request over, LittleBot does it at once without the text model (`chatgpt/quick.py`), and the text
+model has a `change_card` tool (offered only while a card is up, naming it and what it can do) for anything the
+words miss, so it changes the card instead of making a new one or opening Google.
 
 ## The parent's switches
 

@@ -84,10 +84,12 @@ from urllib.parse import parse_qs, urlsplit
 from littlebot.browser import page_scripts as scripts
 from littlebot.browser.cdp import CDPConnection, CDPError
 from littlebot.browser.policy import (
+    bing_url,
     check,
     clean_query,
     google_url,
     host_of,
+    is_google_captcha,
     query_blocked,
 )
 from littlebot.core.arbiter import Lease, Priority, Resource
@@ -122,6 +124,7 @@ MIN_ZOOM, MAX_ZOOM = 0.75, 2.5
 MAX_RESULT = 20
 SCROLL_SHARES = {"page": 0.85, "screen": 0.85, "half": 0.5, "little": 0.3, "bit": 0.3, "lot": 1.7}
 TMP_PREFIX = "littlebot-browser-"
+GOOGLE_RESTS_S = 3600.0  # after Google asks for a captcha, searches go to Bing (SafeSearch strict) this long
 FETCH_PATTERNS = [
     {"urlPattern": "*", "resourceType": "Document", "requestStage": "Request"},
     {"urlPattern": "*google.*/search*", "resourceType": "XHR", "requestStage": "Request"},
@@ -257,6 +260,7 @@ class BrowserView(Service):
         self._teardowns: set[asyncio.Future[Any]] = set()
         self._spoke: tuple[bool, float] | None = None  # (is_child, when) from voice recognition
         self._last: dict[str, Any] | None = None
+        self._google_off_until = -1e18  # Google asked for a captcha: Bing until then (GOOGLE_RESTS_S)
         self.last_error: str | None = None
         self._subs: list[Subscription] = []
 
@@ -365,7 +369,7 @@ class BrowserView(Service):
             if hits:
                 log.info("browser: a search was refused by the safety rules (%s)", hits[0])
                 return self._fail("blocked")
-            target = google_url(q)
+            target = self._search_url(q)
         elif url:
             verdict = check(str(url), insecure_hosts=self._insecure)
             if verdict.action == "block":
@@ -378,6 +382,11 @@ class BrowserView(Service):
             if s is not None and not s.ended:
                 return await self._open_again(s, target, q, source)
             return await self._launch(target, q, source)
+
+    def _search_url(self, q: str) -> str:
+        """Google's results for ``q``, or Bing's while Google wants a captcha (from a real call: "Google brought
+        up a captcha")."""
+        return bing_url(q) if self._clock() < self._google_off_until else google_url(q)
 
     async def _open_again(self, s: _Session, target: str, q: str, source: str) -> dict[str, Any]:
         now = self._clock()
@@ -649,6 +658,14 @@ class BrowserView(Service):
                 return
         except CDPError:
             log.debug("browser: the backstop failed", exc_info=True)
+            return
+        if is_google_captcha(url) and s.query:
+            self._google_off_until = self._clock() + GOOGLE_RESTS_S
+            log.info("browser: Google asked for a captcha; showing Bing's results instead (SafeSearch strict)")
+            try:
+                await self._page(s, "Page.navigate", {"url": bing_url(s.query)})
+            except CDPError:
+                log.debug("browser: going to Bing failed", exc_info=True)
             return
         if same_document and host_of(url) == s.host:
             s.url = url
@@ -964,8 +981,9 @@ class BrowserView(Service):
         if s is None or s.ended:
             return None
         shown = _search_words(s.url) if s.url else s.query
-        if shown is not None and (not s.url or _is_google(s.host)):
-            return f"Google results for “{shown}”" if shown else "Google"
+        if shown is not None and (not s.url or _is_google(s.host) or _is_bing(s.host)):
+            engine = "Bing" if _is_bing(s.host) else "Google"
+            return f"{engine} results for “{shown}”" if shown else engine
         if s.title and s.host:
             return f"{s.title} ({s.host})"
         return s.host or "a web page"
@@ -1093,13 +1111,17 @@ def _is_google(host: str) -> bool:
     return bool(re.match(r"^(?:www\.)?google\.[a-z.]+$", host or ""))
 
 
+def _is_bing(host: str) -> bool:
+    return bool(re.match(r"^(?:www\.)?bing\.com$", host or ""))
+
+
 def _search_words(url: str) -> str | None:
-    """The words of a Google search address ("" for Google's start page), None for any other page."""
+    """The words of a Google (or Bing) search address ("" for its start page), None for any other page."""
     try:
         parts = urlsplit(url)
     except ValueError:
         return None
-    if not _is_google(parts.hostname or ""):
+    if not _is_google(parts.hostname or "") and not _is_bing(parts.hostname or ""):
         return None
     if parts.path == "/search":
         return " ".join((parse_qs(parts.query).get("q") or [""])[0].split())[:120]

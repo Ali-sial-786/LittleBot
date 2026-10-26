@@ -614,6 +614,15 @@ def test_an_unknown_card_is_named_in_the_log_reason():
     ("zoom out", "out"),
     ("back to the card", "back"),
     ("zoom in on the weather map", None),  # not the card's picture words
+    ("Show the picture in full screen", "fill"),  # from a real call (it made a new card instead)
+    ("can you show me the picture of Alexander full screen", "fill"),
+    ("Can I see it bigger?", "fill"),
+    ("exit full screen", "back"),
+    ("make the text bigger", None),
+    ("don't make it full screen", None),
+    ("google a picture of Alexander", None),
+    ("show me another picture", None),
+    ("come closer", None),
 ])
 def test_picture_words_steer_a_cards_picture(words, view):
     from littlebot.screens.base import card_types

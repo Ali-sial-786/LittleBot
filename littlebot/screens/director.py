@@ -397,6 +397,10 @@ def local_rule(text: str, kind: str | None, actions: dict[str, Any] | None = Non
     actions = actions or {}
     if PICTURE_ACTION in actions:
         view = next((v for v, words in _PICTURE_VIEWS if words.match(plain)), None)
+        if view is None:
+            from littlebot.screens.picture_words import picture_view  # noqa: PLC0415
+
+            view = picture_view(plain)  # "show the picture in full screen", "can I see it bigger?"
         if view is not None:
             return Decision("command", action=PICTURE_ACTION, args={"view": view})
     if kind == "weather" and "view" in actions:
