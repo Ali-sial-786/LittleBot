@@ -84,7 +84,7 @@ own desktop browser at the same time, and consider `MemoryHigh=` in the user ser
 |---|---|---|
 | Face animating | 30 FPS (`display.fps`) using <= 25 % of one core | TO MEASURE on Pi (desktop x86: ~4 % of one core during the demo; 1.2 ms mean update+render per frame at scale 1) |
 | Face idle | 15 FPS (`display.idle_fps`) using <= 10 % of one core | TO MEASURE on Pi (desktop x86: ~3 % of one core) |
-| Vision (640x480 MJPG capture, 320 px detection at 5 Hz) | <= 40 % of one core | **Pi 5, measured 2026-10-22** (`check_camera.py`, U20CAM, 5 s): YuNet 7.9 ms mean / 9.5 ms p95 per frame, face found in 100 % of frames, ~4 % of one core at 5 Hz; Haar 13.6 ms, face in 1 % of frames. Camera delivers 15 fps MJPG 640x480, 0 empty reads |
+| Vision (640x480 MJPG capture, 320 px detection at 15 Hz, `config/pi.yaml`) | <= 40 % of one core | **Pi 5, measured 2026-10-22** (`check_camera.py`, U20CAM, 5 s): YuNet 7.9 ms mean / 9.5 ms p95 per frame, face found in 100 % of frames, ~4 % of one core at 5 Hz; Haar 13.6 ms, face in 1 % of frames. Camera delivers 15 fps MJPG 640x480, 0 empty reads. Raised to 15 Hz (every frame) for smoother eye tracking: ~12 % of one core estimated from those numbers; **TO MEASURE** on the Pi with the app running (`perf_monitor.py --children`, a voice chat, and with the browser open). Lower it in `config/local.yaml` if the voice or temperature suffer |
 | Dashboard idle | ~0 % | TO MEASURE |
 | Whole app, idle face, nobody present | <= 20 % of one core | TO MEASURE |
 | YouTube in Chromium (system total) | will dominate; keep `sys_cpu_pct` < 80 % | TO MEASURE |

@@ -20,7 +20,7 @@ camera:
   capture_height: 480
   capture_fps: 15
   process_width: 320
-  detect_fps: 5.0
+  detect_fps: 15.0      # every camera frame: smoother eye tracking (Pi 5: YuNet ~8 ms each, ~12 % of one core)
 audio:
   microphone:
     backend: real
