@@ -47,6 +47,7 @@ import time
 from dataclasses import dataclass
 from typing import Any, Callable
 
+from littlebot.core import memory
 from littlebot.core.config import Mode
 from littlebot.core.context import RobotContext
 from littlebot.core.events import Event, Subscription, Topics
@@ -165,8 +166,10 @@ class VisionService(Service):
         # gestures (experimental)
         self._gestures_on = bool(self.vis_cfg.gestures_enabled)  # parent setting
         self._gestures_reset = False
-        # robot-state dependent work level: active | reduced (SLEEPING, the browser open) | paused (PLAYING_MEDIA)
+        # robot-state dependent work level: active | reduced (SLEEPING, the browser open on 2 GB) | paused (PLAYING_MEDIA)
         self._browser_open = False  # browser.opened / browser.closed (littlebot/browser)
+        # a 4 GB Pi keeps tracking faces at the full rate while the browser is open (littlebot/core/memory.py)
+        self._full_with_browser = memory.roomy_for(ctx)
         self._robot_state = ctx.state.state.value
         self._mode = self._mode_for(self._robot_state)
         # publishing
@@ -214,8 +217,8 @@ class VisionService(Service):
             return "paused"  # the video player needs the CPU; camera stays open, nothing is decoded
         if robot_state == "SLEEPING":
             return "reduced"  # still notice a person arriving (wakes the robot), at a low rate
-        if self._browser_open:
-            return "reduced"  # Chromium needs the CPU and memory; photos for camera looks still work
+        if self._browser_open and not self._full_with_browser:
+            return "reduced"  # Chromium needs the CPU and memory (2 GB); photos for camera looks still work
         return "active"
 
     @staticmethod

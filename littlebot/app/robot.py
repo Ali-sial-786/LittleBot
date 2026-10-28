@@ -15,6 +15,7 @@ import time
 from typing import Any, Callable
 
 from littlebot import __version__
+from littlebot.core import memory
 from littlebot.core.config import LittleBotConfig
 from littlebot.core.context import RobotContext, build_core_context
 from littlebot.core.events import Topics
@@ -126,6 +127,10 @@ class LittleBot:
         self._started = True
         self.ctx.bus.publish(Topics.SYSTEM_STARTED, {"mode": self.ctx.config.mode.value, "version": __version__})
         log.info("LittleBot %s started in %s mode", __version__, self.ctx.config.mode.value)
+        ram = memory.total_mb()
+        log.info("memory: %s RAM, %s (system.memory: %s)", f"{ram / 1024:.1f} GB" if ram else "unknown",
+                 "keeping more loaded" if memory.roomy_for(self.ctx) else "saving memory",
+                 self.ctx.config.system.memory)
 
     async def _start_async(self) -> None:
         targets = [(n, s) for n, s in self.services] + ([("dashboard", self.dashboard)] if self.dashboard else [])

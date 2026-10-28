@@ -435,6 +435,22 @@ async def test_the_models_go_after_a_while_without_use(real, monkeypatch):
     assert not rec.status()["loaded"]
 
 
+@needs_cv2
+async def test_a_4gb_board_keeps_the_models_while_switched_on(real, monkeypatch):
+    model_files(real.root)
+    monkeypatch.setattr(F, "FaceEngine", lambda det, rec: FakeEngine())
+    monkeypatch.setattr(F, "UNLOAD_IDLE_S", 0.1)
+    real.ctx.config.system.memory = "roomy"
+    rec = real.rec
+    pid = rec.store.add_person("Ali")["id"]
+    rec.store.add_sample(pid, face((0, 1.0)))
+    await rec.who_is_there()
+    await asyncio.sleep(0.3)
+    assert rec.status()["loaded"] and rec._unload_at is None
+    real.ctx.privacy.set(face_recognition_enabled=False)  # switched off: dropped all the same
+    assert not rec.status()["loaded"]
+
+
 def test_the_threshold_comes_from_the_config_within_sensible_limits(setup):
     s = setup
     assert s.rec.threshold == F.MATCH_THRESHOLD == s.ctx.config.vision.face_match_threshold == 0.45

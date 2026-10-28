@@ -46,7 +46,7 @@ camera:
   capture_fps: 15
   fourcc: MJPG
   process_width: 320       # detection runs on a 320 px wide copy
-  detect_fps: 5.0          # face detections per second (CPU budget on a 2 GB Pi 5)
+  detect_fps: 15.0         # face detections per second (every frame; lower it if the CPU is busy)
   mirror: true
 
 vision:

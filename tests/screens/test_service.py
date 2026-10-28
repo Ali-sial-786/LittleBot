@@ -507,3 +507,21 @@ def test_a_closed_card_lets_its_drawings_and_pictures_go(svc, sctx, monkeypatch)
     svc.close("test")
     svc._freeing.join(5)
     assert art.cache_bytes() == 0 and images.cache_bytes() == 0 and svc._canvas is None and given == [1]
+
+
+def test_a_4gb_board_keeps_a_closed_cards_drawings_and_pictures(svc, sctx, monkeypatch):
+    from littlebot.core import memory
+    from littlebot.games import art
+    from littlebot.screens import images
+
+    monkeypatch.setattr(memory, "total_mb", lambda: 3900)
+    surf = pygame.Surface((W, H))
+    svc.show_card(DummyCard({"title": "one"}))
+    art.cached(("test", 2), lambda: pygame.Surface((300, 200)))
+    images._cache_put("a zebra", (pygame.Surface((100, 100)), "", "wikipedia"))
+    svc.render(surf, surf.get_rect(), 0.03)
+    svc.close("test")
+    assert svc._freeing is None and art.cache_bytes() >= 300 * 200 * 4 and images.cache_bytes() > 0
+    assert svc._canvas is None  # the card's own canvas still goes
+    art.clear_caches()
+    images.clear_cache()

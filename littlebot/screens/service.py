@@ -69,6 +69,7 @@ from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
 from typing import Any
 
+from littlebot.core import memory
 from littlebot.core.arbiter import Lease, Priority, Resource
 from littlebot.core.events import Event, Subscription, Topics
 from littlebot.core.service import Service, ServiceStatus
@@ -757,11 +758,16 @@ class ScreenService(Service):
         """No card on the screen any more: its drawings (text, panels, the presenter), its pictures and the
         canvas are let go at once, not kept for a next card (tens of MB on a 2 GB Pi; a new card draws its own
         in a few ms), and the memory is given back to the system (littlebot/core/memory.py; ~25 ms, so on a
-        thread of its own). Not while another card took its place or a game (which shares the drawings) is on."""
+        thread of its own). Not while another card took its place or a game (which shares the drawings) is on.
+        With room to spare (a 4 GB Pi: littlebot/core/memory.py roomy) the drawings and pictures are kept (their
+        caches are bounded, ~10-40 MB): the card asked for again comes back at once, its picture not fetched
+        again."""
         with self._lock:
             if self._session is not None:
                 return
             self._canvas = self._scaled = None
+        if memory.roomy_for(self.ctx):
+            return
         games = getattr(self.ctx, "games", None)
         try:
             if games is not None and games.active:
@@ -773,7 +779,6 @@ class ScreenService(Service):
 
     def _free_now(self) -> None:
         try:
-            from littlebot.core import memory  # noqa: PLC0415
             from littlebot.games import art  # noqa: PLC0415
             from littlebot.screens import images  # noqa: PLC0415
             from littlebot.screens.cards import _kit  # noqa: PLC0415

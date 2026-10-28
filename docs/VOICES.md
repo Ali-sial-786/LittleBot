@@ -116,7 +116,8 @@ roughly 2-3 times slower there):
 | Memory in use after a session of enrolling and identifying | ~130-140 MB above what LittleBot used before |
 
 The model loads when it is first needed ("Hey LittleBot" loads it straight away when someone has a
-voiceprint) and is dropped after 2 minutes unused or when switched off.
+voiceprint). A 4 GB Pi keeps it loaded while the switch is on; a 2 GB one drops it after 2 minutes
+unused (`system.memory`, [PERFORMANCE.md](PERFORMANCE.md#memory-profile)). Switched off, it is always dropped.
 
 On a small public set of real recordings (sherpa-onnx's speaker-recognition test data: three men,
 Mandarin, enrolled from 5-9 s each), resampled to the call's 48 kHz: of 2 s clips 13 of 14 were

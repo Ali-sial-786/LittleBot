@@ -202,3 +202,8 @@ privacy:
   camera_enabled: true
   microphone_enabled: true
   cloud_enabled: false
+
+system:
+  # auto: a 4 GB or bigger board keeps more loaded (recognition models, cards' pictures, full face tracking
+  # with the browser open); a 2 GB one lets them go to make room. small / roomy force one (docs/PERFORMANCE.md).
+  memory: auto

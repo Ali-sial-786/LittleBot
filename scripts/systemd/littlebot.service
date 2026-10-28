@@ -48,9 +48,9 @@ RestartMaxDelaySec=60
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=littlebot
-# Optional soft memory cap for the 2 GB Pi (uncomment after measuring - docs/PERFORMANCE.md).
-# A Chromium kiosk started by the app counts towards this too.
-#MemoryHigh=700M
+# Optional soft memory cap (uncomment after measuring - docs/PERFORMANCE.md). A Chromium kiosk
+# started by the app counts towards this too. 2 GB Pi: about 700M; 4 GB Pi: about 2G.
+#MemoryHigh=2G
 
 [Install]
 WantedBy=default.target

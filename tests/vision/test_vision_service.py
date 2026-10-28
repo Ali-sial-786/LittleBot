@@ -679,3 +679,22 @@ async def test_the_browser_open_reduces_detection_but_photos_still_work(make_ctx
         assert svc.status()["detect_mode"] == "active"
     finally:
         await svc.stop()
+
+
+async def test_a_4gb_board_keeps_tracking_faces_at_full_rate_with_the_browser_open(make_ctx):
+    from littlebot.core.state import RobotState
+
+    ctx = make_ctx(camera={"detect_fps": 6.0}, vision={"sleep_detect_fps": 1.5}, system={"memory": "roomy"})
+    det = MockDetector()
+    svc, cam, clock = build(ctx, detector=det)
+    await svc.start(run_thread=False)
+    try:
+        ctx.bus.publish("browser.opened", {"source": "tool", "host": "www.google.com", "search": True})
+        calls = det.calls
+        run_for(svc, clock, 4.0)
+        assert svc.status()["detect_mode"] == "active" and det.calls - calls >= 20  # 6 Hz, not 1.5
+        assert ctx.state.transition(RobotState.SLEEPING, "test")
+        run_for(svc, clock, 1.0)
+        assert svc.status()["detect_mode"] == "reduced"  # asleep is still slow
+    finally:
+        await svc.stop()

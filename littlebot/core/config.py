@@ -574,6 +574,11 @@ class PrivacyConfig(_Section):
 class SystemConfig(_Section):
     sleep_after_idle_minutes: float = 10.0
     monitor_interval_seconds: float = 2.0
+    # How much LittleBot keeps in memory (littlebot/core/memory.py, docs/PERFORMANCE.md "Memory profile").
+    # auto: roomy on a 4 GB or bigger board, small on a 2 GB one. roomy keeps the recognition models loaded,
+    # cards' pictures cached and face tracking at full rate with the browser open;
+    # small lets them go to make room.
+    memory: Literal["auto", "small", "roomy"] = "auto"
 
 
 class LittleBotConfig(BaseModel):

@@ -1,7 +1,8 @@
-# Performance on the Raspberry Pi 5 (2 GB)
+# Performance on the Raspberry Pi 5 (4 GB)
 
-The 2 GB Pi 5 is fast enough for LittleBot's face, vision and dashboard; **memory** is
-the scarce resource, and Chromium playing YouTube is by far the heaviest component.
+The Pi 5 is fast enough for LittleBot's face, vision and dashboard. On the first robot (2 GB)
+**memory** was the scarce resource; the 4 GB board has room to keep more loaded
+([Memory profile](#memory-profile)). Chromium playing YouTube is by far the heaviest component.
 This page says how to measure, and holds the budget. Every number in a "Measured"
 column is **TO MEASURE** on the real robot.
 
@@ -62,6 +63,39 @@ The Pi 5 is roughly 2–3x slower per core than this machine, but runs at scale 
 simulator panel (the 2x scaling alone costs ~2 ms/frame here). Expect the app alone to stay
 well under 400 MB RSS on the Pi; Chromium during YouTube is the big unknown.
 
+## Memory profile
+
+`system.memory` (config/default.yaml, `littlebot/core/memory.py`) decides what LittleBot keeps in
+memory. `auto` (the default) reads the board's RAM: 3 GB or more (a 4 GB Pi 5 reports ~3.9 GB) is
+**roomy**, less is **small**. `small` or `roomy` in `config/local.yaml` forces one. The log says
+which at start: `memory: 3.9 GB RAM, keeping more loaded (system.memory: auto)`.
+
+| | small (2 GB) | roomy (4 GB) | What it buys |
+|---|---|---|---|
+| Face recognition models (~110 MB) | dropped after 2 min unused | kept while recognition is on | every chat knows who is there at once, no ~0.4-1 s reload |
+| Voice recognition model (~75 MB) | dropped after 2 min unused | kept while recognition is on | who woke it is known at once |
+| A closed card's drawings and pictures (bounded caches, ~10-40 MB) | freed at once | kept | a card asked for again comes back at once, its picture not downloaded again |
+| Face detection with the browser open | 1.5/s (as when asleep) | full rate (`camera.detect_fps`) | the eyes keep following you, someone arriving is noticed |
+
+Both profiles: the recognition models go when their switch is off, the browser is closed and
+given back when it closes, detection pauses during videos and slows while asleep, the wake word
+stays loaded during videos (`wake.during_videos`). The browser keeps one renderer and no site
+isolation on both: with frames from other sites in processes of their own, LittleBot's address
+check (`littlebot/browser/policy.py`) would no longer see what those frames load.
+
+Roomy costs about 200-300 MB more at most (*estimate*); the 4 GB budget below has room for it.
+
+## Memory budget (4 GB)
+
+| Component | Budget *(estimate)* | Measured |
+|---|---|---|
+| Kernel, firmware reservations, system services | ~150 MB | TO MEASURE |
+| Desktop session (labwc, panel, PipeWire) | 150-250 MB | TO MEASURE |
+| **LittleBot app**, roomy (models kept, card caches, wake word) | **target <= 600 MB RSS, alarm at 800 MB** | TO MEASURE |
+| Chromium kiosk playing YouTube, or the browser view | 400-700 MB (largest item) | TO MEASURE |
+| Headroom (page cache, spikes, dashboard browser on the Pi) | >= 1.5 GB free | TO MEASURE |
+| **Total** | < ~2 GB with ~1.5-2 GB available | TO MEASURE |
+
 ## Memory budget (2 GB)
 
 | Component | Budget *(estimate)* | Measured |
@@ -100,6 +134,7 @@ own desktop browser at the same time, and consider `MemoryHigh=` in the user ser
 | `camera.detect_fps`, `camera.process_width` | detection cost |
 | `vision.opencv_threads` | OpenCV worker threads (leave cores for the face and audio) |
 | `media.player: none` | disables YouTube entirely (saves the most memory) |
+| `system.memory: small` | a 4 GB board saves memory like a 2 GB one ([Memory profile](#memory-profile)) |
 
 ## Results log
 

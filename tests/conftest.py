@@ -19,3 +19,12 @@ def ctx():
     c = make_test_context()
     yield c
     c.db.close()
+
+
+@pytest.fixture(autouse=True)
+def _two_gb_board(monkeypatch):
+    """Every test runs as on a 2 GB Pi (``system.memory: auto`` -> small), whatever this computer has; tests of
+    what a 4 GB one keeps set ``system.memory`` or patch ``littlebot.core.memory.total_mb`` themselves."""
+    from littlebot.core import memory  # noqa: PLC0415
+
+    monkeypatch.setattr(memory, "total_mb", lambda: 2000)

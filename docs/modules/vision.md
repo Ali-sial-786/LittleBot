@@ -122,6 +122,7 @@ the new level applies within one cycle:
 |---|---|---|
 | `PLAYING_MEDIA` (and `vision.pause_during_media: true`, default) | `paused` | **Nothing is read, decoded or detected**, no gestures, no events. The camera stays **open** (no release / re-open churn; the reader thread only `grab()`s, which costs almost nothing) and an unplugged camera is still noticed. Presence is **frozen**, so a video does not produce a fake `person_left` + `person_present` pair. On the Pi 5 2 GB the video decode in Chromium needs the CPU. |
 | `SLEEPING` | `reduced` | detection at `vision.sleep_detect_fps` (1.5 Hz instead of 6), gestures off. A person arriving still publishes `person_present`, and `behaviours.py` wakes the robot (tested end to end). Someone who was already present when the robot fell asleep does not wake it again until they leave and return. |
+| the browser view open, on a 2 GB board (`system.memory`, [PERFORMANCE.md](../PERFORMANCE.md#memory-profile)) | `reduced` | as when sleeping; photos for camera looks still work. A 4 GB board stays `active` |
 | everything else | `active` | `camera.detect_fps` (6 Hz) and gestures if enabled |
 
 When `paused` ends, detection runs at once, stale detections from before the video are dropped,
@@ -172,7 +173,7 @@ contain `CascadeClassifier` or the Haar XML files. With them, Haar is unavailabl
 only detector, so it needs `scripts/download_models.py`. With apt `python3-opencv` (4.x on
 Bookworm/Trixie) Haar works out of the box.
 
-## CPU budget (Raspberry Pi 5, 2 GB)
+## CPU budget (Raspberry Pi 5)
 
 Design choices: 640x480 MJPG capture (USB 2.0 friendly, cheap to decode), detection on a 320 px
 copy at 6 Hz (5 Hz in `pi.yaml`), decode only the frames we process, `vision.opencv_threads: 2` so
@@ -288,8 +289,9 @@ with a camera look ([AI_SAFETY.md §4](../AI_SAFETY.md#4-privacy) has the privac
 
 * **Models:** YuNet (`cv2.FaceDetectorYN`, its landmarks this time: they line the face up) and SFace
   (`cv2.FaceRecognizerSF`, `vision.sface_model`, `scripts/download_models.py faces`; Apache-2.0,
-  39 MB). Loaded on first use (~0.2 s on an x86 VM) and ~110 MB of RAM; unloaded when switched off
-  or after 10 minutes unused. Missing models or an old OpenCV are reported ("The face models aren't
+  39 MB). Loaded on first use (~0.2 s on an x86 VM) and ~110 MB of RAM; unloaded when switched off.
+  A 4 GB Pi keeps them otherwise; a 2 GB one also drops them after 2 minutes unused (`system.memory`,
+  [PERFORMANCE.md](../PERFORMANCE.md#memory-profile)). Missing models or an old OpenCV are reported ("The face models aren't
   downloaded yet ..."), never a crash.
 * **Matching:** each sample is 128 numbers (unit length). A person is the average of their samples
   (made unit length again); a face is theirs when the cosine similarity to it is at least

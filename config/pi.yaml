@@ -1,4 +1,5 @@
-# Raspberry Pi 5 (2 GB) with the 480x320 HDMI screen and USB camera/mic/speaker.
+# Raspberry Pi 5 (4 GB) with the 480x320 HDMI screen and USB camera/mic/speaker.
+# A 2 GB board also works: system.memory: auto (config/default.yaml) keeps less loaded there.
 # UNVERIFIED until the hardware arrives - see HARDWARE_ARRIVAL_CHECKLIST.md.
 display:
   scale: 1.0

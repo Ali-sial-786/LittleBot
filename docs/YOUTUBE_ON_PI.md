@@ -329,5 +329,6 @@ the child a metre or two away, so the SNR may well be 0 dB or less at a normal v
 Not measured: real children's and adults' voices, accents, real rooms, the Pi's USB microphone and
 speaker, how often real videos start it, and the Pi's CPU for listening during a video (about 4 %
 of one desktop core measured for the wake word; roughly 10 % of one Pi 5 core expected, on top of
-Chromium). The wake word's model now stays loaded during a video (about 130 MB); on a 2 GB Pi that
-is tight next to Chromium (section 3): `wake.during_videos: false` frees it, as before.
+Chromium). The wake word's model now stays loaded during a video (about 130 MB); on a 4 GB Pi there
+is room for it. On a 2 GB one it is tight next to Chromium (section 3): `wake.during_videos: false`
+frees it, as before.
