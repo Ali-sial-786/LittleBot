@@ -18,6 +18,16 @@ For each model (``--rounds`` times, models taking turns):
   as on the robot. GPT-Live itself (hearing the words, choosing to hand off, saying the answer) is not timed here:
   its hand-off is sent at once, in the child's words.
 
+With --live (on the robot: a network that lets WebRTC through, and espeak-ng), each model gets a real GPT-Live
+call through ``LiveCall.run()``: the child's lines from the log are spoken into the call's microphone with espeak, one
+after another, and the voice hears them, hands off (or not) and answers as it does with a child. A test sound card
+stands in for the microphone and speaker (nothing is played; the robot's own microphone and speaker are left alone),
+so each turn is timed from the end of the child's words: the voice's transcript, its first sound, the hand-off, the
+text model, what the voice was sent and when, when it began saying the answer, when it went quiet, and the card.
+
+    .venv/bin/python scripts/time_live_handoff.py --live \
+        --model gpt-6-luna --model gpt-5.6-luna --model claude-haiku-5-5 --model claude-haiku-4-5
+
 Claude needs ANTHROPIC_API_KEY (no fallback to ChatGPT while timing); ChatGPT and the voice need the ChatGPT sign-in
 in the data folder. Tools are offered as on the robot but only the screen acts (simulation mode).
 """
@@ -215,6 +225,262 @@ async def handoff(call: Any, logs: _Logs, req: dict[str, Any], n: int) -> dict[s
     }
 
 
+class _TestAudio:
+    """The live call's sound card for --live: the child's words (handed to ``say``) are its microphone, and the
+    voice's sound is timed instead of played. 20 ms frames, 48 kHz mono, as LiveAudio's."""
+
+    LOUD = 0.01  # RMS of a frame that counts as the voice making sound (voice_record.LOUD)
+
+    def __init__(self) -> None:
+        self.level = 0.0
+        self.mic_open = True
+        self.loud: list[float] = []  # when each of the voice's loud frames came
+        self._queue: list[tuple[Any, asyncio.Event]] = []
+        self._pos = 0
+        self._next: float | None = None
+
+    @property
+    def speaking(self) -> bool:
+        return bool(self.loud) and time.monotonic() - self.loud[-1] < 0.3
+
+    def open(self, loop: Any) -> None:
+        pass
+
+    def close(self) -> None:
+        pass
+
+    def mute(self) -> None:
+        pass
+
+    def drop_voice(self) -> None:
+        pass
+
+    def say(self, pcm: Any) -> asyncio.Event:
+        """Queue ``pcm`` (int16 at 48 kHz) for the microphone; the event is set once all of it was sent."""
+        ended = asyncio.Event()
+        self._queue.append((pcm, ended))
+        return ended
+
+    async def read_frame(self) -> Any:
+        import numpy as np
+
+        now = time.monotonic()
+        self._next = now if self._next is None or self._next < now - 0.2 else self._next
+        await asyncio.sleep(max(0.0, self._next - now))
+        self._next += 0.02
+        pcm = np.zeros(960, dtype=np.int16)
+        if self._queue:
+            sound, ended = self._queue[0]
+            chunk = sound[self._pos:self._pos + 960]
+            pcm[:len(chunk)] = chunk
+            self._pos += 960
+            if self._pos >= len(sound):
+                self._queue.pop(0)
+                self._pos = 0
+                ended.set()
+        return pcm
+
+    def play_frame(self, frame: Any) -> None:
+        import numpy as np
+
+        x = frame.to_ndarray().astype(np.float64) / 32768.0
+        self.level = float(np.sqrt(np.mean(x * x))) if x.size else 0.0
+        if self.level > self.LOUD:
+            self.loud.append(time.monotonic())
+
+
+def conversation() -> list[str]:
+    """What the child said in the 26 Oct log, in order (each line once)."""
+    out: list[str] = []
+    for r in LOG_REQUESTS:
+        text = r.get("ask") or r["lines"][-1][1]
+        if text not in out:
+            out.append(text)
+    return out
+
+
+def _speech(text: str) -> Any:
+    from littlebot.chatgpt.voice_record import espeak_pcm
+
+    pcm = espeak_pcm(text)
+    if pcm is None:
+        raise SystemExit("--live speaks the child's words with espeak-ng: sudo apt install espeak-ng")
+    return pcm
+
+
+async def live_turn(call: Any, audio: _TestAudio, events: list[tuple[float, str, Any]],
+                    sent: list[tuple[float, str, str]], logs: _Logs, cards: list[tuple[float, dict[str, Any]]],
+                    words: str, max_wait: float) -> dict[str, Any]:
+    """Say ``words`` into the call, wait for the voice to finish with it, and time what happened in between."""
+    from littlebot.chatgpt import wire
+    from littlebot.chatgpt.live import LATE_ANSWER, MORE_ANSWER, STILL_WORKING
+
+    marks = (len(events), len(sent), len(audio.loud), len(logs.rows), len(cards), len(logs.lines))
+    t_start = time.monotonic()
+    await audio.say(_speech(words)).wait()
+    t0 = time.monotonic()  # the child has stopped talking
+    deadline = t0 + max_wait
+    while time.monotonic() < deadline and not call._ended.is_set():
+        await asyncio.sleep(0.1)
+        last = max([t0] + [e[0] for e in events[marks[0]:]] + [s[0] for s in sent[marks[1]:]]
+                   + audio.loud[marks[2]:])
+        answered = any(isinstance(e[2], wire.AssistantText) and e[2].final for e in events[marks[0]:])
+        if answered and call._delegations == 0 and time.monotonic() - last > 2.0:
+            break
+    ev, out, loud = events[marks[0]:], sent[marks[1]:], audio.loud[marks[2]:]
+    rows = logs.rows[marks[3]:]
+    hand = [r for r in rows if r.get("purpose") == "handoff"]
+    lines = [m for _t, _n, m in logs.lines[marks[5]:]]
+
+    def first(pred: Any, items: list[Any]) -> Any:
+        return next((x for x in items if pred(x)), None)
+
+    heard = first(lambda e: isinstance(e[2], wire.UserText) and e[2].final, ev)
+    deleg = first(lambda e: isinstance(e[2], wire.Delegation), ev)
+    results = [s for s in out if s[1] == "delegation.context.append"]
+    late = (LATE_ANSWER.split("{")[0], MORE_ANSWER.split("{")[0])  # the rest / a late answer, as notes
+    answer = [s for s in results if s[2] not in (STILL_WORKING, wire.FAILED_RESULT)] \
+        + [s for s in out if s[1] == "session.context.append" and s[2].startswith(late)]
+    answer.sort()
+    first_out = results[0] if results else None
+    if first_out is None:
+        first_what = "-"
+    elif first_out[2] == STILL_WORKING:
+        first_what = "wait (3.5 s)"
+    elif first_out[2] == wire.FAILED_RESULT:
+        first_what = "failed"
+    elif any("answered with its first sentence" in m for m in lines):
+        first_what = "1st sentence"
+    else:
+        first_what = "answer"
+    answer_at = answer[0][0] if answer else None
+    spoke_answer = first(lambda t: t > answer_at, loud) if answer_at is not None else None
+    said = " ".join(e[2].text for e in ev if isinstance(e[2], wire.AssistantText) and e[2].final)
+    kind = next((m.split("kind=")[1].split(")")[0].split(",")[0] for m in lines if "hand-off received" in m), "-")
+    return {
+        "words": words, "speech_ms": _ms(t0, t_start), "heard_ms": _ms(heard[0], t0) if heard else None,
+        "voice_sound_ms": _ms(loud[0], t0) if loud else None,
+        "handoff_ms": _ms(deleg[0], t0) if deleg else None, "kind": kind,
+        "text_model": ",".join(dict.fromkeys(r.get("model", "?") for r in hand)) or "-",
+        "first_token_ms": hand[0].get("first_token_ms") if hand else None,
+        "model_total_ms": sum(int(r.get("total_ms", 0)) for r in hand) if hand else None,
+        "to_voice_ms": _ms(first_out[0], t0) if first_out else None, "first_what": first_what,
+        "answer_sent_ms": _ms(answer[-1][0], t0) if answer else None,
+        "answer_spoken_ms": _ms(spoke_answer, t0) if spoke_answer else None,
+        "voice_done_ms": _ms(loud[-1], t0) if loud else None,
+        "card_ms": _ms(cards[marks[4]][0], t0) if len(cards) > marks[4] else None,
+        "card": str(cards[marks[4]][1].get("kind")) if len(cards) > marks[4] else "none",
+        "said": " ".join(said.split())[:80],
+    }
+
+
+async def live_call(ctx: Any, logs: _Logs, model: str, rnd: int, args: argparse.Namespace,
+                    **svc_options: Any) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """One real GPT-Live call through LiveCall.run(), the child's lines from the log spoken into it in turn."""
+    from littlebot.chatgpt import wire
+    from littlebot.chatgpt.live import LiveCall, LiveVoiceService
+
+    audio = _TestAudio()
+    svc = LiveVoiceService(ctx, audio_factory=lambda: audio, **svc_options)
+    call = LiveCall(svc)
+    events: list[tuple[float, str, Any]] = []
+    sent: list[tuple[float, str, str]] = []
+    cards: list[tuple[float, dict[str, Any]]] = []
+    own = call._on_message
+
+    def on_message(message: Any) -> None:
+        parsed = wire.parse(message)
+        if parsed is not None:
+            events.append((time.monotonic(), parsed[0], parsed[1]))
+        own(message)
+
+    call._on_message = on_message  # LiveCall._connect hands this to the data channel
+    sub = ctx.bus.subscribe("screen.card_shown", lambda e: cards.append((time.monotonic(), dict(e.data))))
+    t0 = time.monotonic()
+    task = asyncio.ensure_future(call.run())
+    setup: dict[str, Any] = {"model": model, "round": rnd}
+    turns: list[dict[str, Any]] = []
+    try:
+        while not task.done() and time.monotonic() - t0 < args.channel_wait + 25:
+            ch = call.channel
+            if ch is not None and ch.readyState == "open":
+                break
+            await asyncio.sleep(0.02)
+        setup["connected_ms"] = call.connect_ms
+        ch = call.channel
+        if task.done() or ch is None or ch.readyState != "open":
+            setup["error"] = call.error or ("the data channel didn't open" + (
+                f" ({args.channel_wait + 25:.0f} s after the start; UDP blocked?)" if call.connect_ms else ""))
+            return setup, turns
+        setup["channel_ms"] = _ms(time.monotonic(), t0)
+        setup["voice"] = call.voice
+        send = ch.send
+
+        def recorded(frame: str) -> None:
+            obj = json.loads(frame)
+            sent.append((time.monotonic(), str(obj.get("type")),
+                         "".join(c.get("text", "") for c in obj.get("content", []))))
+            send(frame)
+
+        ch.send = recorded
+        await asyncio.sleep(1.0)  # the call's own first notes (who is here, a paused video) go first
+        for words in conversation():
+            print(f"round {rnd}, {model}: saying {words!r} ...", flush=True)
+            turns.append({"model": model, "round": rnd, **await live_turn(call, audio, events, sent, logs, cards,
+                                                                        words, args.turn_wait)})
+            if call._ended.is_set():
+                break
+    finally:
+        sub.cancel()
+        call.end("timing test done")
+        try:
+            await asyncio.wait_for(task, 10)
+        except (TimeoutError, asyncio.CancelledError):
+            task.cancel()
+        await svc.stop()
+    return setup, turns
+
+
+def print_live(setups: list[dict[str, Any]], turns: list[dict[str, Any]], models: list[str]) -> None:
+    def v(x: Any) -> str:
+        return "-" if x is None else str(x)
+
+    print("\nCALL SETUP (ms from the start; \"connected\" is where the robot logs it, then the data channel opens)")
+    print(f"{'model':18} {'round':>5} {'connected':>9} {'data channel':>12}  voice")
+    for s in setups:
+        if "error" in s:
+            print(f"{s['model']:18} {s['round']:>5} {v(s.get('connected_ms')):>9}  failed: {s['error']}")
+        else:
+            print(f"{s['model']:18} {s['round']:>5} {v(s['connected_ms']):>9} {v(s['channel_ms']):>12}  {s['voice']}")
+    print("\nTURNS (ms from the end of the child's words)")
+    print(f"{'model':18} {'rnd':>3} {'heard':>5} {'voice sound':>11} {'hand-off':>8} {'kind':7} {'model 1st':>9} "
+          f"{'model total':>11} {'to voice':>8} {'what':13} {'answer sent':>11} {'answer spoken':>13} "
+          f"{'voice done':>10} {'card at':>7} {'card':8} words / said")
+    for t in turns:
+        print(f"{t['model']:18} {t['round']:>3} {v(t['heard_ms']):>5} {v(t['voice_sound_ms']):>11} "
+              f"{v(t['handoff_ms']):>8} {t['kind']:7} {v(t['first_token_ms']):>9} {v(t['model_total_ms']):>11} "
+              f"{v(t['to_voice_ms']):>8} {t['first_what']:13} {v(t['answer_sent_ms']):>11} "
+              f"{v(t['answer_spoken_ms']):>13} {v(t['voice_done_ms']):>10} {v(t['card_ms']):>7} {t['card']:8} "
+              f"{t['words'][:40]!r} / {t['said']}")
+    print("\nMEDIANS per model (ms; hand-offs only for the hand-off columns)")
+    print(f"{'model':18} {'connected':>9} {'data channel':>12} {'voice sound':>11} {'hand-off':>8} {'to voice':>8} "
+          f"{'answer spoken':>13} {'card at':>7}  hand-offs  waits")
+    for model in models:
+        ss = [s for s in setups if s["model"] == model and "error" not in s]
+        tt = [t for t in turns if t["model"] == model]
+        hh = [t for t in tt if t["handoff_ms"] is not None]
+
+        def med(vals: list[Any]) -> str:
+            got = [int(x) for x in vals if x is not None]
+            return str(int(statistics.median(got))) if got else "-"
+
+        print(f"{model:18} {med([s['connected_ms'] for s in ss]):>9} {med([s['channel_ms'] for s in ss]):>12} "
+              f"{med([t['voice_sound_ms'] for t in tt]):>11} {med([t['handoff_ms'] for t in hh]):>8} "
+              f"{med([t['to_voice_ms'] for t in hh]):>8} {med([t['answer_spoken_ms'] for t in hh]):>13} "
+              f"{med([t['card_ms'] for t in tt]):>7}  {len(hh):>4}/{len(tt):<4} "
+              f"{sum(t['first_what'].startswith('wait') for t in hh):>5}")
+
+
 async def run(args: argparse.Namespace) -> int:
     from compare_text_models import build_context
 
@@ -237,6 +503,21 @@ async def run(args: argparse.Namespace) -> int:
     await ctx.screens.start()
     setups: list[dict[str, Any]] = []
     results: list[dict[str, Any]] = []
+    if args.live:
+        for rnd in range(1, args.rounds + 1):
+            for model in args.model:
+                configure(ctx, model)
+                print(f"round {rnd}, {model}: calling GPT-Live ...", flush=True)
+                s, t = await live_call(ctx, logs, model, rnd, args)
+                setups.append(s)
+                results.extend(t)
+                ctx.screens.close("next call")
+        ctx.screens.detach()
+        ctx.db.close()
+        print_live(setups, results, args.model)
+        if args.json:
+            Path(args.json).write_text(json.dumps({"setups": setups, "turns": results}, indent=1))
+        return 0
     n = 0
     for rnd in range(1, args.rounds + 1):
         for model in args.model:
@@ -306,6 +587,10 @@ def main() -> int:
     ap.add_argument("--mode", default="pi", help="config mode (default pi)")
     ap.add_argument("--channel-wait", type=float, default=8.0, help="seconds to wait for the data channel")
     ap.add_argument("--no-setup", action="store_true", help="hand-offs only (no call is set up)")
+    ap.add_argument("--live", action="store_true",
+                    help="a real GPT-Live call per model, the child's words spoken into it (needs espeak-ng and a "
+                         "network that lets WebRTC through: the robot's)")
+    ap.add_argument("--turn-wait", type=float, default=40.0, help="--live: seconds at most for each turn")
     ap.add_argument("--json", help="also write the results here")
     args = ap.parse_args()
     logging.basicConfig(level=logging.WARNING)
