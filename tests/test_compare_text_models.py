@@ -118,10 +118,25 @@ async def test_the_model_list_shows_names_and_labels_only(tmp_path, capsys):
             {"slug": "gpt-6-mini-test", "description": "small"}]})
 
     mod = _models_script()
-    assert await mod.run(argparse.Namespace(json=False, mode="pi"), ctx=ctx, transport=httpx.MockTransport(handler)) == 0
+    args = argparse.Namespace(json=False, mode="pi")
+    assert await mod.run(args, ctx=ctx, transport=httpx.MockTransport(handler)) == 0
     out = capsys.readouterr().out
     assert seen["url"].startswith("https://chatgpt.com/backend-api/codex/models") and seen["auth"].startswith("Bearer ")
     assert "gpt-6-luna  (GPT-6 Luna, effort low/high, list) <- used now" in out and "gpt-6-mini-test" in out
     assert "tok-should-not-show" not in out and seen["auth"][7:] not in out
     assert "live voice:             gpt-live-1-codex" in out
     ctx.db.close()
+
+
+async def test_the_log_replay_sends_the_rebuilt_requests_and_prints_the_logged_times(setup, capsys):
+    mod, _ctx, client, asked = setup
+    client.turns = [{"text": '{"do": "none", "why": "a test"}'}] * 5
+    assert await mod.run(argparse.Namespace(rounds=1, only=["claude"], mode="pi", from_log=True,
+                                            claude_model="claude-haiku-5-5")) == 0
+    out = capsys.readouterr().out
+    assert len(client.calls) == len(mod.LOG_REQUESTS) and not asked  # Claude only, once each
+    assert "12181 (+11355)" in out and "2940 (+2875), 3661 (+3523), 7240 (+7178)" in out
+    full = client.calls[1]
+    assert any(str(t.get("type", "")).startswith("web_search") for t in full["tools"])  # the full hand-off searches
+    assert full["messages"][0]["content"] == mod._KUBLAI  # with the conversation before it
+    assert not any(str(t.get("type", "")).startswith("web_search") for t in client.calls[3]["tools"])
