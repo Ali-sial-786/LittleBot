@@ -24,7 +24,7 @@ The base also has room for the later phases: ESP32, TB6612FNG, TT gear motors + 
 
 **Overall size:** 340 mm tall (about 35 cm, like the reference), base 176 × 152 mm, head 150 × 132 × 120 mm.
 - All parts fit a 220 × 220 × 250 mm bed.
-- Everything prints **without supports**.
+- Everything prints **without supports** except the head: its visor seat needs a few supports from the bed (see *Material and settings*).
 - All parts come from one parametric OpenSCAD file.
 
 v1 (`../enclosure/`) is smaller and simpler (212 mm, 11 parts). v2 is bigger, more of a character, and ready for the wheels.
@@ -94,7 +94,7 @@ Each plate is a single STL with several separate bodies. Most slicers can split 
 
 - **Fewer isn't possible:** the base, floor, head and head back cap are each too big to share a 256 mm plate with one another, so the main colour needs 4 plates. All of it on one plate would need a bed of about 465 × 465 mm.
 - **Colours stay on separate plates, even with an AMS.** On a mixed plate the printer swaps filament on every layer where both colours are printing: up to 33 mm high for the visor, which means hundreds of swaps, hours of extra time and a lot of purged filament. With an AMS, just load all three colours and it switches between plates for you. If your main colour is white or natural, the ears and front plate can be printed in it too.
-- **3MF, one object per part:** each part keeps its name, so in Bambu Studio you can click the **ring gear** and **pinion** and add per-object settings (5 walls, 50 % infill, slower). If Bambu Studio says the file "is not from Bambu Lab", choose to load the geometry. If the parts don't land where they should, press **A** (arrange): they're known to fit.
+- **3MF, one object per part:** each part keeps its name, so in Bambu Studio you can click the **ring gear** and **pinion** and add per-object settings (5 walls, 50 % infill, slower), and give the **head** its supports (on build plate only). If Bambu Studio says the file "is not from Bambu Lab", choose to load the geometry. If the parts don't land where they should, press **A** (arrange): they're known to fit.
 - The layout keeps 10 mm between parts (room for a brim on the base and torso), 5 mm from the edges, and keeps the 18 × 28 mm front-left corner free, which the X1 and P1 printers reserve.
 - For another bed size: `python3 pack_plates.py 300` (writes `plates_300/`). The wheel-phase parts stay in `plates/`.
 
@@ -124,7 +124,7 @@ Each plate is a single STL with several separate bodies. Most slicers can split 
 **Material and settings:**
 - **Material:** PETG (tougher, copes better with the Pi's warmth) or PLA+.
 - **Settings:** 0.2 mm layers, 3 perimeters, 15–25 % infill. For the gears: 5 perimeters / 50 %, printed slowly.
-- **Supports:** none needed. A brim helps the tall base and torso.
+- **Supports:** only for the **head**, and only from the bed. It prints face down, and the ledge the visor rests on, with its four screw tabs, starts 3 mm above the bed with nothing under it (Bambu Studio warns about a "floating cantilever"). In the slicer, give the head alone: support on, **On build plate only** on. That fills just the 3 mm visor recess (hidden behind the visor; pull it out with pliers) and nothing inside the head. Every other part: no supports. A brim helps the tall base and torso.
 - **Colours:** the ears and the front plate glow only when printed in **white, natural or translucent** filament; dark filament hides the LEDs. Print the visor in black.
 - **Filament:** the stationary build is about 940 cm³ of plastic (about 1.2 kg PETG at 100 % infill). Normal infill uses noticeably less: plan on about 1 kg of the main colour plus a little black and natural.
 
