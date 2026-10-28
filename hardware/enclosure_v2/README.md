@@ -37,6 +37,7 @@ v1 (`../enclosure/`) is smaller and simpler (212 mm, 11 parts). v2 is bigger, mo
 | `stl/*.stl` | ready-to-slice parts, already in print orientation |
 | `checks.scad`, `run_checks.sh` | 70 automated interference and finger-pinch checks (head ±60°, arms −90…+100°), a self-test that must find an overlap, and an INFO line on the cooler under the screen |
 | `build.sh`, `stl_tools.py` | rebuild the STLs and images. Report per part: size, watertight, number of separate bodies, bed fit, overhang area |
+| `make_plates.py` → `plates/`, `pack_plates.py` → `plates_256/` | the parts grouped into print jobs: 9 for a 220 mm bed, 6 for a 256 mm bed (Bambu Lab) |
 
 ### What has been verified (by the scripts, not by a real print yet)
 
@@ -74,7 +75,28 @@ Instead, `plates/` groups the parts into **9 ready-made build plates**, one STL 
 
 ![plates](images/plates.png)
 
-Each plate is a single STL with several separate bodies. Most slicers can split it back into objects if you want different settings per part, such as more infill for the gears. On a bigger bed, run `python3 make_plates.py 256` (or your bed size) to check the layout still fits. Some plates could also be merged.
+Each plate is a single STL with several separate bodies. Most slicers can split it back into objects if you want different settings per part, such as more infill for the gears.
+
+### On a 256 mm bed (Bambu Lab A1 / P1S / P2S / X1C): 6 jobs
+
+`plates_256/` packs the same parts onto **6 plates** (made by `pack_plates.py`):
+
+| Plate | Parts | Filament |
+|---|---|---|
+| `01_main.3mf` | base, Pi carrier, left arm, servo frame | main colour |
+| `02_main.3mf` | floor, shelf, right arm, rear plate, pinion | main colour |
+| `03_main.3mf` | head, torso, well cover, neck coupler, ring gear | main colour |
+| `04_main.3mf` | head back cap, torso back cover, well cover, camera pod, camera bracket | main colour |
+| `05_black.3mf` | visor | **black** |
+| `06_glow.3mf` | both ears + front plate | **white / natural / translucent** |
+
+![256 mm plates](images/plates_256.png)
+
+- **Fewer isn't possible:** the base, floor, head and head back cap are each too big to share a 256 mm plate with one another, so the main colour needs 4 plates. All of it on one plate would need a bed of about 465 × 465 mm.
+- **Colours stay on separate plates, even with an AMS.** On a mixed plate the printer swaps filament on every layer where both colours are printing: up to 33 mm high for the visor, which means hundreds of swaps, hours of extra time and a lot of purged filament. With an AMS, just load all three colours and it switches between plates for you. If your main colour is white or natural, the ears and front plate can be printed in it too.
+- **3MF, one object per part:** each part keeps its name, so in Bambu Studio you can click the **ring gear** and **pinion** and add per-object settings (5 walls, 50 % infill, slower). If Bambu Studio says the file "is not from Bambu Lab", choose to load the geometry. If the parts don't land where they should, press **A** (arrange): they're known to fit.
+- The layout keeps 10 mm between parts (room for a brim on the base and torso), 5 mm from the edges, and keeps the 18 × 28 mm front-left corner free, which the X1 and P1 printers reserve.
+- For another bed size: `python3 pack_plates.py 300` (writes `plates_300/`). The wheel-phase parts stay in `plates/`.
 
 ## Parts to print
 

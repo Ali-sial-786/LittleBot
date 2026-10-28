@@ -18,6 +18,7 @@ printf '%s\n' "${PARTS[@]}" | xargs -P "${JOBS:-4}" -I{} bash -c 'render {}'
 files=(); for p in "${PARTS[@]}"; do files+=("$OUT/$p.stl"); done
 status=0; python3 stl_tools.py report "${files[@]}" || status=1
 (($# == 0)) && { python3 make_plates.py || status=1; }   # group the parts into build plates
+(($# == 0)) && { python3 pack_plates.py 256 || status=1; }   # fewer, fuller plates for a 256 mm bed (Bambu Lab)
 if (($# == 0)) && command -v xvfb-run >/dev/null; then
     shot() { xvfb-run -a -s "-screen 0 1600x1200x24" openscad -q -o "$IMG/$1.png" -D "part=\"$2\"" -D "section_cut=${4:-0}" \
              --imgsize=1100,1300 --camera="$3" --colorscheme=Tomorrow --projection="${5:-p}" "$SCAD"; }
