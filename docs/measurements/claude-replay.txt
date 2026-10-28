@@ -1,0 +1,20 @@
+Claude log replay, 2026-10-28 06:36 UTC, GitHub Actions runner (not the robot)
+commit e4a7155
+
+logged at request           ChatGPT then (log)   model            first word ms  total ms  answer
+pygame-ce 2.5.8 (SDL 2.32.10, Python 3.12.15)
+00:58:21  card                           17503   claude-haiku-5-5           699      1075  {"do": "show", "spec": {"card": "facts", "layout": "profile"
+                                                 claude-haiku-4-5           432      1100  {"do": "show", "spec": {"card": "profile", "layout": "profil
+00:59:15  hand-off full         12181 (+11355)   claude-haiku-5-5          1622      1711  I can't put a fact card on the screen right now, because I d
+                                                 claude-haiku-4-5           592      4514  Kublai Khan was a Mongol ruler and grandson of Genghis Khan 
+01:14:00  card                           26541   claude-haiku-5-5           512       651  {"do": "show", "spec": {"card": "compare", "title": "Genghis
+                                                 claude-haiku-4-5           351      1666  {"do": "show", "spec": {"card": "compare", "layout": "compar
+01:14:03  hand-off light          3875 (+3729)   claude-haiku-5-5           641      1665  This is a grown-up question, so I'll answer in a few sentenc
+                                                 claude-haiku-4-5           443      2230  I can answer that question, but this is tricky because they 
+01:15:14  hand-off light  2940 (+2875), 3661 (+3523), 7240 (+7178)   claude-haiku-5-5          1253      1479  I can't put a picture up full screen with the tools I have, 
+                                                 claude-haiku-4-5           409      1192  I don't have a tool to show pictures full screen on LittleBo
+
+ChatGPT's logged times are from the robot (its own network, the whole request); a card's logged time also
+includes the director waiting for the words. The requests are rebuilt from the log's card titles.
+claude-haiku-5-5 cost for this run (estimate from the token counts, web searches not included): $0.0022
+claude-haiku-4-5 cost for this run (estimate from the token counts, web searches not included): $0.0270
