@@ -1,7 +1,7 @@
 # LittleBot hardware: 3D-printable enclosures
 
 Two complete designs. Both are parametric OpenSCAD models with ready-to-slice STLs and automated interference checks, and both hold the same parts:
-- Raspberry Pi 5 (2 GB) + official Active Cooler, with the MPI3508 3.5" HDMI screen **plugged straight onto its GPIO header** – the screen + Pi stack sits in the head;
+- Raspberry Pi 5 (4 GB; every RAM size has the same board) + official Active Cooler, with the MPI3508 3.5" HDMI screen **plugged straight onto its GPIO header** – the screen + Pi stack sits in the head;
 - InnoMaker U20CAM-1080P camera;
 - Adafruit mini USB mic (3367) + mini USB speaker (3369);
 - 3 × MG90S servos (head turn + two arms) and a PCA9685.

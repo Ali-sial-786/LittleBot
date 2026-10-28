@@ -1,6 +1,6 @@
-# Performance on the Raspberry Pi 5 (2 GB)
+# Performance on the Raspberry Pi 5 (4 GB)
 
-The 2 GB Pi 5 is fast enough for LittleBot's face, vision and dashboard; **memory** is
+The Pi 5 is fast enough for LittleBot's face, vision and dashboard; **memory** is
 the scarce resource, and Chromium playing YouTube is by far the heaviest component.
 This page says how to measure, and holds the budget. Every number in a "Measured"
 column is **TO MEASURE** on the real robot.
@@ -62,7 +62,9 @@ The Pi 5 is roughly 2–3x slower per core than this machine, but runs at scale 
 simulator panel (the 2x scaling alone costs ~2 ms/frame here). Expect the app alone to stay
 well under 400 MB RSS on the Pi; Chromium during YouTube is the big unknown.
 
-## Memory budget (2 GB)
+## Memory budget (sized for 2 GB)
+
+The robot now has the 4 GB board, so this budget leaves about 2 GB more headroom.
 
 | Component | Budget *(estimate)* | Measured |
 |---|---|---|

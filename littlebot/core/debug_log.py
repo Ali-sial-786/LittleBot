@@ -40,7 +40,7 @@ HINTS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"HTTP 40[13]\b|sign-in (?:failed|no longer valid)|unauthori", re.I),
      "The ChatGPT sign-in was refused or ran out: a grown-up signs in again on the dashboard (ChatGPT)."),
     (re.compile(r"stood still|memory is low|swap", re.I),
-     "The Pi ran short of memory (it has 2 GB) and stalled for a while; the browser view and videos use the "
+     "The Pi ran short of memory and stalled for a while; the browser view and videos use the "
      "most. Closing them helps."),
     (re.compile(r"took too long|timed out|TimeoutError", re.I),
      "Something took too long: usually slow Wi-Fi or a busy ChatGPT."),

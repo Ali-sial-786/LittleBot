@@ -68,7 +68,7 @@ and prefer a supply that negotiates 5 A properly.
 
 | Consumer | Path | Typical | Peak | Measured |
 |---|---|---|---|---|
-| Pi 5 (2 GB) idle, desktop | USB-C in | 0.5-0.6 A | - | TO MEASURE |
+| Pi 5 (4 GB) idle, desktop | USB-C in | 0.5-0.6 A | - | TO MEASURE |
 | Pi 5 busy (face + vision + Chromium) | USB-C in | 1.0-1.5 A | ~2 A | TO MEASURE |
 | Active cooler fan | Pi (shares the USB current limit) | 0.05 A | 0.1 A | TO MEASURE |
 | MPI3508 screen (backlight) | GPIO 5 V pins | 0.15-0.3 A | - | TO MEASURE |

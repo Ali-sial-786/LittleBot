@@ -1,4 +1,4 @@
-# Raspberry Pi 5 (2 GB) with the 480x320 HDMI screen and USB camera/mic/speaker.
+# Raspberry Pi 5 (4 GB) with the 480x320 HDMI screen and USB camera/mic/speaker.
 # UNVERIFIED until the hardware arrives - see HARDWARE_ARRIVAL_CHECKLIST.md.
 display:
   scale: 1.0

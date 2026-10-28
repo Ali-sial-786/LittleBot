@@ -6,7 +6,7 @@ The second design, inspired by the companion-robot reference picture:
 - a **mobility-ready base**: wheel wells, a front sensor / light-bar plate, a battery bay, an electronics shelf and a servo power input.
 
 The parts are the same as in v1:
-- Raspberry Pi 5 (2 GB) with the official Active Cooler;
+- Raspberry Pi 5 (4 GB; every RAM size has the same board) with the official Active Cooler;
 - MPI3508 3.5" HDMI screen, **plugged straight onto the Pi's GPIO header**;
 - InnoMaker U20CAM-1080P USB camera;
 - Adafruit 3367 mini USB mic and Adafruit 3369 mini USB speaker;

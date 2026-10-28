@@ -98,4 +98,4 @@ docs/    guides
 * Python >= 3.11, type hints, `from __future__ import annotations`, module docstrings.
 * Standard `logging` (`logging.getLogger("littlebot.<module>")`), no prints in library code.
 * Keep dependencies minimal; heavy/optional imports go inside functions.
-* Target: Raspberry Pi 5 with 2 GB RAM. Bounded queues, timeouts, low idle CPU.
+* Target: Raspberry Pi 5 with 4 GB RAM; keep it lean enough for 2 GB. Bounded queues, timeouts, low idle CPU.

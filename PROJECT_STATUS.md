@@ -53,7 +53,7 @@ checked through rendered screenshots.
 | Dashboard (`littlebot/dashboard`) | ✅ | 80+ endpoints, setup-code first run, Host allowlist, body caps, global login lockout, scrypt passwords, server-side sessions, CSRF + Origin checks, rate limits, CSP, no secrets in responses, phone-first UI | Phone access over home Wi-Fi (`--lan`) |
 | Audio (`littlebot/audio`) | 🧪 | 20 synthesised gentle sound effects, melody synth, espeak-ng voice (real), half-duplex, volume ceiling, privacy, device fallback, OpenAI TTS/STT (mock transport) | USB speaker + mic on Pi (PipeWire/ALSA), VAD threshold, real STT (Vosk/OpenAI) |
 | Vision (`littlebot/vision`) | 🧪 | Detector on sample photos, tracker + presence hysteresis, mirroring, reconnect, privacy release, pause during video, reduced rate while asleep | USB UVC camera, Pi CPU, mirror direction on the assembled robot, gestures (experimental) |
-| Media (`littlebot/media`) | 🧪 / ⛔ | Allowlist parsing, age gate, session/daily limits, official IFrame player page with stubbed YT, kiosk/desktop backends, Chromium cleanup | Real playback (blocked from sandbox), Pi 5 2 GB memory/CPU with Chromium |
+| Media (`littlebot/media`) | 🧪 / ⛔ | Allowlist parsing, age gate, session/daily limits, official IFrame player page with stubbed YT, kiosk/desktop backends, Chromium cleanup | Real playback (blocked from sandbox), Pi 5 4 GB memory/CPU with Chromium |
 | Brain (`littlebot/brain`, `safety/content.py`) | ✅ (mock) / 🧪 (cloud) | Mock conversations, code-enforced reply validation, PII scrubbing, rate/budget limits, provider gating by age/privacy/offline | Real Anthropic/OpenAI calls (needs a paid API key) |
 | Motion (`littlebot/motion`) | 🧪 | Datasheet-exact PCA9685 register emulation, limits, eased interpolation, gestures, latched e-stop, two-key arming | PCA9685 + MG90S servos, calibration, mechanical safety (**physical motion disabled**) |
 | Pi deployment (`scripts/`, `docs/`) | 🛠️ | Shell scripts `bash -n` + shellcheck clean, systemd units verified with `systemd-analyze`, installer dry run, diagnose/perf tools run here | Everything on the actual Pi 5 |
@@ -111,8 +111,8 @@ tunnels; rebinding pages never send "localhost"); LAN mode is plain HTTP (truste
 ## Known limitations / honest caveats
 
 - **Nothing has run on a Raspberry Pi.** Performance numbers are desktop measurements (`docs/PERFORMANCE.md`).
-- **YouTube playback is unverified** (sandbox network blocked by YouTube). Chromium on a 2 GB Pi 5 is
-  expected to be tight; fallbacks are documented in `docs/YOUTUBE_ON_PI.md`.
+- **YouTube playback is unverified** (sandbox network blocked by YouTube). Chromium on the 4 GB Pi 5 should
+  fit (it was expected to be tight on 2 GB); fallbacks are documented in `docs/YOUTUBE_ON_PI.md`.
 - **Speech recognition**: with default settings and no Vosk model or cloud key, real microphone speech
   is detected but not transcribed (push-to-talk then says it didn't hear). Simulated speech always works.
 - **Gesture (wave) detection** is experimental and off by default.

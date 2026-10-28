@@ -1,6 +1,6 @@
 # Raspberry Pi setup
 
-How to go from an empty microSD card to LittleBot running on the Raspberry Pi 5 (2 GB)
+How to go from an empty microSD card to LittleBot running on the Raspberry Pi 5 (4 GB)
 with its 3.5" HDMI screen, USB camera, USB microphone and USB speaker.
 
 > **Status: written before the hardware arrived.** Commands are standard Raspberry Pi
@@ -18,7 +18,7 @@ format reference `config/calibration.example.yaml`).
 
 ## 0. What you need
 
-- Raspberry Pi 5 (2 GB) with the official active cooler fitted.
+- Raspberry Pi 5 (4 GB) with the official active cooler fitted.
 - Patriot 64 GB A1/V30 microSD card and a card reader for your computer.
 - **For bring-up: the official Raspberry Pi 27 W USB-C power supply** (5.1 V / 5 A).
   Test the power bank only later, following [POWER.md](POWER.md).
@@ -121,7 +121,7 @@ Options: `--with-service` (autostart, section 10), `--headless-service`, `--enab
 `--echo-cancel` (section [Echo cancelling](#echo-cancelling)), `--yes`. See `scripts/install_pi.sh --help`.
 
 The wake word keeps the USB microphone open while it is switched on (**AI** → **Live voice**), and
-hands it over to push to talk, the microphone test and live voice. On a 2 GB Pi it costs about
+hands it over to push to talk, the microphone test and live voice. On the Pi it costs about
 140 MB of RAM and roughly a tenth of one CPU core; turn the switch off if you don't use it.
 
 ### Why a plain venv with pip wheels (and when to use `--system-opencv`)
@@ -132,7 +132,7 @@ opencv-python-headless, pydantic-core, psutil), so nothing is compiled, versions
 the development machine, and an `apt upgrade` can never break the app's Python packages.
 The installer passes `--only-binary` for numpy / pygame-ce / OpenCV (and for PyAV, pylibsrtp,
 cryptography and google-crc32c in the live-voice step) so that, if a wheel is ever missing, pip
-fails within seconds instead of compiling for an hour and running a 2 GB Pi out of memory.
+fails within seconds instead of compiling for an hour and running the Pi out of memory.
 
 `--system-opencv` instead uses Debian's `python3-opencv` (+ `opencv-data` for the Haar
 cascade files) through a `--system-site-packages` venv. Choose it only if the pip

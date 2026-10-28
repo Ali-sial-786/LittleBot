@@ -2,7 +2,7 @@
 
 A small, gentle, expressive companion robot for a young child: big animated eyes, songs and
 scripted developmental play with a caregiver, parent-approved videos, optional AI conversation for
-older children, and a phone-friendly parent dashboard. Built for a Raspberry Pi 5 (2 GB) with a
+older children, and a phone-friendly parent dashboard. Built for a Raspberry Pi 5 (4 GB) with a
 480×320 screen, USB camera, USB microphone and USB speaker, and future head/arm servos.
 
 > **LittleBot is a supervised prototype.** It is not a babysitter, not a child-safety device and not

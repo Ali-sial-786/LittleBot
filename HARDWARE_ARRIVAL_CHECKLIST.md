@@ -18,7 +18,7 @@ calibration format `config/calibration.example.yaml`)
 
 ## Phase 0 - Unpack and inspect
 
-- [ ] Raspberry Pi 5 2 GB: no bent pins or damage; note board revision printed on it: ________
+- [ ] Raspberry Pi 5 4 GB: no bent pins or damage; note board revision printed on it: ________
 - [ ] Official active cooler: fan blade free, thermal pads present, push-pins intact
 - [ ] DORHEA MPI3508 3.5" screen: glass not cracked, header socket straight
 - [ ] InnoMaker U20CAM-1080P camera, mini USB microphone, mini USB speaker
