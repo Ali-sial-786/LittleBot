@@ -35,8 +35,8 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-# Haiku-class prices per million tokens (input, cached input, output); docs/CLAUDE.md has the current list.
-PRICE = (0.10, 0.01, 0.50)
+# Prices per million tokens (input, cached input, output); docs/CLAUDE.md has the current list.
+PRICES = {"claude-haiku-5-5": (0.10, 0.01, 0.50), "claude-haiku-4-5": (1.00, 0.10, 5.00)}
 CARD_HEARD = "What is the tallest building in the world?"
 HANDOFF_ASK = "Why is the sky blue?"
 ROUTE_ASK = "What's the weather like in Leeds this afternoon?"
@@ -167,43 +167,68 @@ async def decide(ctx: Any, client: Any) -> dict[str, Any]:
 
 async def replay_log(args: argparse.Namespace, ctx: Any, lines: "_Lines", want: set[str], cards: dict[str, Any],
                      handoffs: dict[str, Any]) -> int:
-    """The log's requests (LOG_REQUESTS) to the chosen models, printed next to ChatGPT's logged times."""
+    """The log's requests (LOG_REQUESTS) to the chosen models, printed next to ChatGPT's logged times.
+    Each Claude model in ``--claude-model`` is asked in turn."""
     from littlebot.brain.providers.base import ProviderError
+    from littlebot.brain.text_model import make_claude
 
-    cost = 0.0
-    print(f"{'logged at':9} {'request':15} {'ChatGPT then (log)':>20}   {'model':8} {'first word ms':>13} "
+    who: list[tuple[str, Any, Any]] = []
+    if "chatgpt" in want:
+        who.append(("chatgpt", cards["chatgpt"], handoffs["chatgpt"]))
+    if "claude" in want:
+        for model in _claude_models(args) or [ctx.config.claude.model]:
+            who.append((model, make_claude(ctx, purpose="screen", model=model),
+                        make_claude(ctx, purpose="handoff", model=model)))
+    for _name, screen, hand in who:
+        for p in (screen, hand):
+            if getattr(p, "warm", None) is not None:
+                await p.warm(5.0)  # opens the connection once; no model is asked
+    costs: dict[str, float] = {}
+    width = max(8, *(len(n) for n, _s, _h in who))
+    print(f"{'logged at':9} {'request':15} {'ChatGPT then (log)':>20}   {'model':{width}} {'first word ms':>13} "
           f"{'total ms':>9}  answer")
     for req in LOG_REQUESTS:
         logged = ", ".join(f"{t}" + (f" (+{f})" if f else "") for t, f in req["chatgpt_ms"])
         for rnd in range(args.rounds):
-            for name in ("chatgpt", "claude"):
-                if name not in want:
-                    continue
-                p = (cards if req["kind"] == "card" else handoffs)[name]
+            for i, (name, screen, hand) in enumerate(who):
                 before = len(lines.rows)
                 try:
                     if req["kind"] == "card":
-                        reply = await card(ctx, p, req["lines"])
+                        reply = await card(ctx, screen, req["lines"])
                     else:
-                        reply = await handoff(ctx, p, req["ask"], light=req.get("light", True),
+                        reply = await handoff(ctx, hand, req["ask"], light=req.get("light", True),
                                               history=req.get("history", ()))
                     note = " ".join(reply.text.split())[:60]
                 except (ProviderError, asyncio.TimeoutError) as e:
                     note = f"failed: {getattr(e, 'kind', type(e).__name__)}"
                 row = lines.rows[before] if len(lines.rows) > before else {}
-                if name == "claude" and row:
-                    t_in, cached, t_out = (int(row.get(k, 0)) for k in ("tokens_in", "cache_read", "tokens_out"))
-                    cost += ((t_in - cached) * PRICE[0] + cached * PRICE[1] + t_out * PRICE[2]) / 1e6
-                first = (req["at"], req["kind"], logged) if rnd == 0 and name == min(want) else ("", "", "")
-                print(f"{first[0]:9} {first[1]:15} {first[2]:>20}   {name:8} {row.get('first_token_ms', '-'):>13} "
-                      f"{row.get('total_ms', '-'):>9}  {note}")
+                if name != "chatgpt" and row:
+                    costs[name] = costs.get(name, 0.0) + _cost(name, row)
+                first = (req["at"], req["kind"], logged) if rnd == 0 and i == 0 else ("", "", "")
+                print(f"{first[0]:9} {first[1]:15} {first[2]:>20}   {name:{width}} "
+                      f"{row.get('first_token_ms', '-'):>13} {row.get('total_ms', '-'):>9}  {note}")
     print("\nChatGPT's logged times are from the robot (its own network, the whole request); a card's logged time "
           "also\nincludes the director waiting for the words. The requests are rebuilt from the log's card titles.")
-    if "claude" in want:
-        print(f"Claude cost for this run (estimate from the token counts, web searches not included): ${cost:.4f}")
+    for name, cost in costs.items():
+        print(f"{name} cost for this run (estimate from the token counts, web searches not included): ${cost:.4f}")
+    for _name, screen, hand in who:
+        await screen.aclose()
+        await hand.aclose()
     for p in {**cards, **handoffs}.values():
         await p.aclose()
     return 0
+
+
+def _claude_models(args: argparse.Namespace) -> list[str]:
+    models = getattr(args, "claude_model", None) or []
+    return [models] if isinstance(models, str) else list(models)
+
+
+def _cost(model: str, row: dict[str, str]) -> float:
+    """USD for one call from its logged token counts (input, cached input, output per million tokens)."""
+    price = PRICES.get(model, PRICES["claude-haiku-5-5"])
+    t_in, cached, t_out = (int(row.get(k, 0) or 0) for k in ("tokens_in", "cache_read", "tokens_out"))
+    return ((t_in - cached) * price[0] + cached * price[1] + t_out * price[2]) / 1e6
 
 
 def _ms(v: str | None) -> int | None:
@@ -220,15 +245,17 @@ async def run(args: argparse.Namespace) -> int:
     from littlebot.decide.base import DecideError
 
     ctx = build_context(args.mode)
-    if getattr(args, "claude_model", None):
-        ctx.config.claude.model = args.claude_model
+    if _claude_models(args):
+        ctx.config.claude.model = _claude_models(args)[0]
     blocked = cloud_block(ctx)
     if blocked:
         print(f"Not asking any model: {blocked} (offline mode, or Cloud communication is off on the Privacy page).")
         return 2
     lines = _Lines()
-    logging.getLogger("littlebot.text_model").addHandler(lines)
-    logging.getLogger("littlebot.text_model").setLevel(logging.INFO)
+    timing_log = logging.getLogger("littlebot.text_model")
+    timing_log.addHandler(lines)
+    timing_log.setLevel(logging.INFO)
+    timing_log.propagate = False  # the table shows the numbers; the lines themselves aren't printed
     want = set(args.only or ["chatgpt", "claude", "jev", "openai"])
 
     cards, handoffs = providers(ctx, "screen"), providers(ctx, "handoff")
@@ -268,8 +295,7 @@ async def run(args: argparse.Namespace) -> int:
                 row = lines.rows[before] if len(lines.rows) > before else {}
                 results.append({"request": request, "who": name, "round": rnd, "log": row, "note": note})
                 if name == "claude" and row:
-                    t_in, cached, t_out = (int(row.get(k, 0)) for k in ("tokens_in", "cache_read", "tokens_out"))
-                    cost += ((t_in - cached) * PRICE[0] + cached * PRICE[1] + t_out * PRICE[2]) / 1e6
+                    cost += _cost(str(row.get("model", "")), row)
         for name, client in deciders.items():
             before = len(lines.rows)
             t0 = asyncio.get_running_loop().time()
@@ -283,8 +309,7 @@ async def run(args: argparse.Namespace) -> int:
             row = lines.rows[before] if len(lines.rows) > before else {"total_ms": str(total)}
             results.append({"request": "decider", "who": name, "round": rnd, "log": row, "note": note})
             if name == "claude" and "tokens_in" in row:
-                t_in, cached, t_out = (int(row.get(k, 0)) for k in ("tokens_in", "cache_read", "tokens_out"))
-                cost += ((t_in - cached) * PRICE[0] + cached * PRICE[1] + t_out * PRICE[2]) / 1e6
+                cost += _cost(str(row.get("model", "")), row)
 
     print(f"\n{'request':9} {'provider':8} {'model':18} {'round':>5} {'first word ms':>13} {'total ms':>9}  answer")
     for r in results:
@@ -319,7 +344,9 @@ def main() -> int:
     ap.add_argument("--from-log", action="store_true",
                     help="the requests behind the slow calls in the 2026-10-26 log, next to their logged times "
                          "(Claude only unless --only says otherwise; once each unless --rounds)")
-    ap.add_argument("--claude-model", help="the Claude model, when config/local.yaml doesn't set claude.model")
+    ap.add_argument("--claude-model", action="append",
+                    help="the Claude model (default claude.model in config/local.yaml); with --from-log, repeat it "
+                         "to time several, e.g. --claude-model claude-haiku-5-5 --claude-model claude-haiku-4-5")
     args = ap.parse_args()
     if args.from_log:
         args.only = args.only or ["claude"]

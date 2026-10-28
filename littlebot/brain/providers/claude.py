@@ -30,6 +30,7 @@ import asyncio
 import base64
 import json
 import logging
+import re
 import time
 from typing import Any, Awaitable, Callable, Collection
 
@@ -54,6 +55,9 @@ MAX_TOOL_OUTPUT_CHARS = 4000
 TOOL_FAILED = "error: the action failed"
 WEB_SEARCH = "web_search_20250305"  # the basic variant: the dynamic-filtering one isn't on Haiku-class models
 MAX_PAUSES = 2  # a server tool's long turn (stop_reason "pause_turn") is continued at most this often
+# Models from before adaptive thinking and the effort setting (Claude Haiku 4.5 and older): they think only when
+# asked to, so a request to them carries neither (both would be refused).
+_OLDER_MODEL = re.compile(r"^claude-(3|(haiku|sonnet|opus)-4-[015])(-|$)")
 CHEAP_EFFORTS = ("none", "minimal")  # LittleBot's "simple request" efforts (ChatGPT's names): no thinking here
 ToolRunner = Callable[[str, str], Awaitable[str]]
 
@@ -95,6 +99,11 @@ class ClaudeProvider(BaseProvider):
         self._allowed = allowed  # () -> why requests may not go now ("offline", "cloud_off") or None
         self._no_web_search = False  # the account refused Anthropic's web search: not offered again
         self._must_think = False  # the model refused thinking "disabled" (not a Haiku-class one): never sent again
+
+    @property
+    def older_model(self) -> bool:
+        """Claude Haiku 4.5 or older: no adaptive thinking and no effort setting."""
+        return bool(_OLDER_MODEL.match(self.model))
 
     def __repr__(self) -> str:  # never the key
         return f"ClaudeProvider(model={self.model!r}, purpose={self.purpose!r})"
@@ -162,7 +171,9 @@ class ClaudeProvider(BaseProvider):
             "messages": [{"role": "user", "content": user}],
             "output_config": {"effort": "low", "format": {"type": "json_schema", "schema": schema}},
         }
-        if not self._must_think:
+        if self.older_model:
+            del kwargs["output_config"]["effort"]
+        elif not self._must_think:
             kwargs["thinking"] = {"type": "disabled"}
         try:
             try:
@@ -223,7 +234,9 @@ class ClaudeProvider(BaseProvider):
             "messages": msgs,
             "output_config": {"effort": self.effort if effort is None else level},
         }
-        if (cheap or self.thinking == "disabled") and not self._must_think:
+        if self.older_model:
+            del kwargs["output_config"]  # no effort setting, and no thinking unless asked for
+        elif (cheap or self.thinking == "disabled") and not self._must_think:
             kwargs["thinking"] = {"type": "disabled"}
         converted = [t for t in (self._tool(spec) for spec in tools or ()) if t]
         if converted:
@@ -281,8 +294,8 @@ class ClaudeProvider(BaseProvider):
                     kwargs.pop("thinking")
                     continue
                 usage = getattr(msg, "usage", None)
-                tokens_in += _int(getattr(usage, "input_tokens", 0)) + _int(
-                    getattr(usage, "cache_creation_input_tokens", 0)) + _int(getattr(usage, "cache_read_input_tokens", 0))
+                tokens_in += sum(_int(getattr(usage, k, 0)) for k in (
+                    "input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"))
                 tokens_out += _int(getattr(usage, "output_tokens", 0))
                 cached += _int(getattr(usage, "cache_read_input_tokens", 0))
                 blocks = list(getattr(msg, "content", None) or [])

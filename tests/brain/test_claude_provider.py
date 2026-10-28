@@ -141,6 +141,19 @@ async def test_a_simple_request_goes_without_thinking():
     assert "thinking" not in client.calls[1] and client.calls[1]["output_config"]["effort"] == "medium"
 
 
+async def test_haiku_4_5_gets_no_thinking_or_effort_settings():
+    client = FakeAnthropic([{"text": "Hi!"}, {"text": "Hi again!"}, {"text": '{"a": 1}'}])
+    p = claude(client)
+    p.model = "claude-haiku-4-5"
+    assert p.older_model and not claude(client).older_model
+    for effort in ("minimal", None):
+        await p.reply([{"role": "user", "content": "hi"}], system="s", max_tokens=50, timeout=5, effort=effort)
+    await p.ask_json(system="s", user="u", schema={"type": "object"}, timeout=5)
+    for req in client.calls[:2]:
+        assert "thinking" not in req and "output_config" not in req
+    assert "thinking" not in client.calls[2] and "effort" not in client.calls[2]["output_config"]
+
+
 async def test_a_model_that_must_think_is_asked_again_with_thinking():
     class BadRequest(Exception):
         status_code = 400

@@ -130,11 +130,15 @@ async def test_the_model_list_shows_names_and_labels_only(tmp_path, capsys):
 
 async def test_the_log_replay_sends_the_rebuilt_requests_and_prints_the_logged_times(setup, capsys):
     mod, _ctx, client, asked = setup
-    client.turns = [{"text": '{"do": "none", "why": "a test"}'}] * 5
+    client.turns = [{"text": '{"do": "none", "why": "a test"}'}] * 10
     assert await mod.run(argparse.Namespace(rounds=1, only=["claude"], mode="pi", from_log=True,
-                                            claude_model="claude-haiku-5-5")) == 0
+                                            claude_model=["claude-haiku-5-5", "claude-haiku-4-5"])) == 0
     out = capsys.readouterr().out
-    assert len(client.calls) == len(mod.LOG_REQUESTS) and not asked  # Claude only, once each
+    assert len(client.calls) == 2 * len(mod.LOG_REQUESTS) and not asked  # Claude only, once each per model
+    assert [c["model"] for c in client.calls[:2]] == ["claude-haiku-5-5", "claude-haiku-4-5"]
+    assert "output_config" in client.calls[0] and "output_config" not in client.calls[1]
+    assert "claude-haiku-4-5 cost for this run" in out and "claude-haiku-5-5 cost for this run" in out
+    client.calls = client.calls[::2]  # Haiku 5.5's requests, in order
     assert "12181 (+11355)" in out and "2940 (+2875), 3661 (+3523), 7240 (+7178)" in out
     full = client.calls[1]
     assert any(str(t.get("type", "")).startswith("web_search") for t in full["tools"])  # the full hand-off searches
