@@ -1,4 +1,4 @@
-// Fast decisions (littlebot/decide): TypeSafe's Jev or OpenAI's Decisions API for LittleBot's small multiple-choice
+// Fast decisions (littlebot/decide): TypeSafe's Jev, OpenAI's Decisions API or Claude for LittleBot's small multiple-choice
 // calls. The keys stay in .env on the robot; this page only learns whether one is set.
 
 import { get, put } from '../api.js';
@@ -8,6 +8,7 @@ const PROVIDERS = [
   { value: 'off', label: 'Off (nothing is sent)' },
   { value: 'jev', label: 'TypeSafe Jev (TYPESAFE_API_KEY)' },
   { value: 'openai', label: 'OpenAI Decisions API (OPENAI_API_KEY)' },
+  { value: 'claude', label: 'Claude (ANTHROPIC_API_KEY)' },
 ];
 
 const MODES = [
@@ -78,7 +79,8 @@ export function decidePanel(app) {
     context.set(d.log_context);
     clear(keys).append(
       h('span', { class: `badge ${d.has_typesafe_key ? 'ok' : ''}` }, icon(d.has_typesafe_key ? 'check' : 'key'), d.has_typesafe_key ? 'TypeSafe key configured' : 'No TypeSafe key'),
-      h('span', { class: `badge ${d.has_openai_key ? 'ok' : ''}` }, icon(d.has_openai_key ? 'check' : 'key'), d.has_openai_key ? 'OpenAI key configured' : 'No OpenAI key'));
+      h('span', { class: `badge ${d.has_openai_key ? 'ok' : ''}` }, icon(d.has_openai_key ? 'check' : 'key'), d.has_openai_key ? 'OpenAI key configured' : 'No OpenAI key'),
+      h('span', { class: `badge ${d.has_anthropic_key ? 'ok' : ''}` }, icon(d.has_anthropic_key ? 'check' : 'key'), d.has_anthropic_key ? 'Anthropic key configured' : 'No Anthropic key'));
     clear(notices);
     if (d.provider !== 'off' && d.why_off) notices.append(banner('warn', 'alert', 'Not deciding right now', d.why_off === "TYPESAFE_API_KEY isn't set" || d.why_off === "OPENAI_API_KEY isn't set" ? `${d.why_off}: add it to the .env file on the robot, then restart LittleBot.` : `${d.why_off.charAt(0).toUpperCase()}${d.why_off.slice(1)}.`));
     for (const [key, f] of Object.entries(d.features || {})) {

@@ -646,11 +646,16 @@ class LiveVoiceService(Service):
                          voice_level=self.cfg.live_voice_level, barge_in=BargeInSettings.from_config(self.cfg))
 
     def provider(self) -> BaseProvider:
+        """The text model for hand-offs: ChatGPT, or Claude with ChatGPT behind it (``text.provider``,
+        littlebot/brain/text_model.py)."""
         if self._provider is None:
+            from littlebot.brain.text_model import text_provider  # noqa: PLC0415
             from littlebot.chatgpt.responses import ChatGPTProvider  # noqa: PLC0415
 
-            self._provider = ChatGPTProvider(self.auth, models=list(self.cfg.models), effort=self.cfg.reasoning_effort,
-                                             transport=self._transport)
+            models = list(dict.fromkeys([*self.cfg.handoff_models, *self.cfg.models]))
+            chatgpt = ChatGPTProvider(self.auth, models=models, effort=self.cfg.reasoning_effort,
+                                      transport=self._transport, purpose="handoff")
+            self._provider = text_provider(self.ctx, chatgpt, purpose="handoff")
         return self._provider
 
     def screen_provider(self) -> BaseProvider:
@@ -659,11 +664,13 @@ class LiveVoiceService(Service):
         if self._provider_given:
             return self.provider()
         if self._screen_provider is None:
+            from littlebot.brain.text_model import text_provider  # noqa: PLC0415
             from littlebot.chatgpt.responses import ChatGPTProvider  # noqa: PLC0415
 
             models = list(dict.fromkeys([*getattr(self.cfg, "look_models", []), *self.cfg.models]))
-            self._screen_provider = ChatGPTProvider(self.auth, models=models, effort=self.cfg.reasoning_effort,
-                                                    transport=self._transport)
+            chatgpt = ChatGPTProvider(self.auth, models=models, effort=self.cfg.reasoning_effort,
+                                      transport=self._transport, purpose="screen")
+            self._screen_provider = text_provider(self.ctx, chatgpt, purpose="screen")
         return self._screen_provider
 
     def blocked_reason(self, parent_present: bool = True) -> str | None:
@@ -696,6 +703,10 @@ class LiveVoiceService(Service):
             "active": call is not None,
             "voice": self.cfg.live_voice,
             "session_minutes": self.cfg.live_session_minutes,
+            # which text model does the hand-offs and cards (never the key itself: only whether one is set)
+            "text_model": {"provider": self.ctx.config.text.provider, "claude_model": self.ctx.config.claude.model,
+                           "has_anthropic_key": bool(self.ctx.config.anthropic_api_key
+                                                     and self.ctx.config.anthropic_api_key.get_secret_value())},
             "last_call": self.last_call,
         }
         if call is not None:

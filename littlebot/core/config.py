@@ -289,6 +289,9 @@ class ChatGPTConfig(_Section):
     # (None: "none" / "minimal"), and the photo detail ("auto": low for simple questions, high for counting
     # and reading; "low" is fastest). The look's timing log line shows what each one costs.
     look_models: list[str] = Field(default_factory=list)
+    # Hand-offs (the live voice asking the text model): models tried first for them (a smaller, faster one, say;
+    # then chatgpt.models). [] = chatgpt.models, as before. scripts/chatgpt_models.py lists what the sign-in offers.
+    handoff_models: list[str] = Field(default_factory=list)
     look_effort: Literal["none", "minimal", "low", "medium", "high"] | None = None
     look_count_effort: Literal["none", "minimal", "low", "medium", "high"] | None = None
     look_detail: Literal["auto", "low", "high"] = "auto"
@@ -330,6 +333,39 @@ class ChatGPTConfig(_Section):
     web_search: bool = True
 
 
+class TextConfig(_Section):
+    """Which text model does LittleBot's text work during a voice chat: the screen director and its cards, the
+    hand-offs (with their tool calls) and the browser's search words (docs/CLAUDE.md). The live voice itself is
+    always GPT-Live, and camera looks always ChatGPT. The decider has its own choice (``decide.provider``)."""
+
+    provider: Literal["chatgpt", "claude"] = "chatgpt"
+    # claude: when Claude fails, times out or isn't set up, the same request goes to ChatGPT (LittleBot never goes
+    # silent). Off: Claude's failure is the answer's failure (only for measuring Claude on its own).
+    fallback: bool = True
+
+
+class ClaudeConfig(_Section):
+    """Claude on the Anthropic API (your ANTHROPIC_API_KEY: .env or data/anthropic_api_key, mode 0600), for
+    ``text.provider: claude`` and ``decide.provider: claude`` (littlebot/brain/providers/claude.py, docs/CLAUDE.md).
+    Needs the "claude" extra (pip install -e '.[claude]')."""
+
+    model: str | None = None  # e.g. claude-haiku-5-5; set it in config/local.yaml. None: Claude isn't used
+    effort: Literal["low", "medium", "high"] = "low"
+    # adaptive: the model thinks when it helps (counted in the tokens); disabled: never (fastest; Haiku 5.5 only,
+    # at effort low..high). Requests LittleBot marks as simple ("minimal" effort) always go without thinking.
+    thinking: Literal["adaptive", "disabled"] = "adaptive"
+    max_tokens: int = Field(default=2048, ge=256, le=16000)  # room for thinking + a card's fields; replies are cut later
+    # No first word from Claude by then: ChatGPT is asked instead (text.fallback). The caller's own timeout (15 s for
+    # a hand-off) still bounds the whole answer.
+    first_token_timeout_seconds: float = Field(default=4.0, ge=0.5, le=30.0)
+    # Anthropic's web search (a server tool, billed per search on top of the tokens) for hand-offs about current
+    # facts, as ChatGPT's web search is used now. Off: those questions are answered without a search.
+    web_search: bool = True
+    web_search_max_uses: int = Field(default=2, ge=1, le=5)
+    base_url: str = "https://api.anthropic.com"
+    key_file: str = "anthropic_api_key"  # under data_dir; read only when no other user can read it (chmod 600)
+
+
 class InfoConfig(_Section):
     """Live information for the tools: the weather (Open-Meteo, no key) and the time (littlebot/info).
 
@@ -365,12 +401,13 @@ DecideMode = Literal["off", "shadow", "on"]
 class DecideConfig(_Section):
     """Fast decision models for LittleBot's small multiple-choice calls (littlebot/decide, docs/DECISIONS.md).
 
-    ``provider``: off (nothing is sent), jev (TypeSafe's Jev, TYPESAFE_API_KEY) or openai (OpenAI's Decisions
-    API, OPENAI_API_KEY). Each feature is off, shadow (it decides alongside LittleBot's own way and only logs
+    ``provider``: off (nothing is sent), jev (TypeSafe's Jev, TYPESAFE_API_KEY), openai (OpenAI's Decisions
+    API, OPENAI_API_KEY) or claude (Claude answering the same questions, ANTHROPIC_API_KEY; ``claude_model``). Each feature is off, shadow (it decides alongside LittleBot's own way and only logs
     both) or on (its answer is used when it is sure enough, else LittleBot's own way)."""
 
-    provider: Literal["off", "jev", "openai"] = "off"
+    provider: Literal["off", "jev", "openai", "claude"] = "off"
     jev_model: str = "jev-latest"
+    claude_model: str | None = None  # None: claude.model (set in config/local.yaml)
     jev_base_url: str = "https://api.typesafe.ai"
     openai_model: str = "gpt-6-luna"
     openai_base_url: str = "https://api.openai.com/v1"
@@ -597,6 +634,8 @@ class LittleBotConfig(BaseModel):
     voices: VoicesConfig = Field(default_factory=VoicesConfig)
     ai: AIConfig = Field(default_factory=AIConfig)
     chatgpt: ChatGPTConfig = Field(default_factory=ChatGPTConfig)
+    text: TextConfig = Field(default_factory=TextConfig)
+    claude: ClaudeConfig = Field(default_factory=ClaudeConfig)
     info: InfoConfig = Field(default_factory=InfoConfig)
     screens: ScreensConfig = Field(default_factory=ScreensConfig)
     browser: BrowserConfig = Field(default_factory=BrowserConfig)
@@ -640,6 +679,24 @@ class LittleBotConfig(BaseModel):
 # ---------------------------------------------------------------------------
 # Loading helpers
 # ---------------------------------------------------------------------------
+
+def read_key_file(path: Path) -> str | None:
+    """An API key kept in a file (one line), only when the file is the robot user's alone (chmod 600): a key
+    others could read is ignored, with a warning that never says what is in it."""
+    try:
+        st = path.stat()
+    except OSError:
+        return None
+    if st.st_mode & 0o077:
+        logging.getLogger("littlebot.config").warning(
+            "%s is readable by other users (mode %o): not used; run chmod 600 on it", path.name, st.st_mode & 0o777)
+        return None
+    try:
+        key = path.read_text(encoding="utf-8").strip()
+    except (OSError, UnicodeDecodeError):
+        return None
+    return key.splitlines()[0].strip() if key else None
+
 
 def deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
     out = copy.deepcopy(base)
@@ -750,6 +807,10 @@ def load_config(
             cfg.openai_api_key = SecretStr(env["OPENAI_API_KEY"])
         if env.get("TYPESAFE_API_KEY"):
             cfg.typesafe_api_key = SecretStr(env["TYPESAFE_API_KEY"])
+        if cfg.anthropic_api_key is None:
+            key = read_key_file(cfg.data_path / cfg.claude.key_file)
+            if key:
+                cfg.anthropic_api_key = SecretStr(key)
     if chosen == Mode.OFFLINE:
         # Offline demo: never touch the network, whatever the overrides say.
         cfg.privacy.cloud_enabled = False

@@ -173,7 +173,8 @@ class CameraLook:
 
             cfg = self.ctx.config.chatgpt
             models = list(dict.fromkeys([*getattr(cfg, "look_models", []), *cfg.models]))  # look_models first
-            self._provider = ChatGPTProvider(get_auth(self.ctx), models=models, effort=cfg.reasoning_effort)
+            self._provider = ChatGPTProvider(get_auth(self.ctx), models=models, effort=cfg.reasoning_effort,
+                                             purpose="look")
         return self._provider
 
     def _spare_provider(self) -> BaseProvider:
@@ -185,7 +186,7 @@ class CameraLook:
             if isinstance(main, ChatGPTProvider):
                 cfg = self.ctx.config.chatgpt
                 self._spare = ChatGPTProvider(get_auth(self.ctx), models=list(main.models),
-                                              effort=cfg.reasoning_effort)
+                                              effort=cfg.reasoning_effort, purpose="look")
             else:
                 self._spare = main
         return self._spare

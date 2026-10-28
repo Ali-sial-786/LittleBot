@@ -107,9 +107,21 @@ screens:
   linger_seconds: 30       # a card stays this long after the voice chat ends (a running timer stays until done)
   presenter_backing: true  # the presenter's small eyes sit on a patch of LittleBot's pink face
 
+text:  # the text model for cards, the screen director and hand-offs during a voice chat (docs/CLAUDE.md)
+  provider: chatgpt      # chatgpt | claude (ANTHROPIC_API_KEY, claude.model); the live voice stays GPT-Live
+  fallback: true         # claude: a failure or a slow first word goes to ChatGPT instead
+
+claude:  # Anthropic API (pip install -e '.[claude]'); the key in .env or data/anthropic_api_key (chmod 600)
+  model: null            # set in config/local.yaml, e.g. claude-haiku-5-5
+  effort: low
+  thinking: adaptive     # adaptive | disabled (fastest)
+  first_token_timeout_seconds: 4.0
+  web_search: true       # Anthropic's web search for current facts (billed per search)
+
 decide:  # fast decision models for small multiple-choice calls (littlebot/decide, docs/DECISIONS.md)
-  provider: "off"        # off | jev (TYPESAFE_API_KEY in .env) | openai (OPENAI_API_KEY); also on the dashboard
+  provider: "off"        # off | jev (TYPESAFE_API_KEY in .env) | openai (OPENAI_API_KEY) | claude (ANTHROPIC_API_KEY)
   jev_model: jev-latest
+  claude_model: null     # null = claude.model
   openai_model: gpt-6-luna
   timeout_seconds: 2.0
   default_mode: shadow   # per feature: off | shadow (decide alongside, only log both) | on (use it when sure)

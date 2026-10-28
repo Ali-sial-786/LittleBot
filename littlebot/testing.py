@@ -302,6 +302,102 @@ def use_decision_model(ctx: RobotContext, answer: Any, *, modes: dict[str, str] 
     return model
 
 
+class FakeAnthropic:
+    """Stands in for ``anthropic.AsyncAnthropic`` (littlebot/brain/providers/claude.py): each ``messages.stream``
+    or ``messages.create`` plays the next scripted turn. A turn: ``{"text": str | [pieces], "tools": [(id, name,
+    input)], "stop": stop_reason, "delay": seconds before the first event, "error": an exception to raise}``.
+    ``calls`` holds every request's arguments (deep-copied), ``models_listed`` the connection warm-ups."""
+
+    def __init__(self, turns: list[dict[str, Any]] | None = None) -> None:
+        self.turns = list(turns or [])
+        self.calls: list[dict[str, Any]] = []
+        self.models_listed = 0
+        self.messages = _FakeMessages(self)
+        self.models = _FakeModels(self)
+
+    def _next(self, kwargs: dict[str, Any]) -> dict[str, Any]:
+        import copy  # noqa: PLC0415
+
+        self.calls.append(copy.deepcopy(kwargs))
+        return self.turns.pop(0) if self.turns else {"text": "Okay!"}
+
+    async def close(self) -> None:
+        return None
+
+
+class _FakeModels:
+    def __init__(self, owner: FakeAnthropic) -> None:
+        self.owner = owner
+
+    async def list(self, **kw: Any) -> list[Any]:
+        self.owner.models_listed += 1
+        return []
+
+
+def _fake_message(turn: dict[str, Any]) -> Any:
+    from types import SimpleNamespace  # noqa: PLC0415
+
+    text = turn.get("text", "")
+    pieces = text if isinstance(text, list) else ([text] if text else [])
+    content: list[dict[str, Any]] = [{"type": "thinking", "thinking": "", "signature": "sig"}] if turn.get(
+        "thinking") else []
+    if pieces:
+        content.append({"type": "text", "text": "".join(pieces)})
+    for call_id, name, args in turn.get("tools", ()):
+        content.append({"type": "tool_use", "id": call_id, "name": name, "input": args})
+    stop = turn.get("stop") or ("tool_use" if turn.get("tools") else "end_turn")
+    usage = SimpleNamespace(input_tokens=100, output_tokens=20, cache_read_input_tokens=turn.get("cached", 0),
+                            cache_creation_input_tokens=0)
+    return pieces, SimpleNamespace(content=content, stop_reason=stop, usage=usage, model="claude-fake")
+
+
+class _FakeStream:
+    def __init__(self, turn: dict[str, Any]) -> None:
+        self.turn = turn
+        self.pieces, self.final = _fake_message(turn)
+
+    async def __aenter__(self) -> "_FakeStream":
+        return self
+
+    async def __aexit__(self, *exc: Any) -> bool:
+        return False
+
+    def __aiter__(self) -> Any:
+        return self._events()
+
+    async def _events(self) -> Any:
+        from types import SimpleNamespace  # noqa: PLC0415
+
+        if self.turn.get("delay"):
+            await asyncio.sleep(self.turn["delay"])
+        if self.turn.get("error") is not None:
+            raise self.turn["error"]
+        for piece in self.pieces:
+            yield SimpleNamespace(type="text", text=piece)
+        for call_id, name, _args in self.turn.get("tools", ()):
+            yield SimpleNamespace(type="content_block_start", content_block={"type": "tool_use", "id": call_id,
+                                                                             "name": name})
+
+    async def get_final_message(self) -> Any:
+        return self.final
+
+
+class _FakeMessages:
+    def __init__(self, owner: FakeAnthropic) -> None:
+        self.owner = owner
+
+    def stream(self, **kwargs: Any) -> _FakeStream:
+        return _FakeStream(self.owner._next(kwargs))
+
+    async def create(self, **kwargs: Any) -> Any:
+        turn = self.owner._next(kwargs)
+        if turn.get("delay"):
+            await asyncio.sleep(turn["delay"])
+        if turn.get("error") is not None:
+            raise turn["error"]
+        return _fake_message(turn)[1]
+
+
 def make_test_config(**overrides: Any) -> LittleBotConfig:
     """Config for tests: offline-safe, headless, fast activity timing, no real devices."""
     base = {

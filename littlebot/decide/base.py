@@ -19,7 +19,7 @@ from typing import Any
 FEATURES = ("cards", "routing", "answered", "browser", "naming", "videos", "names", "concern",
             "addressed")
 MODES = ("off", "shadow", "on")
-PROVIDERS = ("off", "jev", "openai")
+PROVIDERS = ("off", "jev", "openai", "claude")
 
 
 @dataclass(frozen=True)

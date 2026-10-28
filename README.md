@@ -88,6 +88,7 @@ remove them.
 | `docs/DASHBOARD_GUIDE.md`, `docs/ACTIVITY_GUIDE.md` | For parents |
 | `docs/AI_SAFETY.md`, `docs/MOTION_SAFETY.md`, `docs/YOUTUBE_ON_PI.md` | Safety and feasibility notes |
 | `docs/CHATGPT.md` | Sign in with ChatGPT and live voice: setup, safety, privacy, troubleshooting |
+| `docs/CLAUDE.md` | Claude (Anthropic API key) as the text model for cards and hand-offs, with ChatGPT behind it: key, switch, cost, measuring |
 | `docs/VOICES.md` | Recognising family voices (opt-in, on the robot): setup, privacy, troubleshooting |
 | `docs/DEV_CONVENTIONS.md`, `docs/modules/*.md` | For developers |
 | `hardware/README.md` | The two 3D-printable enclosures: parts, hardware lists, assembly, safety |

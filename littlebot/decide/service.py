@@ -89,7 +89,10 @@ class Decider:
         if provider == "off":
             return "the provider is off"
         if self.client is None and not self._api_key(provider):
-            return "TYPESAFE_API_KEY isn't set" if provider == "jev" else "OPENAI_API_KEY isn't set"
+            return {"jev": "TYPESAFE_API_KEY isn't set", "claude": "ANTHROPIC_API_KEY isn't set"}.get(
+                provider, "OPENAI_API_KEY isn't set")
+        if self.client is None and provider == "claude" and not self._claude_model():
+            return "no Claude model is set (decide.claude_model or claude.model in config/local.yaml)"
         try:
             if self.ctx.config.is_offline or not self.ctx.privacy.cloud_enabled:
                 return "cloud communication is off (Privacy)"
@@ -240,6 +243,7 @@ class Decider:
                 "log_context": self.log_context(),
                 "has_typesafe_key": bool(_key(self.ctx.config, "typesafe_api_key")),
                 "has_openai_key": bool(_key(self.ctx.config, "openai_api_key")),
+                "has_anthropic_key": bool(_key(self.ctx.config, "anthropic_api_key")),
                 "requests_today": self._day[1] if self._day[0] == dt.date.today() else 0,
                 "features": features}
 
@@ -252,13 +256,18 @@ class Decider:
         return default if v in (None, "") else v
 
     def _api_key(self, provider: str) -> str:
-        return _key(self.ctx.config, "typesafe_api_key" if provider == "jev" else "openai_api_key")
+        return _key(self.ctx.config, {"jev": "typesafe_api_key", "claude": "anthropic_api_key"}.get(
+            provider, "openai_api_key"))
+
+    def _claude_model(self) -> str:
+        claude = getattr(self.ctx.config, "claude", None)
+        return str(getattr(self.cfg, "claude_model", None) or getattr(claude, "model", None) or "")
 
     def _client(self) -> Any:
         if self.client is not None:
             return self.client
         provider = self.provider()
-        model = self.cfg.jev_model if provider == "jev" else self.cfg.openai_model
+        model = {"jev": self.cfg.jev_model, "claude": self._claude_model()}.get(provider, self.cfg.openai_model)
         key = self._api_key(provider)
         if self._made != (provider, model, key):
             if provider == "jev":
@@ -273,6 +282,11 @@ class Decider:
 
                 self._made_client = OpenAIDecisionsClient(key, model=model, base_url=self.cfg.openai_base_url,
                                                           transport=self._transport)
+            elif provider == "claude":
+                from littlebot.brain.text_model import make_claude  # noqa: PLC0415
+                from littlebot.decide.claude import ClaudeDecisionsClient  # noqa: PLC0415
+
+                self._made_client = ClaudeDecisionsClient(make_claude(self.ctx, purpose="decide", model=model))
             else:
                 self._made_client = None
             self._made = (provider, model, key)

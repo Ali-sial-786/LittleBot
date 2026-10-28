@@ -92,7 +92,7 @@ def build_defaults(cfg: LittleBotConfig) -> dict[str, Any]:
         # ... and whether it keeps its cookies (Google's "you're a person"), history and cache between searches
         # (data/browser-profile); off: a fresh browser that is deleted afterwards
         "browser.keep_signins": False,
-        # fast decision models (littlebot/decide): the provider (off | jev | openai) and each feature's mode
+        # fast decision models (littlebot/decide): the provider (off | jev | openai | claude) and each feature's mode
         # (off | shadow | on); {} = the config's decide.modes / decide.default_mode
         "decide.provider": cfg.decide.provider,
         "decide.modes": {},

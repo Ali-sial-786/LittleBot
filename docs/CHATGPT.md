@@ -677,6 +677,38 @@ audio:
 
 All keys and defaults are listed in the [technical section](#configuration).
 
+### Trying a faster model for hand-offs
+
+The text model that answers hand-offs is the first of `chatgpt.models` that works
+(`gpt-6-luna`, then `gpt-6-sol`, then `gpt-5.6-luna`, at reasoning effort `low`; light hand-offs go at
+`minimal` effort with no web search). The voice is `chatgpt.live_model` (`gpt-live-1-codex`), voice
+`bubbie`, then `sol`.
+
+To see which models your sign-in offers:
+
+```bash
+.venv/bin/python scripts/chatgpt_models.py
+```
+
+It prints the model names (and marks the ones in use), never your sign-in's tokens. To try a smaller
+model for hand-offs only, put it first in `config/local.yaml` and restart:
+
+```yaml
+chatgpt:
+  handoff_models: [the-model-name]   # tried first for hand-offs; then chatgpt.models as before
+```
+
+Default: `[]` (no change). A name your sign-in doesn't offer costs one refused request, then the usual
+models answer. Cards and camera looks keep their own models (`look_models`). Compare the
+`live voice: the text model answered in N ms` lines in the log before and after
+(`journalctl --user -u littlebot --since today | grep -E 'text model'`); each call also logs a
+`text model: provider=chatgpt model=...` line with its time to the first word. Remove the line to go back.
+
+### Claude instead of ChatGPT for the text work
+
+Cards, the screen director and hand-offs can use Claude (Anthropic's API, your own key) with ChatGPT
+behind it. The live voice stays GPT-Live. See [CLAUDE.md](CLAUDE.md).
+
 <a id="5-troubleshooting"></a>
 <a id="6-troubleshooting"></a>
 
@@ -911,6 +943,7 @@ back to text-to-speech; the index is re-read when the file changes. Dashboard: `
 | `token_file` | `chatgpt_auth.json` | under `data_dir` (`data/`), mode 0600 |
 | `models` | `[gpt-6-luna, gpt-6-sol, gpt-5.6-luna]` | text model for replies and look-ups: the first one that works |
 | `reasoning_effort` | `low` | `minimal` / `low` / `medium` / `high` |
+| `handoff_models` | `[]` | models tried first for live-voice hand-offs, then `models` ([Trying a faster model](#trying-a-faster-model-for-hand-offs)) |
 | `live_model` | `gpt-live-1-codex` | the voice model |
 | `live_voice` | `bubbie` | the voice asked for first. Any name is passed to OpenAI as is (no list is enforced). Known voices: `cove`, `arbor`, `breeze`, `ember`, `juniper`, `maple`, `sol`, `spruce`, `vale` |
 | `live_voice_fallbacks` | `[sol]` | if OpenAI refuses a voice (HTTP 400/422), the next one in this list is tried. The card shows the voice in use |
