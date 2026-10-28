@@ -25,6 +25,12 @@ from stl_tools import read_stl, vertex_ids
 GAP = 10.0                # between parts: room for a 4 mm brim on each side
 MARGIN = 5.0              # from the bed edge
 EXCLUDE = (18.0, 28.0)    # front-left corner Bambu Lab X1 / P1 keep free
+# Tall parts stay in the middle of the bed with room for a brim: the edges are cooler, and on a
+# bed-slinger (A1) the leverage on a tall part grows as it rises. The torso (125 mm) came off
+# twice when it stood 6.5 mm from the front edge.
+TALL = 60.0               # taller than this (mm)
+TALL_EDGE = 20.0          # ... at least this far from every bed edge
+BRIM = 8.0                # ... and this much more room all round than other parts get
 
 GROUPS = [
     ("main", "main colour", ["base", "torso", "head", "camera_pod", "base_floor", "well_cover", "well_cover",
@@ -44,18 +50,22 @@ class Plate:
     """MaxRects bin: free rectangles, each part padded by GAP on its right and back."""
 
     def __init__(self, size: float) -> None:
-        self.free = [(0.0, 0.0, size + GAP, size + GAP)]
+        self.size = size + GAP
+        self.free = [(0.0, 0.0, self.size, self.size)]
         self.parts: list[tuple[str, float, float, bool]] = []
         self.take(0.0, 0.0, EXCLUDE[0] - MARGIN + GAP, EXCLUDE[1] - MARGIN + GAP)
 
-    def spot(self, w: float, h: float):
-        best = None
+    def spot(self, w: float, h: float, keep_off: float = 0.0):
+        """Tightest free spot for a w x h rectangle, at least ``keep_off`` in from every side of the bin."""
+        best, hi_edge = None, self.size - keep_off
         for fx, fy, fw, fh in self.free:
+            x0, y0 = max(fx, keep_off), max(fy, keep_off)
+            fw, fh = min(fx + fw, hi_edge) - x0, min(fy + fh, hi_edge) - y0
             for rw, rh, turned in ((w, h, False), (h, w, True)):
                 if rw <= fw + 1e-9 and rh <= fh + 1e-9:
                     key = (min(fw - rw, fh - rh), max(fw - rw, fh - rh))
                     if best is None or key < best[0]:
-                        best = (key, fx, fy, rw, rh, turned)
+                        best = (key, x0, y0, rw, rh, turned)
         return best
 
     def take(self, x: float, y: float, w: float, h: float) -> None:
@@ -76,16 +86,24 @@ class Plate:
                                                 and a[1] + a[3] <= b[1] + b[3] for b in free)]
 
 
+def is_tall(name: str) -> bool:
+    return bool(load(name).reshape(-1, 3).max(0)[2] > TALL)
+
+
 def pack(names: list[str], usable: float) -> list[Plate]:
-    sizes = {n: load(n).reshape(-1, 3).max(0)[:2] for n in set(names)}
+    sizes = {n: load(n).reshape(-1, 3).max(0) for n in set(names)}
+    tall_off = TALL_EDGE - MARGIN - BRIM            # how far in the padded rectangle of a tall part starts
     plates: list[Plate] = []
-    for n in sorted(names, key=lambda n: -sizes[n][0] * sizes[n][1]):
-        w, h = sizes[n] + GAP
+    # tall parts first (they need the middle), then largest first
+    for n in sorted(names, key=lambda n: (sizes[n][2] <= TALL, -sizes[n][0] * sizes[n][1])):
+        tall = sizes[n][2] > TALL
+        pad = 2 * BRIM if tall else 0.0
+        w, h = sizes[n][:2] + GAP + pad
         for p in plates + [Plate(usable)]:
-            s = p.spot(w, h)
+            s = p.spot(w, h, tall_off if tall else 0.0)
             if s:
                 p.take(*s[1:5])
-                p.parts.append((n, s[1], s[2], s[5]))
+                p.parts.append((n, s[1] + pad / 2, s[2] + pad / 2, s[5]))
                 if p not in plates:
                     plates.append(p)
                 break
@@ -105,7 +123,8 @@ def placed(p: Plate, bed: float) -> list[tuple[str, np.ndarray]]:
         out.append((n, t + np.array([MARGIN + x, MARGIN + y, 0.0])))
     lo = np.min([t.reshape(-1, 3).min(0) for _, t in out], axis=0)
     hi = np.max([t.reshape(-1, 3).max(0) for _, t in out], axis=0)
-    shift = np.maximum(0.0, (bed - hi - lo) / 2) * np.array([1.0, 1.0, 0.0])
+    room = np.min([bed - TALL_EDGE - t.reshape(-1, 3).max(0) for n, t in out if is_tall(n)] + [bed - MARGIN - hi], axis=0)
+    shift = np.clip((bed - hi - lo) / 2, 0.0, room) * np.array([1.0, 1.0, 0.0])
     return [(n, t + shift) for n, t in out]
 
 
@@ -140,15 +159,18 @@ def write_3mf(path: Path, parts: list[tuple[str, np.ndarray]], label: str) -> No
 
 
 def check(parts: list[tuple[str, np.ndarray]], bed: float) -> list[str]:
-    """Every part on the bed, out of the corner, and >= GAP from every other part (bounding boxes)."""
+    """Every part on the bed, out of the corner, >= GAP from every other part (+ BRIM next to a tall part),
+    and tall parts >= TALL_EDGE from every edge (bounding boxes)."""
     boxes = [(n, t.reshape(-1, 3).min(0), t.reshape(-1, 3).max(0)) for n, t in parts]
     bad = [f"{n} off the bed" for n, lo, hi in boxes if lo[:2].min() < MARGIN - 1e-6 or hi[:2].max() > bed - MARGIN + 1e-6]
     bad += [f"{n} in the corner" for n, lo, hi in boxes if lo[0] < EXCLUDE[0] and lo[1] < EXCLUDE[1]]
+    bad += [f"{n} (tall) within {TALL_EDGE:.0f} mm of an edge" for n, lo, hi in boxes
+            if hi[2] > TALL and (lo[:2].min() < TALL_EDGE - 1e-6 or hi[:2].max() > bed - TALL_EDGE + 1e-6)]
     for i, (a, alo, ahi) in enumerate(boxes):
         for b, blo, bhi in boxes[i + 1:]:
-            if not (alo[0] >= bhi[0] + GAP - 1e-6 or blo[0] >= ahi[0] + GAP - 1e-6
-                    or alo[1] >= bhi[1] + GAP - 1e-6 or blo[1] >= ahi[1] + GAP - 1e-6):
-                bad.append(f"{a} and {b} closer than {GAP:.0f} mm")
+            g = GAP + (BRIM if max(ahi[2], bhi[2]) > TALL else 0.0) - 1e-6
+            if not (alo[0] >= bhi[0] + g or blo[0] >= ahi[0] + g or alo[1] >= bhi[1] + g or blo[1] >= ahi[1] + g):
+                bad.append(f"{a} and {b} closer than {g:.0f} mm")
     return bad
 
 
