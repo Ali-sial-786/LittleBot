@@ -22,12 +22,12 @@ import numpy as np
 
 from stl_tools import read_stl, vertex_ids
 
-GAP = 10.0                # between parts: room for a 4 mm brim on each side
-MARGIN = 5.0              # from the bed edge
+GAP = 10.0                # between parts (neighbouring 8 mm brims join; they snap apart)
+MARGIN = 15.0             # from the bed edge: an 8 mm brim still ends 7 mm inside the plate (at 5 mm the
+                          # brim ran off the edge, lifted there and took the plate with it)
 EXCLUDE = (18.0, 28.0)    # front-left corner Bambu Lab X1 / P1 keep free
-# Tall parts stay in the middle of the bed with room for a brim: the edges are cooler, and on a
-# bed-slinger (A1) the leverage on a tall part grows as it rises. The torso (125 mm) came off
-# twice when it stood 6.5 mm from the front edge.
+# Tall parts stay further in, with room for a brim: the edges of a plate hold least, and the pull
+# on a tall part grows as it rises. The torso (125 mm) came off twice 6.5 mm from the front edge.
 TALL = 60.0               # taller than this (mm)
 TALL_EDGE = 20.0          # ... at least this far from every bed edge
 BRIM = 8.0                # ... and this much more room all round than other parts get
@@ -92,7 +92,7 @@ def is_tall(name: str) -> bool:
 
 def pack(names: list[str], usable: float) -> list[Plate]:
     sizes = {n: load(n).reshape(-1, 3).max(0) for n in set(names)}
-    tall_off = TALL_EDGE - MARGIN - BRIM            # how far in the padded rectangle of a tall part starts
+    tall_off = max(0.0, TALL_EDGE - MARGIN - BRIM)  # how far in the padded rectangle of a tall part starts
     plates: list[Plate] = []
     # tall parts first (they need the middle), then largest first
     for n in sorted(names, key=lambda n: (sizes[n][2] <= TALL, -sizes[n][0] * sizes[n][1])):
