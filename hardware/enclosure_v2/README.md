@@ -37,6 +37,7 @@ v1 (`../enclosure/`) is smaller and simpler (212 mm, 11 parts). v2 is bigger, mo
 | `stl/*.stl` | ready-to-slice parts, already in print orientation |
 | `checks.scad`, `run_checks.sh` | 70 automated interference and finger-pinch checks (head ±60°, arms −90…+100°), a self-test that must find an overlap, and an INFO line on the cooler under the screen |
 | `build.sh`, `stl_tools.py` | rebuild the STLs and images. Report per part: size, watertight, number of separate bodies, bed fit, overhang area |
+| `assembly_video/` | `./make_video.sh` renders a 1¾-minute video of the assembly order below (every printed part in place, electronics as blocks): `assembly_video/build/LittleBot_assembly.mp4` |
 | `make_plates.py` → `plates/`, `pack_plates.py` → `plates_256/` | the parts grouped into print jobs: 9 for a 220 mm bed, 6 for a 256 mm bed (Bambu Lab) |
 
 ### What has been verified (by the scripts, not by a real print yet)
