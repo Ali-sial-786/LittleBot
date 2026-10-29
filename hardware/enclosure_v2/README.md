@@ -37,7 +37,7 @@ v1 (`../enclosure/`) is smaller and simpler (212 mm, 11 parts). v2 is bigger, mo
 | `stl/*.stl` | ready-to-slice parts, already in print orientation |
 | `checks.scad`, `run_checks.sh` | 70 automated interference and finger-pinch checks (head ±60°, arms −90…+100°), a self-test that must find an overlap, and an INFO line on the cooler under the screen |
 | `build.sh`, `stl_tools.py` | rebuild the STLs and images. Report per part: size, watertight, number of separate bodies, bed fit, overhang area |
-| `make_plates.py` → `plates/`, `pack_plates.py` → `plates_256/` | the parts grouped into print jobs: 9 for a 220 mm bed, 7 for a 256 mm bed (Bambu Lab) |
+| `make_plates.py` → `plates/`, `pack_plates.py` → `plates_256/` | the parts grouped into print jobs: 9 for a 220 mm bed, 6 for a 256 mm bed (Bambu Lab) |
 
 ### What has been verified (by the scripts, not by a real print yet)
 
@@ -77,28 +77,27 @@ Instead, `plates/` groups the parts into **9 ready-made build plates**, one STL 
 
 Each plate is a single STL with several separate bodies. Most slicers can split it back into objects if you want different settings per part, such as more infill for the gears.
 
-### On a 256 mm bed (Bambu Lab A1 / P1S / P2S / X1C): 7 jobs
+### On a 256 mm bed (Bambu Lab A1 / P1S / P2S / X1C): 6 jobs
 
-`plates_256/` packs the same parts onto **7 plates** (made by `pack_plates.py`):
+`plates_256/` packs the same parts onto **6 plates** (made by `pack_plates.py`):
 
 | Plate | Parts | Filament |
 |---|---|---|
-| `01_main.3mf` | base, ring gear, camera pod, rear plate | main colour, **brim** |
-| `02_main.3mf` | head, Pi carrier, left arm, servo frame | main colour, **brim**, supports for the head (below) |
-| `03_main.3mf` | torso, torso back cover, shelf, camera bracket, pinion | main colour, **brim** |
-| `04_main.3mf` | floor, right arm, well cover | main colour |
-| `05_main.3mf` | head back cap, well cover, neck coupler | main colour |
-| `06_black.3mf` | visor | **black** |
-| `07_glow.3mf` | both ears + front plate | **white / natural / translucent** |
+| `01_main.3mf` | base, both arms, servo frame | main colour, brim on the **base** only |
+| `02_main.3mf` | head, Pi carrier, well cover, neck coupler, rear plate, camera bracket | main colour, brim on the **head** only, supports for the head (below) |
+| `03_main.3mf` | torso, head back cap, torso back cover, ring gear, camera pod | main colour, brim on the **torso** only |
+| `04_main.3mf` | floor, shelf, well cover, pinion | main colour |
+| `05_black.3mf` | visor | **black** |
+| `06_glow.3mf` | both ears + front plate | **white / natural / translucent** |
 
 ![256 mm plates](images/plates_256.png)
 
-- **Nothing near the edges:** every part is at least **15 mm** from every edge of the plate, so an 8 mm brim still ends 7 mm inside it. The tall parts, base (72 mm), head (100 mm) and torso (125 mm), are at least 20 mm in, each on its own plate. Give plates 01–03 an 8 mm outer brim (Others → Brim type: Outer brim only, Brim width: 8 mm); the others may have one too, there's room. Neighbouring brims can join: snap them apart. **Don't press Arrange (A)**: it moves parts back towards the edges.
-- **Why the edges matter:** an earlier layout kept parts only 5 mm from the edge, and with the 8 mm brim the brim ran off the plate. The edge of the plate is where prints hold least: the brim lifted there, the nozzle caught it and the plate failed three times (on a P2S, in PLA).
-- **Why 7 plates:** the base, floor, head and head back cap can't share a plate with one another, and the head and torso need the middle of theirs. All of it on one plate would need a bed of about 465 × 465 mm.
+- **Brim on the tall part only, never on the whole plate.** The tall parts, base (72 mm), head (100 mm) and torso (125 mm), are at least 20 mm from every edge with room for an 8 mm brim. The other parts are only 5 mm from the edge, so a plate-wide brim runs off the plate there, lifts, and the nozzle catches it: that failed a P2S three times in PLA. In Bambu Studio leave the plate's brim off (**Others → Brim type: No-brim**), then right-click the tall part → **Add settings → Others** → Brim type **Outer brim only**, Brim width **8 mm**. After slicing, check in the Preview tab that no brim reaches an edge. **Don't press Arrange (A)**: it moves parts.
+- **Why not more room at the edges?** Every part 8 mm or more from the edges needs a seventh plate; 6 plates need the flat parts close to the edge, which is fine without a brim (they have big, flat footprints).
+- **Fewer isn't possible:** the base, floor, head and head back cap are each too big to share a 256 mm plate with one another, so the main colour needs 4 plates. All of it on one plate would need a bed of about 465 × 465 mm.
 - **Colours stay on separate plates, even with an AMS.** On a mixed plate the printer swaps filament on every layer where both colours are printing: up to 33 mm high for the visor, which means hundreds of swaps, hours of extra time and a lot of purged filament. With an AMS, just load all three colours and it switches between plates for you. If your main colour is white or natural, the ears and front plate can be printed in it too.
 - **3MF, one object per part:** each part keeps its name, so in Bambu Studio you can click the **ring gear** and **pinion** and add per-object settings (5 walls, 50 % infill, slower), and give the **head** its supports (on build plate only). If Bambu Studio says the file "is not from Bambu Lab", choose to load the geometry.
-- The layout keeps 10 mm between parts and keeps the 18 × 28 mm front-left corner free, which the X1 and P1 printers reserve.
+- The layout keeps 10 mm between parts, 5 mm from the edges (20 mm for tall parts), and keeps the 18 × 28 mm front-left corner free, which the X1 and P1 printers reserve.
 - For another bed size: `python3 pack_plates.py 300` (writes `plates_300/`). The wheel-phase parts stay in `plates/`.
 
 ## Parts to print
@@ -127,7 +126,7 @@ Each plate is a single STL with several separate bodies. Most slicers can split 
 **Material and settings:**
 - **Material:** PETG (tougher, copes better with the Pi's warmth) or PLA+.
 - **Settings:** 0.2 mm layers, 3 perimeters, 15–25 % infill. For the gears: 5 perimeters / 50 %, printed slowly.
-- **Supports:** only for the **head**, and only from the bed. It prints face down, and the ledge the visor rests on, with its four screw tabs, starts 3 mm above the bed with nothing under it (Bambu Studio warns about a "floating cantilever"). In the slicer, give the head alone: support on, **On build plate only** on. That fills just the 3 mm visor recess (hidden behind the visor; pull it out with pliers) and nothing inside the head. Every other part: no supports. Give the tall parts (base, head, torso) an 8 mm brim, and wash the plate (dish soap and water) before a long print.
+- **Supports:** only for the **head**, and only from the bed. It prints face down, and the ledge the visor rests on, with its four screw tabs, starts 3 mm above the bed with nothing under it (Bambu Studio warns about a "floating cantilever"). In the slicer, give the head alone: support on, **On build plate only** on. That fills just the 3 mm visor recess (hidden behind the visor; pull it out with pliers) and nothing inside the head. Every other part: no supports. Give the tall parts (base, head, torso) an 8 mm brim, on those parts only (see the 256 mm plates below), and wash the plate (dish soap and water) before a long print.
 - **Colours:** the ears and the front plate glow only when printed in **white, natural or translucent** filament; dark filament hides the LEDs. Print the visor in black.
 - **Filament:** the stationary build is about 940 cm³ of plastic (about 1.2 kg PETG at 100 % infill). Normal infill uses noticeably less: plan on about 1 kg of the main colour plus a little black and natural.
 

@@ -22,9 +22,9 @@ import numpy as np
 
 from stl_tools import read_stl, vertex_ids
 
-GAP = 10.0                # between parts (neighbouring 8 mm brims join; they snap apart)
-MARGIN = 15.0             # from the bed edge: an 8 mm brim still ends 7 mm inside the plate (at 5 mm the
-                          # brim ran off the edge, lifted there and took the plate with it)
+GAP = 10.0                # between parts
+MARGIN = 5.0              # from the bed edge. Parts this close get NO brim: a brim here runs off the plate,
+                          # lifts at the edge and takes the plate with it. Only tall parts get one (below).
 EXCLUDE = (18.0, 28.0)    # front-left corner Bambu Lab X1 / P1 keep free
 # Tall parts stay further in, with room for a brim: the edges of a plate hold least, and the pull
 # on a tall part grows as it rises. The torso (125 mm) came off twice 6.5 mm from the front edge.
