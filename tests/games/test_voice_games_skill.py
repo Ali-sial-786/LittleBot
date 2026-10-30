@@ -65,6 +65,22 @@ def test_not_a_start(text):
     assert parse_start(text) is None
 
 
+@pytest.mark.parametrize("text, want", [
+    ("stop the game", "stop"), ("I quit", "stop"), ("let's stop playing", "stop"), ("no more trivia", "stop"),
+    ("I'm done playing", "stop"), ("stop", None), ("stop talking", None),
+    ("hint", "hint"), ("give me a hint please", "hint"), ("can I have a clue", "hint"), ("help me", "hint"),
+    ("skip", "skip"), ("pass", "skip"), ("I don't know", "skip"), ("I give up", "skip"), ("next question", "skip"),
+    ("what's the answer", "skip"), ("not sure", None),
+    ("repeat the question", "repeat"), ("say that again", "repeat"), ("what were the options", "repeat"),
+    ("what's my score", "score"), ("how am I doing", "score"), ("how many lives do I have left", "score"),
+    ("B", None), ("is there an E", None), ("", None), (None, None),
+])
+def test_commands_every_game_understands(text, want):
+    from littlebot.games.voice.base import command  # noqa: PLC0415
+
+    assert command(text) == want
+
+
 def test_game_names():
     assert game_id("Trivia") == "trivia" and game_id("20 questions") == "twenty_questions"
     assert game_id("would_you_rather") == "would_you_rather" and game_id("word game") == "hangman"

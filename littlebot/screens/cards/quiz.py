@@ -86,8 +86,9 @@ class QuizCard(gk.GameCard):
         gk.background(surf)
         v = self.view
         chips = []
-        if not v.get("over"):
-            chips.append(gk.chip(f"{v.get('number', 0)}/{v.get('total', 0)}"))
+        if not v.get("over") or self.flashing:
+            number = (self.flash or {}).get("id") if self.flashing else v.get("number", 0)  # the answered one
+            chips.append(gk.chip(f"{number}/{v.get('total', 0)}"))
         chips.append(gk.chip(f"{v.get('score', 0)} pts", fg=gk.GOLD))
         if int(v.get("streak") or 0) >= 2 and not v.get("over"):
             chips.insert(0, gk.chip(f"x{int(v['streak'])}", fg=gk.GOOD))

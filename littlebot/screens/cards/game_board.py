@@ -106,7 +106,7 @@ class GameBoardCard(gk.GameCard):
             self._options(surf, list(v.get("options") or []), picked=self.pressed, tally=None, mine=None)
         else:
             self._text(surf, str(v.get("text") or ""), counter if not v.get("over") else None)
-        status = str(v.get("status") or "")
+        status = str(v.get("status") or "") if f is None else ""  # the next one's status waits for it
         if status:
             gk.blit_text_in(surf, status, STATUS_RECT, (BODY_PX,), 1, gk.INK_SOFT)
 

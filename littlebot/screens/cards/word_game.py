@@ -92,7 +92,7 @@ class WordGameCard(gk.GameCard):
                 surf.blit(img, r)
                 x = r.left - 4
                 hearts_left = x
-        cat = str(v.get("category") or "")
+        cat = "" if self.flashing else str(v.get("category") or "")  # the next word's category waits for it
         gk.title(surf, f"Hangman · {cat}" if cat else "Hangman", right=hearts_left)
         if self.flashing and self.flash:
             self._word_end(surf, self.flash)

@@ -73,7 +73,7 @@ COMMANDS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("skip", re.compile(
         rf"^{_POLITE}(?:skip(?: it| this| that| this one| that one| the question| this question| this word|"
         rf" this riddle)?|pass|i pass|next(?: one| question| word| riddle| please)?|"
-        rf"(?:i\s+)?(?:dont|do not|have no|got no) (?:know|idea|clue)(?: the answer)?|no idea|not sure|i have no idea|"
+        rf"(?:i\s+)?(?:dont|do not|have no|got no) (?:know|idea|clue)(?: the answer)?|no idea|i have no idea|"
         rf"no clue|i give up|give up|i surrender|you got me|tell me(?: the answer)?|what is the answer|"
         rf"whats the answer|what was the answer|what is it|whats the word|what is the word|reveal(?: it| the answer)?|"
         rf"show me(?: the answer)?|just tell me){_TAIL}$")),
