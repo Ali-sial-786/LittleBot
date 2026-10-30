@@ -25,6 +25,8 @@ log = logging.getLogger("littlebot.assistant.voice")
 AHEAD_S = 0.5  # audio handed to the speaker ahead of what is being heard
 PACE_STEP_S = 0.02
 PREFETCH = 2  # sentences being synthesised at once (the one playing and the next)
+CHUNK_STALL_S = 15.0  # no audio for a sentence for this long: it is skipped (a voice that hangs never hangs LittleBot)
+DRAIN_MAX_S = 10.0  # done(): the last audio handed over is heard within this (it is at most AHEAD_S + the echo tail)
 
 
 class VoiceOut:
@@ -39,6 +41,7 @@ class VoiceOut:
         self._closed = False
         self._cancelled = False
         self._worker: asyncio.Task[Any] | None = None
+        self._fetching: collections.deque[tuple[Sentence, asyncio.Queue[Any], asyncio.Task[Any]]] = collections.deque()
         self._timers: list[asyncio.TimerHandle] = []
         self.heard: list[str] = []  # sentences that started playing (what they actually heard)
         self.first_audio_at: float | None = None
@@ -74,16 +77,16 @@ class VoiceOut:
     def busy(self) -> bool:
         return bool(self._queue) or (self._worker is not None and not self._worker.done())
 
-    async def done(self, timeout: float = 120.0) -> bool:
-        """Wait until every sentence was played and heard (False: cancelled or timed out)."""
-        deadline = self._now() + timeout
-        if self._worker is not None:
-            try:
-                await asyncio.wait_for(asyncio.shield(self._worker), max(0.0, deadline - self._now()))
-            except (asyncio.TimeoutError, asyncio.CancelledError):
+    async def done(self) -> bool:
+        """Wait until every sentence was played and heard (False: cancelled). A story takes as long as it takes:
+        only a sentence whose voice stalls is given up (``CHUNK_STALL_S``). The caller's own cancellation is never
+        swallowed here."""
+        worker = self._worker
+        if worker is not None:
+            await asyncio.wait({worker})  # raises CancelledError if *we* are cancelled; the worker keeps its own fate
+            if worker.cancelled():
                 return False
-            except Exception:  # noqa: BLE001 - logged by the worker
-                return False
+        deadline = self._now() + DRAIN_MAX_S
         while not self._cancelled and self._now() < deadline:
             if float(getattr(self.output, "queued_s", 0.0) or 0.0) <= 0.0 and not getattr(self.output, "speaking",
                                                                                             False):
@@ -92,29 +95,33 @@ class VoiceOut:
         return not self._cancelled
 
     # ------------------------------------------------------------ the worker
+    def _top_up(self) -> None:
+        """Ask the voice for the next sentences while one plays (no gap between sentences)."""
+        while self._queue and len(self._fetching) < PREFETCH:
+            s = self._queue.popleft()
+            q: asyncio.Queue[Any] = asyncio.Queue()
+            self._fetching.append((s, q, asyncio.ensure_future(self._fetch(s, q))))
+
     async def _run(self) -> None:
-        fetching: collections.deque[tuple[Sentence, asyncio.Queue[Any], asyncio.Task[Any]]] = collections.deque()
         try:
             while True:
-                while self._queue and len(fetching) < PREFETCH:
-                    s = self._queue.popleft()
-                    q: asyncio.Queue[Any] = asyncio.Queue()
-                    fetching.append((s, q, asyncio.ensure_future(self._fetch(s, q))))
-                if not fetching:
+                self._top_up()
+                if not self._fetching:
                     if self._closed or self._cancelled:
                         return
                     self._wake.clear()
                     await self._wake.wait()
                     continue
-                s, q, task = fetching.popleft()
+                s, q, task = self._fetching.popleft()
                 try:
                     await self._play(s, q)
                 finally:
                     if not task.done():
                         task.cancel()
         finally:
-            for _, _, task in fetching:
+            for _, _, task in self._fetching:
                 task.cancel()
+            self._fetching.clear()
 
     async def _fetch(self, s: Sentence, q: asyncio.Queue[Any]) -> None:
         try:
@@ -132,7 +139,14 @@ class VoiceOut:
         rate = int(getattr(self.tts, "sample_rate", 48000) or 48000)
         started = False
         while True:
-            chunk = await q.get()
+            self._top_up()  # the next sentence is being made while this one plays
+            try:
+                chunk = await asyncio.wait_for(q.get(), CHUNK_STALL_S)
+            except asyncio.TimeoutError:
+                self.failures += 1
+                log.warning("assistant: the voice stalled for %.0f s in a sentence; skipping the rest of it",
+                            CHUNK_STALL_S)
+                return
             if chunk is None or self._cancelled:
                 return
             pcm = np.asarray(chunk, dtype=np.float32).reshape(-1)

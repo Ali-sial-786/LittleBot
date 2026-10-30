@@ -273,7 +273,7 @@ class Brain:
     # ------------------------------------------------------------ one turn
     async def respond(self, text: str, *, history: list[dict[str, str]], toolbox: Any,
                       on_sentence: OnSentence, on_tool: OnTool | None = None,
-                      images: list[bytes] | None = None) -> TurnResult:
+                      images: list[bytes] | None = None, mark_day: bool = True) -> TurnResult:
         """Answer ``text``: sentences go to ``on_sentence`` as they are ready (checked for safety first). Never
         raises (except cancellation); a failure is ``result.error``."""
         result = TurnResult()
@@ -352,7 +352,7 @@ class Brain:
         result.text = " ".join(splitter.said)
         result.model = str(getattr(reply, "model", "") or result.model)
         result.total_ms = int((self._now() - t0) * 1000)
-        if result.sentences:
+        if result.sentences and mark_day:  # (a voice session marks it itself, once the answer was heard)
             self.talked_today()
         if not result.sentences and not result.silent and not result.tools:
             result.error = getattr(reply, "stop_reason", None) or "empty"
@@ -441,11 +441,16 @@ def _safe(fn: Callable[[], Any]) -> Any:
         return None
 
 
+_PENDING: set[asyncio.Future[Any]] = set()  # listeners' coroutines, kept alive until done
+
+
 def _call(fn: Callable[..., Any], *args: Any) -> None:
     try:
         out = fn(*args)
         if inspect.isawaitable(out):
-            asyncio.ensure_future(out)
+            fut = asyncio.ensure_future(out)
+            _PENDING.add(fut)
+            fut.add_done_callback(_PENDING.discard)
     except Exception:  # noqa: BLE001 - a listener's bug must not break the answer
         log.debug("assistant: a listener failed", exc_info=True)
 

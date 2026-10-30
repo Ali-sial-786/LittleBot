@@ -106,6 +106,8 @@ class VoiceSession:
         self._gate: asyncio.Event | None = None  # an early answer's: set once their turn really ended
         self._confirmed_at: float | None = None
         self._spec_at = 0.0
+        self._unsaid: list[str] = []  # announcements not said yet (busy until they are)
+        self._saying = False
 
     # ------------------------------------------------------------ status
     def snapshot(self) -> dict[str, Any]:
@@ -228,7 +230,7 @@ class VoiceSession:
 
     async def _stt_failed(self, kind: str) -> None:
         if self._speculating():
-            self._cut_answer()  # its turn will never be confirmed now
+            self._cut_answer(silence=True)  # its turn will never be confirmed now
         old, self.stt = self.stt, None
         self._failed_stt.append(self.stt_name)
         log.warning("assistant: speech-to-text %s failed (%s); switching", self.stt_name, kind)
@@ -257,7 +259,8 @@ class VoiceSession:
             self._check_time()
 
     def _busy(self) -> bool:
-        return (self._answer is not None and not self._answer.done()) or self._hearing_since is not None
+        return (self._answer is not None and not self._answer.done()) or self._hearing_since is not None or \
+            bool(self._unsaid) or self._saying
 
     def _check_time(self) -> None:
         now = self._now()
@@ -339,6 +342,7 @@ class VoiceSession:
             self._cut_answer()
         self._gate = asyncio.Event()
         self._spec_at = self._now()
+        self._voice = None
         self._answer_text = text
         self._answer = self._spawn(self._respond(text, gate=self._gate))
 
@@ -363,9 +367,10 @@ class VoiceSession:
                 log.info("assistant: more words before the answer started; asking again with them")
             else:
                 self._record_cut()
-            self._cut_answer()
+            self._cut_answer(silence=voice is not None and voice.first_audio_at is not None)
         self._answer_text = text
         self._gate = None
+        self._voice = None  # until the new answer runs: more words now are added to this question
         self._answer = self._spawn(self._respond(text))
 
     # ------------------------------------------------------------ one answer
@@ -418,7 +423,7 @@ class VoiceSession:
             else:
                 tools = box if gate is None else _GatedToolbox(box, gate)
                 result = await self.svc.brain.respond(text, history=self.svc.history.messages(), toolbox=tools,
-                                                      on_sentence=say, on_tool=self._tool_started)
+                                                      on_sentence=say, on_tool=self._tool_started, mark_day=False)
                 if result.error and not result.sentences:
                     for s in _sentences(SORRY.get(result.error, SORRY_DEFAULT)):
                         say(s)
@@ -426,6 +431,9 @@ class VoiceSession:
                 await waiter  # an early answer waits here until their turn really ended
             voice.close()
             await voice.done()
+            if voice.first_audio_at is None and getattr(self.audio, "interrupted", False):
+                with contextlib.suppress(Exception):
+                    self.audio.drop_voice()  # nothing was said after they cut in: the call audio listens normally
         except asyncio.CancelledError:
             voice.cancel()
             if waiter is not None:
@@ -433,6 +441,9 @@ class VoiceSession:
             raise
         t0 = t_heard[0]
         heard = " ".join(voice.heard) or (getattr(result, "text", "") or "")
+        if voice.heard and result is not None:
+            with contextlib.suppress(Exception):
+                self.svc.brain.talked_today()
         if heard and said_by != "stop":
             self.svc.history.add(text, heard)
             self._publish(ev.CAPTION, {"who": "robot", "text": heard})
@@ -562,21 +573,32 @@ class VoiceSession:
                 self.audio.play_pcm(hit[0], int(hit[1]))
 
     def announce(self, text: str) -> None:
-        """Say ``text`` now in this session (a reminder rang, a game's tap was judged): after what is being said."""
-        if self._ended.is_set() or not text.strip():
+        """Say ``text`` now in this session (a reminder rang, a game's tap was judged): after what is being said.
+        Still unsaid when the session ends: the service says it with the speaker (never lost)."""
+        if not text.strip():
             return
+        if self._ended.is_set():
+            self.svc.speak_later(text)
+            return
+        self._unsaid.append(text)
         self._spawn(self._say_now(text))
 
     async def _say_now(self, text: str) -> None:
         while self._answering():
             await asyncio.sleep(0.1)
+        with contextlib.suppress(ValueError):
+            self._unsaid.remove(text)
         voice = self._voice = VoiceOut(self.svc.tts(), self.audio, on_start=self._sentence_started, now=self._now)
         with contextlib.suppress(Exception):
             self.audio.unmute()
-        for s in _sentences(text):
-            voice.say(s)
-        voice.close()
-        await voice.done()
+        self._saying = True
+        try:
+            for s in _sentences(text):
+                voice.say(s)
+            voice.close()
+            await voice.done()
+        finally:
+            self._saying = False
         self.svc.history.add("(LittleBot spoke up by itself)", text)
         self._deadline = max(self._deadline, self._now() + max(4.0, float(self.cfg.follow_up_seconds)))
 
@@ -585,10 +607,15 @@ class VoiceSession:
         if voice is not None and voice.heard:
             self.svc.history.add(self._answer_text, " ".join(voice.heard) + " (interrupted)")
 
-    def _cut_answer(self) -> None:
-        """Stop the answer being thought of or said (they cut in, or added to the question)."""
+    def _cut_answer(self, *, silence: bool = False) -> None:
+        """Stop the answer being thought of or said (they cut in, or added to the question). ``silence``: also drop
+        what was already handed to the speaker (not after a barge-in: the call audio has done that, and is still
+        sending them their first words)."""
         if self._voice is not None:
             self._voice.cancel()
+        if silence and self.audio is not None and not getattr(self.audio, "interrupted", False):
+            with contextlib.suppress(Exception):
+                self.audio.drop_voice()
         if self._answer is not None and not self._answer.done():
             self._answer.cancel()
         self._answer = None
@@ -620,11 +647,16 @@ class VoiceSession:
         if what == "interrupted":
             self._set_phase("hearing")
         elif what == "heard":  # their words confirmed it: the answer being said is dropped
+            voice = self._voice
+            if voice is None or (voice.first_audio_at is None and not voice.heard):
+                return  # over the thinking sound, before any answer: their words join the question (_start_answer)
             self.barge_ins += 1
             self._record_cut()
             self._cut_answer()
             self._publish(ev.INTERRUPTED, {})
             log.info("assistant: interrupted; listening to them")
+        elif what == "carried_on":  # a false alarm: it talks on
+            self._set_phase("speaking" if self._answering() else "listening")
         elif what == "stop_word":
             self.barge_ins += 1
             self._record_cut()
@@ -726,6 +758,9 @@ class VoiceSession:
             self.ctx.state.release(current, "assistant session ended")
         if self.carry is not None:
             self.carry.drop(self.end_reason or "session ended")
+        unsaid, self._unsaid = self._unsaid, []
+        for text in unsaid:  # an announcement that came as it ended: the speaker says it now
+            self.svc.speak_later(text)
         self.end_reason = self.end_reason or ("failed" if self.error else "ended")
         self.phase = "ended"
         self._publish(ev.SESSION, {"active": False, "reason": self.end_reason[:60]})

@@ -87,6 +87,7 @@ class AssistantService(Service):
         self._tts_factory = tts_factory
         self._tts: Any = None
         self._stt: Any = None
+        self._bg: set[asyncio.Task[Any]] = set()
         if brain is None:
             from littlebot.assistant.agent import Brain  # noqa: PLC0415
 
@@ -300,9 +301,46 @@ class AssistantService(Service):
         session.end(reason)
         try:
             await asyncio.wait_for(asyncio.shield(task), 8.0)
-        except (asyncio.TimeoutError, asyncio.CancelledError):
+        except asyncio.TimeoutError:
             task.cancel()
+        except asyncio.CancelledError:
+            me = asyncio.current_task()
+            if me is not None and me.cancelling():
+                raise  # we were cancelled ourselves
+        except Exception:  # noqa: BLE001 - the session's own failure is in its summary
+            log.debug("assistant: the session ended with an error", exc_info=True)
         return {"ok": True, **self.status()}
+
+    def _background(self, coro: Any) -> asyncio.Task[Any]:
+        """A task the service keeps a reference to until it is done (never garbage-collected mid-run)."""
+        task = asyncio.ensure_future(coro)
+        self._bg.add(task)
+        task.add_done_callback(self._bg_done)
+        return task
+
+    def _bg_done(self, task: asyncio.Task[Any]) -> None:
+        self._bg.discard(task)
+        if not task.cancelled() and task.exception() is not None:
+            log.warning("assistant: a background job failed (%s)", type(task.exception()).__name__)
+
+    def speak_later(self, text: str) -> None:
+        """Say ``text`` through the speaker soon (an announcement a session ended before saying)."""
+        loop = self._loop
+        if loop is None or loop.is_closed() or not text.strip():
+            return
+        with contextlib.suppress(RuntimeError):
+            loop.call_soon_threadsafe(lambda: self._background(self._speak_when_free(text)))
+
+    async def _speak_when_free(self, text: str) -> None:
+        for _ in range(100):  # the session hands the speaker back first
+            if self._session is None:
+                break
+            await asyncio.sleep(0.1)
+        session = self._session
+        if session is not None and not session.ended:
+            session.announce(text)
+        else:
+            await self.speak(text)
 
     def _end_threadsafe(self, reason: str) -> None:
         session, loop = self._session, self._loop
@@ -351,7 +389,7 @@ class AssistantService(Service):
         if reply:
             self.history.add(text, reply)
         if speak and reply and self._session is None:
-            asyncio.ensure_future(self.speak(reply))
+            self._background(self.speak(reply))
         return out
 
     # ------------------------------------------------------------ speaking outside a session
@@ -381,7 +419,7 @@ class AssistantService(Service):
         if event.get("kind") == "alarm":
             self._wake_for_alarm()
         with contextlib.suppress(RuntimeError):
-            loop.call_soon_threadsafe(lambda: asyncio.ensure_future(self._announce(text, card)))
+            loop.call_soon_threadsafe(lambda: self._background(self._announce(text, card)))
 
     def _wake_for_alarm(self) -> None:
         """An alarm ("wake me at 7") wakes LittleBot up if it was asleep, so its face and card show."""

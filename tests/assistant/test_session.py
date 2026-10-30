@@ -332,3 +332,49 @@ async def test_voice_games_are_played_without_the_brain() -> None:
     await _wait(lambda: len(tts.said) > said)
     assert brain.questions == []  # the start and the answer were handled on the robot
     await svc.stop_session("test")
+
+
+class SlowTTS(FakeTTS):
+    """Two seconds of voice per sentence, streamed in 50 ms pieces (a real answer takes a while to say)."""
+
+    async def stream(self, text: str) -> Any:
+        import numpy as np
+
+        self.said.append(text)
+        for _ in range(40):
+            await asyncio.sleep(0.05)
+            yield np.ones(2400, dtype=np.float32) * 0.1
+
+
+async def test_a_barge_in_mid_sentence_cancels_the_turns_take_over_and_records_it_once() -> None:
+    brain = Scripted(["Going to sleep now, goodnight.", ("go_to_sleep", "{}")])
+    svc, stt, _, audio = _service(brain, follow_up_seconds=5)
+    svc._tts = SlowTTS()
+    await svc.start()
+    await svc.start_session()
+    await _wait(lambda: stt.stream is not None)
+    stt.say("could you have a little nap please")
+    await _wait(lambda: len(audio.played) >= 3)
+    audio.on_change("heard", {})  # what LiveAudio does once their words confirm the barge-in
+    await asyncio.sleep(0.5)
+    assert svc.status()["active"] is True
+    assert svc.ctx.state.state != RobotState.SLEEPING
+    assert svc.history.messages()[-1]["content"].endswith("(interrupted)")
+    assert len(svc.history) == 1
+    await svc.stop_session("test")
+
+
+async def test_a_long_answer_is_not_cut_by_a_timeout_and_unsaid_news_is_kept() -> None:
+    brain = Scripted(["One. ", "Two. ", "Three."])
+    svc, stt, _, audio = _service(brain, follow_up_seconds=0.3)
+    svc._tts = SlowTTS()
+    await svc.start()
+    await svc.start_session()
+    await _wait(lambda: stt.stream is not None)
+    stt.say("count to three slowly")
+    from littlebot.skills.base import announce
+
+    await _wait(lambda: len(audio.played) >= 2)
+    announce(svc.ctx, "The egg timer is done.")
+    await _wait(lambda: not svc.status()["active"], timeout=15)
+    assert svc._tts.said == ["One.", "Two.", "Three.", "The egg timer is done."]
