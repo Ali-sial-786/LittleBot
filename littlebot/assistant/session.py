@@ -350,7 +350,10 @@ class VoiceSession:
             return False
         hub = getattr(self.ctx, "skills", None)
         games = hub.get("voice_games") if hub is not None and hasattr(hub, "get") else None
-        return games is None or getattr(games, "active", None) is None
+        if games is not None and getattr(games, "active", None) is not None:
+            return False
+        rem = hub.get("reminders") if hub is not None and hasattr(hub, "get") else None
+        return not (rem is not None and _safe(rem.ringing))
 
     def _start_answer(self, text: str) -> None:
         if self._answering():
@@ -404,7 +407,8 @@ class VoiceSession:
         said_by = "brain"
         result: Any = None
         try:
-            local = await self._local_answer(text, box)
+            # an early answer never takes a local path: those act at once (a game starts, an alarm snoozes)
+            local = await self._local_answer(text, box) if gate is None else None
             if local is not None:
                 said_by, words, end = local
                 for s in _sentences(words):
@@ -470,7 +474,8 @@ class VoiceSession:
             return f"intent:{hit.name}", words, hit.end
         hub = getattr(self.ctx, "skills", None)
         games = hub.get("voice_games") if hub is not None and hasattr(hub, "get") else None
-        if games is not None and getattr(games, "active", None) is not None:
+        if games is not None:  # every turn: a move, or "let's play trivia" / "play again" (cheap when no game runs)
+            self._tool_started("voice_game")  # a free-topic trivia round takes a few seconds to write: a soft sound
             try:
                 reply = games.handle_utterance(text)
                 if asyncio.iscoroutine(reply):
@@ -484,7 +489,7 @@ class VoiceSession:
                     self._spawn(_show(self.ctx, card))
                 sound = getattr(reply, "sound", None)
                 if sound:
-                    self.play_sound(str(sound))
+                    self.play_sound(str(sound))  # before the words
                 return "game", str(getattr(reply, "say", "") or ""), False
         routines = hub.get("routines") if hub is not None and hasattr(hub, "get") else None
         if routines is not None and hasattr(routines, "match_phrase"):

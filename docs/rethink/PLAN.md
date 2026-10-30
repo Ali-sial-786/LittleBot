@@ -71,8 +71,8 @@ robot keeps working exactly as today until the new keys are added.
 - [x] Music mode (YouTube audio with a now-playing screen) and translator mode.
 
 ### 3. Games
-- [ ] Voice game framework (local judging, cards, scores in SQLite, "what's my high score").
-- [ ] Trivia (model-written questions, offline bank), Hangman, 20 Questions, Riddles, Would You Rather.
+- [x] Voice game framework (local judging, cards, scores in SQLite, "what's my high score").
+- [x] Trivia (model-written questions, offline bank), Hangman, 20 Questions, Riddles, Would You Rather.
 
 ### 4. Face and screen
 - [x] Expression tags → face per sentence; thinking/listening/speaking attention cues (body language module).

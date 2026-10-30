@@ -311,3 +311,24 @@ async def test_an_alarm_wakes_littlebot_up() -> None:
     announce(svc.ctx, "Good morning! It's 7.", kind="alarm", urgent=True)
     assert svc.ctx.state.state == RobotState.IDLE
     await _wait(lambda: "Good morning! It's 7." in svc.ctx.audio.spoken)
+
+
+async def test_voice_games_are_played_without_the_brain() -> None:
+    from littlebot.games.voice.skill import VoiceGames
+    from littlebot.skills.hub import SkillHub
+
+    brain = Scripted()
+    svc, stt, tts, _ = _service(brain, follow_up_seconds=3)
+    svc.ctx.skills = SkillHub(svc.ctx, [VoiceGames(svc.ctx)])
+    await svc.ctx.skills.start()
+    await svc.start()
+    await svc.start_session()
+    await _wait(lambda: stt.stream is not None)
+    stt.say("let's play trivia")
+    await _wait(lambda: len(tts.said) >= 1)
+    assert svc.ctx.skills.get("voice_games").active is not None
+    said = len(tts.said)
+    stt.say("B")
+    await _wait(lambda: len(tts.said) > said)
+    assert brain.questions == []  # the start and the answer were handled on the robot
+    await svc.stop_session("test")
