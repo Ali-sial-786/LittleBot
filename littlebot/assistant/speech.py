@@ -28,8 +28,8 @@ STT_RATE = 16000  # what the session feeds every STT provider
 
 
 class SpeechError(Exception):
-    """A speech service failed. ``kind``: no_key | not_installed | cloud_off | auth | rate_limit | timeout |
-    network | server_error | bad_audio | closed."""
+    """A speech service failed. ``kind``: no_key | not_installed | no_model | cloud_off | auth | rate_limit |
+    timeout | network | server_error | bad_request | bad_audio | closed."""
 
     def __init__(self, kind: str, detail: str = "") -> None:
         super().__init__(f"{kind}: {detail}" if detail else kind)
