@@ -21,8 +21,13 @@ brain per question:
 | Voice | Cartesia Sonic (or ElevenLabs Flash) streams the first sentence | first audio ~0.1-0.2 s |
 | **Total** | **from the end of your question to the first word you hear** | **about 0.8-1.1 s** |
 
+Deepgram also says when you are *probably* done ("eager end of turn"): the brain starts then, and its answer is
+said (and its tools run) only once your turn really ended with the same words; if you carry on, it is dropped.
+That saves about 0.2 s on most questions (`assistant.deepgram_eager_eot_threshold`, null: off).
+
 Things that need no model at all are instant: "stop", "never mind", "louder", "volume 40", "pause", "skip",
-"what time is it?", "thanks", "bye", and a voice game's answers ("B!", "Paris").
+"what time is it?", "thanks", "bye", "snooze" / "I'm up" while an alarm rings, and a voice game's moves ("let's
+play trivia", "B!", "Paris", "is there an E?", "play again").
 
 ## Turning it on
 
