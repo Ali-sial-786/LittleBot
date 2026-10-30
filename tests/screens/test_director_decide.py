@@ -69,6 +69,19 @@ async def test_on_a_card_kind_is_a_hint_for_the_text_model(make, ctx):
     assert get_decider(ctx).status()["features"]["cards"]["agreed"] == 1
 
 
+async def test_a_new_question_with_a_card_up_gets_a_new_card_not_a_page_turn(make, ctx):
+    # on the robot (2026-10-29): "and Alexander the Great?" after a Khans card only turned that card's page
+    nxt = {"do": "command", "action": "next", "args": {}}
+    new = {"do": "show", "spec": {"card": "recipe", "title": "Crepes", "steps": ["Mix", "Fry thin"]}}
+    s = make(nxt, new)
+    s.screens.card = FakeCard("recipe", "recipe: Pancakes")
+    use_decision_model(ctx, picks("show_recipe"), modes={"cards": "on", "answered": "off"})
+    await asked(s, "And how do I make crepes?", "Crepes are thin: mix a runny batter and fry it thin.")
+    assert "show a new recipe card for it rather than steering" in s.provider.calls[0]["messages"][-1]["content"]
+    assert "Not a command: they asked about something new" in s.provider.calls[1]["messages"][-1]["content"]
+    assert s.screens.commands == [] and s.screens.shown[0][0]["title"] == "Crepes"
+
+
 async def test_on_close_takes_the_card_away(make, ctx):
     s = make(FACT, wait_for_answer=True)
     s.screens.card = FakeCard("weather", "Sunny tomorrow")

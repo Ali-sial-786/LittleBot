@@ -530,3 +530,123 @@ async def test_a_stalled_stream_reopens_with_barge_in_still_on(call):
     finally:
         audio.close()
     assert not audio.interrupted
+
+
+# --------------------------------------------------------------------------- stop words (stop_words.py)
+class FakeStopWords:
+    """What littlebot/chatgpt/stop_words.StopWords does for LiveAudio, with the stop word given by the test."""
+
+    def __init__(self) -> None:
+        self.pushed = self.quiets = 0
+        self.hit: str | None = None
+        self.closed = False
+
+    def push(self, frame: np.ndarray) -> None:
+        self.pushed += 1
+
+    def quiet(self) -> None:
+        self.quiets += 1
+
+    def take(self) -> str | None:
+        hit, self.hit = self.hit, None
+        return hit
+
+    def close(self) -> None:
+        self.closed = True
+
+
+async def short_word(c: Call, words: FakeStopWords | None, said: str = "stop") -> None:
+    """A quick "stop!" over the voice (0.16 s, too short for live_barge_in_speech_ms), recognised just after."""
+    for u in frames_of(voiced(120, 0.16, 0.08, seed=13)):
+        await c.tick(user=u)
+    for i in range(10):
+        if i == 3 and words is not None:
+            words.hit = said  # the recogniser's words so far have it a moment after it was said
+        await c.tick()
+
+
+async def test_a_quick_stop_word_interrupts_however_short(call, caplog):
+    # "it should look for words like stop even if they're shorter" (a parent, 2026-10-29)
+    caplog.set_level(logging.INFO, logger="littlebot.chatgpt.live")
+    audio, c = call()
+    words = FakeStopWords()
+    audio.setup_barge_in(on_change=lambda what, info: c.events.append(what), stop_words=words)
+    try:
+        await c.warm_up()
+        await short_word(c, words)
+        assert audio.interrupted and c.events == ["interrupted"] and words.pushed > 0
+        assert "live voice: interrupted: they said 'stop'" in caplog.text
+    finally:
+        audio.close()
+    assert words.closed
+
+
+async def test_the_same_short_sound_without_a_stop_word_does_not_interrupt(call):
+    audio, c = call()
+    try:
+        await c.warm_up()
+        await short_word(c, None)
+        assert not audio.interrupted and c.events == []
+    finally:
+        audio.close()
+
+
+async def test_the_voice_saying_wait_itself_does_not_stop_it(call, caplog):
+    caplog.set_level(logging.INFO, logger="littlebot.chatgpt.live")
+    audio, c = call()
+    words = FakeStopWords()
+    audio.setup_barge_in(on_change=lambda what, info: c.events.append(what), stop_words=words)
+    try:
+        await c.warm_up()
+        words.hit = "wait"  # heard in what is left of its own echo: nothing louder than the echo
+        for _ in range(5):
+            await c.tick()
+        assert not audio.interrupted and c.events == []
+        assert "heard 'wait' while the voice talked, but nothing louder than its own echo" in caplog.text
+        for _ in range(40):
+            await c.tick(voice=False)  # the voice stopped: what was being recognised is forgotten
+        assert words.quiets > 0
+    finally:
+        audio.close()
+
+
+class FakeRecognizer:
+    def __init__(self, partials: list[str]) -> None:
+        self.partials = list(partials)
+        self.accepted = self.resets = 0
+
+    def accept(self, pcm16: bytes) -> dict[str, Any] | None:
+        self.accepted += 1
+        return None
+
+    def partial(self) -> str:
+        return self.partials.pop(0) if self.partials else ""
+
+    def reset(self) -> None:
+        self.resets += 1
+
+
+async def test_stop_words_finds_the_phrase_in_the_words_so_far():
+    import time
+
+    from littlebot.chatgpt.stop_words import StopWords, match
+
+    rec = FakeRecognizer(["", "the bus", "okay stop"])
+    phrases = [("stop", ("stop",)), ("okay stop", ("okay", "stop")), ("hold on", ("hold", "on"))]
+    words = StopWords(lambda: (rec, phrases), rate=RATE)
+    try:
+        for _ in range(15):  # three batches of 0.1 s
+            words.push(np.zeros(FRAME, dtype=np.int16))
+        deadline = time.monotonic() + 3
+        while words.heard == 0 and time.monotonic() < deadline:
+            await asyncio.sleep(0.01)
+        assert words.take() == "okay stop" and words.take() is None and rec.resets == 1
+    finally:
+        words.close()
+    assert match("so hold on a second".split(), phrases) == "hold on" and match(["holding"], phrases) is None
+
+
+def test_no_stop_words_without_the_speech_model(tmp_path):
+    from littlebot.chatgpt.stop_words import StopWords
+
+    assert StopWords.from_model(tmp_path / "no-model") is None

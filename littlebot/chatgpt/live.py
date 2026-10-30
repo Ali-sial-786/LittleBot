@@ -1277,10 +1277,18 @@ class LiveCall:
             voices = getattr(self.ctx, "voices", None)
             hooks: dict[str, Any] = {"identify": getattr(voices, "identify", None), "on_change": self._barge_in_changed}
             try:
-                if "talking_with" in inspect.signature(setup).parameters:
-                    hooks["talking_with"] = self._talking_with  # only they cut in; others talk to each other
+                params = inspect.signature(setup).parameters
             except (TypeError, ValueError):
-                pass
+                params = {}
+            if "talking_with" in params:
+                hooks["talking_with"] = self._talking_with  # only they cut in; others talk to each other
+            if "stop_words" in params and getattr(self.audio, "barge_in_on", False) and \
+                    getattr(self.cfg, "live_stop_words", False):
+                from littlebot.chatgpt.live_audio import RATE  # noqa: PLC0415
+                from littlebot.chatgpt.stop_words import StopWords  # noqa: PLC0415
+
+                wake = getattr(self.ctx.config, "wake", None)
+                hooks["stop_words"] = StopWords.from_model(getattr(wake, "model_path", None), rate=RATE)
             setup(**hooks)
 
     def _talking_with(self) -> int | None:

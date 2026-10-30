@@ -1094,6 +1094,24 @@ class ScreenDirector:
                 self._log("dropped", t0, "model", "they said something else meanwhile")
                 return "dropped"
         decision = self._validate(obj)
+        if hint and hint != "steer" and decision.do == "command":
+            # On the robot (2026-10-29) "and Alexander the Great?" after a Khans card only paged that card ("next"),
+            # though the quick check said a new facts card: ask once more, plainly
+            log.info("screen: the model steered the card on screen, but the quick check says a new %s card; "
+                     "asking once more", hint)
+            try:
+                again = await asyncio.wait_for(self._ask(answer=answer, hint=hint, partial=partial, insist=True),
+                                               RETRY_TIMEOUT_S)
+                second = self._validate(parse_decision(getattr(again, "text", "") or ""))
+                if second.do == "show":
+                    decision = second
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001 - keep the first decision
+                log.debug("screen: asking once more failed", exc_info=True)
+            if turn != self._turn or self._closed:
+                self._log("dropped", t0, "model", "they said something else meanwhile")
+                return "dropped"
         label = _label(decision)
         child = self._speaker(t0)
         if decision.do != "none" and (child or (needs_grownup and child is not False)):
@@ -1120,12 +1138,18 @@ class ScreenDirector:
                   "" if result.get("ok") else f"not shown ({result.get('error') or 'no card'})")
 
     async def _ask(self, *, retry: bool = False, answer: str | None = None, hint: str | None = None,
-                   partial: bool = False) -> Any:
+                   partial: bool = False, insist: bool = False) -> Any:
         provider = self._provider_factory()
         opts = _reply_options(provider.reply, effort=self.effort)
         content = self._context(answer, partial)
         if hint == "steer":
             content += "\n(A quick check says they are following up on the card on screen.)"
+        elif hint and insist:
+            content += (f"\n(Not a command: they asked about something new, not the card on screen. Answer \"show\" "
+                        f"with a new {hint} card for what they just asked.)")
+        elif hint and self._current_kind() is not None:
+            content += (f"\n(A quick check says they asked about something new: show a new {hint} card for it "
+                        "rather than steering the card on screen, unless it really is a follow-up on it.)")
         elif hint:
             content += f"\n(A quick check says a {hint} card fits: use it, unless it really doesn't.)"
         content = f"{content}\n\n{RETRY_NOTE if retry else ANSWER_CUE}"

@@ -322,6 +322,9 @@ class ChatGPTConfig(_Section):
     live_barge_in_min_level: float = Field(default=0.008, ge=0.0, le=0.5)  # and at least this loud (RMS 0..1)
     live_barge_in_max_pitch_hz: float = Field(default=260.0, ge=150.0, le=400.0)  # higher voices: a child's
     live_barge_in_false_alarm_ms: int = Field(default=2500, ge=300, le=5000)  # no words from ChatGPT by then: carry on
+    # "stop", "wait", "hold on" ... said over the voice stop it however short (littlebot/chatgpt/stop_words.py;
+    # offline, with the wake word's Vosk model). Only with barge-in.
+    live_stop_words: bool = True
     live_volume: float | None = None  # None = the speaker volume setting (always capped at max_volume)
     # A soft two-note sound while a hand-off is being worked on and the voice is quiet (after 1.5 s, then every
     # 3 s, at most 4 times), like smart speakers' "thinking" sound.

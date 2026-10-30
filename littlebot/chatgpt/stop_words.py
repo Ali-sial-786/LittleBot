@@ -1,0 +1,178 @@
+"""Stop words while the live voice talks: "stop", "wait", "hold on", "be quiet" ... interrupt it at once.
+
+The barge-in detector (littlebot/chatgpt/live_audio.py, ``BargeInDetector``) needs ``chatgpt.live_barge_in_speech_ms``
+of voiced grown-up speech, longer than a quick "stop!"; a parent: "it should look for words like stop even if
+they're shorter" (2026-10-29). So while the voice is audible, the echo-cancelled microphone also goes to Vosk (the
+wake word's offline model, ``wake.model_path``) in grammar mode: only ``STOP_PHRASES``, the wake word's everyday
+``DISTRACTOR_WORDS`` and ``[unk]`` (anything else). Its words so far (the partial result) are checked every 0.1 s,
+so a stop word counts as soon as it is said, not when the sentence ends.
+
+``LiveAudio`` only acts on a stop word when the detector saw a sound louder than what is left of the voice's own
+echo at the same moment (so the voice saying "wait" can't stop itself) that wasn't a child's. Audio stays in
+memory, in a short queue; nothing is kept or sent anywhere. Recognition runs in its own thread: the call's audio
+never waits for it. Without vosk or its model there are no stop words, and barge-in works as before.
+"""
+
+from __future__ import annotations
+
+import logging
+import queue
+import threading
+import time
+from pathlib import Path
+from typing import Any, Callable
+
+import numpy as np
+
+from littlebot.audio import dsp
+
+log = logging.getLogger("littlebot.chatgpt.live")
+
+STOP_PHRASES = ("stop", "stop it", "stop talking", "stop please", "okay stop", "no stop", "wait", "wait a second",
+                "wait a minute", "hold on", "hang on", "be quiet", "quiet", "shush", "shh", "enough", "that's enough",
+                "pause", "cut it out")
+REC_RATE = 16000
+BATCH_S = 0.1  # the recogniser gets this much at a time; its words so far are checked after each
+QUEUE_FRAMES = 50  # 1 s of 20 ms frames; more waiting (the thread fell behind): the newest are dropped
+HIT_FRESH_S = 1.0  # a stop word heard this recently can still be taken
+_RESET = object()
+
+
+class StopWords:
+    """Listens for ``STOP_PHRASES`` in the microphone frames pushed while the voice talks (``push``); ``take``
+    returns the phrase once, when one was heard. ``recognizer_factory()`` -> (recogniser, phrases as word
+    tuples), called in the worker thread (loading the model may take ~1 s the first time)."""
+
+    def __init__(self, recognizer_factory: Callable[[], tuple[Any, list[tuple[str, tuple[str, ...]]]] | None], *,
+                 rate: int = 48000, now: Callable[[], float] = time.monotonic) -> None:
+        self._factory = recognizer_factory
+        self.rate = int(rate)
+        self._now = now
+        self._q: queue.Queue[Any] = queue.Queue(maxsize=QUEUE_FRAMES)
+        self._lock = threading.Lock()
+        self._hit: tuple[str, float] | None = None
+        self._pushing = False
+        self._stop = threading.Event()
+        self.ready = False
+        self.heard = 0
+        self._thread = threading.Thread(target=self._work, name="littlebot-stop-words", daemon=True)
+        self._thread.start()
+
+    @classmethod
+    def from_model(cls, model_path: Path | str | None, *, rate: int = 48000) -> StopWords | None:
+        """The stop words with the Vosk model at ``model_path`` (``wake.model_path``), or None without vosk or it."""
+        from littlebot.audio.stt.vosk import model_present, resolve_model_path, vosk_installed  # noqa: PLC0415
+
+        path = resolve_model_path(str(model_path) if model_path else None)
+        if not vosk_installed() or not model_present(path):
+            log.info("live voice: no stop words (%s)", "vosk isn't installed" if not vosk_installed()
+                     else f"no speech model at {path}")
+            return None
+        return cls(lambda: _vosk_recognizer(path), rate=rate)
+
+    # ------------------------------------------------------------ the call's side (event loop)
+    def push(self, frame: np.ndarray) -> None:
+        """20 ms of the echo-cancelled microphone (int16) while the voice is audible."""
+        self._pushing = True
+        try:
+            self._q.put_nowait(frame)
+        except queue.Full:
+            pass
+
+    def quiet(self) -> None:
+        """The voice stopped: what was being recognised is forgotten (no stale partial words later)."""
+        if self._pushing:
+            self._pushing = False
+            try:
+                self._q.put_nowait(_RESET)
+            except queue.Full:
+                pass
+
+    def take(self) -> str | None:
+        """The stop phrase heard since the last call (fresh ones only), or None."""
+        with self._lock:
+            hit, self._hit = self._hit, None
+        if hit is None or self._now() - hit[1] > HIT_FRESH_S:
+            return None
+        return hit[0]
+
+    def close(self) -> None:
+        self._stop.set()
+        try:
+            self._q.put_nowait(_RESET)
+        except queue.Full:
+            pass
+
+    # ------------------------------------------------------------ the worker thread
+    def _work(self) -> None:
+        try:
+            made = self._factory()
+        except Exception as e:  # noqa: BLE001 - no stop words; barge-in works as before
+            log.warning("live voice: stop words unavailable (%s)", e)
+            return
+        if made is None:
+            return
+        rec, phrases = made
+        self.ready = True
+        batch: list[np.ndarray] = []
+        need = round(BATCH_S * self.rate)
+        while not self._stop.is_set():
+            try:
+                item = self._q.get(timeout=0.5)
+            except queue.Empty:
+                continue
+            if item is _RESET:
+                batch.clear()
+                _reset(rec)
+                continue
+            batch.append(item)
+            if sum(len(b) for b in batch) < need:
+                continue
+            pcm = np.concatenate(batch).astype(np.float32) / 32768.0
+            batch.clear()
+            if self.rate != REC_RATE:
+                pcm = dsp.resample(pcm, self.rate, REC_RATE)
+            try:
+                result = rec.accept(dsp.to_int16(pcm).tobytes())
+                words = (str(result.get("text") or "") if result else str(rec.partial() or "")).split()
+            except Exception:  # noqa: BLE001 - one bad batch: carry on
+                log.debug("stop words: recognition failed", exc_info=True)
+                continue
+            said = match(words, phrases)
+            if said is not None:
+                with self._lock:
+                    self._hit = (said, self._now())
+                self.heard += 1
+                _reset(rec)
+
+
+def match(words: list[str], phrases: list[tuple[str, tuple[str, ...]]]) -> str | None:
+    """The stop phrase in ``words`` (consecutive), longest first; None when there is none."""
+    toks = [w.lower() for w in words]
+    for phrase, ph in sorted(phrases, key=lambda p: -len(p[1])):
+        n = len(ph)
+        if any(tuple(toks[i:i + n]) == ph for i in range(len(toks) - n + 1)):
+            return phrase
+    return None
+
+
+def _reset(rec: Any) -> None:
+    try:
+        rec.reset()
+    except Exception:  # noqa: BLE001
+        log.debug("stop words: reset failed", exc_info=True)
+
+
+def _vosk_recognizer(path: Path) -> tuple[Any, list[tuple[str, tuple[str, ...]]]] | None:
+    from littlebot.audio.stt.vosk import load_model  # noqa: PLC0415
+    from littlebot.audio.wakeword import VoskKeywordRecognizer, build_grammar  # noqa: PLC0415
+
+    model = load_model(path)  # shared with the wake word (already loaded while it waits for the call to end)
+    known = None
+    if hasattr(model, "vosk_model_find_word"):
+        known = lambda w: model.vosk_model_find_word(w) >= 0  # noqa: E731
+    grammar, usable, _dropped = build_grammar(STOP_PHRASES, known=known)
+    if not usable:
+        log.warning("live voice: no stop words (the speech model knows none of them)")
+        return None
+    return VoskKeywordRecognizer(model, grammar, REC_RATE), usable

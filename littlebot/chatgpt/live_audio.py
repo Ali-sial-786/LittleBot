@@ -85,6 +85,10 @@ ECHO_LEARN_MIN = 0.002  # the echo is measured only while the speaker plays at l
 ID_AFTER_S = 0.2  # ask voice recognition (ctx.voices) about a run once this much was heard
 ID_TIMEOUT_S = 1.0
 FAST_SPEECH_S = 0.2  # voice recognition says a grown-up: this much speech is enough
+# A stop word ("stop", "wait" ... littlebot/chatgpt/stop_words.py) interrupts however short it was, when the
+# detector heard this many frames louder than the voice's echo in the same run, ended at most STOP_RUN_S ago.
+STOP_LOUD_FRAMES = 3
+STOP_RUN_S = 1.0
 PREROLL_MAX_S = 0.8  # the microphone kept for the pre-roll (in memory, the last 0.8 s only)
 PREROLL_LEAD_S = 0.1  # the pre-roll starts this long before their speech did
 QUIET_LEVEL = 0.0105  # RMS below which a frame of the pre-roll is a pause (as in littlebot/audio/carry.py)
@@ -199,6 +203,7 @@ class BargeInDetector:
         self.threshold = 0.0
         self.level = 0.0
         self.run: _Run | None = None
+        self.last: _Run | None = None  # the run that ended last (a stop word is recognised a moment after it)
         self.fired: _Run | None = None  # the run that interrupted last
         self._quiet_after: float = float("-inf")  # no echo measuring until then (someone may still talk)
 
@@ -242,7 +247,7 @@ class BargeInDetector:
                 elif f0 > self.s.max_pitch_hz:
                     run.child += 1
         elif run is not None and now - run.last_loud > GAP_S:
-            self.run = None
+            self.run, self.last = None, run
             self._missed(run)
             return False
         if run is None or run.vetoed or self.voice_s < WARMUP_S:
@@ -389,6 +394,8 @@ class LiveAudio:
         self._identify: Callable[..., Any] | None = None  # ctx.voices.identify (optional)
         self._talking_with: Callable[[], Any] | None = None  # the call's current grown-up (optional)
         self._on_barge: Callable[[str, dict[str, Any]], None] | None = None
+        self._stop_words: Any = None  # littlebot/chatgpt/stop_words.StopWords (optional)
+        self._stop_said: str | None = None  # the stop word that interrupted last
         self._id_tasks: set[asyncio.Future[Any]] = set()
         self._barge_at = 0.0
         self._barge_run: _Run | None = None
@@ -474,15 +481,19 @@ class LiveAudio:
 
     def setup_barge_in(self, *, identify: Callable[..., Any] | None = None,
                        on_change: Callable[[str, dict[str, Any]], None] | None = None,
-                       talking_with: Callable[[], Any] | None = None) -> None:
+                       talking_with: Callable[[], Any] | None = None, stop_words: Any = None) -> None:
         """The call's hooks: ``identify(samples, rate)`` (ctx.voices, optional) and ``on_change(what, info)``
         with what = "interrupted" (the voice stopped for them), "heard" (ChatGPT has their words) or
         "carried_on" (a false alarm: the voice plays on). ``talking_with()``: the person_id of the grown-up
         the voice is talking with, or None: someone else recognised cutting in doesn't stop the voice (they
-        were talking to each other). Called in the event loop."""
+        were talking to each other). ``stop_words``: a ``StopWords`` (closed with the audio). Called in the
+        event loop."""
         self._identify = identify if callable(identify) else None
         self._on_barge = on_change
         self._talking_with = talking_with if callable(talking_with) else None
+        if self._stop_words is not None and self._stop_words is not stop_words:
+            self._stop_words.close()
+        self._stop_words = stop_words
 
     def _start_streams(self, sd: Any) -> tuple[dict[str, Any], dict[str, Any]]:
         import av  # noqa: PLC0415  (comes with aiortc)
@@ -552,6 +563,9 @@ class LiveAudio:
         for t in list(self._id_tasks):
             t.cancel()
         self._id_tasks.clear()
+        if self._stop_words is not None:
+            self._stop_words.close()
+            self._stop_words = None
         self._ring.clear()
         self._sendq.clear()
         self._bstate, self._hold, self._barge_run, self._await_final = _WATCH, False, None, False
@@ -687,7 +701,7 @@ class LiveAudio:
         self._ring.append(out)
         if self._bstate == _WATCH:
             if now - self._last_loud < self.echo_tail_s:  # the voice is audible: watch for someone cutting in
-                if det.step(out, self._echo_ref(now), now, voice_on=True):
+                if det.step(out, self._echo_ref(now), now, voice_on=True) or self._stop_word(out, now):
                     self._interrupt(now)
                     return self._send(None)
                 self._maybe_identify(now)
@@ -695,6 +709,8 @@ class LiveAudio:
                 self._sendq.clear()
                 return np.zeros(FRAME, dtype=np.int16)
             det.step(out, 0.0, now, voice_on=False)  # the room's own noise
+            if self._stop_words is not None:
+                self._stop_words.quiet()
             return self._send(out)
         det.step(out, 0.0, now, voice_on=False)  # they cut in: are they still talking?
         if det.level >= det.threshold:
@@ -705,6 +721,27 @@ class LiveAudio:
                 self.frames_gated += 1
                 return np.zeros(FRAME, dtype=np.int16)
         return self._send(out)
+
+    def _stop_word(self, out: np.ndarray, now: float) -> bool:
+        """A stop word ("stop", "wait" ...) said over the voice, however briefly: interrupt, if the detector heard
+        a sound louder than the voice's echo just then (not the voice's own "wait") that wasn't a child's."""
+        words, det = self._stop_words, self._detector
+        if words is None or det is None:
+            return False
+        words.push(out)
+        said = words.take()
+        if said is None:
+            return False
+        run = det.run
+        if run is None and det.last is not None and now - det.last.last_loud <= STOP_RUN_S:
+            run = det.last
+        if run is None or run.vetoed or run.loud < STOP_LOUD_FRAMES or run.child > run.adult or det.voice_s < WARMUP_S:
+            log.info("live voice: heard '%s' while the voice talked, but nothing louder than its own echo (or a "
+                     "child's voice): it carried on", said)
+            return False
+        det.fired, det.run = run, None
+        self._stop_said = said
+        return True
 
     def _send(self, frame: np.ndarray | None) -> np.ndarray:
         """The pre-roll first, then the microphone, one frame per frame read (never a burst). While behind,
@@ -794,9 +831,15 @@ class LiveAudio:
         self.barge_ins += 1
         pitch = BargeInDetector.pitch_of(run) if run is not None else 0.0
         voice = run.voice if run is not None else None
-        log.info("live voice: interrupted by a grown-up after %.1f s of speech (pitch %d Hz%s)", now - onset,
-                 round(pitch), f", voice {voice}" if voice else "")
-        self._notify("interrupted", {"speech_s": round(now - onset, 2), "pitch_hz": round(pitch), "voice": voice})
+        said, self._stop_said = self._stop_said, None
+        if said is not None:
+            log.info("live voice: interrupted: they said '%s' (%.1f s of speech, pitch %d Hz%s)", said, now - onset,
+                     round(pitch), f", voice {voice}" if voice else "")
+        else:
+            log.info("live voice: interrupted by a grown-up after %.1f s of speech (pitch %d Hz%s)", now - onset,
+                     round(pitch), f", voice {voice}" if voice else "")
+        self._notify("interrupted", {"speech_s": round(now - onset, 2), "pitch_hz": round(pitch), "voice": voice,
+                                     **({"stop_word": said} if said else {})})
 
     def _check_held(self, now: float) -> None:
         """Held, and no words from ChatGPT: a false alarm once they stop (at the latest FALSE_ALARM_MAX_S)."""
