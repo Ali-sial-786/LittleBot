@@ -110,6 +110,7 @@ class AssistantService(Service):
             bus.subscribe(Topics.PRIVACY_CHANGED, self._on_privacy),
             bus.subscribe(ANNOUNCE, self._on_announce),
             bus.subscribe("game.news", self._on_game_news),
+            bus.subscribe("screen.news", self._on_screen_news),
         ]
         why = self.pipeline_reason()
         log.info("assistant: voice pipeline %s (%s)", "assistant" if self.use_cascade() else "GPT-Live", why)
@@ -382,6 +383,17 @@ class AssistantService(Service):
         if session is not None and text and self._loop is not None:
             with contextlib.suppress(RuntimeError):
                 self._loop.call_soon_threadsafe(session.announce, text)
+
+    def _on_screen_news(self, event: Event) -> None:
+        """A card's news during a session: a timer that rang is said ("The egg timer (5 minutes) has just finished");
+        the rest (what a recipe card shows) the screen says by itself."""
+        session = self._session
+        text = str(event.get("text") or "").strip()
+        if session is None or not text or "finished" not in text or self._loop is None:
+            return
+        line = text.split(";")[0].strip().rstrip(".") + "."
+        with contextlib.suppress(RuntimeError):
+            self._loop.call_soon_threadsafe(session.announce, f"Ding! {line}")
 
     async def _announce(self, text: str, card: Any = None) -> None:
         if isinstance(card, dict) and getattr(self.ctx, "screens", None) is not None:

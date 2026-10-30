@@ -101,7 +101,7 @@ CARD_CLOSED = "screen.card_closed"  # {kind, reason}
 SCREEN_NEWS = "screen.news"  # {kind, title, text}: a quiet note for the live voice (CardHost.tell)
 KEEP_AWAKE = "screen.keep_awake"  # {kind}: a sticky card (a running timer) is still up
 
-VOICE_OWNERS = frozenset({"conversation", "live_voice"})
+VOICE_OWNERS = frozenset({"conversation", "live_voice", "assistant"})  # assistant: littlebot/assistant/session.py
 VOICE_RESOURCES = (Resource.FACE, Resource.AUDIO_OUT, Resource.MICROPHONE)
 GAME_STARTED = "game.started"  # littlebot.games.service.GAME_STARTED
 _STOP_STATES = {RobotState.SLEEPING.value, RobotState.ERROR.value, RobotState.PLAYING_MEDIA.value}
