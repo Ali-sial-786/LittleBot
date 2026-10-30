@@ -43,6 +43,7 @@ TAP_COOLDOWN_SECONDS = 1.5
 # Holding a finger on the idle face this long opens the games menu (littlebot/screens/cards/games.py).
 # A plain tap still giggles: babies tap the face all the time, a deliberate hold is a grown-up's.
 LONG_PRESS_SECONDS = 1.0
+DOUBLE_TAP_SECONDS = 0.45  # two taps on the idle face this close together: today at a glance
 LONG_PRESS_SLOP = 0.04  # of the face width: a finger that wanders further is not holding still
 # A resistive touch screen often flickers as a finger lands: down, up, down again within a few ms. A lift is
 # held back this long; a press again near it (TOUCH_BOUNCE_PX) means the finger never left.
@@ -1191,7 +1192,20 @@ class DisplayLoop:
             else:
                 self.face.look_at(nx, ny)
             return
+        now = time.monotonic()
+        last, self._last_press_at = getattr(self, "_last_press_at", 0.0), now
+        if now - last <= DOUBLE_TAP_SECONDS and self.show_glance():
+            return
         self.tap_reaction(nx, ny)
+
+    def show_glance(self) -> bool:
+        """A double tap on the idle face: the day at a glance (littlebot/screens/cards/glance.py)."""
+        screens = getattr(self.ctx, "screens", None)
+        if screens is None or self._games() is not None or self._screens() is not None or self.face_hidden():
+            return False
+        log.info("double tap on the face: today at a glance")
+        self._submit(lambda: screens.show({"card": "glance"}, source="touch"), "glance card")
+        return True
 
     def tap_reaction(self, nx: float, ny: float) -> bool:
         """Gentle giggle + bounce when the child taps the face. Returns True if it reacted."""

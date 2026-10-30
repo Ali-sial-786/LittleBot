@@ -509,3 +509,28 @@ def test_init_video_without_preference_uses_default():
     pg = _FakePg(env)
     D.init_video(pg, None, env)
     assert pg.display.inits == [None] and env == {}
+
+
+def test_double_tap_shows_today_at_a_glance(runtime):
+    robot = _robot(runtime, sim_panel=False)
+    robot.ctx.audio = FakeAudio(robot.ctx.bus)
+    shown: list[dict] = []
+
+    class Screens:
+        active = False
+
+        async def show(self, spec, source="voice"):
+            shown.append(dict(spec))
+            return {"ok": True}
+
+    robot.ctx.screens = Screens()
+    loop = D.DisplayLoop(robot, max_frames=2)
+    loop.open()
+    try:
+        r = loop.face_rect
+        loop.handle_click((r.centerx, r.centery), 1, 0)
+        loop.handle_click((r.centerx, r.centery), 1, 0)
+        assert _wait_until(lambda: shown == [{"card": "glance"}])
+    finally:
+        loop.close()
+        _close(robot)

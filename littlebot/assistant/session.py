@@ -143,6 +143,7 @@ class VoiceSession:
 
     async def _open(self) -> None:
         t0 = self._now()
+        self._spawn(self._warm())  # the brain's and the voice's connections open while the microphone does
         audio_svc = self.ctx.audio
         if hasattr(audio_svc, "suspend"):
             await audio_svc.suspend("assistant")
@@ -166,6 +167,13 @@ class VoiceSession:
         self.detail = "Listening."
         log.info("assistant: listening %d ms after the wake word (speech-to-text: %s)", self.connect_ms, self.stt_name)
         self._publish(ev.SESSION, {"active": True, "source": self.source})
+
+    async def _warm(self) -> None:
+        jobs = [self.svc.brain.warm()]
+        warm_tts = getattr(self.svc.tts(), "warm", None)
+        if warm_tts is not None:
+            jobs.append(warm_tts())
+        await asyncio.gather(*jobs, return_exceptions=True)
 
     async def _open_stt(self) -> None:
         provider = self.svc.stt_provider(exclude=self._failed_stt)
