@@ -23,6 +23,7 @@ Nothing is recorded: audio passes through in-memory buffers only; the words are 
 from __future__ import annotations
 
 import asyncio
+import collections
 import contextlib
 import logging
 import re
@@ -47,6 +48,8 @@ POLL_S = 0.05
 THINKING_AFTER_S = 0.9  # a tool still running after this long: the soft thinking sound (again every REPEAT)
 THINKING_REPEAT_S = 2.2
 QUESTION_FOLLOW_UP_S = 12.0  # LittleBot asked them something: wait at least this long for the answer
+HEARD_KEEP_S = 12.0  # the microphone kept (in memory only) to recognise whose voice a turn was
+IDENTIFY_TIMEOUT_S = 3.0
 SPECULATION_MAX_S = 8.0  # an early answer whose turn is neither confirmed nor resumed by then is dropped
 STT_REOPENS = 3  # speech-to-text that fails this often in one session ends it
 HEARING_GRACE_S = 2.0  # a turn that never ends (noise): finished after max_turn_seconds + this
@@ -108,6 +111,11 @@ class VoiceSession:
         self._spec_at = 0.0
         self._unsaid: list[str] = []  # announcements not said yet (busy until they are)
         self._saying = False
+        # Who is talking (voice recognition, opt-in) and who is in view (face recognition, opt-in): for the brain.
+        self.speaker: Any = None  # voices.service.VoiceMatch of the latest turn it was sure about
+        self._heard_audio: collections.deque[np.ndarray] = collections.deque()  # the last HEARD_KEEP_S, 16 kHz
+        self._heard_n = 0
+        self._faces: Any = None  # vision.faces.CallFaces while face recognition can look
 
     # ------------------------------------------------------------ status
     def snapshot(self) -> dict[str, Any]:
@@ -162,6 +170,8 @@ class VoiceSession:
         await asyncio.to_thread(self.audio.open, self._loop)
         self._setup_barge_in()
         await self._open_stt()
+        self._who_woke()
+        self._watch_faces()
         if self.carry is not None:  # what they said with the wake word goes first
             samples = self.carry.take()
             rate = int(getattr(self.carry, "sample_rate", STT_RATE) or STT_RATE)
@@ -222,6 +232,8 @@ class VoiceSession:
             if frame.dtype == np.int16:
                 x = x / 32768.0
             y = res.process(x)
+            if len(y) and self._voices() is not None:
+                self._keep_heard(y)
             if len(y) and self.stt is not None:
                 try:
                     await self.stt.feed(y)
@@ -310,6 +322,7 @@ class VoiceSession:
                     self._gate.set()  # the early answer was right: it is said now
                     self._publish(ev.HEARD, {"words": len(text.split()), "ms": spoke_ms})
                     self._publish(ev.CAPTION, {"who": "user", "text": text})
+                    self._identify_turn(spoke_ms)
                     return
                 self._cut_answer()  # their words changed: answer the final ones
             if not text:
@@ -318,6 +331,7 @@ class VoiceSession:
                 return
             self._publish(ev.HEARD, {"words": len(text.split()), "ms": spoke_ms})
             self._publish(ev.CAPTION, {"who": "user", "text": text})
+            self._identify_turn(spoke_ms)
             self._start_answer(text)
         elif event.kind == "error":
             await self._stt_failed(event.detail or "error")
@@ -423,7 +437,8 @@ class VoiceSession:
             else:
                 tools = box if gate is None else _GatedToolbox(box, gate)
                 result = await self.svc.brain.respond(text, history=self.svc.history.messages(), toolbox=tools,
-                                                      on_sentence=say, on_tool=self._tool_started, mark_day=False)
+                                                      on_sentence=say, on_tool=self._tool_started, mark_day=False,
+                                                      extra=self.who_notes())
                 if result.error and not result.sentences:
                     for s in _sentences(SORRY.get(result.error, SORRY_DEFAULT)):
                         say(s)
@@ -509,6 +524,89 @@ class VoiceSession:
                 log.info("assistant: routine %r matched", name)
                 return None  # the brain runs it (its context note says how), with the tools it needs
         return None
+
+    # ------------------------------------------------------------ who is talking, who is in view
+    def _voices(self) -> Any:
+        """``ctx.voices`` while voice recognition may listen (the parent's switch, the model), else None."""
+        voices = getattr(self.ctx, "voices", None)
+        try:
+            return voices if voices is not None and voices.blocked_reason() is None else None
+        except Exception:  # noqa: BLE001
+            return None
+
+    def _keep_heard(self, y: np.ndarray) -> None:
+        self._heard_audio.append(y)
+        self._heard_n += len(y)
+        while self._heard_audio and self._heard_n - len(self._heard_audio[0]) >= HEARD_KEEP_S * STT_RATE:
+            self._heard_n -= len(self._heard_audio.popleft())
+
+    def _who_woke(self) -> None:
+        """Whose voice said "Hey LittleBot" (the wake word keeps it only while voice recognition is on)."""
+        carry = self.carry
+        if carry is None or self._voices() is None:
+            return
+        try:
+            samples = carry.voice_audio()
+            carry.forget_voice()
+        except Exception:  # noqa: BLE001
+            return
+        if len(samples):
+            self._spawn(self._identify(samples, int(getattr(carry, "sample_rate", STT_RATE) or STT_RATE)))
+
+    def _identify_turn(self, spoke_ms: int) -> None:
+        """Whose voice that turn was (in the background: the answer never waits for it; the next one knows)."""
+        if self._voices() is None or not self._heard_audio:
+            return
+        audio = np.concatenate(list(self._heard_audio))
+        keep = int(min(HEARD_KEEP_S, max(1.0, spoke_ms / 1000 + 0.6)) * STT_RATE)
+        self._spawn(self._identify(audio[-keep:], STT_RATE))
+
+    async def _identify(self, samples: np.ndarray, rate: int) -> None:
+        voices = self._voices()
+        if voices is None:
+            return
+        try:
+            match = await asyncio.wait_for(voices.identify(samples, rate), IDENTIFY_TIMEOUT_S)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - optional: the brain just doesn't know who
+            log.debug("assistant: voice recognition failed", exc_info=True)
+            return
+        finally:
+            del samples
+        if match is None or getattr(match, "is_child", False):
+            return
+        if self.speaker is None or getattr(self.speaker, "person_id", None) != match.person_id:
+            log.info("assistant: talking with %s (by voice)", match.label)
+        self.speaker = match
+
+    def _watch_faces(self) -> None:
+        """Who is in front of the camera during the session (opt-in face recognition, on the robot)."""
+        try:
+            from littlebot.vision import faces  # noqa: PLC0415
+
+            recognition = faces.get_faces(self.ctx)
+            if recognition.blocked_reason() in ("off", "no_camera", "camera_off"):
+                return
+            self._faces = faces.CallFaces(recognition, tell=lambda _text: False,
+                                          hide=faces.hidden_child_name(self.ctx), now=self._now)
+            self._spawn(self._faces.run())
+        except Exception:  # noqa: BLE001 - knowing who is there must never stop the session
+            log.debug("assistant: face recognition unavailable", exc_info=True)
+            self._faces = None
+
+    def who_notes(self) -> list[str]:
+        """For the brain's context: who is talking (by voice) and who is in view (by face). Names only."""
+        notes: list[str] = []
+        if self.speaker is not None:
+            notes.append(f"the person talking sounds like {self.speaker.label} (recognised by voice; use their name "
+                         "now and then, and their own memories)")
+        faces = self._faces
+        if faces is not None:
+            seen = _safe(faces.summary) or ""
+            if seen and seen not in ("off", "nobody it knows"):
+                notes.append(f"in front of your camera: {seen} (recognised by face)")
+        return notes
 
     def _alarm_answer(self, text: str) -> str | None:
         """An alarm or reminder is ringing: "stop" / "okay" stops it, "snooze" snoozes it (no model needed)."""
@@ -758,6 +856,11 @@ class VoiceSession:
             self.ctx.state.release(current, "assistant session ended")
         if self.carry is not None:
             self.carry.drop(self.end_reason or "session ended")
+        if self._faces is not None:
+            with contextlib.suppress(Exception):
+                self._faces.close()
+        self._heard_audio.clear()
+        self._heard_n = 0
         unsaid, self._unsaid = self._unsaid, []
         for text in unsaid:  # an announcement that came as it ended: the speaker says it now
             self.svc.speak_later(text)

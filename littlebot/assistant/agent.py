@@ -263,8 +263,9 @@ class Brain:
         with contextlib.suppress(Exception):
             self.ctx.db.kv_set(LAST_DAY_KEY, _day())
 
-    def build_messages(self, text: str, history: list[dict[str, str]], toolbox: Any = None) -> list[dict[str, str]]:
-        items = self.context_items(toolbox)
+    def build_messages(self, text: str, history: list[dict[str, str]], toolbox: Any = None, *,
+                       extra: list[str] | None = None) -> list[dict[str, str]]:
+        items = [*(extra or []), *self.context_items(toolbox)]
         question = text.strip()
         if items:
             question = CONTEXT.format(items="; ".join(i.strip().rstrip(".") for i in items if i)) + "\n" + question
@@ -273,7 +274,8 @@ class Brain:
     # ------------------------------------------------------------ one turn
     async def respond(self, text: str, *, history: list[dict[str, str]], toolbox: Any,
                       on_sentence: OnSentence, on_tool: OnTool | None = None,
-                      images: list[bytes] | None = None, mark_day: bool = True) -> TurnResult:
+                      images: list[bytes] | None = None, mark_day: bool = True,
+                      extra: list[str] | None = None) -> TurnResult:
         """Answer ``text``: sentences go to ``on_sentence`` as they are ready (checked for safety first). Never
         raises (except cancellation); a failure is ``result.error``."""
         result = TurnResult()
@@ -318,7 +320,7 @@ class Brain:
         system = self.system_prompt()
         if toolbox is not None and hasattr(toolbox, "instructions"):
             system += "\n" + toolbox.instructions().strip()
-        messages = self.build_messages(text, history, toolbox)
+        messages = self.build_messages(text, history, toolbox, extra=extra)
         kwargs: dict[str, Any] = {"tools": tools, "run_tool": run_tool, "max_tool_rounds": MAX_TOOL_ROUNDS,
                                   "effort": "minimal", "on_delta": on_delta, "final_tools": FINAL_TOOLS}
         if images:

@@ -378,3 +378,38 @@ async def test_a_long_answer_is_not_cut_by_a_timeout_and_unsaid_news_is_kept() -
     announce(svc.ctx, "The egg timer is done.")
     await _wait(lambda: not svc.status()["active"], timeout=15)
     assert svc._tts.said == ["One.", "Two.", "Three.", "The egg timer is done."]
+
+
+async def test_the_brain_is_told_who_is_talking_by_voice() -> None:
+    from littlebot.voices.service import VoiceMatch
+
+    class Voices:
+        def blocked_reason(self) -> str | None:
+            return None
+
+        async def identify(self, samples: Any, rate: int) -> VoiceMatch:
+            assert rate == 16000 and len(samples) > 0
+            return VoiceMatch(person_id=1, name="Ali", role="dad", score=0.8, is_child=False)
+
+    brain = Scripted(["Hi!"], ["Sure."])
+    svc, stt, tts, _ = _service(brain, follow_up_seconds=2)
+    svc.ctx.voices = Voices()
+    seen: list[str] = []
+    real = svc.brain.build_messages
+
+    def spy(text: str, history: Any, toolbox: Any = None, *, extra: Any = None) -> Any:
+        seen.append(" ".join(extra or []))
+        return real(text, history, toolbox, extra=extra)
+
+    svc.brain.build_messages = spy
+    await svc.start()
+    await svc.start_session()
+    await _wait(lambda: stt.stream is not None)
+    await asyncio.sleep(0.2)  # some microphone audio to recognise
+    stt.say("hello")
+    await _wait(lambda: "Hi!" in tts.said)
+    await _wait(lambda: svc._session is not None and svc._session.speaker is not None)
+    stt.say("what's up")
+    await _wait(lambda: "Sure." in tts.said)
+    assert "sounds like Ali (dad)" in seen[1]  # recognised in the background: known by the next turn at the latest
+    await svc.stop_session("test")
