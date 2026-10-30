@@ -61,14 +61,14 @@ robot keeps working exactly as today until the new keys are added.
 
 ### 2. Skills (new abilities, in both pipelines)
 - [x] Skill registry: tools + prompt notes + run; offered by RobotToolbox (GPT-Live hand-offs) and the agent.
-- [ ] Memory (remember / recall / forget; facts in the prompt).
-- [ ] Reminders and alarms (natural times, repeat daily, announced proactively with a card, snooze).
-- [ ] Lists (shopping, to-do, any name): add / remove / read / clear; list card.
-- [ ] Personality styles (warm, witty, calm, concise, playful) switchable by voice.
-- [ ] Briefing ("good morning"): weather, reminders, lists, headlines (RSS, no key); evening version.
-- [ ] Smart home (Home Assistant REST: url + token), not offered until set up.
-- [ ] Routines made by voice ("when I say good night, …").
-- [ ] Music mode (YouTube audio with a now-playing screen) and translator mode.
+- [x] Memory (remember / recall / forget; facts in the prompt).
+- [x] Reminders and alarms (natural times, repeat daily, announced proactively with a card, snooze).
+- [x] Lists (shopping, to-do, any name): add / remove / read / clear; list card.
+- [x] Personality styles (warm, witty, calm, concise, playful) switchable by voice.
+- [x] Briefing ("good morning"): weather, reminders, lists, headlines (RSS, no key); evening version.
+- [x] Smart home (Home Assistant REST: url + token), not offered until set up.
+- [x] Routines made by voice ("when I say good night, …").
+- [x] Music mode (YouTube audio with a now-playing screen) and translator mode.
 
 ### 3. Games
 - [ ] Voice game framework (local judging, cards, scores in SQLite, "what's my high score").
@@ -76,7 +76,7 @@ robot keeps working exactly as today until the new keys are added.
 
 ### 4. Face and screen
 - [ ] Expression tags → face per sentence; thinking/listening/speaking attention cues (body language module).
-- [ ] New cards: list, reminders, quiz, hangman, briefing, home (glanceable time/weather/next reminder).
+- [x] New cards: list, reminders, quiz, hangman, briefing, home (glanceable time/weather/next reminder).
 
 ### 5. Movement (ready for hardware)
 - [ ] Head pan + tilt joints, look_at(x, y), nod / tilt / shrug / think gestures; body language drives them.
