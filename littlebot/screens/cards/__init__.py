@@ -12,7 +12,7 @@ log = logging.getLogger("littlebot.screens")
 
 _MODULES = ("weather", "clock", "timer", "maths", "definition", "explain", "recipe", "facts", "games",
             # the rethink's cards (a module not written yet is skipped)
-            "lists", "reminders", "briefing", "home", "glance", "music", "quiz", "word_game", "game_board")
+            "lists", "reminders", "briefing", "home", "glance", "note", "music", "quiz", "word_game", "game_board")
 
 for _name in _MODULES:
     try:
