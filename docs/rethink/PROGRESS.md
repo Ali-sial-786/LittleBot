@@ -1,6 +1,6 @@
 # Overnight rethink: progress
 
-Heartbeat: 2026-10-30T13:52:34-04:00
+Heartbeat: 2026-10-30T14:05:23-04:00
 Status: IN PROGRESS (follow-up asked 2026-10-30 afternoon: Spotify as default music; voice + face recognition in the assistant).
 
 Started from main 01d9259 (tag `checkpoint-2026-10-30-before-rethink`). Read BRIEF.md first.
