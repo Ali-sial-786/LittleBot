@@ -452,6 +452,19 @@ class SkillsConfig(_Section):
     translator: bool = True
     translator_idle_minutes: float = Field(default=15.0, ge=1.0, le=240.0)  # interpreter mode ends after this long quiet
     music: bool = True  # "play some jazz": YouTube audio with a now-playing screen
+    # Where "play some jazz" plays from (littlebot/skills/music.py): auto = Spotify when it is connected and the
+    # robot's Spotify receiver is visible (docs/SPOTIFY.md), else YouTube; "play it on YouTube" always works.
+    music_provider: Literal["auto", "spotify", "youtube"] = "auto"
+    # Spotify (littlebot/skills/spotify.py; needs Spotify Premium): the Client ID of the owner's app on
+    # developer.spotify.com (not a secret; the dashboard can set it too). The sign-in is kept in
+    # data/spotify_token.json (chmod 600). Plays on the robot's own Spotify Connect receiver
+    # (scripts/setup_spotify.sh), found by this name.
+    spotify: bool = True
+    spotify_client_id: str = ""
+    spotify_device_name: str = "LittleBot"
+    spotify_duck_percent: int = Field(default=20, ge=0, le=100)  # music volume while someone talks to LittleBot
+    spotify_explicit: bool = False  # False: never pick a song marked explicit (set the account's own filter too)
+    spotify_timeout_seconds: float = Field(default=6.0, gt=0, le=30)
     # Home Assistant (smart home): its address, e.g. http://homeassistant.local:8123; the long-lived access token
     # goes in .env (HOME_ASSISTANT_TOKEN) or data/home_assistant_token (chmod 600). Empty: no smart-home tools.
     home_assistant_url: str = ""

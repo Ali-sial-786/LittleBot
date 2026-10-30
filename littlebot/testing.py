@@ -450,6 +450,9 @@ def make_test_context(*, fakes: bool = True, **config_overrides: Any) -> RobotCo
 
     ctx.extras["chatgpt_auth"] = ChatGPTAuth(Path(tempfile.gettempdir()) / f"littlebot-test-{uuid.uuid4().hex}" /
                                              "chatgpt_auth.json")
+    # ... nor a real Spotify sign-in (littlebot/skills/spotify.py reads this path instead of data/)
+    ctx.extras["spotify_token_file"] = Path(tempfile.gettempdir()) / f"littlebot-test-{uuid.uuid4().hex}" / \
+        "spotify_token.json"
     if fakes:
         ctx.face = FakeFace(ctx.bus)
         ctx.audio = FakeAudio(ctx.bus)

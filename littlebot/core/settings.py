@@ -51,6 +51,10 @@ def build_defaults(cfg: LittleBotConfig) -> dict[str, Any]:
         # the assistant's personality (littlebot/skills/persona.py): warm | witty | calm | concise | playful, or
         # "custom: <text>"; changed by voice ("be more concise") or on the dashboard
         "assistant.persona": cfg.skills.persona,
+        # music (littlebot/skills/music.py, spotify.py): where "play some jazz" plays from (auto | spotify | youtube)
+        # and the Client ID of the owner's Spotify app (not a secret; the sign-in is in data/spotify_token.json)
+        "music.provider": cfg.skills.music_provider,
+        "spotify.client_id": cfg.skills.spotify_client_id,
         # ai
         "ai.enabled": False,  # cloud conversation, parent must opt in
         "ai.provider": cfg.ai.provider,
