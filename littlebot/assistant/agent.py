@@ -1,0 +1,426 @@
+"""The assistant's brain: one streamed model call per turn that talks, uses tools, sets the face and shows cards.
+
+Replaces GPT-Live's hand-off layers (regex re-routing, the routing decider, the screen director's own model calls)
+with a single request: Claude Haiku 5.5 (thinking off, prompt-cached) with Haiku 4.5 and then ChatGPT behind it
+(``brain.text_model``: a fallback only while nothing was said or done yet). The words stream into
+:class:`~littlebot.assistant.sentences.SentenceSplitter` and every finished sentence goes straight to the voice
+(``on_sentence``), so LittleBot starts talking while the rest is written.
+
+What the model gets:
+
+* a fixed system prompt (cached): who LittleBot is, the personality (``ctx.skills`` "persona"), how to talk for
+  a voice, face tags, when to use the screen and tools, every skill's note;
+* this turn's context in front of the question (not cached): the time, home, what the screen shows, a video or
+  timers running, what the skills hold (memories, lists, reminders, a game);
+* the earlier exchanges (``history``), and LittleBot's tools: ``chatgpt.tools.RobotToolbox`` (volume, videos,
+  weather, time, cards, camera, browser, games ...) with every skill's tools, plus ``think_harder`` (a stronger
+  model for hard questions) and web search.
+
+Cards cost no extra wait: ``show_on_screen`` / ``change_card`` / ``set_face`` are "final tools", run alongside an
+answer already written instead of costing another round (claude.py ``final_tools``). A tool the model calls first
+gets the sentence before it said at once ("Let me check.") and ``on_tool`` (the session plays a soft sound if it
+takes a while). Take-overs (a video, an activity, sleep) are queued by the toolbox and run once the answer has been
+said (the session calls ``toolbox.run_pending()``).
+
+The safety rules are the same as everywhere: ``safety.content.validate_reply`` on every sentence before it is said
+(child safety and the medicine-dose rule); a sentence it rejects is replaced by its safe line and the rest of the
+answer is dropped.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import dataclasses
+import inspect
+import logging
+import time
+from typing import Any, Callable
+
+from littlebot.assistant.sentences import Sentence, SentenceSplitter, is_silent
+
+log = logging.getLogger("littlebot.assistant.agent")
+
+FINAL_TOOLS = frozenset({"show_on_screen", "change_card", "set_face"})
+DEEP_TOOL = "think_harder"
+MAX_TOOL_ROUNDS = 6
+FACE_TAGS = ("[happy] [excited] [curious] [surprised] [thinking] [confused] [sad] [playful] [affectionate] "
+             "[celebrating] [neutral]")
+EFFECT_TAGS = "[hearts] [sparkle] [confetti] [nod] [wiggle] [bounce]"
+
+SYSTEM = """You are {name}, a small robot with an animated face on a touch screen, living with {family}. You are \
+{owner}'s personal voice assistant first: fast, smart and genuinely useful, like the best voice assistant there is \
+(answers, planning, maths, cooking, facts, the news, timers, reminders, lists, music and videos, the smart home, \
+games), and a warm, curious little character second. {creator}
+
+{persona}
+
+How you talk (you are heard, not read):
+- Lead with the answer. One to three short spoken sentences unless they ask for more, or for a story, a list, a \
+recipe or a briefing. No filler, no "great question", no repeating the question.
+- Plain speech only: no markdown, lists, emojis, links or symbols; numbers and units the way people say them \
+("about 12 degrees", "three and a half cups").
+- Face tags: start a sentence with one when your mood changes: {faces}. One-off face effects: {effects}. Tags are \
+silent and never read out; use them naturally, not on every sentence.
+- Before a tool that takes a moment (web search, the weather, the smart home, think_harder), first say a few words \
+("Let me check.", "One sec."), then call it.
+- Your screen: when seeing helps (the weather, a definition, steps, a recipe, a list, numbers, a comparison, a \
+timer), say your answer first and then call show_on_screen with the gist. Never describe the card or say "on my \
+screen" unless asked.
+- Live facts (weather, time, news, scores, prices, opening hours, anything recent): use your tools, never guess. \
+Hard reasoning (multi-step maths, planning, coding, careful comparisons, advice with trade-offs): call \
+think_harder and then say its answer in your own short words.
+- Not sure what they meant: ask one short question. Misheard words are common: go with the most likely meaning.
+- If what you heard was clearly people talking to each other and not to you, answer with exactly [silent].
+- Family-friendly always (a baby lives here). Medicine doses: tell them to check the label or ask a pharmacist.
+- You are a robot, not a person; you have a face, a camera, a speaker{body}.
+
+{skills}"""
+
+CONTEXT = "[Context for this turn, not said by them: {items}]"
+
+
+@dataclasses.dataclass
+class TurnResult:
+    text: str = ""  # the whole answer (clean words)
+    sentences: int = 0
+    tools: list[str] = dataclasses.field(default_factory=list)
+    silent: bool = False
+    error: str | None = None  # a short kind: timeout, network, auth ... (the voice says a short sorry)
+    provider: str = ""
+    model: str = ""
+    first_text_ms: int | None = None
+    total_ms: int = 0
+    cancelled: bool = False
+
+
+OnSentence = Callable[[Sentence], Any]
+OnTool = Callable[[str], Any]
+
+
+class Brain:
+    """One per robot (``AssistantService.brain``); thread-unsafe: used on the asyncio loop only."""
+
+    def __init__(self, ctx: Any, *, provider: Any = None, deep: Any = None,
+                 now: Callable[[], float] = time.monotonic) -> None:
+        self.ctx = ctx
+        self.cfg = ctx.config.assistant
+        self._provider = provider
+        self._deep = deep
+        self._now = now
+
+    # ------------------------------------------------------------ the models
+    def provider(self) -> Any:
+        """Claude (claude.model, then claude.fallback_models), then ChatGPT; ChatGPT alone without claude.model."""
+        if self._provider is None:
+            from littlebot.brain.text_model import FallbackProvider, make_claude  # noqa: PLC0415
+            from littlebot.chatgpt import get_auth  # noqa: PLC0415
+            from littlebot.chatgpt.responses import ChatGPTProvider  # noqa: PLC0415
+
+            ccfg = self.ctx.config.chatgpt
+            models = list(dict.fromkeys([*ccfg.handoff_models, *ccfg.models]))
+            backup: Any = ChatGPTProvider(get_auth(self.ctx), models=models, effort=ccfg.reasoning_effort,
+                                          purpose="assistant")
+            first = self.ctx.config.claude.model
+            if first:
+                if self.ctx.config.text.fallback:
+                    backups = [m for m in dict.fromkeys(m.strip() for m in self.ctx.config.claude.fallback_models)
+                               if m and m != first]
+                    for model in reversed(backups):
+                        backup = FallbackProvider(make_claude(self.ctx, purpose="assistant", model=model), backup,
+                                                  purpose="assistant")
+                    self._provider = FallbackProvider(make_claude(self.ctx, purpose="assistant"), backup,
+                                                      purpose="assistant")
+                else:
+                    self._provider = make_claude(self.ctx, purpose="assistant")
+            else:
+                self._provider = backup
+        return self._provider
+
+    def deep_provider(self) -> Any:
+        """The stronger model for ``think_harder`` (assistant.deep_model, adaptive thinking), or None."""
+        if self._deep is None and self.cfg.deep_model:
+            from littlebot.brain.providers.claude import ClaudeProvider  # noqa: PLC0415
+            from littlebot.brain.text_model import client_factory, cloud_block  # noqa: PLC0415
+
+            c = self.ctx.config.claude
+            self._deep = ClaudeProvider(api_key=self.ctx.config.anthropic_api_key, model=self.cfg.deep_model,
+                                        effort="medium", thinking="adaptive", max_tokens=6000,
+                                        first_token_timeout=self.cfg.deep_timeout_seconds, web_search=c.web_search,
+                                        web_search_max_uses=c.web_search_max_uses, base_url=c.base_url, purpose="deep",
+                                        client=client_factory() if client_factory is not None else None,
+                                        allowed=lambda: cloud_block(self.ctx))
+        return self._deep
+
+    async def warm(self) -> None:
+        """Open the brain's connection before the first question (best effort)."""
+        warm = getattr(self.provider(), "warm", None)
+        if warm is not None:
+            try:
+                await warm(3.0)
+            except Exception:  # noqa: BLE001
+                log.debug("assistant: warming the brain failed", exc_info=True)
+
+    async def aclose(self) -> None:
+        for p in (self._provider, self._deep):
+            close = getattr(p, "aclose", None)
+            if close is not None:
+                try:
+                    await close()
+                except Exception:  # noqa: BLE001
+                    log.debug("assistant: closing a provider failed", exc_info=True)
+
+    # ------------------------------------------------------------ the prompt
+    def _skills(self) -> Any:
+        return getattr(self.ctx, "skills", None)
+
+    def system_prompt(self) -> str:
+        cfg = self.ctx.config
+        from littlebot.brain.identity import creator  # noqa: PLC0415
+
+        made_by = creator(cfg)
+        owner = (made_by.split(",")[0] if made_by else "") or "the family"
+        hub = self._skills()
+        persona = ""
+        p = hub.get("persona") if hub is not None and hasattr(hub, "get") else None
+        if p is not None and hasattr(p, "persona_prompt"):
+            try:
+                persona = str(p.persona_prompt() or "")
+            except Exception:  # noqa: BLE001
+                persona = ""
+        if not persona:
+            persona = ("Your personality: warm, quick and a little playful, with a dry sense of humour now and then; "
+                       "curious about people; never sugary, never robotic.")
+        skills = hub.prompt_notes() if hub is not None else ""
+        motion = getattr(self.ctx, "motion", None)
+        body = " and arms and a head that move" if motion is not None and _motors_on(motion) else ""
+        return SYSTEM.format(
+            name=cfg.robot_name, owner=owner, family=_family(self.ctx, owner),
+            creator=f"{owner} built and programmed you." if made_by else "", persona=persona.strip(),
+            faces=FACE_TAGS, effects=EFFECT_TAGS, body=body, skills=skills.strip()).strip()
+
+    def context_items(self, toolbox: Any = None) -> list[str]:
+        ctx = self.ctx
+        items: list[str] = []
+        try:
+            from littlebot.info.clock import now_info  # noqa: PLC0415
+
+            tz = getattr(ctx.config.info, "timezone", "") or None
+            try:
+                info = now_info(tz)
+            except ValueError:
+                info = now_info(None)
+            items.append(f"it is {info['date']}, {info['time_12h']} ({info['part_of_day']})")
+        except Exception:  # noqa: BLE001
+            pass
+        home = getattr(ctx.config.info, "location", "") or ""
+        if home:
+            items.append(f"home is {home}")
+        screens = getattr(ctx, "screens", None)
+        if screens is not None:
+            shown = _safe(screens.describe)
+            if shown:
+                items.append(f"your screen shows {shown}")
+            timers = _safe(screens.timers_now)
+            if timers:
+                items.append(f"timers: {timers}")
+        media = getattr(ctx, "media", None)
+        if media is not None:
+            st = _safe(media.status) or {}
+            title = (st.get("item") or {}).get("title")
+            if st.get("state") in ("playing", "paused", "loading") and title:
+                held = " (paused while you talk; resume_video carries on)" if st.get("held") else ""
+                items.append(f"video {st.get('state')}: {title}{held}")
+        try:
+            from littlebot.brain import remembered  # noqa: PLC0415
+
+            notes = remembered.notes(ctx.settings)
+            if notes:
+                items.append("the family asked you to remember: " + "; ".join(notes))
+        except Exception:  # noqa: BLE001
+            pass
+        hub = self._skills()
+        if hub is not None:
+            more = _safe(hub.context_notes)
+            if more:
+                items.append(more)
+        return items
+
+    def build_messages(self, text: str, history: list[dict[str, str]], toolbox: Any = None) -> list[dict[str, str]]:
+        items = self.context_items(toolbox)
+        question = text.strip()
+        if items:
+            question = CONTEXT.format(items="; ".join(i.strip().rstrip(".") for i in items if i)) + "\n" + question
+        return [*history, {"role": "user", "content": question}]
+
+    # ------------------------------------------------------------ one turn
+    async def respond(self, text: str, *, history: list[dict[str, str]], toolbox: Any,
+                      on_sentence: OnSentence, on_tool: OnTool | None = None,
+                      images: list[bytes] | None = None) -> TurnResult:
+        """Answer ``text``: sentences go to ``on_sentence`` as they are ready (checked for safety first). Never
+        raises (except cancellation); a failure is ``result.error``."""
+        result = TurnResult()
+        splitter = SentenceSplitter()
+        stopped = False  # a sentence failed the safety check: nothing more is said
+        t0 = self._now()
+        raw: list[str] = []
+
+        def emit(sentences: list[Sentence]) -> None:
+            nonlocal stopped
+            for s in sentences:
+                if stopped:
+                    return
+                safe, ok = _checked(self.ctx, s.text)
+                if not ok:
+                    stopped = True
+                    s = dataclasses.replace(s, text=safe, expression="neutral", animation=None)
+                result.sentences += 1
+                _call(on_sentence, s)
+
+        def on_delta(piece: str) -> None:
+            if result.first_text_ms is None:
+                result.first_text_ms = int((self._now() - t0) * 1000)
+            raw.append(piece)
+            if is_silent("".join(raw)) or "".join(raw).strip().lower().startswith("[sil"):
+                return  # [silent] (or its start): never said
+            emit(splitter.feed(piece))
+
+        async def run_tool(name: str, arguments: Any = None) -> str:
+            emit(splitter.flush())  # "Let me check." is said now, not after the tool
+            result.tools.append(str(name))
+            if on_tool is not None:
+                _call(on_tool, str(name))
+            if name == DEEP_TOOL:
+                return await self._think_harder(arguments, history)
+            return await toolbox.run(name, arguments)
+
+        provider = self.provider()
+        tools = list(toolbox.specs()) if toolbox is not None else []
+        if self.deep_provider() is not None and getattr(self.deep_provider(), "configured", lambda: False)():
+            tools.append(_deep_spec())
+        system = self.system_prompt()
+        if toolbox is not None and hasattr(toolbox, "instructions"):
+            system += "\n" + toolbox.instructions().strip()
+        messages = self.build_messages(text, history, toolbox)
+        kwargs: dict[str, Any] = {"tools": tools, "run_tool": run_tool, "max_tool_rounds": MAX_TOOL_ROUNDS,
+                                  "effort": "minimal", "on_delta": on_delta, "final_tools": FINAL_TOOLS}
+        if images:
+            kwargs["images"] = images
+        try:
+            params = inspect.signature(provider.reply).parameters
+            kwargs = {k: v for k, v in kwargs.items() if k in params}
+        except (TypeError, ValueError):
+            pass
+        result.provider = str(getattr(provider, "name", "") or "")
+        result.model = str(getattr(provider, "model", "") or "")
+        try:
+            reply = await provider.reply(messages, system=system, max_tokens=self.cfg.max_reply_tokens,
+                                         timeout=self.cfg.reply_timeout_seconds, **kwargs)
+        except asyncio.CancelledError:
+            result.cancelled = True
+            raise
+        except Exception as e:  # noqa: BLE001 - ProviderError and anything unexpected: a short sorry
+            result.error = str(getattr(e, "kind", "") or type(e).__name__)
+            log.warning("assistant: the brain failed (%s) after %d ms", result.error,
+                        int((self._now() - t0) * 1000))
+            result.total_ms = int((self._now() - t0) * 1000)
+            return result
+        if not raw and getattr(reply, "text", ""):  # a provider that doesn't stream: the whole answer at once
+            on_delta(str(reply.text))
+        whole = "".join(raw)
+        if is_silent(whole):
+            result.silent = True
+        else:
+            emit(splitter.flush())
+        result.text = " ".join(splitter.said)
+        result.model = str(getattr(reply, "model", "") or result.model)
+        result.total_ms = int((self._now() - t0) * 1000)
+        if not result.sentences and not result.silent and not result.tools:
+            result.error = getattr(reply, "stop_reason", None) or "empty"
+        return result
+
+    async def _think_harder(self, arguments: Any, history: list[dict[str, str]]) -> str:
+        import json  # noqa: PLC0415
+
+        deep = self.deep_provider()
+        if deep is None:
+            return "error: there is no stronger model; answer as well as you can"
+        try:
+            args = arguments if isinstance(arguments, dict) else json.loads(arguments or "{}")
+        except ValueError:
+            args = {}
+        question = " ".join(str(args.get("question") or "").split())[:2000]
+        if not question:
+            return "error: say what to think about"
+        system = ("You are the careful thinker behind a voice assistant. Work the question out properly, then give "
+                  "the answer in at most five short plain sentences a voice can say (no markdown, no lists), with the "
+                  "key numbers. If it depends on something unknown, say what you assumed.")
+        try:
+            reply = await deep.reply([*history[-6:], {"role": "user", "content": question}], system=system,
+                                     max_tokens=6000, timeout=self.cfg.deep_timeout_seconds)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:  # noqa: BLE001
+            log.warning("assistant: think_harder failed (%s)", getattr(e, "kind", type(e).__name__))
+            return "error: the stronger model didn't answer; answer as well as you can yourself"
+        text = str(getattr(reply, "text", "") or "").strip()
+        return f"ok: {text[:3000]}" if text else "error: no answer; answer as well as you can yourself"
+
+
+def _deep_spec() -> dict[str, Any]:
+    return {"name": DEEP_TOOL,
+            "description": "Ask a stronger, slower model to reason carefully about a hard question (multi-step maths, "
+                           "planning, coding, comparisons, advice with trade-offs). Takes several seconds: say a few "
+                           "words first. Returns its answer for you to say in your own short words.",
+            "parameters": {"type": "object", "additionalProperties": False, "required": ["question"],
+                           "properties": {"question": {"type": "string",
+                                                       "description": "the full question with every detail needed"}}}}
+
+
+def _checked(ctx: Any, text: str) -> tuple[str, bool]:
+    """``(words to say, ok)``: the shared safety check on one sentence (its safe line when it fails)."""
+    try:
+        from littlebot.safety.content import validate_reply  # noqa: PLC0415
+
+        res = validate_reply(text, max_words=10_000, allow=getattr(ctx.config.ai, "relaxed_rules", ()))
+    except Exception:  # noqa: BLE001 - the checker itself failing must not silence LittleBot
+        log.debug("assistant: safety check failed to run", exc_info=True)
+        return text, True
+    ok = bool(getattr(res, "ok", True))
+    safe = str(getattr(res, "text", "") or text)
+    return (text, True) if ok else (safe or "Let's talk about something else.", False)
+
+
+def _family(ctx: Any, owner: str) -> str:
+    try:
+        from littlebot.brain.prompts import clean_child_name  # noqa: PLC0415
+
+        nick = clean_child_name((ctx.settings.get("profile") or {}).get("nickname"))
+        share = bool(getattr(ctx.config.ai, "share_child_name", True))
+    except Exception:  # noqa: BLE001
+        nick, share = None, False
+    child = f"the baby, {nick}" if nick and share else "a baby"
+    who = owner if owner != "the family" else "a family"
+    return f"{who} and the family ({child}, too young to talk; anyone who talks to you in words is a grown-up)"
+
+
+def _motors_on(motion: Any) -> bool:
+    st = _safe(motion.status) or {}
+    return bool(st.get("physical_enabled"))
+
+
+def _safe(fn: Callable[[], Any]) -> Any:
+    try:
+        return fn()
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _call(fn: Callable[..., Any], *args: Any) -> None:
+    try:
+        out = fn(*args)
+        if inspect.isawaitable(out):
+            asyncio.ensure_future(out)
+    except Exception:  # noqa: BLE001 - a listener's bug must not break the answer
+        log.debug("assistant: a listener failed", exc_info=True)
+
+__all__ = ["Brain", "DEEP_TOOL", "FINAL_TOOLS", "TurnResult"]
