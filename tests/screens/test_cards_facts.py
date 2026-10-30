@@ -77,6 +77,46 @@ async def test_what_each_layout_needs(spec: dict[str, Any]) -> None:
     assert await base.build({"card": "facts", **spec}, None, base.RecordingHost()) is None
 
 
+LION_TIGER = "Lion or tiger?: Lion vs Tiger: Weight: 190 kg, 220 kg; Lives in: Africa, Asia"
+
+
+@pytest.mark.parametrize(("spec", "said"), [
+    ({"rows": [{"label": "Weight", "Lion": "190 kg", "Tiger": "220 kg"},  # records, a key per column
+               {"label": "Lives in", "Lion": "Africa", "Tiger": "Asia"}]}, LION_TIGER),
+    ({"columns": ["Lion", "Tiger"],  # names as columns, each row a label and its values
+      "rows": [{"label": "Weight", "values": ["190 kg", "220 kg"]}, {"label": "Lives in", "values": ["Africa", "Asia"]}]},
+     LION_TIGER),
+    ({"rows": [["", "Lion", "Tiger"], ["Weight", "190 kg", "220 kg"], ["Lives in", "Africa", "Asia"]]},  # a table
+     LION_TIGER),
+    ({"columns": [["Lion", "190 kg", "Africa"], ["Tiger", "220 kg", "Asia"]], "rows": ["Weight", "Lives in"]},
+     LION_TIGER),
+    ({"rows": [{"name": "Lion", "facts": ["190 kg", "Africa"]}, {"name": "Tiger", "facts": ["220 kg", "Asia"]}]},
+     "Lion or tiger?: Lion vs Tiger: 190 kg, 220 kg; Africa, Asia"),  # the columns under the wrong name
+])
+async def test_a_comparison_written_as_a_table_still_shows(spec: dict[str, Any], said: str) -> None:
+    from littlebot.screens.director import clean_spec
+
+    cleaned, why = clean_spec({"card": "facts", "layout": "compare", "title": "Lion or tiger?", **spec},
+                              base.card_types())
+    assert cleaned is not None, why  # the director keeps the table's shape for the card
+    card = await make(cleaned)
+    assert card.layout == "compare" and card.describe() == said
+    preview.surface(card, seconds=1.0)
+
+
+async def test_a_comparison_with_names_only_in_the_title_and_values_by_row() -> None:
+    card = await make({"layout": "compare", "title": "Genghis Khan vs Kublai Khan",
+                       "rows": [{"label": "Known for", "values": ["Conquest", "Ruling China"]}]})
+    assert [c["name"] for c in card.columns] == ["Genghis Khan", "Kublai Khan"] and card.rows == ["Known for"]
+
+
+async def test_an_empty_comparison_says_what_it_was_sent(caplog: pytest.LogCaptureFixture) -> None:
+    caplog.set_level("INFO", logger="littlebot.screens")
+    assert await base.build({"card": "facts", "layout": "compare", "title": "A or B", "rows": ["Size", "Age"]},
+                            None, base.RecordingHost()) is None
+    assert "rows=[2 x str]" in caplog.text and "title=str" in caplog.text
+
+
 async def test_a_profile_without_its_title_shows_its_facts_as_a_list() -> None:
     card = await base.build({"card": "facts", "layout": "profile", "facts": ["a"]}, None, base.RecordingHost())
     assert card is not None and card.layout == "list"

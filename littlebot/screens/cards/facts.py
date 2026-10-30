@@ -19,6 +19,7 @@ Text is at least BODY_PX, at most MAX_LINES lines a page; "next" / "prev" (or a 
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 import pygame
@@ -47,15 +48,83 @@ PIC_W = 262
 MAX_ITEMS = 12
 
 
+LABEL_KEYS = ("label", "row", "aspect", "category", "feature", "trait", "what")
+VS = re.compile(r"\s+(?:vs\.?|versus|or|and|compared (?:to|with))\s+", re.I)
+
+
 def _column(raw: Any) -> dict[str, Any] | None:
     if isinstance(raw, str):
         raw = {"name": raw}
+    if isinstance(raw, (list, tuple)):  # ["Lion", "190 kg", "Africa"]: its name, then its facts
+        cells = [kit.clean(c, 50) for c in raw]
+        raw = {"name": cells[0], "facts": cells[1:]} if cells else {}
     if not isinstance(raw, dict):
         return None
     name = kit.clean(raw.get("name") or raw.get("title"), 24)
     if not name:
         return None
     return {"name": name, "facts": kit.str_list(raw.get("facts") or raw.get("values"), max_items=8, limit=50)}
+
+
+def _table(columns: list[dict[str, Any]], raw_rows: Any, title: str) -> tuple[list[dict[str, Any]], list[str]]:
+    """Columns and row labels from a comparison written row by row, as models often do: ``rows`` as records
+    ({"label": "Weight", "Lion": "190 kg", "Tiger": "220 kg"}, or a label and its "values" in the columns'
+    order) or as lists (a header row, then a label and a value per column). ([], []) when it isn't one."""
+    if not isinstance(raw_rows, (list, tuple)):
+        return [], []
+    records = [r for r in raw_rows if isinstance(r, (dict, list, tuple))]
+    if not records:
+        return [], []
+    if all(isinstance(r, dict) and ("facts" in r or "values" in r) and not any(str(k).lower() in LABEL_KEYS
+                                                                              for k in r) for r in records):
+        named = [c for c in (_column(r) for r in records) if c and c["facts"]]  # columns, under the wrong name
+        return (named[:3], []) if len(named) >= 2 else ([], [])
+    names = [c["name"] for c in columns]
+    if not names and isinstance(records[0], (list, tuple)):  # a header row: ["", "Lion", "Tiger"]
+        header = [kit.clean(c, 24) for c in records[0]]
+        width = max((len(r) for r in records[1:] if isinstance(r, (list, tuple))), default=len(header))
+        # its empty corner cell may have been dropped on the way: then every cell of it is a name
+        names = [n for n in (header if len(header) < width else header[1:]) if n]
+        records = records[1:]
+    labels: list[str] = []
+    cells: list[dict[int, str]] = []
+    for r in records:
+        row: dict[int, str] = {}
+        if isinstance(r, dict):
+            key = next((k for k in r if str(k).lower() in LABEL_KEYS), None)
+            label = kit.clean(r.get(key), 24) if key is not None else ""
+            values = r.get("values") or r.get("facts")
+            if isinstance(values, (list, tuple)):  # in the columns' order
+                row = {i: kit.clean(v, 50) for i, v in enumerate(values)}
+            else:
+                for k, v in r.items():
+                    name = kit.clean(k, 24)
+                    if k == key or not name or isinstance(v, (dict, list, tuple)):
+                        continue
+                    if name not in names:
+                        names.append(name)
+                    row[names.index(name)] = kit.clean(v, 50)
+        else:
+            label = kit.clean(r[0], 24) if r else ""
+            row = {i: kit.clean(v, 50) for i, v in enumerate(list(r)[1:])}
+        labels.append(label)
+        cells.append(row)
+    if not names:  # "Genghis Khan vs Kublai Khan"
+        names = [n for n in (kit.clean(p, 24) for p in VS.split(title.rstrip("?!. "))) if n]
+    names = names[:3]
+    out = [{"name": n, "facts": [row.get(i) or "-" for row in cells]} for i, n in enumerate(names)]
+    if len(out) < 2 or not any(row for row in cells):
+        return [], []
+    return out, labels if any(labels) else []
+
+
+def _shape(value: Any) -> str:
+    """What a field looked like (types and keys, never the words), for the log."""
+    if isinstance(value, dict):
+        return "{" + ",".join(sorted(str(k)[:20] for k in value))[:80] + "}"
+    if isinstance(value, (list, tuple)):
+        return f"[{len(value)} x {_shape(value[0])}]" if value else "[]"
+    return type(value).__name__
 
 
 def _team(raw: Any) -> dict[str, str] | None:
@@ -81,6 +150,10 @@ class FactsCard(Card):
         self.ordered = spec.get("ordered") is not False
         self.columns = [c for c in (_column(c) for c in (spec.get("columns") or [])[:3]) if c]
         self.rows = kit.str_list(spec.get("rows"), max_items=8, limit=24)
+        if self.layout == "compare" and not any(c["facts"] for c in self.columns):
+            columns, labels = _table(self.columns, spec.get("rows"), self.title)
+            if columns:
+                self.columns, self.rows = columns, labels[:8]
         self.subtitle = kit.clean(spec.get("subtitle"), 40)
         self.facts = kit.str_list(spec.get("facts"), max_items=4, limit=80)
         self.teams = [t for t in (_team(t) for t in (spec.get("teams") or [])[:2]) if t]
@@ -416,8 +489,8 @@ async def _build(spec: dict[str, Any], ctx: Any, host: Any) -> Card | None:
         if _fits(FactsCard({**given, "layout": layout}, None), pic):
             log.info("facts card: the %s layout was missing its part; shown as %s", card.layout, layout)
             return FactsCard({**given, "layout": layout}, host)
-    fields = ", ".join(sorted(k for k, v in spec.items() if v not in (None, "", [], {}))) or "none"
-    log.info("facts card not made: the %s layout had nothing to show (fields given: %s)", card.layout, fields[:200])
+    fields = ", ".join(f"{k}={_shape(v)}" for k, v in sorted(spec.items()) if v not in (None, "", [], {})) or "none"
+    log.info("facts card not made: the %s layout had nothing to show (fields given: %s)", card.layout, fields[:400])
     return None
 
 
@@ -444,12 +517,18 @@ register(CardType(
                                                   "(\"as tall as an 81-storey building\")"},
         "items": {"type": "array", "items": {"type": "string"}, "description": "list: the items, each 1-6 words"},
         "ordered": {"type": "boolean", "description": "list: number the items (default true)"},
+        # (lists and plain names are kept too: the card also reads a comparison written as a table)
         "columns": {"type": "array", "maxItems": 3, "description": "compare: 2-3 columns, each "
                     "{\"name\": \"Lion\", \"facts\": [\"190 kg\", \"Africa\"]}; the n-th facts line up as a row",
-                    "items": {"type": "object", "properties": {"name": {"type": "string"},
-                                                               "facts": {"type": "array", "items": {"type": "string"}}}}},
-        "rows": {"type": "array", "items": {"type": "string"},
-                 "description": "compare, optional: a label for each row of facts (\"Weight\", \"Lives in\")"},
+                    "items": {"type": ["object", "array", "string"], "items": {"type": "string"},
+                              "properties": {"name": {"type": "string"}, "title": {"type": "string"},
+                                             "facts": {"type": "array", "items": {"type": "string"}},
+                                             "values": {"type": "array", "items": {"type": "string"}}}}},
+        "rows": {"type": "array", "items": {"type": ["string", "object", "array"], "items": {"type": "string"},
+                                            "additionalProperties": {"type": ["string", "array"],
+                                                                     "items": {"type": "string"}}},
+                 "description": "compare, optional: a label for each row of facts (\"Weight\", \"Lives in\"); "
+                                "the facts themselves go in columns"},
         "subtitle": {"type": "string", "description": "profile: what it is, 1-4 words (\"Animal\", \"City in Japan\")"},
         "facts": {"type": "array", "items": {"type": "string"}, "maxItems": 3,
                   "description": "profile: 2-3 short facts, each at most 8 words"},

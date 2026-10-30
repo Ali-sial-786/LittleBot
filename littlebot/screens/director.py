@@ -551,15 +551,16 @@ def _as(value: Any, kind: str, schema: dict[str, Any], depth: int) -> Any:  # no
         if not isinstance(value, dict) or depth >= 3:
             return _DROP
         props = schema.get("properties")
+        extra = schema.get("additionalProperties")  # free-form keys of this shape (a table row: a key per column)
         cleaned: dict[str, Any] = {}
         for key, v in list(value.items())[:MAX_KEYS * 2]:
             name = str(key)[:40]
-            if isinstance(props, dict):
-                if name not in props:
-                    continue
+            if isinstance(props, dict) and name in props:
                 c = _clean(v, props[name] if isinstance(props[name], dict) else {}, depth + 1)
+            elif isinstance(props, dict) and not isinstance(extra, dict):
+                continue
             else:
-                c = _clean(v, {}, depth + 1)
+                c = _clean(v, extra if isinstance(extra, dict) else {}, depth + 1)
             if c is not _DROP:
                 cleaned[name] = c
             if len(cleaned) >= MAX_KEYS:
