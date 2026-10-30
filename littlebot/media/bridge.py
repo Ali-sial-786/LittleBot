@@ -85,6 +85,9 @@ class PlayerBridge:
                 "list_id": item.get("list_id"), "start_seconds": int(item.get("start_seconds") or 0),
                 "title": item.get("title", ""),
             }
+            if item.get("presentation") == "music":  # the page's now-playing screen (otherwise a plain video)
+                self._item["presentation"] = "music"
+                self._item["channel"] = str(item.get("channel") or "")[:80]
             self._action, self._reason = "play", None
             self._player, self._player_at = {}, None
             self._owner = None  # a new load is claimed afresh
