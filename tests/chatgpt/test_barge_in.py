@@ -538,16 +538,16 @@ class FakeStopWords:
 
     def __init__(self) -> None:
         self.pushed = self.quiets = 0
-        self.hit: str | None = None
+        self.hit: tuple[str, float] | None = None
         self.closed = False
 
-    def push(self, frame: np.ndarray) -> None:
+    def push(self, frame: np.ndarray, at: float | None = None) -> None:
         self.pushed += 1
 
     def quiet(self) -> None:
         self.quiets += 1
 
-    def take(self) -> str | None:
+    def take(self) -> tuple[str, float] | None:
         hit, self.hit = self.hit, None
         return hit
 
@@ -555,13 +555,16 @@ class FakeStopWords:
         self.closed = True
 
 
-async def short_word(c: Call, words: FakeStopWords | None, said: str = "stop") -> None:
-    """A quick "stop!" over the voice (0.16 s, too short for live_barge_in_speech_ms), recognised just after."""
-    for u in frames_of(voiced(120, 0.16, 0.08, seed=13)):
+async def short_word(c: Call, words: FakeStopWords | None, said: str = "stop", *, f0: float = 120.0,
+                     late: int = 3) -> None:
+    """A quick "stop!" over the voice (0.16 s, too short for live_barge_in_speech_ms), recognised ``late`` frames
+    after it was said (the time stamp is when its audio was heard)."""
+    for u in frames_of(voiced(f0, 0.16, 0.08, seed=13)):
         await c.tick(user=u)
-    for i in range(10):
-        if i == 3 and words is not None:
-            words.hit = said  # the recogniser's words so far have it a moment after it was said
+    said_at = c.clock.t
+    for i in range(max(10, late + 5)):
+        if i == late and words is not None:
+            words.hit = (said, said_at)  # the recogniser's words so far have it a moment after it was said
         await c.tick()
 
 
@@ -574,11 +577,27 @@ async def test_a_quick_stop_word_interrupts_however_short(call, caplog):
     try:
         await c.warm_up()
         await short_word(c, words)
-        assert audio.interrupted and c.events == ["interrupted"] and words.pushed > 0
-        assert "live voice: interrupted: they said 'stop'" in caplog.text
+        assert audio.interrupted and c.events == ["interrupted", "stop_word"] and words.pushed > 0
+        assert "live voice: interrupted: they said 'stop' (recognised in " in caplog.text
     finally:
         audio.close()
     assert words.closed
+
+
+@pytest.mark.parametrize("f0,late", [
+    (255.0, 3),  # a parent's voice near live_barge_in_max_pitch_hz (on the robot 200-260 Hz) reads as a child's
+    (120.0, 60),  # the recogniser on the robot lagged over a second behind
+])
+async def test_a_stop_word_said_high_or_recognised_late_still_stops_it(call, f0, late):
+    audio, c = call()
+    words = FakeStopWords()
+    audio.setup_barge_in(on_change=lambda what, info: c.events.append(what), stop_words=words)
+    try:
+        await c.warm_up()
+        await short_word(c, words, f0=f0, late=late)
+        assert c.events == ["interrupted", "stop_word"]
+    finally:
+        audio.close()
 
 
 async def test_the_same_short_sound_without_a_stop_word_does_not_interrupt(call):
@@ -598,11 +617,12 @@ async def test_the_voice_saying_wait_itself_does_not_stop_it(call, caplog):
     audio.setup_barge_in(on_change=lambda what, info: c.events.append(what), stop_words=words)
     try:
         await c.warm_up()
-        words.hit = "wait"  # heard in what is left of its own echo: nothing louder than the echo
+        words.hit = ("wait", c.clock.t)  # heard in what is left of its own echo: nothing louder than the echo
         for _ in range(5):
             await c.tick()
         assert not audio.interrupted and c.events == []
-        assert "heard 'wait' while the voice talked, but nothing louder than its own echo" in caplog.text
+        assert "heard 'wait' while the voice talked (" in caplog.text
+        assert "but nothing louder than its own echo then: it carried on" in caplog.text
         for _ in range(40):
             await c.tick(voice=False)  # the voice stopped: what was being recognised is forgotten
         assert words.quiets > 0
@@ -640,7 +660,8 @@ async def test_stop_words_finds_the_phrase_in_the_words_so_far():
         deadline = time.monotonic() + 3
         while words.heard == 0 and time.monotonic() < deadline:
             await asyncio.sleep(0.01)
-        assert words.take() == "okay stop" and words.take() is None and rec.resets == 1
+        hit = words.take()
+        assert hit is not None and hit[0] == "okay stop" and words.take() is None and rec.resets == 1
     finally:
         words.close()
     assert match("so hold on a second".split(), phrases) == "hold on" and match(["holding"], phrases) is None

@@ -498,7 +498,8 @@ async def test_one_info_line_per_decision_without_the_words(make, caplog):
         await s.heard("What's the weather like in Springfield tomorrow?")
         await s.heard("hi")
     lines = [r.getMessage() for r in caplog.records if r.levelno == logging.INFO]
-    assert len(lines) == 1 and lines[0].startswith("screen: show weather (model, ")
+    assert len(lines) == 2 and lines[0].startswith("screen: show weather (model, ")
+    assert lines[1] == "screen: nothing to decide (chit-chat, 1 words)"  # why no card came, never the words
     assert "Springfield" not in caplog.text
 
 

@@ -751,16 +751,19 @@ class ScreenDirector:
         if not browser_turn:
             self._browser_moved_on(text)
         if handled or browser_turn or not self.enabled():
+            if not browser_turn:
+                log.info("screen: nothing to decide (%s)", "another part of the call took it" if handled
+                         else "cards are off")
             return
         t0 = self._now()
         child = self._speaker(t0)
-        if child:
-            log.debug("screen: nothing to decide (the child spoke)")
+        if child:  # (info, as below: a card that didn't come must say why in the log, 2026-10-29)
+            log.info("screen: nothing to decide (voice recognition says the child spoke)")
             return
         kind = self._current_kind()
         rule = local_rule(text, kind, self._actions(kind), kinds=self._types())  # clear grown-up phrases
         if rule is not None and rule.do == "none":
-            log.debug("screen: nothing to do (%s)", rule.why)
+            log.info("screen: nothing to do (%s)", rule.why)
             return
         if rule is not None and rule.do == "show" and rule.spec is not None:
             self._spawn(self._apply_show(rule.spec, t0, "rule"))
@@ -777,7 +780,7 @@ class ScreenDirector:
         if why is None and self._screen_taken():
             why = "a game or the browser is on the screen"
         if why is not None:
-            log.debug("screen: nothing to decide (%s)", why)
+            log.info("screen: nothing to decide (%s, %d words)", why, len(text.split()))
             return
         self._spawn(self._decide(self._turn, t0, needs_grownup=not grownup))
 

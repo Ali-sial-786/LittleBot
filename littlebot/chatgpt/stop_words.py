@@ -8,9 +8,13 @@ wake word's offline model, ``wake.model_path``) in grammar mode: only ``STOP_PHR
 so a stop word counts as soon as it is said, not when the sentence ends.
 
 ``LiveAudio`` only acts on a stop word when the detector saw a sound louder than what is left of the voice's own
-echo at the same moment (so the voice saying "wait" can't stop itself) that wasn't a child's. Audio stays in
-memory, in a short queue; nothing is kept or sent anywhere. Recognition runs in its own thread: the call's audio
-never waits for it. Without vosk or its model there are no stop words, and barge-in works as before.
+echo when it was said (so the voice saying "wait" can't stop itself); no pitch rule (a parent's voice near
+``live_barge_in_max_pitch_hz`` read as a child's, 2026-10-29), but voice recognition saying "the child" still
+vetoes. Then the call goes quiet as for a "stop" in ChatGPT's caption (live.py ``_asked_to_stop``), without
+waiting for that caption: for a word this short it often never came. Each frame carries the time it was heard,
+so a recogniser that lags on the robot still finds the right moment. Audio stays in memory, in a short queue;
+nothing is kept or sent anywhere. Recognition runs in its own thread: the call's audio never waits for it.
+Without vosk or its model there are no stop words, and barge-in works as before.
 """
 
 from __future__ import annotations
@@ -33,8 +37,8 @@ STOP_PHRASES = ("stop", "stop it", "stop talking", "stop please", "okay stop", "
                 "pause", "cut it out")
 REC_RATE = 16000
 BATCH_S = 0.1  # the recogniser gets this much at a time; its words so far are checked after each
-QUEUE_FRAMES = 50  # 1 s of 20 ms frames; more waiting (the thread fell behind): the newest are dropped
-HIT_FRESH_S = 1.0  # a stop word heard this recently can still be taken
+QUEUE_FRAMES = 100  # 2 s of 20 ms frames; more waiting (the thread fell behind): the newest are dropped
+HIT_FRESH_S = 3.0  # a stop word said this recently (by the time its audio was heard) can still be taken
 _RESET = object()
 
 
@@ -71,11 +75,11 @@ class StopWords:
         return cls(lambda: _vosk_recognizer(path), rate=rate)
 
     # ------------------------------------------------------------ the call's side (event loop)
-    def push(self, frame: np.ndarray) -> None:
-        """20 ms of the echo-cancelled microphone (int16) while the voice is audible."""
+    def push(self, frame: np.ndarray, at: float | None = None) -> None:
+        """20 ms of the echo-cancelled microphone (int16) while the voice is audible, heard ``at``."""
         self._pushing = True
         try:
-            self._q.put_nowait(frame)
+            self._q.put_nowait((frame, self._now() if at is None else at))
         except queue.Full:
             pass
 
@@ -88,13 +92,13 @@ class StopWords:
             except queue.Full:
                 pass
 
-    def take(self) -> str | None:
-        """The stop phrase heard since the last call (fresh ones only), or None."""
+    def take(self) -> tuple[str, float] | None:
+        """(The stop phrase heard since the last call, when the audio it was found in ended), fresh ones only."""
         with self._lock:
             hit, self._hit = self._hit, None
         if hit is None or self._now() - hit[1] > HIT_FRESH_S:
             return None
-        return hit[0]
+        return hit
 
     def close(self) -> None:
         self._stop.set()
@@ -116,6 +120,7 @@ class StopWords:
         self.ready = True
         batch: list[np.ndarray] = []
         need = round(BATCH_S * self.rate)
+        heard_at = 0.0
         while not self._stop.is_set():
             try:
                 item = self._q.get(timeout=0.5)
@@ -125,7 +130,8 @@ class StopWords:
                 batch.clear()
                 _reset(rec)
                 continue
-            batch.append(item)
+            frame, heard_at = item
+            batch.append(frame)
             if sum(len(b) for b in batch) < need:
                 continue
             pcm = np.concatenate(batch).astype(np.float32) / 32768.0
@@ -140,8 +146,10 @@ class StopWords:
                 continue
             said = match(words, phrases)
             if said is not None:
+                log.debug("stop words: '%s' recognised %d ms after its audio", said,
+                          int((self._now() - heard_at) * 1000))
                 with self._lock:
-                    self._hit = (said, self._now())
+                    self._hit = (said, heard_at)
                 self.heard += 1
                 _reset(rec)
 

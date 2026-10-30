@@ -135,6 +135,24 @@ async def test_cutting_in_listens_at_once_and_oops_go_ahead_carries_on(ctx, tmp_
         await server.close()
 
 
+async def test_a_stop_word_heard_on_the_robot_quiets_the_voice_without_waiting_for_their_caption(ctx, tmp_path):
+    # on the robot (2026-10-29) a short "stop" got no caption from ChatGPT: a false alarm, the voice talked on
+    from littlebot.chatgpt.live import QUIET_NOTE
+
+    audio = BargeAudio()
+    svc, server = await start_call(ctx, tmp_path, audio)
+    try:
+        audio.speaking = True
+        await wait_for(lambda: ctx.state.state == RobotState.SPEAKING)
+        audio.interrupt()
+        audio.on_change("stop_word", {"said": "stop"})  # what LiveAudio sends next for a stop word
+        assert audio.dropped == 1 and svc.status()["active"]
+        await wait_for(lambda: QUIET_NOTE in notes(server))
+    finally:
+        await svc.stop()
+        await server.close()
+
+
 async def test_room_talk_over_the_voice_lets_it_carry_on(ctx, tmp_path):
     audio = BargeAudio()
     svc, server = await start_call(ctx, tmp_path, audio)

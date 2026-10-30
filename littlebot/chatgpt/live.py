@@ -1308,6 +1308,10 @@ class LiveCall:
             self.phase = "listening"  # the face listens at once, not at the next poll
             self._set_state(RobotState.LISTENING)
             self._publish(Topics.AUDIO_VISEME, {"level": 0.0})
+        if what == "stop_word" and not self._ended.is_set():
+            # "stop" heard on the robot (littlebot/chatgpt/stop_words.py): quiet now, as for a "stop" in their
+            # caption, which for so short a word often never comes (on the robot, 2026-10-29)
+            self._asked_to_stop(str(info.get("said") or "stop"), first=False, early=True)
 
     def _barge_in_words(self, event: Any) -> None:
         """Their words after cutting in: tell the audio (it drops the voice it held), and when all they said was
