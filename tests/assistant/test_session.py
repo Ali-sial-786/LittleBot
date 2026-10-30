@@ -200,3 +200,13 @@ async def test_typed_chat_uses_the_same_brain() -> None:
     assert out["reply"] == "Paris is the capital of France." and out["error"] is None
     out = await svc.handle_text("volume 20")
     assert out["provider"] == "intent" and out["reply"] == "Volume 20."
+
+
+async def test_voice_front_falls_back_to_gpt_live_without_speech_to_text() -> None:
+    from littlebot.assistant import voice_front
+
+    svc, stt, _, _ = _service(Scripted())
+    svc.ctx.live = object()
+    assert voice_front(svc.ctx) is svc
+    svc._stt_factory = lambda exclude=(): None
+    assert voice_front(svc.ctx) is svc.ctx.live

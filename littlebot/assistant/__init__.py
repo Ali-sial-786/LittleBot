@@ -20,7 +20,12 @@ def voice_front(ctx: Any) -> Any:
     assistant = getattr(ctx, "assistant", None)
     try:
         if assistant is not None and assistant.use_cascade():
-            return assistant
+            if assistant.ready():
+                return assistant
+            import logging  # noqa: PLC0415
+
+            logging.getLogger("littlebot.assistant").warning(
+                "assistant: no speech-to-text is available; GPT-Live answers instead")
     except Exception:  # noqa: BLE001 - GPT-Live as before
         pass
     return getattr(ctx, "live", None)

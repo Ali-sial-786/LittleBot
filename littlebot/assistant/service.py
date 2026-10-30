@@ -143,6 +143,14 @@ class AssistantService(Service):
         k = self.keys()
         return k["deepgram"] and (k["cartesia"] or k["elevenlabs"])
 
+    def ready(self) -> bool:
+        """Something can hear (a speech-to-text provider is available): else the wake word keeps using GPT-Live."""
+        try:
+            return self.stt_provider() is not None
+        except Exception:  # noqa: BLE001
+            log.debug("assistant: no speech-to-text", exc_info=True)
+            return False
+
     def pipeline_reason(self) -> str:
         mode = self.cfg.pipeline
         if mode != "auto":
