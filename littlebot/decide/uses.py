@@ -37,7 +37,8 @@ def card_options(kinds: dict[str, str], card_up: str | None, actions: list[str])
                        "given)."}
     if card_up:
         opts[CARD_CLOSE] = (f"They want the {card_up} card on the screen gone, or the talk has moved on to something "
-                            "it doesn't fit and isn't worth a card.")
+                            "it doesn't fit and isn't worth a card. A new question worth a card is a new card "
+                            "(show_...), not close.")
         if actions:
             opts[CARD_STEER] = (f"They follow up on the {card_up} card on the screen (it can: "
                                 f"{', '.join(actions)[:200]}), e.g. \"and tomorrow?\" or \"next step\".")

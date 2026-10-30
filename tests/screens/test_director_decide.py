@@ -82,12 +82,22 @@ async def test_a_new_question_with_a_card_up_gets_a_new_card_not_a_page_turn(mak
     assert s.screens.commands == [] and s.screens.shown[0][0]["title"] == "Crepes"
 
 
-async def test_on_close_takes_the_card_away(make, ctx):
-    s = make(FACT, wait_for_answer=True)
+async def test_on_close_is_a_hint_and_the_text_model_closes_it(make, ctx):
+    s = make({"do": "close"}, wait_for_answer=True)
     s.screens.card = FakeCard("weather", "Sunny tomorrow")
     use_decision_model(ctx, picks("close"), modes={"cards": "on", "answered": "off"})
+    await asked(s, "How was your day at the park today?", "Lovely, the ducks were out by the pond.")
+    assert "the card on screen no longer fits the talk" in s.provider.calls[0]["messages"][-1]["content"]
+    assert s.screens.closed == ["asked in the voice chat"]
+
+
+async def test_on_close_for_a_new_question_gets_the_new_card(make, ctx):
+    # on the robot (2026-10-29): the decider's "close" took the Khans card away for "and Alexander the Great?"
+    s = make(FACT, wait_for_answer=True)
+    s.screens.card = FakeCard("facts", "facts: Genghis Khan vs Kublai Khan")
+    use_decision_model(ctx, picks("close", confidence=0.95), modes={"cards": "on", "answered": "off"})
     await asked(s, "How do I make pancakes for breakfast?", "Mix flour, eggs and milk, then fry.")
-    assert s.provider.calls == [] and s.screens.closed == ["asked in the voice chat"]
+    assert len(s.provider.calls) == 1 and s.screens.closed == [] and s.screens.shown[0][0]["card"] == "recipe"
 
 
 async def test_on_but_unsure_is_the_text_models_decision(make, ctx):

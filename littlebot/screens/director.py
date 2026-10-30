@@ -1027,17 +1027,15 @@ class ScreenDirector:
                     self._log("dropped", t0, "decider", "they said something else meanwhile")
                     return
                 if pick is not None and pick.confidence >= decider.min_confidence():
-                    child = self._speaker(t0)
                     if pick.value == uses.CARD_NONE and pick.confidence >= NONE_SURE_AT:
                         decider.used("cards", pick.value, pick)
                         self._log("none", t0, "decider", f"{decider.provider()}, confidence {pick.confidence:.2f}")
                         return
-                    if pick.value == uses.CARD_CLOSE and self._current_kind() is not None and not child:
-                        decider.used("cards", pick.value, pick)
-                        self._steer(Decision("close"), t0, "decider")
-                        return
+                    # Its "close" is only a hint: on the robot (2026-10-29) it closed the Khans card for "and
+                    # Alexander the Great?", which wanted a new card. "Close it" / "hide that" are the close words.
                     hint = pick.value[len("show_"):] if pick.value.startswith("show_") else \
-                        "steer" if pick.value == uses.CARD_STEER else None
+                        "steer" if pick.value == uses.CARD_STEER else \
+                        "close" if pick.value == uses.CARD_CLOSE and self._current_kind() is not None else None
             label = await self._decide_model(turn, t0, answer, needs_grownup=needs_grownup, hint=hint,
                                              partial=partial)
         except BaseException:
@@ -1106,7 +1104,7 @@ class ScreenDirector:
                 self._log("dropped", t0, "model", "they said something else meanwhile")
                 return "dropped"
         decision = self._validate(obj)
-        if hint and hint != "steer" and decision.do == "command":
+        if hint and hint not in ("steer", "close") and decision.do == "command":
             # On the robot (2026-10-29) "and Alexander the Great?" after a Khans card only paged that card ("next"),
             # though the quick check said a new facts card: ask once more, plainly
             log.info("screen: the model steered the card on screen, but the quick check says a new %s card; "
@@ -1156,6 +1154,9 @@ class ScreenDirector:
         content = self._context(answer, partial)
         if hint == "steer":
             content += "\n(A quick check says they are following up on the card on screen.)"
+        elif hint == "close":
+            content += ("\n(A quick check says the card on screen no longer fits the talk. If what they just asked is "
+                        "worth a card, answer \"show\" with a new card for it; otherwise answer \"close\".)")
         elif hint and insist:
             content += (f"\n(Not a command: they asked about something new, not the card on screen. Answer \"show\" "
                         f"with a new {hint} card for what they just asked.)")
