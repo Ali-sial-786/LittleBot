@@ -40,8 +40,7 @@ class ElevenLabsTTS(HttpPcmTTS):
         if self.language and "_v2_5" in self.model:
             body["language_code"] = self.language
         url = f"{self.base_url}/v1/text-to-speech/{quote(self.voice, safe='')}/stream"
-        headers = {"xi-api-key": key, "Accept": "audio/pcm"}
-        return Request(url, headers, body, params={"output_format": FORMAT})
+        return Request(url, {"xi-api-key": key}, body, params={"output_format": FORMAT})
 
 
 __all__ = ["ElevenLabsTTS"]

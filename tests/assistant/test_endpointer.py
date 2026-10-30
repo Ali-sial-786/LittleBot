@@ -335,3 +335,21 @@ async def test_endpointed_provider_opens_streams():
     stream = await provider.open(Events())
     assert isinstance(stream, STTStream) and inner.warmed == 1
     assert stream.end_of_turn_ms == 400 and stream.threshold == 0.02
+
+
+async def test_a_handler_may_reset_from_inside_end_of_turn():
+    ep: Endpointer | None = None
+    got = []
+
+    async def handler(event: STTEvent) -> None:
+        got.append(event.kind)
+        if event.kind == "end_of_turn":
+            assert ep is not None
+            await ep.reset()  # the session answered: the next words are a new turn
+
+    ep = Endpointer(FakeBatch("first"), handler)
+    await feed_frames(ep, np.concatenate([tone(600), quiet(800)]))
+    await ep.idle()
+    await feed_frames(ep, np.concatenate([tone(600), quiet(800)]))
+    await ep.idle()
+    assert got == ["start_of_turn", "end_of_turn", "start_of_turn", "end_of_turn"]

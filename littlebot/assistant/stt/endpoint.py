@@ -273,7 +273,7 @@ class Endpointer:
 
     def _cancel(self) -> None:
         task, self._task = self._task, None
-        if task is not None and not task.done():
+        if task is not None and not task.done() and task is not asyncio.current_task():  # (a handler may reset)
             task.cancel()
 
 
