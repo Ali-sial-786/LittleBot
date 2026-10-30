@@ -596,16 +596,59 @@ async def test_a_stop_word_recognised_late_still_stops_it(call):
         audio.close()
 
 
-async def test_a_stop_word_in_a_childs_voice_or_its_own_echo_does_not(call, caplog):
+async def test_a_stop_word_in_a_babys_squeal_does_not(call, caplog):
     caplog.set_level(logging.INFO, logger="littlebot.chatgpt.live")
     audio, c = call()
     words = FakeStopWords()
     audio.setup_barge_in(on_change=lambda what, info: c.events.append(what), stop_words=words)
     try:
         await c.warm_up()
-        await short_word(c, words, f0=400.0)
+        await short_word(c, words, f0=480.0)
         assert c.events == [] and not audio.interrupted
-        assert "heard 'stop', but it sounded like a child or its own voice" in caplog.text
+        assert "heard 'stop', but it sounded like a child or its own voice (4" in caplog.text
+    finally:
+        audio.close()
+
+
+async def test_a_shouted_stop_higher_than_a_grown_ups_pitch_still_stops_it(call, caplog):
+    # on the robot (2026-10-29) the parent's "stop!" had no frame at a grown-up's pitch: turned down three times
+    caplog.set_level(logging.INFO, logger="littlebot.chatgpt.live")
+    audio, c = call()
+    words = FakeStopWords()
+    audio.setup_barge_in(on_change=lambda what, info: c.events.append(what), stop_words=words)
+    try:
+        await c.warm_up()
+        await short_word(c, words, f0=300.0)
+        assert c.events == ["interrupted", "stop_word"]
+        assert "live voice: interrupted: they said 'stop' (recognised in " in caplog.text and " pitch 0 Hz" not in \
+            caplog.text
+    finally:
+        audio.close()
+
+
+async def test_its_own_hang_on_heard_back_higher_than_a_grown_up_does_not(call, caplog):
+    caplog.set_level(logging.INFO, logger="littlebot.chatgpt.live")
+    audio, c = call()
+    words = FakeStopWords()
+    audio.setup_barge_in(on_change=lambda what, info: c.events.append(what), stop_words=words)
+    try:
+        await c.warm_up()
+        await short_word(c, words, "hang on", f0=300.0)
+        assert c.events == [] and "heard 'hang on', but it sounded like a child or its own voice" in caplog.text
+    finally:
+        audio.close()
+
+
+async def test_a_stop_word_the_voice_just_said_itself_does_not(call, caplog):
+    caplog.set_level(logging.INFO, logger="littlebot.chatgpt.live")
+    audio, c = call()
+    words = FakeStopWords()
+    audio.setup_barge_in(on_change=lambda what, info: c.events.append(what), stop_words=words,
+                         voice_said=lambda: "Okay. Let's stop there for today, and")
+    try:
+        await c.warm_up()
+        await short_word(c, words)
+        assert c.events == [] and "heard 'stop', but the voice itself just said it" in caplog.text
     finally:
         audio.close()
 

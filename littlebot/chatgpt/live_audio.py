@@ -90,6 +90,12 @@ FAST_SPEECH_S = 0.2  # voice recognition says a grown-up: this much speech is en
 # before the audio the word was found in ended, and not mostly above max_pitch_hz (a child, or its own echo).
 STOP_LOUD_FRAMES = 3
 STOP_RUN_S = 1.5
+# A stop word said higher than a grown-up's pitch still stops the voice: on the robot (2026-10-29) the parent's
+# shouted "stop!" had no frame under live_barge_in_max_pitch_hz and was turned down three times. Not above this
+# (the baby's squeals), nor a word the voice says itself as a filler ("hang on, the seven-day is up"), whose echo
+# leaking through is higher than a grown-up's voice too.
+STOP_MAX_PITCH_HZ = 400.0
+VOICE_FILLERS = frozenset({"wait", "wait a second", "wait a minute", "hold on", "hang on"})
 PREROLL_MAX_S = 0.8  # the microphone kept for the pre-roll (in memory, the last 0.8 s only)
 PREROLL_LEAD_S = 0.1  # the pre-roll starts this long before their speech did
 QUIET_LEVEL = 0.0105  # RMS below which a frame of the pre-roll is a pause (as in littlebot/audio/carry.py)
@@ -171,6 +177,7 @@ class _Run:
     adult: int = 0
     child: int = 0
     pitches: list[float] = dataclasses.field(default_factory=list)
+    high: list[float] = dataclasses.field(default_factory=list)  # the pitches above a grown-up's
     grown_up: bool = False  # voice recognition: a grown-up
     vetoed: bool = False  # voice recognition: a child
     voice: str | None = None  # their name, from voice recognition
@@ -250,6 +257,7 @@ class BargeInDetector:
                     run.pitches.append(f0)
                 elif f0 > self.s.max_pitch_hz:
                     run.child += 1
+                    run.high.append(f0)
         elif run is not None and now - run.last_loud > GAP_S:
             self.run = None
             self.recent.append(run)
@@ -307,7 +315,9 @@ class BargeInDetector:
 
     @staticmethod
     def pitch_of(run: _Run) -> float:
-        return float(np.median(run.pitches)) if run.pitches else 0.0
+        """The run's median pitch at a grown-up's pitch, else above it (0: nothing voiced)."""
+        pitches = run.pitches or run.high
+        return float(np.median(pitches)) if pitches else 0.0
 
 
 _GA_LEAD = (r"(?:oops|whoops|oopsie|oh|ah|uh|um|erm|hmm|sorry|so sorry|i'?m sorry|my bad|my mistake|pardon(?: me)?|"
@@ -398,6 +408,7 @@ class LiveAudio:
         self._played: collections.deque[tuple[float, float]] = collections.deque(maxlen=48)  # (heard at, RMS)
         self._identify: Callable[..., Any] | None = None  # ctx.voices.identify (optional)
         self._talking_with: Callable[[], Any] | None = None  # the call's current grown-up (optional)
+        self._voice_said: Callable[[], str] | None = None  # the voice's words lately (optional)
         self._on_barge: Callable[[str, dict[str, Any]], None] | None = None
         self._stop_words: Any = None  # littlebot/chatgpt/stop_words.StopWords (optional)
         self._stop_said: tuple[str, int] | None = None  # (the stop word that interrupts now, ms to recognise it)
@@ -486,16 +497,18 @@ class LiveAudio:
 
     def setup_barge_in(self, *, identify: Callable[..., Any] | None = None,
                        on_change: Callable[[str, dict[str, Any]], None] | None = None,
-                       talking_with: Callable[[], Any] | None = None, stop_words: Any = None) -> None:
+                       talking_with: Callable[[], Any] | None = None, stop_words: Any = None,
+                       voice_said: Callable[[], str] | None = None) -> None:
         """The call's hooks: ``identify(samples, rate)`` (ctx.voices, optional) and ``on_change(what, info)``
         with what = "interrupted" (the voice stopped for them), "heard" (ChatGPT has their words) or
         "carried_on" (a false alarm: the voice plays on). ``talking_with()``: the person_id of the grown-up
         the voice is talking with, or None: someone else recognised cutting in doesn't stop the voice (they
-        were talking to each other). ``stop_words``: a ``StopWords`` (closed with the audio). Called in the
-        event loop."""
+        were talking to each other). ``stop_words``: a ``StopWords`` (closed with the audio). ``voice_said()``:
+        the voice's words lately (a stop word it said itself is its own echo). Called in the event loop."""
         self._identify = identify if callable(identify) else None
         self._on_barge = on_change
         self._talking_with = talking_with if callable(talking_with) else None
+        self._voice_said = voice_said if callable(voice_said) else None
         if self._stop_words is not None and self._stop_words is not stop_words:
             self._stop_words.close()
         self._stop_words = stop_words
@@ -746,16 +759,33 @@ class LiveAudio:
             log.info("live voice: heard '%s' while the voice talked (%d ms ago), but nothing louder than its own "
                      "echo then: it carried on", said, late)
             return False
-        if run.vetoed or run.child > run.adult:
+        if run.vetoed:
+            log.info("live voice: heard '%s', but it sounded like the child (voice recognition): it carried on", said)
+            return False
+        if self._said_it_itself(said):
+            log.info("live voice: heard '%s', but the voice itself just said it: it carried on", said)
+            return False
+        pitch = BargeInDetector.pitch_of(run)
+        if run.child > run.adult and (said in VOICE_FILLERS or pitch > STOP_MAX_PITCH_HZ):
             # a child, or the voice's own echo leaking through (on the robot its false alarms were 240-259 Hz, the
-            # parent 107-154 Hz, 2026-10-29): the voice saying "wait" must not stop itself
-            log.info("live voice: heard '%s', but it sounded like %s: it carried on", said,
-                     "the child (voice recognition)" if run.vetoed else
-                     f"a child or its own voice ({round(BargeInDetector.pitch_of(run))} Hz)")
+            # parent 107-154 Hz, 2026-10-29): the voice saying "hang on" must not stop itself
+            log.info("live voice: heard '%s', but it sounded like a child or its own voice (%d Hz): it carried on",
+                     said, round(pitch))
             return False
         det.fired, det.run = run, None
         self._stop_said = (said, late)
         return True
+
+    def _said_it_itself(self, said: str) -> bool:
+        """The stop word is in the voice's own words lately: what was heard is its echo."""
+        if self._voice_said is None:
+            return False
+        try:
+            text = str(self._voice_said() or "")
+        except Exception:  # noqa: BLE001 - optional: the other checks decide
+            return False
+        plain = " ".join(re.sub(r"[^a-z' ]+", " ", text.lower()).split())
+        return re.search(rf"\b{re.escape(said)}\b", plain) is not None
 
     def _send(self, frame: np.ndarray | None) -> np.ndarray:
         """The pre-roll first, then the microphone, one frame per frame read (never a burst). While behind,

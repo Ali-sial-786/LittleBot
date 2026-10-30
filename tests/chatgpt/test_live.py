@@ -1064,7 +1064,8 @@ async def test_saying_stop_ends_the_call(live, words):
     assert svc.status()["last_call"]["ended_reason"] == "asked to stop"
 
 
-@pytest.mark.parametrize("words", ["Stop talking!", "Stop.", "Be quiet please", "Shh", "That's enough."])
+@pytest.mark.parametrize("words", ["Stop talking!", "Stop.", "Be quiet please", "Shh", "That's enough.",
+                                   "He stopped talking."])  # ChatGPT's caption of "hey, stop talking" (2026-10-29)
 async def test_stop_while_talking_makes_the_voice_wait_and_then_hangs_up(live, words, monkeypatch, caplog):
     monkeypatch.setattr(live_mod, "QUIET_END_S", 0.6)
     caplog.set_level(logging.INFO, logger="littlebot.chatgpt.live")

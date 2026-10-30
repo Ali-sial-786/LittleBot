@@ -971,7 +971,7 @@ back to text-to-speech; the index is re-read when the file changes. Dashboard: `
 | `live_barge_in_min_level` | `0.008` | and at least this loud (microphone RMS, full scale 1.0) |
 | `live_barge_in_max_pitch_hz` | `260.0` | (150-400) voiced above this counts as a child and doesn't interrupt |
 | `live_barge_in_false_alarm_ms` | `2500` | (300-5000) no words of theirs from ChatGPT by then: the voice carries on |
-| `live_stop_words` | `true` | "stop", "wait", "hold on", "be quiet" ... said over the voice stop it however short (`littlebot/chatgpt/stop_words.py`: offline, the wake word's Vosk model; only with barge-in, and only when the sound was louder than the voice's own echo and not a child's) |
+| `live_stop_words` | `true` | "stop", "wait", "hold on", "be quiet" ... said over the voice stop it however short (`littlebot/chatgpt/stop_words.py`: offline, the wake word's Vosk model; only with barge-in, and only when the sound was louder than the voice's own echo, the voice didn't just say the word itself, and voice recognition didn't say it was the child; a shouted "stop" above `live_barge_in_max_pitch_hz` still counts, but not above 400 Hz (the baby) and not "wait" / "hold on" / "hang on", which the voice says itself) |
 | `live_thinking_sound` | `true` | a soft sound while a hand-off is worked on and the voice is quiet |
 | `live_voice_level` | `0.012` | speaker RMS (0..1) above which the voice counts as speaking |
 | `live_volume` | `null` | `null` = the speaker volume setting. Always capped at `audio.speaker.max_volume` |

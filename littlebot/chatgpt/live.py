@@ -175,11 +175,12 @@ HUSH_QUIET_LEVEL = 0.01  # RMS (full scale 1.0) below which a 20 ms frame is qui
 # ("stop", "be quiet", "shh") makes the voice go quiet and wait for them (QUIET_END_S: then the call ends),
 # except as their first words in a call (a wake word heard by mistake): then it ends too. The wake word
 # listens again after a call.
-_STOP_LEAD = (r"(?:ok|okay|oh|um+|uh+|no|hey|please|just|alright|all right|littlebot|little bot|lil bot|bot|robot|"
-              r"(?:can|could|would|will) you(?: please)?|you can|i want you to|i need you to)")
+# ChatGPT's caption of "hey, stop talking" said over the voice was "He stopped talking" (on the robot, 2026-10-29)
+_STOP_LEAD = (r"(?:ok|okay|oh|um+|uh+|no|hey|he|please|just|alright|all right|littlebot|little bot|lil bot|bot|"
+              r"robot|(?:can|could|would|will) you(?: please)?|you can|i want you to|i need you to)")
 _STOP_TAIL = r"(?: (?:please|now|thanks|thank you|littlebot|little bot|lil bot|bot|robot))*$"
-_HUSH_WHAT = (r"(?:stop(?: (?:talking|it|now|that|for now))*|stop talking to me|be quiet|quiet|shh+|hush|shush|"
-              r"shut up|that'?s enough|enough)")
+_HUSH_WHAT = (r"(?:stop(?: (?:talking|it|now|that|for now))*|stop talking to me|stopped talking|be quiet|quiet|shh+|"
+              r"hush|shush|shut up|that'?s enough|enough)")
 _END_WHAT = (r"(?:stop(?: (?:talking|it|now|that|for now))* and (?:stop )?listening|"
              r"stop listening(?: (?:to me|now|for now))*(?: and (?:stop )?talking)?|"
              r"never ?mind|cancel(?: that)?|go away|hang up|end (?:the )?call|that'?s (?:all|it)|"
@@ -213,6 +214,7 @@ GAME_NOTES = {
            "and tells you who won: never make your own pick or play it out loud. ",
 }
 PARTIAL_MAX_CHARS = 300  # what the person is still saying, kept to start a look before they finish
+VOICE_SAID_CHARS = 600  # the voice's words lately, for the stop words (live_audio.LiveAudio._said_it_itself)
 CANT_SEE = "You couldn't look. Say you can't see right now, and suggest the grown-up shows you again later; " \
            "don't guess what is there."
 # Why LittleBot can't look (CameraLook.blocked_reason), with the words for the voice to use. The wording
@@ -1282,6 +1284,8 @@ class LiveCall:
                 params = {}
             if "talking_with" in params:
                 hooks["talking_with"] = self._talking_with  # only they cut in; others talk to each other
+            if "voice_said" in params:
+                hooks["voice_said"] = self._voice_said_lately  # its own "hang on" heard back isn't them
             if "stop_words" in params and getattr(self.audio, "barge_in_on", False) and \
                     getattr(self.cfg, "live_stop_words", False):
                 from littlebot.chatgpt.live_audio import RATE  # noqa: PLC0415
@@ -1290,6 +1294,11 @@ class LiveCall:
                 wake = getattr(self.ctx.config, "wake", None)
                 hooks["stop_words"] = StopWords.from_model(getattr(wake, "model_path", None), rate=RATE)
             setup(**hooks)
+
+    def _voice_said_lately(self) -> str:
+        """The voice's last finished turn and what it is saying now."""
+        last = next((c["text"] for c in reversed(self._captions) if c["who"] == "robot"), "")
+        return f"{last} {self._assistant_turn}"[-VOICE_SAID_CHARS:]
 
     def _talking_with(self) -> int | None:
         """The grown-up the voice is talking with (voice recognition's last sure turn), or None."""
@@ -2998,6 +3007,10 @@ _ASKS = re.compile(
     r"zoom|scroll|pause|resume|skip|more|less)\b")
 _ANSWERS = re.compile(_LEAD + r"(?:no|nope|yes|yeah|yep|not|that's|thats|okay|ok|sure|thanks|thank you)\b")
 ANSWER_WORDS = 5  # "No, that's fine": an answer to LittleBot; "Yeah, same. I'm just putting in the salt": not
+# ChatGPT's caption of words said over the voice is often only a piece of them: "Under the Great" for "tell me
+# more about Alexander the Great" (on the robot, 2026-10-29). Taken for room talk, the voice carried on and
+# ignored them; a piece this short is for LittleBot, and the voice, which heard it, makes sense of it.
+FRAGMENT_WORDS = 4
 _VOCATIVE = re.compile(r"^\W*([A-Z][a-z]+)\s*,")  # "Hassan, come here": to someone by name
 _NOT_NAMES = {"hey", "hi", "oh", "ok", "okay", "so", "well", "wait", "sorry", "no", "yes", "yeah", "now", "and",
               "littlebot", "robot", "bot", "please", "right", "look", "see", "thanks"}
@@ -3005,18 +3018,20 @@ _NOT_NAMES = {"hey", "hi", "oh", "ok", "okay", "so", "well", "wait", "sorry", "n
 
 def _for_robot(text: str, robot: str) -> bool:
     """LittleBot's way of telling whether words said over its voice were for it (else: people in the room talking
-    to each other, "I'm just putting in the salt"). Its name, a question or request, a short answer like "no",
-    and anything very short count as for it; a name other than its own first ("Hassan, ...") doesn't."""
+    to each other, "I'm just putting in the salt"). Its name, a stop, a question or request, a short answer like
+    "no", and anything short (FRAGMENT_WORDS) count as for it; a name other than its own first ("Hassan, ...")
+    doesn't."""
     plain = _plain_words(text)
     words = plain.split()
     if not words:
         return False
-    if re.search(r"\b(?:little ?bot|lil ?bot|robot|bot)\b", plain) or _greets_robot(text, robot):
+    if re.search(r"\b(?:little ?bot|lil ?bot|robot|bot)\b", plain) or _greets_robot(text, robot) or \
+            STOP_CALL.match(plain):
         return True
     name = _VOCATIVE.match(text or "")
     if name is not None and name.group(1).lower() not in _NOT_NAMES:
         return False
-    return (len(words) <= 2 or _ASKS.match(plain) is not None
+    return (len(words) <= FRAGMENT_WORDS or _ASKS.match(plain) is not None
             or (len(words) <= ANSWER_WORDS and _ANSWERS.match(plain) is not None))
 
 

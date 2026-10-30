@@ -182,7 +182,10 @@ async def test_room_talk_over_the_voice_lets_it_carry_on(ctx, tmp_path):
     ("Hassan, come here please", False),
     ("Why are you not showing it on the screen", True),
     ("Can you, can you show me the, uh, precipitation on an hourly basis for Hamilton", True),
-    ("the weather by hour", False),  # a fragment: room talk to the rules (the decision model may know better)
+    ("the weather by hour", True),  # a piece of what they said: for it (the voice heard all of it)
+    ("Under the Great", True),  # ChatGPT's caption of "tell me more about Alexander the Great" (2026-10-29)
+    ("He stopped talking", True),  # and of "hey, stop talking"
+    ("We're leaving in two minutes", False),
     ("Show me the hourly weather", True),
     ("Hey LittleBot, are you there", True),
     ("Lil Bot, wait", True),
