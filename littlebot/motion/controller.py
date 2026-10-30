@@ -10,9 +10,14 @@ Responsibilities
   hard clamps, per-tick rate limiter) and run them on an asyncio scheduler at
   ``update_hz`` that sleeps completely when nothing moves;
 * gestures (keyframes), arbitration (``Resource.MOTION`` leases), cancel / STOP_ALL /
-  emergency stop, and ``motion.*`` events for the simulator panel and dashboard.
+  emergency stop, and ``motion.*`` events for the simulator panel and dashboard;
+* ``look_at(x, y)``: head pan (``head``) / tilt (``head_tilt``) toward a gaze target with the
+  "eyes lead, head follows" rule (``motion/look.py``); look moves are polite: they never
+  interrupt a gesture and give way to any other command on the head;
+* the wheels (``motion/drive.py``, ``self.drive``): built here so the e-stop, STOP_ALL, the
+  arming key and shutdown cover them too. Disabled by default and called by nothing yet.
 
-Threading: commands are coroutines on the runtime loop. ``cancel``, ``emergency_stop``,
+Threading: commands are coroutines on the runtime loop. ``look_at``, ``cancel``, ``emergency_stop``,
 ``reset_emergency_stop`` and ``status`` are safe from any thread. ``emergency_stop``
 switches the outputs off synchronously in the caller's thread before anything else.
 Bus events are published after internal state is consistent (outbox), never while the
@@ -37,14 +42,16 @@ from littlebot.core.events import Event, Subscription, Topics
 from littlebot.core.runtime import cancel_and_wait
 from littlebot.core.service import Service, ServiceStatus
 from littlebot.motion import gestures as G
+from littlebot.motion.drive import Drive, create_drive
 from littlebot.motion.drivers import DriverError, MockPCA9685, PCA9685Driver, ServoDriver
 from littlebot.motion.interpolation import (
     BrakeSegment, MinJerkSegment, Segment, limit_step, make_brake, plan_duration,
 )
 from littlebot.motion.joints import (
-    Calibration, CalibrationError, JointSpec, MotionConfigError, build_joint_specs, load_calibration,
-    resolve_path,
+    HEAD_PAN, HEAD_TILT, Calibration, CalibrationError, JointSpec, MotionConfigError, build_joint_specs,
+    load_calibration, resolve_path,
 )
+from littlebot.motion.look import LookPlanner, LookSettings
 
 LEASE_OWNER = "motion"
 ARMED_KEY = "motion.physical_armed"
@@ -111,7 +118,7 @@ class _Step:
 @dataclass(eq=False)
 class _Job:
     id: int
-    kind: str  # gesture | move | neutral | homing
+    kind: str  # gesture | move | neutral | homing | look
     name: str | None
     joints: frozenset[str]
     steps: list[_Step]
@@ -215,6 +222,8 @@ class MotionController(Service):
         self._jobs: list[_Job] = []
         self._gesture_job: _Job | None = None
         self._lease: Lease | None = None
+        self._look = LookPlanner(LookSettings.from_config(self.cfg.look))
+        self._drive: Drive = self._make_drive()
 
         self._loop: asyncio.AbstractEventLoop | None = None
         self._loop_thread: int | None = None
@@ -248,6 +257,7 @@ class MotionController(Service):
                 self._driver = MockPCA9685(frequency_hz=self.cfg.pwm_frequency, address=self.cfg.i2c_address)
                 self._driver_closed = False
                 self._physical = False
+            self._drive = self._make_drive()
         self._bind_loop()
         if self._decision.use_physical and not self._config_error:
             try:
@@ -307,6 +317,10 @@ class MotionController(Service):
         if self._executor is not None:
             self._executor.shutdown(wait=False, cancel_futures=True)
             self._executor = None
+        try:
+            await self._drive.close()
+        except Exception:  # noqa: BLE001
+            self.log.exception("closing the wheels failed")
         self._started = False
         self.set_status(ServiceStatus.STOPPED)
 
@@ -371,6 +385,48 @@ class MotionController(Service):
         step = _Step(targets={n: s.neutral for n, s in self._specs.items()}, speed=NEUTRAL_SPEED)
         return await self._submit("neutral", None, frozenset(self._specs), [step], priority, owner)
 
+    def look_at(self, x: float, y: float, *, priority: int | None = None, owner: str | None = None) -> bool:
+        """Head pan / tilt toward a gaze target (0..1 view coordinates, 0.5 = centre): see MotionAPI and
+        motion/look.py. Cheap and thread-safe (call it at camera rate): it records the target and starts
+        a smooth head move only when the eyes-lead-head-follows rule says so. ``priority`` defaults to
+        Priority.REACTIVE. False when refused (e-stop, not armed, no head joint, lease, invalid input)."""
+        try:
+            fx, fy = float(x), float(y)
+        except (TypeError, ValueError):
+            return False
+        if not (math.isfinite(fx) and math.isfinite(fy)):
+            return False
+        pan, tilt = self._specs.get(HEAD_PAN), self._specs.get(HEAD_TILT)
+        if pan is None and tilt is None:
+            return False
+        prio = int(Priority.REACTIVE if priority is None else priority)
+        with self._lock:
+            if self._refusal() or self._lease_refusal(prio, owner) or self._loop is None:
+                return False
+            heads = [n for n in (HEAD_PAN, HEAD_TILT) if n in self._joints]
+            busy = any(self._joints[n].segment is not None or self._joints[n].job_id is not None for n in heads) or \
+                any(job.joints & frozenset(heads) for job in self._jobs)
+            targets = self._look.update(
+                fx, fy, self._clock.now(), pan=pan, tilt=tilt,
+                pan_angle=self._joints[HEAD_PAN].angle if pan is not None else None,
+                tilt_angle=self._joints[HEAD_TILT].angle if tilt is not None else None, busy=busy)
+        if targets:
+            self._dispatch(self._start_look, targets, prio, owner)
+        return True
+
+    def _start_look(self, targets: dict[str, float], prio: int, owner: str | None) -> None:
+        try:
+            self._bind_loop()
+        except RuntimeError:  # no running loop in this thread (never started)
+            return
+        step = _Step(targets=dict(targets), speed=self._look.s.speed)
+        self._admit_job("look", None, frozenset(targets), [step], prio, owner)
+
+    @property
+    def drive(self) -> Drive:
+        """The wheels (simulated unless motion.drive.backend=motor_hat + physical_enabled + armed)."""
+        return self._drive
+
     def cancel(self) -> None:
         """Stop commanded motion smoothly where it is (decelerate within limits).
 
@@ -406,6 +462,10 @@ class MotionController(Service):
                 self.log.warning("EMERGENCY STOP (source=%s): outputs off, motion latched", source)
                 self._disarm(f"emergency stop ({source})")
             self.ctx.bus.publish(Topics.MOTION_ESTOP, {"active": True, "source": str(source)}, source="motion")
+        try:
+            self._drive.emergency_stop(str(source))  # the wheels too, in this thread
+        except Exception:  # noqa: BLE001
+            self.log.exception("wheel emergency stop failed - switch the motor supply off")
         self._update_health()
         self._dispatch(self._halt, "emergency stop")
 
@@ -441,6 +501,8 @@ class MotionController(Service):
                 j.energised = False
                 j.last_pulse = None
                 j.velocity = 0.0
+            self._look.reset()
+        self._drive.reset_emergency_stop()
         self.log.warning("emergency stop reset (was: %s)", source)
         self.ctx.bus.publish(Topics.MOTION_ESTOP, {"active": False, "source": "reset"}, source="motion")
         self._update_health()
@@ -461,6 +523,7 @@ class MotionController(Service):
             moving = self._moving_locked()
             gesture = self._gesture_job.name if self._gesture_job is not None else None
             energised = any(j.energised for j in self._joints.values()) and self._outputs_allowed()
+            look = self._look.status()
         try:
             driver = self._driver.describe()
         except Exception as e:  # noqa: BLE001
@@ -484,6 +547,8 @@ class MotionController(Service):
                             "error": self._calibration_error},
             "driver": driver,
             "update_hz": self.cfg.update_hz,
+            "look": look,
+            "drive": self._drive.status(),
         }
 
     # ---------------------------------------------------------------- Service health
@@ -512,20 +577,43 @@ class MotionController(Service):
     async def _submit(self, kind: str, name: str | None, joints: frozenset[str], steps: list[_Step],
                       priority: int | None, owner: str | None) -> bool:
         self._bind_loop()
+        job = self._admit_job(kind, name, joints, steps, priority, owner)
+        if job is None or job.future is None:
+            return False
+        fut = job.future
+        try:
+            return await fut
+        except asyncio.CancelledError:
+            # The caller was cancelled: stop its motion smoothly, then propagate.
+            self._cancel_job(job.id, "caller cancelled")
+            raise
+
+    def _admit_job(self, kind: str, name: str | None, joints: frozenset[str], steps: list[_Step],
+                   priority: int | None, owner: str | None) -> _Job | None:
+        """Admission + queueing (on the runtime loop, loop bound). None when refused."""
         prio = int(Priority.ACTIVITY if priority is None else priority)
         label = f"{kind} {name}" if name else kind
         assert self._loop is not None
         with self._lock:
             reason = self._refusal()
             if reason:
-                return self._refused(label, reason)
+                self._refused(label, reason)
+                return None
             for other in self._jobs:
-                if other.joints & joints and other.priority > prio:
-                    return self._refused(label, f"{other.label} has higher priority ({other.priority} > {prio})")
+                if not other.joints & joints:
+                    continue
+                if kind == "look" and other.kind != "look":
+                    return None  # polite: a look never interrupts a gesture / move (the eyes keep following)
+                if other.kind == "look":
+                    continue  # ... and gives way to any command on the head (superseded below)
+                if other.priority > prio:
+                    self._refused(label, f"{other.label} has higher priority ({other.priority} > {prio})")
+                    return None
             admission = self._admit(prio, owner)
             if admission is None:
                 holder = self.ctx.arbiter.holder(Resource.MOTION)
-                return self._refused(label, f"motion reserved by {holder.owner if holder else '?'}")
+                self._refused(label, f"motion reserved by {holder.owner if holder else '?'}")
+                return None
             mode, borrowed = admission
             if kind == "gesture" and steps:
                 # A gesture interrupting another gesture also brings home the joints the old one
@@ -547,18 +635,32 @@ class MotionController(Service):
                     self._finish_job(other, False, brake=True, reason=f"superseded by {label}")
             self._cancel_release_timer()
             self._wake_scheduler()
-            fut = job.future
         self._flush()
-        try:
-            return await fut
-        except asyncio.CancelledError:
-            # The caller was cancelled: stop its motion smoothly, then propagate.
-            self._cancel_job(job.id, "caller cancelled")
-            raise
+        return job
 
     def _refused(self, label: str, reason: str) -> bool:
         self.log.info("%s refused: %s", label, reason)
         return False
+
+    def _lease_refusal(self, prio: int, owner: str | None) -> str | None:
+        """Would ``_admit`` refuse? (read-only: used by look_at before it plans anything)"""
+        holder = self.ctx.arbiter.holder(Resource.MOTION)
+        if holder is None or holder.owner == LEASE_OWNER or (owner is not None and holder.owner == owner):
+            return None
+        return f"motion reserved by {holder.owner}" if holder.priority > prio else None
+
+    def _drive_gate(self) -> str | None:
+        if self._closing:
+            return "motion service stopped"
+        if self._config_error:
+            return "invalid motion configuration"
+        if self._estop:
+            return f"emergency stop latched ({self._estop_source})"
+        return None
+
+    def _make_drive(self) -> Drive:
+        return create_drive(self.cfg.drive, physical_enabled=bool(self.cfg.physical_enabled), bus=self.ctx.bus,
+                            clock=self._clock, gate=self._drive_gate, armed=lambda: bool(self._armed))
 
     def _refusal(self) -> str | None:
         if self._closing:
@@ -697,6 +799,7 @@ class MotionController(Service):
             j.energised = False
             j.known = False
             j.last_pulse = None
+        self._look.reset()
         if self._lease is not None:
             lease, self._lease = self._lease, None
             lease.release()
@@ -710,7 +813,9 @@ class MotionController(Service):
 
     def _stop_all(self, source: str) -> None:
         """Parent STOP (not latched): cancel everything smoothly, then drift back to neutral slowly."""
+        self._drive.stop()
         with self._lock:
+            self._look.reset()
             self._cancel_jobs_locked(f"stop all ({source})")
             if (self.cfg.stop_all_returns_to_neutral and self._refusal() is None and self._task is not None
                     and self._loop is not None):
@@ -740,6 +845,8 @@ class MotionController(Service):
             self.log.warning("motion ARMED by a parent%s", "" if self._physical else " (simulation only)")
         else:
             self.log.warning("motion disarmed%s", ": outputs off" if self._physical else "")
+            if self._drive.wheels.physical:
+                self._drive.stop()
             if self._physical:
                 self._all_off_now()
                 self._dispatch(self._halt, "disarmed")
