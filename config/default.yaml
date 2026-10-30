@@ -119,6 +119,19 @@ claude:  # Anthropic API (pip install -e '.[claude]'); the key in .env or data/a
   first_token_timeout_seconds: 4.0
   web_search: true       # Anthropic's web search for current facts (billed per search)
 
+assistant:  # the fast voice pipeline (docs/ASSISTANT.md): speech-to-text -> Claude -> natural voice, with barge-in
+  pipeline: auto         # auto: the assistant once DEEPGRAM_API_KEY and CARTESIA_API_KEY (or ELEVENLABS_API_KEY) are set,
+                         # else GPT-Live as before | cascade: always the assistant | live: always GPT-Live
+  stt: [deepgram, openai, vosk]                    # first that works
+  tts: [cartesia, elevenlabs, openai, local]       # first that works (local: piper / espeak on the robot)
+  follow_up_seconds: 8   # keeps listening this long after an answer: no wake word for the next question
+  deep_model: claude-sonnet-5-5   # think_harder: hard questions go to this model while a short line plays
+  barge_in: true         # talk over LittleBot to interrupt it (needs echo cancelling, like GPT-Live)
+
+skills:  # LittleBot's abilities for both voices (littlebot/skills); each one can be switched off
+  persona: warm          # warm | witty | calm | concise | playful (or by voice: "be more concise")
+  home_assistant_url: ""  # e.g. http://homeassistant.local:8123 (token: HOME_ASSISTANT_TOKEN in .env)
+
 decide:  # fast decision models for small multiple-choice calls (littlebot/decide, docs/DECISIONS.md)
   provider: "off"        # off | jev (TYPESAFE_API_KEY in .env) | openai (OPENAI_API_KEY) | claude (ANTHROPIC_API_KEY)
   jev_model: jev-latest
