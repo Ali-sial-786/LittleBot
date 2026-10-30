@@ -6,7 +6,12 @@ timer is done!" (and tells the live voice), shows "Done!" for a while and then g
 finished timer stops it early.
 
 A new timer asked for while a timer card is on screen joins that card (``build`` returns the card
-already showing). Time is kept on ``host.now()`` (monotonic), so tests drive it with a fake clock.
+already showing, or the one running behind another card). Time is kept on ``host.now()`` (monotonic), so
+tests drive it with a fake clock.
+
+When another card, a video or a game takes the screen, the timers carry on behind it (``runs_behind``; the
+screen service keeps updating the card): they still chime and tell the voice at zero, and the card comes
+back when the screen is free or a timer rings.
 """
 
 from __future__ import annotations
@@ -166,6 +171,26 @@ class TimerCard(Card):
     def shown(self) -> bool:
         """On screen: the display loop updated it moments ago."""
         return not self.done and self.host.now() - self._seen <= SEEN_S
+
+    @property
+    def runs_behind(self) -> bool:
+        """A timer still counts down (or is paused): when another card, a video or a game takes the screen, the
+        screen service keeps this card going behind it (littlebot/screens/service.py)."""
+        return not self.done and any(t.state != "ringing" for t in self.timers)
+
+    @property
+    def ringing(self) -> bool:
+        """A timer has just finished: the card wants the screen back."""
+        return not self.done and any(t.state == "ringing" for t in self.timers)
+
+    def go_behind(self) -> None:
+        """The card leaves the screen while its timers carry on: the ones that already rang are let go (they
+        were heard; they must not pull the card straight back)."""
+        rang = [t for t in self.timers if t.state == "ringing"]
+        for t in rang:
+            self.timers.remove(t)
+        if rang:
+            self._retitle()
 
     def add_timer(self, seconds: float, label: Any = "") -> Timer | None:
         if len(self.timers) >= MAX_TIMERS or seconds <= 0:
@@ -348,9 +373,12 @@ async def build(spec: dict[str, Any], ctx: Any, host: CardHost) -> TimerCard | N
     seconds = _seconds(spec)
     if seconds is None:
         return None
-    current = getattr(getattr(ctx, "screens", None), "current", None)  # the card the screen service shows now
-    for card in ([current] if isinstance(current, TimerCard) else []) + (list(_live) if ctx is not None else []):
-        if card.ctx is ctx and not card.done and (card is current or card.shown) and len(card.timers) < MAX_TIMERS:
+    screens = getattr(ctx, "screens", None)
+    current = getattr(screens, "current", None)  # the card the screen service shows now
+    behind = [c for c in getattr(screens, "behind", None) or () if isinstance(c, TimerCard)]  # running unseen
+    first = ([current] if isinstance(current, TimerCard) else []) + behind
+    for card in first + (list(_live) if ctx is not None else []):
+        if card.ctx is ctx and not card.done and (card in first or card.shown) and len(card.timers) < MAX_TIMERS:
             card.add_timer(seconds, spec.get("label"))
             return card
     return TimerCard(spec, host, ctx)

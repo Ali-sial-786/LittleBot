@@ -56,10 +56,19 @@ dashboard's Games page, each with a small drawn icon, its name, a few words and 
   on the card (the wait starts again).
 * A **running timer** (a `sticky` card) stays until it is done, chat or no chat, and keeps LittleBot
   from falling asleep meanwhile (it publishes `screen.keep_awake` every minute).
+* A running timer is **never lost to another card**. When a new card replaces it, or a video, a game or
+  an activity takes the screen, it carries on behind it (`screens.behind`): it still chimes and tells
+  the voice at zero, LittleBot stays awake for it, and the timer card comes back by itself once the
+  screen has been free for a second (the card on top went, the video ended), or at once when a timer
+  rings. Put away by hand (a tap on the eyes, Esc, "close it", the dashboard) it comes back only when a
+  timer rings. A timer that already rang is let go. A new timer joins the one behind the screen, and
+  the voice can still add time to it, pause it or cancel it. STOP ALL, sleep and the parent's switch
+  end it.
 * Sooner: a **tap on the presenter's little eyes**, "close it" to the voice, **Esc** in the
   simulator, the dashboard's *Close the card* button, or a card that has nothing more to show.
 * Always: STOP ALL, LittleBot going to sleep, a game, a video or an activity starting (they take the
-  screen; a game always wins over a card), and the parent switching cards off.
+  screen; a game always wins over a card; a timer carries on behind them, above), and the parent
+  switching cards off.
 
 A card takes only the screen (`Resource.SCREEN`, at conversation priority). The face and speaker stay
 with the voice, so a card never stops the voice; a game or a video simply takes the screen from it.

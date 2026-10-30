@@ -526,6 +526,16 @@ it was handed, so LittleBot answers as early as it can:
   match: another place's time, "why does it rain?", "cancel the egg timer" or "play baby shark
   louder" go to the text model as before, and so does one whose tool fails or takes over 3 s. The
   journal then says something like `hand-off received (kind=quick:weather); answered in 160 ms without the text model`.
+  The text model never sees these, so every later hand-off in the call starts with a short note of the
+  last five ("LittleBot started a timer for 5 minutes on its screen 1 minute ago"), and, with a screen
+  service, what the timers really are now, from the screen's own count ("LittleBot's timers right now
+  (this is what counts): Timer: 3:58 left (behind the card on the screen)", or "none"): "how much time
+  is left on it?" is then answered from that, not with "I didn't set a timer". (Without a screen
+  service the note guesses instead: "about 4 minutes left, unless someone stopped it".) The timers line
+  also starts every hand-off while a timer runs (or once one ran in the call), whoever set it: tested on
+  2026-10-29, none of four text models looked in `change_card`'s description for "how long is left?". A
+  timer that runs behind another card is also in `change_card`'s description, so the text model can add
+  time to it, pause it or cancel it (`ctx.screens.command(..., card=...)`).
 * **The first sentence goes to the voice as soon as it is written** (camera looks already did this):
   the voice starts saying it while the text model writes the rest, which follows as a note ("More of
   the answer ..."). Words that only say what's coming ("Let me check.") are skipped; if the answer

@@ -9,13 +9,16 @@ Public API (``ctx.screens``; used by the voice's director and tools, and by the 
         "no_card" (nothing could be built); None when it worked. ``showing``: describe().
     screens.show_card(card, source="voice") -> the same, for a card that is already built
     screens.make_host()        -> a CardHost bound to this service (to build a card yourself)
-    screens.command(action, args) -> bool   (steers the card: "next", "day", ...; False: no card / not understood)
+    screens.command(action, args, card=None) -> bool   (steers the card: "next", "day", ...; ``card``: one of
+                                  ``behind``; False: no card / not understood)
+    screens.behind             -> [Card]    (timer cards running off the screen, oldest first)
+    screens.timers_now()       -> str       (every timer, on the screen or behind it; "" for none)
     screens.close(reason)      -> bool      (True if a card was taken off the screen)
     screens.current            -> Card | None
     screens.active             -> bool
     screens.describe()         -> str | None (one line: what the screen shows)
     screens.status()           -> {available, enabled, web_pictures, active, card, source, seconds, sticky,
-                                   closes_in, linger_seconds, last, last_error}
+                                   closes_in, linger_seconds, last, last_error, behind}
 
 Display hooks (``littlebot.face.display`` calls these on the main thread; a game wins over a card)::
 
@@ -48,6 +51,18 @@ or calls ``host.close()``, is closed. A card also goes on STOP ALL, when LittleB
 a video or an activity starts, when the parent switches cards off, on a tap on the presenter's eyes
 and on Esc. A card shown with no chat on (the dashboard, a long press for the games menu) lingers from
 the moment it appears, and every touch on it starts the wait again.
+
+Timers behind another card
+--------------------------
+A card with ``runs_behind`` (the timer card while a timer counts down or is paused) is not lost when it leaves
+the screen: when another card replaces it, or a video, a game or an activity takes the screen (COVERED), it
+carries on behind it (``behind``): the watchdog keeps its clock running, so a timer still chimes and tells the
+voice at zero, LittleBot is kept awake for it, and the card comes back by itself once the screen has been free
+for BACK_AFTER (the card on top went, the video ended). Put away by hand (a tap on the presenter's eyes, Esc, the
+voice's "close": HIDDEN) it comes back only when a timer rings. A timer that already rang is let go when its card
+leaves. STOP ALL, sleep, the parent's switch and shutdown (ENDS_BEHIND) end the timers behind the screen too. A
+new timer joins the card behind the screen (littlebot/screens/cards/timer.py build), and ``command(...,
+card=...)`` steers it ("cancel the egg timer").
 
 Leases: a card takes only ``Resource.SCREEN``, at ``Priority.CONVERSATION``. The face and speaker stay
 with whoever has them (the live voice keeps talking under the card), and a game (``ACTIVITY``) or a
@@ -105,6 +120,16 @@ INTRO_SECONDS = 1.0  # full frame rate while the card and presenter pop in
 SOUND_GAP = 0.12  # s between card sounds (a tap storm never builds an audio backlog)
 DEFAULT_EYES = (90, 210, 255)
 
+# A card with ``runs_behind`` (a timer card with a timer still counting down) that leaves the screen for one of
+# these reasons carries on behind it (see "Timers behind another card" above). COVERED: something else took the
+# screen, so it comes back as soon as the screen is free. HIDDEN: put away by hand, so it comes back only when a
+# timer rings. Any other reason (done, STOP ALL, sleep, switched off, shutdown) ends it for good.
+COVERED = ("replaced", "video started", "game started", "activity started", "robot playing_media", "preempted")
+HIDDEN = ("tap", "keyboard", "asked to", "asked in the voice chat", "parent")
+ENDS_BEHIND = ("stop all", "switched off", "shutdown", "robot sleeping", "robot error")
+MAX_BEHIND = 3
+BACK_AFTER = 1.0  # s the screen stays free before a covered card comes back (a video or a game is taking it)
+
 
 class _NoPicture:
     """A picture that already failed: the card shows its no-picture layout."""
@@ -143,6 +168,17 @@ class _Session:
     zoomed: tuple[tuple[int, float], Any] | None = None  # (zoom, picture id) -> the scaled picture
 
 
+@dataclass(eq=False)
+class _Behind:
+    """A card off the screen whose clock keeps running (a timer card): ``hidden`` when put away by hand."""
+
+    card: Card
+    hidden: bool
+    ticked: float
+    awake_t: float
+    free_since: float | None = None  # since when nothing else has had the screen
+
+
 class _Host:
     """The real CardHost: sounds / speech through ``ctx.audio``, notes for the voice, pictures."""
 
@@ -162,7 +198,7 @@ class _Host:
 
     def _live(self) -> bool:
         s = self.session
-        return s is None or (not s.ended and self.svc._session is s)
+        return s is None or (not s.ended and self.svc._session is s) or self.svc._is_behind(s.card)
 
     def now(self) -> float:
         return self.svc._clock()
@@ -220,6 +256,8 @@ class ScreenService(Service):
         self._clock = clock
         self._lock = threading.RLock()
         self._session: _Session | None = None
+        self._behind: list[_Behind] = []  # cards running off the screen (timers), oldest first
+        self._behind_task: Any = None  # their watchdog (an asyncio task or a runtime future)
         self._last: dict[str, Any] | None = None
         self.last_error: str | None = None
         self._voice: tuple[float, str, float] = (0.0, "", -1e9)  # (level, shape, when)
@@ -333,6 +371,7 @@ class ScreenService(Service):
         s.lease = lease
         with self._lock:
             old, self._session = self._session, s
+            self._behind = [b for b in self._behind if b.card is not card]  # back on the screen
         if old is not None:
             self._end(old, "replaced")  # its lease was already replaced by ours (same owner)
         self._start_watch(s)
@@ -341,8 +380,11 @@ class ScreenService(Service):
         self._publish(CARD_SHOWN, {"kind": card.kind, "title": card.title, "source": s.source})
         return self._result(True, None)
 
-    def command(self, action: str, args: dict[str, Any] | None = None) -> bool:
-        """Steer the current card from the voice ("next", "day", ...). False: no card, or not understood."""
+    def command(self, action: str, args: dict[str, Any] | None = None, *, card: Card | None = None) -> bool:
+        """Steer the current card from the voice ("next", "day", ...), or ``card``, one running behind it
+        (``behind``: "cancel" a timer). False: no card, or not understood."""
+        if card is not None and (self.current is not card):
+            return self._command_behind(card, action, args)
         with self._lock:
             s = self._session
             if s is None or s.ended:
@@ -358,6 +400,131 @@ class ScreenService(Service):
         if ok:
             self._check(s, force=True)
         return ok
+
+    def _command_behind(self, card: Card, action: str, args: dict[str, Any] | None) -> bool:
+        with self._lock:
+            if not self._is_behind(card) or str(action or "") == PICTURE_ACTION:
+                return False
+            try:
+                ok = bool(card.command(str(action or ""), dict(args or {})))
+            except Exception:  # noqa: BLE001
+                log.exception("card %s command %r failed", card.kind, action)
+                return False
+        if ok:
+            self._tick_behind()
+        return ok
+
+    @property
+    def behind(self) -> list[Card]:
+        """The cards running off the screen (timers behind another card, a video or a game), oldest first."""
+        return [b.card for b in self._behind]
+
+    def timers_now(self) -> str:
+        """Every timer LittleBot has, on the screen or behind it: "Pasta timer: 7:59 left (on the screen)";
+        "" when there are none."""
+        parts = []
+        with self._lock:
+            s = self._session
+            cards = ([(s.card, "on the screen")] if s is not None and not s.ended else []) + \
+                [(b.card, "off the screen, still running" if b.hidden else "behind the card on the screen")
+                 for b in self._behind]
+        for card, where in cards:
+            if not (getattr(card, "runs_behind", False) or getattr(card, "ringing", False)):
+                continue
+            try:
+                parts.append(f"{str(card.describe())[:200]} ({where})")
+            except Exception:  # noqa: BLE001
+                log.debug("card describe failed", exc_info=True)
+        return "; ".join(parts)
+
+    def _is_behind(self, card: Card) -> bool:
+        return any(b.card is card for b in self._behind)
+
+    def _go_behind(self, s: _Session, reason: str) -> bool:
+        """``s`` is leaving the screen: its card carries on behind it when it can (caller holds the lock)."""
+        card = s.card
+        hidden = reason in HIDDEN
+        if not getattr(card, "runs_behind", False) or not (hidden or reason.startswith(COVERED)):
+            return False
+        try:
+            go = getattr(card, "go_behind", None)
+            if callable(go):
+                go()
+        except Exception:  # noqa: BLE001
+            log.exception("card %s go_behind failed", card.kind)
+            return False
+        if not getattr(card, "runs_behind", False):
+            return False
+        now = self._clock()
+        self._behind = [b for b in self._behind if b.card is not card][-(MAX_BEHIND - 1):]
+        self._behind.append(_Behind(card=card, hidden=hidden, ticked=now, awake_t=s.awake_t))
+        log.info("card %s carries on behind the screen (%s)", card.kind, reason)
+        return True
+
+    def _drop_behind(self, reason: str) -> None:
+        with self._lock:
+            gone, self._behind = self._behind, []
+        for b in gone:
+            log.info("card %s behind the screen ended (%s)", b.card.kind, reason)
+
+    def _tick_behind(self) -> None:
+        """Cards running behind the screen: keep their clocks going (a timer still chimes and tells the voice at
+        zero), keep LittleBot awake for them, and bring one back when a timer rings or, covered (not put away),
+        as soon as the screen is free."""
+        if not self._behind:
+            return
+        back: Card | None = None
+        awake: list[str] = []
+        blocked = self._blocked()
+        with self._lock:
+            now = self._clock()
+            free = blocked is None and (self._session is None or self._session.ended)
+            for b in list(self._behind):
+                card = b.card
+                try:
+                    card.update(max(0.0, min(now - b.ticked, 0.25)))
+                except Exception:  # noqa: BLE001
+                    log.exception("card %s behind the screen failed", card.kind)
+                    self._behind.remove(b)
+                    continue
+                b.ticked = now
+                ringing = bool(getattr(card, "ringing", False))
+                if card.done or not (ringing or getattr(card, "runs_behind", False)):
+                    self._behind.remove(b)
+                    log.info("card %s behind the screen is done", card.kind)
+                    continue
+                if now - b.awake_t >= KEEP_AWAKE_EVERY:
+                    b.awake_t = now
+                    awake.append(card.kind)
+                b.free_since = (b.free_since if b.free_since is not None else now) if free else None
+                back_now = not b.hidden and b.free_since is not None and now - b.free_since >= BACK_AFTER
+                if back is None and (ringing or back_now):
+                    back = card
+        for kind in awake:
+            self._publish(KEEP_AWAKE, {"kind": kind})
+        if back is not None and blocked is None:
+            self.show_card(back, source="timer")
+
+    def _start_behind_watch(self) -> None:
+        task = self._behind_task
+        if task is not None and not task.done():
+            return
+        try:
+            self._behind_task = asyncio.get_running_loop().create_task(self._watch_behind(), name="cards-behind")
+            return
+        except RuntimeError:
+            pass
+        runtime = self.ctx.runtime
+        if runtime is not None and runtime.running:
+            self._behind_task = runtime.submit(self._watch_behind())
+
+    async def _watch_behind(self) -> None:
+        while self._behind:
+            await asyncio.sleep(WATCH_PERIOD)
+            try:
+                self._tick_behind()
+            except Exception:  # noqa: BLE001
+                log.exception("watchdog for cards behind the screen failed")
 
     def _picture_command(self, s: _Session, view: str) -> bool:
         """"fill" / "in" / "out" / "back" for the card's picture (caller holds the lock). The same command again
@@ -416,12 +583,15 @@ class ScreenService(Service):
         return True
 
     def close(self, reason: str = "closed") -> bool:
-        """Take the card off the screen (the face comes back). Safe from any thread."""
+        """Take the card off the screen (the face comes back). Safe from any thread. STOP ALL, sleep, the
+        parent's switch and shutdown (ENDS_BEHIND) also end the timers running behind the screen."""
+        reason = str(reason or "closed")[:60]
         with self._lock:
             s = self._session
-        if s is None:
-            return False
-        return self._end(s, str(reason or "closed")[:60])
+        ended = s is not None and self._end(s, reason)
+        if reason in ENDS_BEHIND:
+            self._drop_behind(reason)
+        return ended
 
     @property
     def current(self) -> Card | None:
@@ -458,9 +628,15 @@ class ScreenService(Service):
             "available": True, "enabled": self.enabled,
             "web_pictures": bool(settings.get("screens.web_pictures", True)), "active": False, "card": None,
             "linger_seconds": self.linger_seconds, "last": dict(self._last) if self._last else None,
-            "last_error": self.last_error,
+            "last_error": self.last_error, "behind": [],
         }
         with self._lock:
+            for b in self._behind:
+                try:
+                    out["behind"].append({"kind": b.card.kind, "showing": str(b.card.describe())[:200],
+                                          "hidden": b.hidden})
+                except Exception:  # noqa: BLE001
+                    out["behind"].append({"kind": b.card.kind, "hidden": b.hidden})
             s = self._session
             if s is None or s.ended:
                 return out
@@ -484,6 +660,7 @@ class ScreenService(Service):
         s = self._session
         if s is not None:
             self._check(s, force=True)
+        self._tick_behind()
 
     # ================================================================ display hooks
     def render(self, surface: Any, rect: Any = None, dt: float = 0.0) -> bool:
@@ -731,8 +908,9 @@ class ScreenService(Service):
             s.ended = True
             if self._session is s:
                 self._session = None
+            behind = self._go_behind(s, reason)
             close = getattr(s.card, "close", None)
-            if callable(close):
+            if callable(close) and not behind:
                 try:
                     close()
                 except Exception:  # noqa: BLE001
@@ -752,6 +930,8 @@ class ScreenService(Service):
         self._publish(CARD_CLOSED, {"kind": s.card.kind, "reason": reason})
         s.zoomed = None
         self._free_memory()
+        if behind:
+            self._start_behind_watch()
         return True
 
     def _free_memory(self) -> None:
@@ -850,7 +1030,7 @@ class ScreenService(Service):
 
     def _on_state(self, event: Event) -> None:
         new = event.get("new")
-        if new in _STOP_STATES and self._session is not None:
+        if new in _STOP_STATES and (self._session is not None or self._behind):
             self.close(f"robot {str(new).lower()}")
 
     def _on_setting(self, event: Event) -> None:

@@ -162,13 +162,17 @@ TOOLS: tuple[_Tool, ...] = (
           "guessing.", _obj({"place": {**_STR, "description": "a city, for the time somewhere else; leave out for "
                                                             "here"}})),
     _Tool("show_on_screen", "Show an info card on LittleBot's screen while your answer is said: the gist (a forecast, "
-          "a word's meaning, key points, a recipe, a timer, a sum, a list), not the words. Cards (* required):",
+          "a word's meaning, key points, a recipe, a timer, a sum, a list), not the words. A timer card is a real "
+          "timer: it counts down, chimes and tells them when it is done, so \"set a timer\" is this card (never say "
+          "you can't set one). Cards (* required):",
           _obj({"card": {**_STR, "description": "the card's kind"},
                 "fields": {"type": "object", "description": "that card's fields"}}, ("card",))),
     _Tool("change_card", "Change the card that is on LittleBot's screen now, instead of making a new one, when they "
           "ask: its picture full screen or zoomed (action picture, args {\"view\": \"fill\" | \"in\" | \"out\" | "
           "\"back\"}: fill for \"show the picture full screen\" or \"make it bigger\", back for the whole card "
-          "again), the next or previous step or point (next, prev), or close it (close). Card on the screen:",
+          "again), the next or previous step or point (next, prev), or close it (close); also a timer running off "
+          "the screen (add, pause, resume, cancel). Only what they ask for: \"how long is left?\" changes nothing "
+          "(LittleBot's note says what the timers are). Card on the screen:",
           _obj({"action": {**_STR, "description": "picture, next, prev, close, or another of the card's actions"},
                 "args": {"type": "object", "description": "the action's arguments, e.g. {\"view\": \"fill\"}"}},
                ("action",))),
@@ -257,7 +261,7 @@ class RobotToolbox:
                 if cards:
                     out.append({"name": t.name, "description": f"{t.description} {cards}.", "parameters": t.parameters})
                 continue
-            if t.name == CARD_TOOL:  # with what the card on the screen is and can do
+            if t.name == CARD_TOOL:  # with what the card on the screen (and a timer behind it) is and can do
                 card = self._card_now()
                 if card:
                     out.append({"name": t.name, "description": f"{t.description} {card}.", "parameters": t.parameters})
@@ -1105,32 +1109,61 @@ class RobotToolbox:
             names.insert(0, PICTURE_ACTION)
         return [*names, "close"]
 
+    def _behind(self, screens: Any) -> list[Any]:
+        """The cards running off the screen (timers behind another card): ``ctx.screens.behind``, newest first."""
+        try:
+            return list(reversed(list(getattr(screens, "behind", None) or ()))) if screens is not None else []
+        except Exception:  # noqa: BLE001
+            return []
+
+    @staticmethod
+    def _showing(card: Any) -> str:
+        try:
+            return str(card.describe() or card.title or "")[:80]
+        except Exception:  # noqa: BLE001
+            return str(getattr(card, "title", ""))[:80]
+
     def _card_now(self) -> str:
         """For change_card's description: "explain (Alexander the Great), with a picture; actions: picture, next,
-        close". Empty: no card is up (the tool isn't offered)."""
-        _screens, card = self._card_up()
-        if card is None:
-            return ""
-        try:
-            showing = str(card.describe() or card.title or "")[:80]
-        except Exception:  # noqa: BLE001
-            showing = str(getattr(card, "title", ""))[:80]
-        acts = self._card_actions(card)
-        pic = ", with a picture" if acts and acts[0] == "picture" else ", no picture"
-        return f"{card.kind} ({showing}){pic}; actions: {', '.join(acts)}"
+        close", then any timer running behind it. Empty: no card is up or behind (the tool isn't offered)."""
+        screens, card = self._card_up()
+        parts = []
+        if card is not None:
+            acts = self._card_actions(card)
+            pic = ", with a picture" if acts and acts[0] == "picture" else ", no picture"
+            parts.append(f"{card.kind} ({self._showing(card)}){pic}; actions: {', '.join(acts)}")
+        for b in self._behind(screens):
+            acts = [a for a in self._card_actions(b) if a not in ("picture", "close")]
+            parts.append(f"{'running behind it' if card is not None else 'none on the screen; running off it'}: "
+                         f"{b.kind} ({self._showing(b)}), actions: {', '.join(acts)}")
+        return ". ".join(parts)
 
     async def _change_card(self, args: dict[str, Any]) -> str:
         from littlebot.screens.base import PICTURE_ACTION  # noqa: PLC0415
 
         screens, card = self._card_up()
-        if card is None:
-            return _err("no card is on the screen now; to show something, use show_on_screen")
         action = str(args.get("action") or "").strip().lower()
         given = args.get("args") if isinstance(args.get("args"), dict) else {}
+        behind = next((b for b in self._behind(screens) if action not in (PICTURE_ACTION, "close")
+                       and action in self._card_actions(b)), None)
+        if behind is not None and (card is None or action not in self._card_actions(card)):
+            # a timer behind the card on the screen ("cancel the egg timer" while a recipe shows)
+            if not screens.command(action, given, card=behind):
+                return _err(f"the {behind.kind} can't do that; it can: "
+                            f"{', '.join(a for a in self._card_actions(behind) if a != 'close')}")
+            done = self._showing(behind) if not behind.done else f"no {behind.kind} any more"
+            self.done.append(f"{behind.kind} (off the screen): {done}")
+            return _ok(f"{done} (it runs off the screen, behind what is on it). Say okay in a few words.")
+        if card is None:
+            return _err("no card is on the screen now; to show something, use show_on_screen")
         acts = self._card_actions(card)
         if action == "close":
+            runs = bool(getattr(card, "runs_behind", False))
             screens.close("asked to")
-            self.done.append("closed the card on the screen")
+            self.done.append("closed the card on the screen" + (" (its timer still runs)" if runs else ""))
+            if runs:
+                return _ok("the card is off the screen, but its timer still runs and comes back when it rings; to "
+                           "stop the timer, use change_card with cancel")
             return _ok("the card is off the screen; the face is back")
         if action == PICTURE_ACTION and PICTURE_ACTION not in acts:
             return _err("the card on the screen has no picture showing; just say so")

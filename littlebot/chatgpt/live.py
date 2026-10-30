@@ -262,6 +262,15 @@ THINKING_AFTER_S = 1.5  # a hand-off still being worked on this long: the soft "
 THINKING_EVERY_S = 3.0
 THINKING_TIMES = 4
 QUICK_TIMEOUT_S = 3.0  # a quick answer (the weather, the time, quick.py) that takes longer: the text model answers
+# The text model never sees what quick.py answered, so each hand-off after one starts with a note of the latest
+# QUICK_DONE_KEEP of them in the call ("how much time is left on it?" once got "I didn't set a timer").
+QUICK_DONE_KEEP = 5
+QUICK_DONE_NOTE = ("(LittleBot's note, not their words: earlier in this chat LittleBot answered these itself, "
+                   "without you, and they really happened. Use them for follow-up questions, and don't do them "
+                   "again unless asked:\n{lines})")
+QUICK_TIMERS_NOTE = "LittleBot's timers right now (this is what counts): {timers}."
+QUICK_NO_TIMERS = "none (they finished or were stopped)"
+TIMERS_NOTE = "(LittleBot's note, not their words: " + QUICK_TIMERS_NOTE[:-1] + ".)"
 HANDOFF_TIMEOUT_S = 25.0  # a hand-off the voice waits on always gets an answer (or a "didn't work" note) within this
 HANDOVER_MAX_S = 15.0  # a video / activity / sleep was promised: the call ends this long after, at the latest
 HANDOVER_REASON = "handed over to what was asked for"
@@ -778,6 +787,9 @@ class LiveCall:
         self._ended = asyncio.Event()
         self._tasks: set[asyncio.Task[Any]] = set()
         self._captions: collections.deque[dict[str, str]] = collections.deque(maxlen=MAX_CAPTIONS)
+        # (when, quick.Asked, their question, what the voice was told): for the text model's follow-ups
+        self._quick_done: collections.deque[tuple[float, Any, str, str]] = collections.deque(maxlen=QUICK_DONE_KEEP)
+        self._had_timer = False  # a timer was running in this call: "none" is worth saying once it is gone
         self._assistant_turn = ""
         self._last_check = 0.0
         self._delegations = 0
@@ -1886,7 +1898,40 @@ class LiveCall:
         log.info("live voice: hand-off received (kind=quick:%s); answered in %d ms without the text model",
                  asked.what, int((time.monotonic() - t0) * 1000))
         self._send_result(delegation_id, text)
+        self._quick_done.append((self.svc._now(), asked, question, text))
         return True
+
+    def _asked_now(self, question: str) -> str:
+        """``question`` for the text model, after a note of what quick.py answered earlier in the call (it never
+        saw those): QUICK_DONE_NOTE; and, while LittleBot has a timer (or had one in this call), what the timers
+        are now (TIMERS_NOTE): the models don't look in change_card's description for "how long is left?"."""
+        timers = self._timers_now()
+        if timers:
+            self._had_timer = True
+        if not self._quick_done:
+            if timers or (timers == "" and self._had_timer):
+                return TIMERS_NOTE.format(timers=timers or QUICK_NO_TIMERS) + "\n\n" + question
+            return question
+        from littlebot.chatgpt import quick  # noqa: PLC0415
+        now = self.svc._now()
+        lines = "\n".join(f"- {quick.done_note(asked, q, told, now - at, timers_known=timers is not None)}"
+                          for at, asked, q, told in self._quick_done)
+        if timers is not None and (timers or any(asked.what == "timer" for _at, asked, _q, _t in self._quick_done)):
+            lines += "\n- " + QUICK_TIMERS_NOTE.format(timers=timers or QUICK_NO_TIMERS)
+        return QUICK_DONE_NOTE.format(lines=lines) + "\n\n" + question
+
+    def _timers_now(self) -> str | None:
+        """Every timer LittleBot has now, from the screen service (on the screen or behind it); "" for none,
+        None when there is no screen service to ask."""
+        screens = getattr(self.ctx, "screens", None)
+        timers_now = getattr(screens, "timers_now", None)
+        if not callable(timers_now):
+            return None
+        try:
+            return str(timers_now() or "")
+        except Exception:  # noqa: BLE001
+            log.debug("timers_now failed", exc_info=True)
+            return None
 
     def _toolbox(self) -> Any:
         from littlebot.chatgpt.tools import RobotToolbox  # noqa: PLC0415
@@ -1957,7 +2002,8 @@ class LiveCall:
         t0 = time.monotonic()
         try:
             reply = await self.svc.provider().reply(
-                history + [{"role": "user", "content": question}], system=system, max_tokens=200, timeout=15.0,
+                history + [{"role": "user", "content": self._asked_now(question)}], system=system, max_tokens=200,
+                timeout=15.0,
                 tools=specs, run_tool=run_tool, max_tool_rounds=self.cfg.max_tool_rounds, **options)
             text, _ = extract_tags(reply.text)  # a stray [face: ...] tag must never be read out
             answer = _speakable(text, self.ctx.config.ai.relaxed_rules)
@@ -2486,7 +2532,7 @@ class LiveCall:
         while history and history[0]["role"] != "user":
             history.pop(0)
         try:
-            reply = await self.svc.provider().reply(history + [{"role": "user", "content": question}],
+            reply = await self.svc.provider().reply(history + [{"role": "user", "content": self._asked_now(question)}],
                                                     system=system, max_tokens=200, timeout=15.0)
         except (ProviderError, asyncio.TimeoutError):
             return wire.FAILED_RESULT

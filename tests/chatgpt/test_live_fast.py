@@ -202,6 +202,24 @@ def test_what_littlebot_answers_without_the_text_model(question, what, args):
     assert (asked.what, asked.args) == (what, args) if what else asked is None, asked
 
 
+def test_a_quick_answer_is_described_for_the_text_models_follow_ups():
+    question = "Set a 3-minute egg timer"
+    asked = quick.match(question)
+    told = ("Done: a timer for 3 minutes (for the egg) is counting down on LittleBot's screen; it chimes when it's "
+            "done. Tell them in a few words.")
+    assert quick.done_note(asked, question, told, 70.4) == (
+        '"Set a 3-minute egg timer": LittleBot started a timer for 3 minutes for the egg on its screen 1 minute and '
+        "10 seconds ago (about 1 minute and 50 seconds left, unless someone stopped it).")
+    assert "(it has finished and chimed, unless" in quick.done_note(asked, question, told, 200)
+    busy = "LittleBot's screen is busy (a game or a video), so no timer was set. Say so briefly."
+    assert quick.done_note(asked, question, busy, 0.2) == (
+        f'"{question}": LittleBot answered just now: LittleBot\'s screen is busy (a game or a video), so no timer '
+        "was set.")
+    weather = quick.match("What's the weather like today?")
+    assert quick.done_note(weather, "What's the weather like today?", "Answer what they asked ... says: {}", 5) == (
+        "\"What's the weather like today?\": LittleBot told them the weather from its weather service 5 seconds ago.")
+
+
 def test_a_weeks_weather_fits_in_one_answer():
     day = {"day": "Monday", "date": "Monday 26 October", "conditions": "light rain showers", "high": 12, "low": 4,
            "chance_of_rain_or_snow_percent": 80, "wind_max": 25, "gusts_max": 40, "uv_index_max": 3.0,

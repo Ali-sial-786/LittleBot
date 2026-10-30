@@ -244,6 +244,29 @@ async def answer(asked: Asked, box: Any, question: str, *,
     return None
 
 
+def done_note(asked: Asked, question: str, told: str, ago_s: float, *, timers_known: bool = False) -> str:
+    """One line for the text model about a quick answer earlier in the call, which it never saw (``told``: what
+    the voice was told then, ``ago_s``: how long ago), so a follow-up ("how much time is left on it?") gets a
+    right answer instead of one that says no timer was set. ``timers_known``: the note also says what the
+    timers are now (the screen service's own count), so no guess at the time left is added here."""
+    asked_for = sanitize_user_text(question, max_chars=120)
+    ago = int(max(0.0, ago_s))
+    when = f"{_say_duration(ago)} ago" if ago >= 1 else "just now"
+    if asked.what == "timer" and told.startswith("Done:"):
+        seconds = int(asked.args["seconds"])
+        label = f" for the {asked.args['label']}" if asked.args.get("label") else ""
+        started = f'"{asked_for}": LittleBot started a timer for {_say_duration(seconds)}{label} on its screen {when}'
+        if timers_known:
+            return started + "."
+        left = seconds - ago
+        state = f"about {_say_duration(left)} left" if left > 0 else "it has finished and chimed"
+        return f"{started} ({state}, unless someone stopped it)."
+    if asked.what == "weather":
+        return f'"{asked_for}": LittleBot told them the weather from its weather service {when}.'
+    said = told.split(" Tell them", 1)[0].split(" Say so", 1)[0].strip()
+    return f'"{asked_for}": LittleBot answered {when}: {said}'
+
+
 async def _answer_picture(args: dict[str, Any], box: Any) -> str | None:
     result = await box.run("change_card", {"action": "picture", "args": {"view": args["view"]}})
     if not result.startswith("ok:"):
@@ -342,4 +365,4 @@ async def run_with_timeout(asked: Asked, box: Any, question: str, timeout: float
     return None
 
 
-__all__ = ["Asked", "answer", "duration_seconds", "match", "run_with_timeout"]
+__all__ = ["Asked", "answer", "done_note", "duration_seconds", "match", "run_with_timeout"]
