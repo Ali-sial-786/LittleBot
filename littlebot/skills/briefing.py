@@ -13,6 +13,10 @@ three headlines and the next reminder.
 
 The context note says when today's morning briefing was already given (kept in memory only), so a second
 "good morning" gets a shorter hello instead of the whole thing again.
+
+Speed: in the hours a briefing is likely (``WARM_HOURS``: early morning and the evening) the headlines and home's
+forecast are fetched ahead every few minutes in the background (only while cloud communication is allowed), so "good
+morning" answers from the cache at once. Nothing about the family is sent: plain GETs of the feeds and the forecast.
 """
 
 from __future__ import annotations
@@ -34,6 +38,9 @@ CARD_HEADLINES = 3
 BRIEF_HEADLINES = 3  # in a morning / evening briefing (the "news" kind gives skills.news_items)
 CARD_WAIT_S = 0.5  # the card goes up while the answer is written; this is the most the tool waits for it
 NOTE_CHARS = 400  # of another skill's note, in the briefing
+WARM_HOURS = frozenset({5, 6, 7, 8, 9, 10, 17, 18, 19, 20, 21, 22})  # local hours the cache is kept warm
+WARM_FIRST_S = 90.0  # after start (the robot settles first)
+WARM_EVERY_S = 9 * 60.0  # within the forecast's 10 minutes (info.cache_minutes) and the news' 15
 
 SAY = {
     "morning": "Turn this into a warm, natural 20-40 second spoken morning briefing: the greeting, the weather in "
@@ -55,6 +62,7 @@ class Briefing(Skill):
         super().__init__(ctx, now=now)
         self.news = news or NewsFeeds(ctx)
         self._given: dict[str, tuple[str, str]] = {}  # kind -> (local date, local time) it was last given
+        self._warmer: asyncio.Task[Any] | None = None
 
     # ------------------------------------------------------------ the skill
     def available(self) -> bool:
@@ -92,8 +100,40 @@ class Briefing(Skill):
     def status(self) -> dict[str, Any]:
         return {**super().status(), "feeds": len(self.news.feeds()), "given": dict(self._given)}
 
+    async def start(self) -> None:
+        if self.available():
+            self._warmer = asyncio.get_running_loop().create_task(self._keep_warm())
+
     async def stop(self) -> None:
+        if self._warmer is not None:
+            self._warmer.cancel()
+            try:
+                await self._warmer
+            except (asyncio.CancelledError, Exception):  # noqa: BLE001
+                pass
+            self._warmer = None
         await self.news.aclose()
+
+    async def _keep_warm(self) -> None:
+        """Fetch the headlines and the forecast ahead in the hours a briefing is likely (never raises)."""
+        await asyncio.sleep(WARM_FIRST_S)
+        while True:
+            await self.warm()
+            await asyncio.sleep(WARM_EVERY_S)
+
+    async def warm(self) -> bool:
+        """One warm-up, when it is a likely hour and the network may be used. True when it fetched."""
+        if self._local().hour not in WARM_HOURS or self.news.blocked_reason() is not None:
+            return False
+        from littlebot.info.weather import get_weather  # noqa: PLC0415
+
+        weather = get_weather(self.ctx)
+        jobs = [self._news(BRIEF_HEADLINES)]
+        if getattr(weather, "blocked_reason", lambda: None)() is None:
+            jobs.append(self._weather(0))
+        await asyncio.gather(*jobs, return_exceptions=True)
+        log.debug("briefing: cache warmed")
+        return True
 
     async def run(self, name: str, args: dict[str, Any]) -> str:
         if name == "get_briefing":

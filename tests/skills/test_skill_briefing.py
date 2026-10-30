@@ -3,6 +3,7 @@ reminders and lists skills and the news feeds, the card it puts up, and get_head
 
 from __future__ import annotations
 
+import asyncio
 import copy
 import datetime as dt
 import json
@@ -179,6 +180,34 @@ async def test_offline_briefing_still_answers():
         assert web.requests == []
     finally:
         ctx.db.close()
+
+
+async def test_the_cache_is_kept_warm_in_briefing_hours(setup, monkeypatch):
+    ctx, b, web, clock = setup
+    assert await b.warm() is True  # 7:05 am
+    assert len(web.requests) == 3 and ctx.extras["weather"].asked == [(None, 2)]
+    out = json.loads(await b.run("get_briefing", {"kind": "morning"}))
+    assert out["headlines"] and len(web.requests) == 3  # answered from the cache
+    clock.t = MORNING + 6 * 3600  # 1:05 pm: not a briefing hour
+    assert await b.warm() is False
+    clock.t = MORNING
+    ctx.privacy.set(cloud_enabled=False)
+    assert await b.warm() is False
+    ctx.privacy.set(cloud_enabled=True)
+    from littlebot.skills import briefing as module
+
+    monkeypatch.setattr(module, "WARM_FIRST_S", 0.0)
+    monkeypatch.setattr(module, "WARM_EVERY_S", 3600.0)
+    web.requests.clear()
+    b.news._cache.clear()
+    await b.start()
+    for _ in range(50):
+        if web.requests:
+            break
+        await asyncio.sleep(0.01)
+    assert len(web.requests) == 3
+    await b.stop()
+    assert b._warmer is None
 
 
 async def test_get_headlines(setup):
