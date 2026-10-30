@@ -90,6 +90,9 @@ SAID_GRACE_S = 0.6  # a caption counts as the answer once this old with no hand-
 # The voice's words as it says them (``saying``): this many are enough to go on, so the card comes while it
 # talks. GPT-Live's final caption only comes when its turn ends, 20 s later for a long answer (2026-10-29).
 PARTIAL_WORDS = 15
+# GPT-Live starts its answer before the person's final caption reaches LittleBot (on the robot ~1 s earlier,
+# 2026-10-29): the words it is saying count for a turn heard up to this long after they began.
+SAYING_LEAD_S = 5.0
 ANSWER_CHARS = 600
 VERDICT_WAIT_S = 1.5  # the decider's "has it answered?" (feature answered, on): a caption waits this long for it
 FILLER = re.compile(
@@ -789,7 +792,7 @@ class ScreenDirector:
         if words and newest is not None and now - newest >= SAID_GRACE_S:
             return "voice", " ".join(words)[:ANSWER_CHARS]
         saying = self._saying  # no final caption yet: the words it is saying now, once there are enough
-        if (saying is not None and saying[0] >= t0 and now - saying[0] >= SAID_GRACE_S
+        if (saying is not None and saying[0] >= t0 - SAYING_LEAD_S and now - saying[0] >= SAID_GRACE_S
                 and len(saying[1].split()) >= PARTIAL_WORDS and not FILLER.match(saying[1])):
             return "voice", saying[1][:ANSWER_CHARS]
         return None

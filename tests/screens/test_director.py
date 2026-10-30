@@ -550,6 +550,18 @@ async def test_a_long_answer_makes_its_card_while_it_is_being_said(make):
     assert len(s.provider.calls) == 1  # the final caption doesn't make a second card
 
 
+async def test_an_answer_begun_before_the_question_arrived_still_makes_the_card(make):
+    # on the robot GPT-Live starts answering ~1 s before the person's final caption reaches LittleBot
+    s = make(FACT, wait_for_answer=True)
+    s.director.saying("Genghis Khan was the founder of")
+    await asyncio.sleep(0.05)
+    s.director.heard("Tell me the difference between Genghis Khan and Kublai Khan")
+    s.director.saying("Genghis Khan was the founder of the Mongol Empire. He united the Mongol tribes and started")
+    await s.settle()
+    assert "Genghis Khan was the founder of the Mongol Empire" in s.provider.calls[0]["messages"][-1]["content"]
+    assert s.screens.shown
+
+
 async def test_filler_said_bit_by_bit_is_still_not_the_answer(make):
     s = make(FACT, wait_for_answer=True)
     s.director.heard("What's the top-grossing movie of all time?")

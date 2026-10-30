@@ -92,6 +92,9 @@ LION_TIGER = "Lion or tiger?: Lion vs Tiger: Weight: 190 kg, 220 kg; Lives in: A
      LION_TIGER),
     ({"rows": [{"name": "Lion", "facts": ["190 kg", "Africa"]}, {"name": "Tiger", "facts": ["220 kg", "Asia"]}]},
      "Lion or tiger?: Lion vs Tiger: 190 kg, 220 kg; Africa, Asia"),  # the columns under the wrong name
+    # names as columns, each row a line of text with both values (what Haiku sent on the robot, 2026-10-29)
+    ({"columns": ["Lion", "Tiger"], "rows": ["Weight: 190 kg vs 220 kg", "Lives in: Africa | Asia"]}, LION_TIGER),
+    ({"rows": ["Weight: 190 kg / 220 kg", "Lives in: Africa; Asia"]}, LION_TIGER),  # names only in the title
 ])
 async def test_a_comparison_written_as_a_table_still_shows(spec: dict[str, Any], said: str) -> None:
     from littlebot.screens.director import clean_spec
@@ -108,6 +111,13 @@ async def test_a_comparison_with_names_only_in_the_title_and_values_by_row() -> 
     card = await make({"layout": "compare", "title": "Genghis Khan vs Kublai Khan",
                        "rows": [{"label": "Known for", "values": ["Conquest", "Ruling China"]}]})
     assert [c["name"] for c in card.columns] == ["Genghis Khan", "Kublai Khan"] and card.rows == ["Known for"]
+
+
+async def test_a_comparison_with_a_line_for_each_of_them() -> None:
+    card = await make({"layout": "compare", "title": "Genghis Khan or Kublai Khan?",
+                       "rows": ["Genghis: united the tribes", "Kublai: ruled China", "Genghis Khan: conquered Asia"]})
+    assert card.columns == [{"name": "Genghis Khan", "facts": ["united the tribes", "conquered Asia"]},
+                            {"name": "Kublai Khan", "facts": ["ruled China"]}] and card.rows == []
 
 
 async def test_an_empty_comparison_says_what_it_was_sent(caplog: pytest.LogCaptureFixture) -> None:

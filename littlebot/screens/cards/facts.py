@@ -74,7 +74,7 @@ def _table(columns: list[dict[str, Any]], raw_rows: Any, title: str) -> tuple[li
         return [], []
     records = [r for r in raw_rows if isinstance(r, (dict, list, tuple))]
     if not records:
-        return [], []
+        return _lines(columns, [r for r in raw_rows if isinstance(r, str)], title)
     if all(isinstance(r, dict) and ("facts" in r or "values" in r) and not any(str(k).lower() in LABEL_KEYS
                                                                               for k in r) for r in records):
         named = [c for c in (_column(r) for r in records) if c and c["facts"]]  # columns, under the wrong name
@@ -109,13 +109,63 @@ def _table(columns: list[dict[str, Any]], raw_rows: Any, title: str) -> tuple[li
             row = {i: kit.clean(v, 50) for i, v in enumerate(list(r)[1:])}
         labels.append(label)
         cells.append(row)
-    if not names:  # "Genghis Khan vs Kublai Khan"
-        names = [n for n in (kit.clean(p, 24) for p in VS.split(title.rstrip("?!. "))) if n]
-    names = names[:3]
+    names = (names or _title_names(title))[:3]
     out = [{"name": n, "facts": [row.get(i) or "-" for row in cells]} for i, n in enumerate(names)]
     if len(out) < 2 or not any(row for row in cells):
         return [], []
     return out, labels if any(labels) else []
+
+
+def _title_names(title: str) -> list[str]:
+    """The things a title compares: "Genghis Khan vs Kublai Khan"."""
+    return [n[:1].upper() + n[1:] for n in (kit.clean(p, 24) for p in VS.split(title.rstrip("?!. "))) if n]
+
+
+# How one line of text holds a value per column ("Conqueror vs Ruler", "Conqueror | Ruler"), tried in this order
+SPLITS = tuple(re.compile(p, re.I) for p in (r"\s+(?:vs\.?|versus)\s+", r"\s*\|\s*", r"\s+/\s+", r"\s*;\s*",
+                                             r"\s+[–—]\s+", r",\s+"))
+
+
+def _owner(label: str, names: list[str]) -> int | None:
+    """The column a line's label names ("Genghis" for "Genghis Khan"), when it names exactly one."""
+    low = label.strip().lower()
+    if not low:
+        return None
+    hits = [i for i, n in enumerate(names)
+            if low == n.lower() or (len(low) >= 4 and (low in n.lower() or n.lower() in low))]
+    return hits[0] if len(hits) == 1 else None
+
+
+def _lines(columns: list[dict[str, Any]], lines: list[str], title: str) -> tuple[list[dict[str, Any]], list[str]]:
+    """A comparison whose ``rows`` are lines of text, as Haiku wrote one on the robot (2026-10-29): a label and
+    a value per column ("Role: Conqueror vs Ruler"), or a fact of one column ("Genghis Khan: united the
+    tribes"). The names come from ``columns`` or the title. ([], []) when it isn't one."""
+    names = ([c["name"] for c in columns] or _title_names(title))[:3]
+    if len(names) < 2:
+        return [], []
+    own: dict[int, list[str]] = {i: [] for i in range(len(names))}
+    labels: list[str] = []
+    cells: list[list[str]] = []
+    for line in lines:
+        text = " ".join(line.split())
+        label, colon, rest = text.partition(":")
+        if not colon or not rest.strip() or len(label) > 30:
+            label, rest = "", text
+        i = _owner(label, names)
+        if i is not None:
+            own[i].append(kit.clean(rest, 50))
+            continue
+        parts = next((p for p in ([s.strip() for s in sep.split(rest.strip()) if s.strip()] for sep in SPLITS)
+                      if len(p) == len(names)), None)
+        if parts is not None:
+            labels.append(kit.clean(label, 24))
+            cells.append([kit.clean(p, 50) for p in parts])
+    if cells:
+        out = [{"name": n, "facts": [row[i] for row in cells][:8]} for i, n in enumerate(names)]
+        return out, labels if any(labels) else []
+    if all(own.values()):  # each line a fact of one of them: a list of facts per column
+        return [{"name": n, "facts": own[i][:8]} for i, n in enumerate(names)], []
+    return [], []
 
 
 def _shape(value: Any) -> str:
@@ -519,7 +569,8 @@ register(CardType(
         "ordered": {"type": "boolean", "description": "list: number the items (default true)"},
         # (lists and plain names are kept too: the card also reads a comparison written as a table)
         "columns": {"type": "array", "maxItems": 3, "description": "compare: 2-3 columns, each "
-                    "{\"name\": \"Lion\", \"facts\": [\"190 kg\", \"Africa\"]}; the n-th facts line up as a row",
+                    "an object {\"name\": \"Lion\", \"facts\": [\"190 kg\", \"Africa\"]} (the facts are needed: "
+                    "names alone show nothing); the n-th facts line up as a row",
                     "items": {"type": ["object", "array", "string"], "items": {"type": "string"},
                               "properties": {"name": {"type": "string"}, "title": {"type": "string"},
                                              "facts": {"type": "array", "items": {"type": "string"}},
@@ -527,8 +578,8 @@ register(CardType(
         "rows": {"type": "array", "items": {"type": ["string", "object", "array"], "items": {"type": "string"},
                                             "additionalProperties": {"type": ["string", "array"],
                                                                      "items": {"type": "string"}}},
-                 "description": "compare, optional: a label for each row of facts (\"Weight\", \"Lives in\"); "
-                                "the facts themselves go in columns"},
+                 "description": "compare, optional: a label for each row of facts, 1-3 words (\"Weight\", "
+                                "\"Lives in\"); the facts themselves go in columns, not here"},
         "subtitle": {"type": "string", "description": "profile: what it is, 1-4 words (\"Animal\", \"City in Japan\")"},
         "facts": {"type": "array", "items": {"type": "string"}, "maxItems": 3,
                   "description": "profile: 2-3 short facts, each at most 8 words"},
