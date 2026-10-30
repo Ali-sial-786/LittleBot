@@ -9,6 +9,8 @@ Keeps reactive rules in one place instead of scattering them through modules:
 * long idle                 -> sleepy, then SLEEPING; a person or parent wakes it
   (the shorter "dozing" look while nothing happens is the face's own: littlebot/face/doze.py)
 * parent STOP               -> everything calms down
+* the conversation          -> gaze, nods and small gestures: littlebot/motion/body.py
+                               (``motion.body_language``; the face parts work without servos)
 """
 
 from __future__ import annotations
@@ -35,6 +37,11 @@ class Behaviours:
         self._idle_task: asyncio.Task[Any] | None = None
         self._last_activity = time.monotonic()
         self._greeted_at = 0.0
+        self.body: Any = None
+        if ctx.config.motion.body_language:
+            from littlebot.motion.body import BodyLanguage
+
+            self.body = BodyLanguage(ctx)
 
     async def start(self) -> None:
         bus = self.ctx.bus
@@ -53,11 +60,15 @@ class Behaviours:
         face = self.ctx.face
         if face is not None:
             face.set_state(FACE_STATE_FOR[self.ctx.state.state])
+        if self.body is not None:
+            await self.body.start()
 
     async def stop(self) -> None:
         for s in self._subs:
             s.cancel()
         self._subs.clear()
+        if self.body is not None:
+            await self.body.stop()
         await cancel_and_wait(self._idle_task)
 
     # ---------------------------------------------------------------- events

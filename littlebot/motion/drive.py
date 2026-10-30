@@ -363,6 +363,7 @@ class Drive:
         self._task: asyncio.Task[None] | None = None
         self._closed = False
         self._last_reason = ""
+        self._driver_error: str | None = None
         self.ticks = 0
         if self._errors:
             log.error("wheels disabled - invalid motion.drive configuration: %s", "; ".join(self._errors))
@@ -423,7 +424,8 @@ class Drive:
                 "command": cmd.label if cmd is not None else None,
                 "reason": self._reason_locked(),
                 "last": self._last_reason,
-                "error": "; ".join(self._errors) or None,
+                "error": "; ".join(self._errors) or self._driver_error,
+                "note": self._note or None,
                 "limits": self.limits.to_dict(),
             }
         try:
@@ -470,6 +472,7 @@ class Drive:
                 return False
             self._estop = False
             self._estop_source = None
+            self._driver_error = None
         return True
 
     async def close(self) -> None:
@@ -698,12 +701,13 @@ class Drive:
     def _errors_from_driver(self, message: str) -> None:
         self._estop = True
         self._estop_source = self._estop_source or "driver_error"
-        self._last_reason = f"wheel driver error: {message}"
         self._wheels_stop()
         if self._cmd is not None:
             cmd, self._cmd = self._cmd, None
             self._resolve(cmd, False, "wheel driver error")
         self._v = self._w = 0.0
+        self._driver_error = message
+        self._last_reason = f"wheel driver error: {message}"
 
     def _wheels_stop(self) -> None:
         try:

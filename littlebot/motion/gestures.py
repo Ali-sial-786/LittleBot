@@ -192,11 +192,12 @@ def resolve_pose(keyframe: Keyframe, specs: Mapping[str, JointSpec]) -> dict[str
 def gesture_joints(gesture: Gesture, specs: Mapping[str, JointSpec]) -> frozenset[str]:
     """Joints a gesture actually moves (a closing neutral keyframe does not energise idle joints).
 
-    A gesture that never leaves neutral (``neutral``) uses every joint it names.
+    A gesture that never leaves neutral (``neutral``) uses every joint it names. A gesture whose
+    moving joints are all missing (``nod`` without a ``head_tilt`` servo) uses none.
     """
-    named = frozenset(j for kf in gesture.keyframes for j in kf.pose if j in specs)
-    moved = frozenset(j for kf in gesture.keyframes for j, v in kf.pose.items() if j in specs and abs(v) > 1e-9)
-    return moved or named
+    if any(abs(v) > 1e-9 for kf in gesture.keyframes for v in kf.pose.values()):
+        return frozenset(j for kf in gesture.keyframes for j, v in kf.pose.items() if j in specs and abs(v) > 1e-9)
+    return frozenset(j for kf in gesture.keyframes for j in kf.pose if j in specs)
 
 
 def validate_gesture(gesture: Gesture, specs: Mapping[str, JointSpec]) -> list[str]:
