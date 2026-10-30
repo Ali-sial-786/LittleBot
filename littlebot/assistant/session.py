@@ -456,6 +456,9 @@ class VoiceSession:
     async def _local_answer(self, text: str, box: Any) -> tuple[str, str, bool] | None:
         """(who answered, words, end the session) without the brain: an instant intent, a voice game's move or a
         routine's phrase; None: the brain answers."""
+        alarm = self._alarm_answer(text)
+        if alarm is not None:
+            return "alarm", alarm, False
         media = getattr(self.ctx, "media", None)
         st = _safe(media.status) if media is not None else None
         media_on = bool(st and st.get("state") in ("playing", "paused", "loading"))
@@ -489,6 +492,20 @@ class VoiceSession:
             if name:
                 log.info("assistant: routine %r matched", name)
                 return None  # the brain runs it (its context note says how), with the tools it needs
+        return None
+
+    def _alarm_answer(self, text: str) -> str | None:
+        """An alarm or reminder is ringing: "stop" / "okay" stops it, "snooze" snoozes it (no model needed)."""
+        hub = getattr(self.ctx, "skills", None)
+        rem = hub.get("reminders") if hub is not None and hasattr(hub, "get") else None
+        if rem is None or not _safe(rem.ringing):
+            return None
+        if SNOOZE.match(text):
+            done = _safe(rem.snooze) or []
+            minutes = _safe(rem.snooze_minutes) or 9
+            return f"Snoozed for {minutes} minutes." if done else None
+        if intents.STOP.match(text) or STOP_ALARM.match(text) or intents.THANKS.match(text):
+            return "Okay, it's off." if _safe(rem.stop_ringing) else None
         return None
 
     async def _after_turn(self, box: Any) -> None:
@@ -725,6 +742,12 @@ def lease_for(svc: Any, end: Any) -> Any:
     """The session's lease: face, speaker and microphone at the parent's priority (as GPT-Live)."""
     return svc.ctx.arbiter.acquire(OWNER, [Resource.FACE, Resource.AUDIO_OUT, Resource.MICROPHONE], Priority.PARENT,
                                    on_preempt=lambda _lease, why: end(f"stopped ({why})"))
+
+
+SNOOZE = re.compile(r"^\s*(?:(?:okay|ok|please|little ?bot)[\s,]*)*snooze(?: (?:it|that|the alarm))?(?: for \w+ "
+                    r"minutes?)?[\s,]*(?:please)?[.!]*\s*$", re.I)
+STOP_ALARM = re.compile(r"^\s*(?:(?:okay|ok|please|little ?bot)[\s,]*)*(?:stop|turn off|cancel|dismiss) (?:the |that )?"
+                        r"(?:alarm|reminder)[\s,]*(?:please)?[.!]*\s*$|^\s*(?:i'?m up|i'?m awake|got it)[.!]*\s*$", re.I)
 
 
 class _GatedToolbox:

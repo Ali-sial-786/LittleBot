@@ -246,3 +246,57 @@ async def test_an_early_answer_is_dropped_when_they_go_on() -> None:
     assert "The weather today is sunny." not in tts.said
     assert brain.questions[-1] == "what's the weather tomorrow"
     assert svc.ctx.settings.get("audio.volume") != 0.1  # the dropped answer's tool never ran
+
+
+async def test_stop_or_snooze_while_an_alarm_rings() -> None:
+    brain = Scripted()
+    svc, stt, tts, _ = _service(brain, follow_up_seconds=0.5)
+
+    class Ringing:
+        name = "reminders"
+
+        def __init__(self) -> None:
+            self.rings = [1]
+            self.calls: list[str] = []
+
+        def ringing(self) -> list[int]:
+            return self.rings
+
+        def snooze(self) -> list[int]:
+            self.calls.append("snooze")
+            return self.rings
+
+        def snooze_minutes(self) -> int:
+            return 9
+
+        def stop_ringing(self) -> list[int]:
+            self.calls.append("stop")
+            return self.rings
+
+    class Hub:
+        def __init__(self, skill: Ringing) -> None:
+            self.skill = skill
+
+        def get(self, name: str) -> Ringing | None:
+            return self.skill if name == "reminders" else None
+
+        def specs(self) -> list:
+            return []
+
+        def prompt_notes(self) -> str:
+            return ""
+
+        def context_notes(self) -> str:
+            return ""
+
+    rem = Ringing()
+    svc.ctx.skills = Hub(rem)
+    await svc.start()
+    await svc.start_session()
+    await _wait(lambda: stt.stream is not None)
+    stt.say("snooze")
+    await _wait(lambda: "Snoozed for 9 minutes." in tts.said)
+    stt.say("I'm up")
+    await _wait(lambda: "Okay, it's off." in tts.said)
+    assert rem.calls == ["snooze", "stop"] and brain.questions == []
+    await svc.stop_session("test")
