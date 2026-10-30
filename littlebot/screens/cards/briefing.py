@@ -31,7 +31,8 @@ def _bell(size: int) -> pygame.Surface:
             body = art.LEMON
             edge = art.inkier(body, 0.4)
             top = (n * 0.5, n * 0.18)
-            pts = [(n * 0.22, n * 0.72), (n * 0.3, n * 0.36), (n * 0.5, n * 0.2), (n * 0.7, n * 0.36), (n * 0.78, n * 0.72)]
+            pts = [(n * 0.22, n * 0.72), (n * 0.3, n * 0.36), (n * 0.5, n * 0.2), (n * 0.7, n * 0.36),
+                   (n * 0.78, n * 0.72)]
             pygame.draw.polygon(s, edge, [(x, y + n * 0.03) for x, y in pts])
             pygame.draw.circle(s, edge, top, n * 0.08)
             pygame.draw.polygon(s, body, pts)

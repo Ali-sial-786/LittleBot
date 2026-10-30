@@ -47,8 +47,8 @@ CREATE TABLE IF NOT EXISTS routines (
 """
 # Words around a trigger phrase that don't change it ("hey LittleBot, good night please").
 _AROUND = frozenset("hey hi ok okay please littlebot little bot robot now then thanks thank you so um uh well".split())
-_RUN = re.compile(r"^(?:(?:please|can you|could you|let's|lets)\s+)*(?:run|start|do|begin|play|go)\s+(?:the\s+|my\s+|our\s+)?"
-                  r"(?P<name>.+?)(?:\s+routine)?$")
+_RUN = re.compile(r"^(?:(?:please|can you|could you|let's|lets)\s+)*(?:run|start|do|begin|play|go)\s+"
+                  r"(?:the\s+|my\s+|our\s+)?(?P<name>.+?)(?:\s+routine)?$")
 
 
 def key(text: Any) -> str:

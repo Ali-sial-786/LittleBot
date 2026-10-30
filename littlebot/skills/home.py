@@ -205,7 +205,8 @@ class SmartHome(Skill):
     name = "home"
 
     def __init__(self, ctx: Any, *, now: Callable[[], float] = time.time,
-                 transport: httpx.AsyncBaseTransport | None = None, clock: Callable[[], float] = time.monotonic) -> None:
+                 transport: httpx.AsyncBaseTransport | None = None,
+                 clock: Callable[[], float] = time.monotonic) -> None:
         super().__init__(ctx, now=now)
         self._transport = transport
         self._clock = clock

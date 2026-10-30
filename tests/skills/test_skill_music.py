@@ -24,7 +24,8 @@ SONGS = [
 ]
 MIXES = [
     {"video_id": "bbbbbbbbbb1", "title": "Jazz in 5 minutes explained", "channel": "Edu", "duration_seconds": 300},
-    {"video_id": "bbbbbbbbbb2", "title": "Relaxing Jazz Music Mix | 3 Hours", "channel": "Cafe", "duration_seconds": 10800},
+    {"video_id": "bbbbbbbbbb2", "title": "Relaxing Jazz Music Mix | 3 Hours", "channel": "Cafe",
+     "duration_seconds": 10800},
     {"video_id": "bbbbbbbbbb3", "title": "Smooth Jazz Mix", "channel": "Cafe", "duration_seconds": 3600},
 ]
 
@@ -108,9 +109,10 @@ class FakeMedia:
 class OldMedia(FakeMedia):
     """A media controller from before the music presentation (no ``presentation`` keyword)."""
 
-    async def play_video(self, video_id: str, *, title: str | None = None, channel: str | None = None,  # type: ignore[override]
-                         duration_seconds: int | None = None, alternatives: list[dict[str, Any]] | None = None,
-                         parent_override: bool = False) -> dict[str, Any]:
+    async def play_video(  # type: ignore[override]
+            self, video_id: str, *, title: str | None = None, channel: str | None = None,
+            duration_seconds: int | None = None, alternatives: list[dict[str, Any]] | None = None,
+            parent_override: bool = False) -> dict[str, Any]:
         return await super().play_video(video_id, title=title, channel=channel, alternatives=alternatives)
 
 

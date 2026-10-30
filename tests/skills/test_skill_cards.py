@@ -7,7 +7,6 @@ import asyncio
 import copy
 from typing import Any
 
-import pytest
 
 from littlebot.screens import base, preview
 from littlebot.screens.cards import briefing as briefing_card

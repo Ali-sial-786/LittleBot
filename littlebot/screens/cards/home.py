@@ -68,10 +68,12 @@ def _icon(kind: str, on: bool, size: int) -> pygame.Surface:
             if kind == "light":
                 fill = LIT if on else (232, 228, 236)
                 if on:
-                    s.blit(art.glow(n * 0.42, LIT, 0.9), art.glow(n * 0.42, LIT, 0.9).get_rect(center=(n * 0.5, n * 0.4)))
+                    glow = art.glow(n * 0.42, LIT, 0.9)
+                    s.blit(glow, glow.get_rect(center=(n * 0.5, n * 0.4)))
                 pygame.draw.circle(s, art.inkier(fill, 0.35), (n * 0.5, n * 0.4), n * 0.27)
                 pygame.draw.circle(s, fill, (n * 0.5, n * 0.4), n * 0.23)
-                pygame.draw.rect(s, soft, pygame.Rect(n * 0.38, n * 0.62, n * 0.24, n * 0.2), border_radius=int(n * 0.05))
+                pygame.draw.rect(s, soft, pygame.Rect(n * 0.38, n * 0.62, n * 0.24, n * 0.2),
+                                 border_radius=int(n * 0.05))
                 for y in (0.68, 0.75):
                     art.capsule(s, ink, (n * 0.38, n * y), (n * 0.62, n * y), n * 0.03)
                 pygame.draw.ellipse(s, art.WHITE, pygame.Rect(n * 0.38, n * 0.26, n * 0.09, n * 0.13))
@@ -110,7 +112,7 @@ def _icon(kind: str, on: bool, size: int) -> pygame.Surface:
                     y = n * (0.24 + i * 0.1)
                     art.capsule(s, frame, (n * 0.22, y), (n * 0.78, y), n * 0.07)
             elif kind == "lock":
-                body = art.TANGERINE if not on else art.MINT
+                body = art.TANGERINE if on else art.MINT  # unlocked ("on") is the one to notice
                 shackle = [(n * 0.32, n * 0.46), (n * 0.32, n * 0.3), (n * 0.5, n * 0.16), (n * 0.68, n * 0.3),
                            (n * 0.68, n * (0.36 if on else 0.46))]
                 for a, b in zip(shackle, shackle[1:]):
@@ -292,7 +294,11 @@ class HomeCard(Card):
         if kind == "fan" and on:
             icon = art.rotated(icon, (self.t * 240) % 360, key=("home_fan", 70))
         art.blit_center(surf, icon, (r.x + 50, r.y + 50))
-        chip = _kit.chip(state_label(d), art.MINT if on else art.mix(art.INK_SOFT, art.WHITE, 0.2))
+        if kind == "lock":
+            tint = art.TANGERINE if on else art.MINT
+        else:
+            tint = art.MINT if on else art.mix(art.INK_SOFT, art.WHITE, 0.2)
+        chip = _kit.chip(state_label(d), tint)
         surf.blit(chip, chip.get_rect(topright=(r.right - 12, r.y + 16)))
         name = candy.fit(str(d.get("name") or ""), BODY_PX, r.w - 24, art.INK, min_size=SMALL_PX)
         surf.blit(name, name.get_rect(bottomleft=(r.x + 14, r.bottom - 14)))
@@ -350,7 +356,8 @@ register(CardType(
 
 SAMPLES: list[dict[str, Any]] = [
     {"card": "home", "title": "Lights", "devices": [
-        {"entity_id": "light.kitchen", "name": "Kitchen Light", "kind": "light", "state": "on", "brightness_percent": 80},
+        {"entity_id": "light.kitchen", "name": "Kitchen Light", "kind": "light", "state": "on",
+         "brightness_percent": 80},
         {"entity_id": "light.porch", "name": "Porch Light", "kind": "light", "state": "off"},
         {"entity_id": "switch.kettle", "name": "Kettle Plug", "kind": "switch", "state": "on"},
         {"entity_id": "climate.hall", "name": "Thermostat", "kind": "climate", "state": "heat",
