@@ -350,6 +350,9 @@ class ClaudeConfig(_Section):
     Needs the "claude" extra (pip install -e '.[claude]')."""
 
     model: str | None = None  # e.g. claude-haiku-5-5; set it in config/local.yaml. None: Claude isn't used
+    # Tried in turn when ``model`` fails or is slow to say its first word, before ChatGPT (text.fallback), e.g.
+    # [claude-haiku-4-5]. Each gets the same request, effort, thinking and first-word limit.
+    fallback_models: list[str] = Field(default_factory=list)
     effort: Literal["low", "medium", "high"] = "low"
     # adaptive: the model thinks when it helps (counted in the tokens); disabled: never (fastest; Haiku 5.5 only,
     # at effort low..high). Requests LittleBot marks as simple ("minimal" effort) always go without thinking.

@@ -1,4 +1,5 @@
-"""The text model for a voice chat's text work (``text.provider``): ChatGPT, or Claude with ChatGPT behind it.
+"""The text model for a voice chat's text work (``text.provider``): ChatGPT, or Claude with ChatGPT behind it
+(and ``claude.fallback_models``, e.g. Haiku 4.5 behind Haiku 5.5, between the two).
 
 ``text_provider(ctx, chatgpt, purpose=)`` is what the live voice's hand-offs and the screen director (its cards and
 the browser's search words) ask (littlebot/chatgpt/live.py): ``chatgpt`` itself with ``text.provider: chatgpt``
@@ -57,11 +58,21 @@ def text_provider(ctx: Any, chatgpt: BaseProvider, *, purpose: str = "") -> Base
     claude = make_claude(ctx, purpose=purpose)
     if not cfg.fallback:
         return claude
-    return FallbackProvider(claude, chatgpt, purpose=purpose)
+    first = ctx.config.claude.model
+    backups = [m for m in dict.fromkeys(m.strip() for m in ctx.config.claude.fallback_models) if m and m != first]
+    backup = chatgpt
+    for model in reversed(backups):  # claude.model, then each of claude.fallback_models, then ChatGPT
+        backup = FallbackProvider(make_claude(ctx, purpose=purpose, model=model), backup, purpose=purpose)
+    return FallbackProvider(claude, backup, purpose=purpose)
+
+
+def _label(p: BaseProvider) -> str:
+    return p.primary.model if isinstance(p, FallbackProvider) else "ChatGPT"
 
 
 class FallbackProvider(BaseProvider):
-    """``primary`` (Claude) first; ``backup`` (ChatGPT) when it can't answer and nothing was done yet."""
+    """``primary`` (Claude) first; ``backup`` (another Claude model's FallbackProvider, or ChatGPT) when it can't
+    answer and nothing was done yet."""
 
     is_cloud = True
     supports_tools = True
@@ -95,7 +106,9 @@ class FallbackProvider(BaseProvider):
         return ok
 
     async def aclose(self) -> None:
-        await self.primary.aclose()  # the backup is ChatGPT's, owned by whoever made it
+        await self.primary.aclose()
+        if isinstance(self.backup, FallbackProvider):  # a backup Claude model made here; ChatGPT is its maker's
+            await self.backup.aclose()
 
     async def reply(self, messages: list[Message], *, system: str, max_tokens: int, timeout: float,
                     images: list[bytes] | None = None, tools: list[dict[str, Any]] | None = None,
@@ -111,7 +124,8 @@ class FallbackProvider(BaseProvider):
         if missing:
             if self._told_missing != missing:
                 self._told_missing = missing
-                log.warning("text model: Claude isn't set up (%s): ChatGPT answers instead", missing)
+                log.warning("text model: Claude isn't set up (%s): %s answers instead", missing,
+                            _label(self.backup))
             return await self._backup(messages, system, max_tokens, timeout, kw)
         acted: list[bool] = []
         if run_tool is not None:
@@ -130,8 +144,8 @@ class FallbackProvider(BaseProvider):
         except ProviderError as e:
             if e.kind in NO_FALLBACK or acted:
                 raise
-            log.warning("text model: Claude failed (%s) after %d ms; asking ChatGPT instead", e.kind,
-                        (time.monotonic() - t0) * 1000)
+            log.warning("text model: Claude failed (%s) after %d ms on %s; asking %s instead", e.kind,
+                        (time.monotonic() - t0) * 1000, self.primary.model, _label(self.backup))
         kw["run_tool"], kw["on_delta"] = run_tool, on_delta
         return await self._backup(messages, system, max_tokens, timeout, kw)
 

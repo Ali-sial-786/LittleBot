@@ -8,9 +8,10 @@ During a voice chat the live voice (GPT-Live) talks. Behind it, a **text model**
 * the browser's search words;
 * optionally the **decider**: the small multiple-choice checks in [DECISIONS.md](DECISIONS.md).
 
-That text model is ChatGPT (your sign-in) by default. With the settings below it can be **Claude**
-(Anthropic's API, your own API key) instead. **ChatGPT stays behind it**: if Claude fails, is slow to say
-its first word, or isn't set up, the same request goes to ChatGPT.
+That text model is **Claude Haiku 5.5** (Anthropic's API, your own API key), with thinking off. If it fails
+or is slow to say its first word, the same request goes to **Claude Haiku 4.5**, then to **ChatGPT** (your
+sign-in). Without a key ChatGPT answers, as before. Haiku 5.5 was the best and cheapest text model in the
+2026-10-29 test of 34 everyday questions (no clear mistakes, 1.16 s median, under a cent for all 34).
 
 What doesn't change:
 
@@ -18,9 +19,9 @@ What doesn't change:
 * **camera looks** ("what am I holding?") are always ChatGPT;
 * the typed / push-to-talk chat has its own setting (`ai.provider`, which can already be `anthropic`).
 
-> **Status.** Tested only with a fake Anthropic client (`tests/brain/test_claude_provider.py`,
-> `tests/chatgpt/test_live_claude.py`), **not yet against Anthropic's real API or on the robot**. Run
-> `scripts/compare_text_models.py` (below) once the key is set to see it work and to measure it.
+> **Status.** Tested against Anthropic's real API from a laptop (with a real GPT-Live call, 2026-10-29),
+> **not yet on the robot**. Run `scripts/compare_text_models.py` (below) once the key is set to see it work
+> on the Pi.
 
 ## 1. Install the Anthropic SDK
 
@@ -58,14 +59,18 @@ to GitHub Actions workflows. The robot can't read it, so the key still has to be
 
 ## 3. Switch the text model
 
-In `config/local.yaml`:
+`config/default.yaml` already has:
 
 ```yaml
 text:
-  provider: claude          # chatgpt (default) | claude
+  provider: claude          # chatgpt | claude
 claude:
   model: claude-haiku-5-5   # the Claude model; nothing is sent to Claude while this is unset
+  fallback_models: [claude-haiku-4-5]   # tried in turn before ChatGPT
+  thinking: disabled
 ```
+
+Change any of it in `config/local.yaml`. For ChatGPT alone: `text: {provider: chatgpt}`.
 
 Optionally, the decider too (it may use a different provider from the cards):
 
@@ -84,16 +89,17 @@ Other `claude:` settings (`littlebot/core/config.py`, `ClaudeConfig`):
 
 | Key | Default | Meaning |
 |---|---|---|
-| `model` | `null` | the model name. Unset: Claude isn't used |
+| `model` | `claude-haiku-5-5` | the model name. Unset (`null`): Claude isn't used |
+| `fallback_models` | `[claude-haiku-4-5]` | asked in turn, with the same request, when `model` fails or is slow; ChatGPT comes after them |
 | `effort` | `low` | `low` / `medium` / `high`. Requests LittleBot marks as simple (light hand-offs, cards) go at `low` with thinking off |
-| `thinking` | `adaptive` | `adaptive`: the model thinks when it helps. `disabled`: never (fastest) |
+| `thinking` | `disabled` | `adaptive`: the model thinks when it helps. `disabled`: never (fastest). Haiku 4.5 never thinks either way |
 | `max_tokens` | `2048` | the most it may write per request, thinking included. Answers are still cut short by LittleBot afterwards |
-| `first_token_timeout_seconds` | `4.0` | no first word by then: ChatGPT is asked instead |
+| `first_token_timeout_seconds` | `4.0` | no first word by then: the next model is asked instead |
 | `web_search` | `true` | Anthropic's web search for hand-offs about current facts (billed per search). Refused by the API: not offered again until restart |
 | `web_search_max_uses` | `2` | searches per hand-off |
 | `key_file` | `anthropic_api_key` | the key file under `data/` |
 
-`text.fallback: false` turns the ChatGPT fallback off. Then a Claude failure is the answer's failure
+`text.fallback: false` turns both fallbacks (Haiku 4.5 and ChatGPT) off. Then a Claude failure is the answer's failure
 ("I'm not sure"), which is only useful for measuring Claude on its own.
 
 ## 4. The same rules

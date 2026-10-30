@@ -82,6 +82,32 @@ def test_claude_comes_with_chatgpt_behind_it_or_alone(cctx, fake):
     assert isinstance(alone, ClaudeProvider)
 
 
+def test_the_shipped_config_is_haiku_5_5_then_4_5_then_chatgpt(tmp_path):
+    cfg = load_config(mode="simulation", environ={}, use_dotenv=False, include_local=False)
+    assert cfg.text.provider == "claude" and cfg.text.fallback and cfg.claude.thinking == "disabled"
+    assert (cfg.claude.model, cfg.claude.fallback_models) == ("claude-haiku-5-5", ["claude-haiku-4-5"])
+
+
+async def test_a_failing_haiku_5_5_goes_to_haiku_4_5_before_chatgpt(cctx, fake, caplog):
+    class Overloaded(Exception):
+        status_code = 529
+
+    cctx.config.claude.fallback_models = ["claude-haiku-4-5", "claude-haiku-5-5"]  # the first model isn't repeated
+    chatgpt = FakeChatGPT()
+    p = text_provider(cctx, chatgpt, purpose="handoff")
+    assert p.primary.model == "claude-haiku-5-5" and p.backup.primary.model == "claude-haiku-4-5"
+    assert p.backup.backup is chatgpt
+    fake.turns = [{"error": Overloaded()}, {"text": "Haiku 4.5 here."}]
+    with caplog.at_level(logging.WARNING):
+        reply = await p.reply([{"role": "user", "content": "x"}], system="s", max_tokens=50, timeout=5)
+    assert reply.text == "Haiku 4.5 here." and not chatgpt.calls
+    assert [c["model"] for c in fake.calls] == ["claude-haiku-5-5", "claude-haiku-4-5"]
+    assert "on claude-haiku-5-5; asking claude-haiku-4-5 instead" in caplog.text
+    fake.turns = [{"error": Overloaded()}, {"error": Overloaded()}]
+    reply = await p.reply([{"role": "user", "content": "x"}], system="s", max_tokens=50, timeout=5)
+    assert reply.text == "ChatGPT here."  # both Haikus failed: ChatGPT still answers
+
+
 def test_the_live_voice_uses_the_chosen_text_model_for_hand_offs_and_the_screen(cctx, fake, tmp_path):
     pytest.importorskip("httpx")
     from littlebot.chatgpt.auth import ChatGPTAuth

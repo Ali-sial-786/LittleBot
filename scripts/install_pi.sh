@@ -298,7 +298,7 @@ info "files: data/, data/logs/; config/local.yaml and .env only if missing (neve
 if ((NO_LIVE)); then
     info "live voice: skipped (--no-live)"
 else
-    info "live voice: pip install -e \".[live]\" (aiortc, prebuilt wheels ~40 MB; a failure only warns)"
+    info "live voice: pip install -e \".[live,claude]\" (aiortc and the Anthropic SDK, prebuilt wheels ~45 MB; a failure only warns)"
 fi
 if ((NO_MODELS == 0)) && [[ -f "$REPO_DIR/scripts/download_models.py" ]]; then
     info "models: YuNet face detector, hand models and SFace (family recognition, opt-in) via scripts/download_models.py (skipped if already verified)"
@@ -402,8 +402,9 @@ fi
 # Python; --only-binary makes pip fail fast instead of compiling PyAV / SRTP / cryptography.
 if ((NO_LIVE == 0)); then
     step "Live voice (aiortc)"
-    run "${PIP[@]}" install --prefer-binary --only-binary=av,pylibsrtp,cryptography,google-crc32c -e "${REPO_DIR}[live]" \
-        || warn "Live voice could not be installed (no internet?). Later: .venv/bin/python -m pip install -e '.[live]'"
+    # claude: the Anthropic SDK for the text model behind the voice (text.provider: claude, docs/CLAUDE.md)
+    run "${PIP[@]}" install --prefer-binary --only-binary=av,pylibsrtp,cryptography,google-crc32c -e "${REPO_DIR}[live,claude]" \
+        || warn "Live voice could not be installed (no internet?). Later: .venv/bin/python -m pip install -e '.[live,claude]'"
 fi
 
 # The OpenCV 5 pip wheel has no Haar cascade support, so the vision module uses YuNet,

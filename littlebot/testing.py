@@ -410,6 +410,9 @@ def make_test_config(**overrides: Any) -> LittleBotConfig:
         "activities": {"time_scale": 0.0},
         "logging": {"level": "WARNING"},
         "power": {"monitor": "none"},  # never a battery monitor plugged into the test machine
+        # ChatGPT as the text model unless a test chooses Claude (config/default.yaml ships Claude first)
+        "text": {"provider": "chatgpt"},
+        "claude": {"model": None, "fallback_models": [], "thinking": "adaptive"},
     }
     from littlebot.core.config import deep_merge
 
