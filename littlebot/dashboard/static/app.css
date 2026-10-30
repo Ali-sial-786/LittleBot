@@ -670,3 +670,4 @@ details.disclosure > summary { cursor: pointer; font-weight: 650; padding: 4px 0
 .skill-row { padding: 6px 0; border-bottom: 1px solid rgba(0, 0, 0, 0.06); }
 .skill-row:last-child { border-bottom: 0; }
 .skill-now { white-space: pre-wrap; font: inherit; font-size: 0.88em; margin: 4px 0 0; color: inherit; opacity: 0.85; }
+.small-head { font-size: 0.95em; margin: 8px 0 2px; text-transform: capitalize; }

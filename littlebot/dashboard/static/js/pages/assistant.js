@@ -87,6 +87,44 @@ export default {
     // ---------- skills
     const skillsBody = h('div', { class: 'stack-sm' });
 
+    // ---------- what it keeps: lists, reminders, memories
+    const listsBody = h('div', { class: 'stack-sm' });
+    const remindersBody = h('div', { class: 'stack-sm' });
+    const memoriesBody = h('div', { class: 'stack-sm' });
+    let dataKey = '';
+
+    function row(text, actionLabel, onAction, sub) {
+      return h('div', { class: 'row between skill-row' },
+        h('div', {}, h('span', { text }), sub ? h('div', { class: 'muted small', text: sub }) : null),
+        button(actionLabel, { kind: 'soft small', onClick: onAction }));
+    }
+
+    function renderData(d) {
+      const key = JSON.stringify(d);
+      if (key === dataKey) return;
+      dataKey = key;
+      clear(listsBody);
+      if (!(d.lists || []).length) listsBody.append(h('p', { class: 'muted', text: 'No lists yet. Say “add milk to the shopping list”.' }));
+      for (const l of d.lists || []) {
+        listsBody.append(h('h3', { class: 'small-head', text: `${l.name} (${l.items.length})` }));
+        for (const it of l.items) listsBody.append(row(it.item, 'Done', () => app.act(() => post('/assistant/lists/tick', { list: l.name, id: it.id })).then(refreshData)));
+      }
+      clear(remindersBody);
+      if (!(d.reminders || []).length) remindersBody.append(h('p', { class: 'muted', text: 'Nothing coming up. Say “remind me at 6 to call mom”.' }));
+      for (const r of d.reminders || []) {
+        const when = new Date(r.at * 1000).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' });
+        remindersBody.append(row(`${r.kind === 'alarm' ? '⏰ ' : ''}${r.label}`, 'Cancel', () => app.act(() => post('/assistant/reminders/cancel', { id: r.id })).then(refreshData),
+          `${when}${r.repeat ? ` · ${r.repeat}` : ''}${r.state === 'ringing' ? ' · ringing now' : ''}`));
+      }
+      clear(memoriesBody);
+      if (!(d.memories || []).length) memoriesBody.append(h('p', { class: 'muted', text: 'Nothing yet. Say “remember that…”.' }));
+      for (const m of d.memories || []) memoriesBody.append(row(m.text, 'Forget', () => app.act(() => post('/assistant/memories/forget', { id: m.id })).then(refreshData)));
+    }
+
+    async function refreshData() {
+      try { renderData(await get('/assistant/data')); } catch { /* shown by the poll */ }
+    }
+
     view.append(
       pageHead('Assistant', 'Talk to LittleBot from here, send it messages, and see what it remembers.'),
       h('div', { class: 'stack' },
@@ -103,8 +141,11 @@ export default {
         h('section', { class: 'card' },
           h('div', { class: 'card-head' }, h('h2', {}, icon('mic'), 'Voice'), h('div', { class: 'btn-row' }, talkBtn, stopBtn)),
           pipeBody),
+        h('section', { class: 'card' }, h('div', { class: 'card-head' }, h('h2', {}, icon('star'), 'Lists')), listsBody),
+        h('section', { class: 'card' }, h('div', { class: 'card-head' }, h('h2', {}, icon('sun'), 'Reminders and alarms')), remindersBody),
+        h('section', { class: 'card' }, h('div', { class: 'card-head' }, h('h2', {}, icon('sparkles'), 'What LittleBot remembers')), memoriesBody),
         h('section', { class: 'card' },
-          h('div', { class: 'card-head' }, h('h2', {}, icon('star'), 'What LittleBot knows and can do')),
+          h('div', { class: 'card-head' }, h('h2', {}, icon('star'), 'Skills right now')),
           skillsBody)));
 
     function render(data) {
@@ -133,6 +174,7 @@ export default {
 
     async function refresh() {
       try { render(await get('/assistant')); } catch { /* the poll shows offline */ }
+      refreshData();
     }
     refresh();
     timer = setInterval(refresh, 4000);

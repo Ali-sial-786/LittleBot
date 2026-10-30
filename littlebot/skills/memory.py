@@ -222,6 +222,14 @@ class Memory(Skill):
                 out.append(line)
         return out
 
+    def entries(self) -> list[dict[str, Any]]:
+        """[{id, text}] of every fact, most recent first (the dashboard's Assistant page)."""
+        return [{"id": int(r["id"]), "text": self.render(r)} for r in self._rows()]
+
+    def delete(self, fact_id: int) -> None:
+        """Forget one fact by its id (the dashboard)."""
+        self._delete([int(fact_id)])
+
     def search(self, query: str, limit: int = RECALL_MAX) -> list[tuple[float, dict[str, Any]]]:
         """(score, row) of the facts that match ``query``, best (then most recent) first."""
         want = tokens(query)

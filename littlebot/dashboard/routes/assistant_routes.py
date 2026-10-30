@@ -122,6 +122,65 @@ async def note(body: NoteBody, dash: DashState = Depends(get_dash)) -> dict[str,
     return {"ok": True}
 
 
+class TickBody(Body):
+    list: str = Field(..., min_length=1, max_length=60)
+    id: int = Field(..., ge=0)
+
+
+class IdBody(Body):
+    id: int = Field(..., ge=0)
+
+
+def _skill(dash: DashState, name: str) -> Any:
+    hub = getattr(dash.ctx, "skills", None)
+    skill = hub.get(name) if hub is not None and hasattr(hub, "get") else None
+    if skill is None:
+        raise HTTPException(status_code=503, detail=f"The {name} skill isn't running.")
+    return skill
+
+
+@router.get("/data")
+async def data(dash: DashState = Depends(get_dash)) -> dict[str, Any]:
+    """What LittleBot keeps for the family: memories, lists and upcoming reminders (on the robot only)."""
+    hub = getattr(dash.ctx, "skills", None)
+    get = (lambda n: hub.get(n)) if hub is not None and hasattr(hub, "get") else (lambda n: None)
+    out: dict[str, Any] = {"memories": [], "lists": [], "reminders": []}
+    memory, lists, reminders = get("memory"), get("lists"), get("reminders")
+    try:
+        if memory is not None:
+            out["memories"] = memory.entries()
+        if lists is not None:
+            out["lists"] = [{"name": name, "items": [{"id": int(i["id"]), "item": str(i["item"])}
+                                                     for i in lists.items(name)]} for name, _ in lists.names()]
+        if reminders is not None:
+            out["reminders"] = [it.as_dict() for it in reminders.upcoming()]
+    except Exception:  # noqa: BLE001 - never break the page
+        log.exception("assistant data failed")
+    return scrub(out)
+
+
+@router.post("/lists/tick")
+async def list_tick(body: TickBody, dash: DashState = Depends(get_dash)) -> dict[str, Any]:
+    gone = _skill(dash, "lists").tick_off(body.list, body.id)
+    return {"ok": gone is not None}
+
+
+@router.post("/memories/forget")
+async def memory_forget(body: IdBody, dash: DashState = Depends(get_dash)) -> dict[str, Any]:
+    _skill(dash, "memory").delete(body.id)
+    return {"ok": True}
+
+
+@router.post("/reminders/cancel")
+async def reminder_cancel(body: IdBody, dash: DashState = Depends(get_dash)) -> dict[str, Any]:
+    rem = _skill(dash, "reminders")
+    item = rem.item(body.id)
+    if item is None:
+        raise HTTPException(status_code=404, detail="That reminder is already gone.")
+    rem.cancel([item])
+    return {"ok": True}
+
+
 @router.post("/glance")
 async def glance(dash: DashState = Depends(get_dash)) -> dict[str, Any]:
     screens = getattr(dash.ctx, "screens", None)
