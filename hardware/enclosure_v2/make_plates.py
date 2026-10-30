@@ -25,10 +25,10 @@ PLATES = [
     ("02_torso",       "main colour",           [["torso"]]),
     ("03_head",        "main colour",           [["head", "camera_pod"]]),
     ("04_floor",       "main colour",           [["base_floor"], ["well_cover", "well_cover"]]),
-    ("05_back_cap",    "main colour",           [["head_back", "shelf"]]),
+    ("05_back_cap",    "main colour",           [["head_back"], ["screen_clamp"]]),
     ("06_arms",        "main colour",           [["torso_back", "arm_left"], ["arm_right"]]),
     ("07_small_parts", "main colour, print slowly (gears)",
-                                                [["coupler", "ring_gear", "pinion"], ["servo_frame", "camera", "rear_usb"], ["pi_carrier"]]),
+                                                [["coupler", "ring_gear", "pinion"], ["servo_frame", "camera", "rear_usb"]]),
     ("08_visor",       "black",                 [["visor"]]),
     ("09_glow",        "white / natural / translucent", [["ear_left", "ear_right"], ["front_blank"]]),
     # later, for the wheel phase

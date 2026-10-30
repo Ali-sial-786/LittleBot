@@ -6,6 +6,7 @@
                                         (FILE.stl=N: the part is N separate pieces on purpose)
     stl_tools.py overhangs FILE.stl     list the biggest overhang patches (where supports would be needed)
     stl_tools.py bbox FILE.stl          bounding-box size (used for the INFO checks)
+    stl_tools.py volume FILE.stl        enclosed volume in mm3 (run_checks.sh: a check whose overlap has none passes)
 
 "shells" counts separate solid bodies: a printable part must be exactly 1 (no floating islands).
 "overhang" is the area (mm^2) of downward faces flatter than 45 degrees that do not sit on the
@@ -137,6 +138,10 @@ def main(argv: list[str]) -> int:
         t = read_stl(Path(argv[1]))
         size = t.reshape(-1, 3).max(0) - t.reshape(-1, 3).min(0)
         print(f"{size[0]:.1f} x {size[1]:.1f} x {size[2]:.1f} mm (x, depth, height)")
+        return 0
+    if len(argv) == 2 and argv[0] == "volume":
+        t = read_stl(Path(argv[1])).astype(np.float64)
+        print(f"{abs(np.einsum('ij,ij->i', t[:, 0], np.cross(t[:, 1], t[:, 2])).sum()) / 6:.4f}")   # mm3 (checks: < 0.01 = touching only)
         return 0
     if len(argv) == 2 and argv[0] == "overhangs":
         for a, lo, hi in overhang_patches(read_stl(Path(argv[1]))):

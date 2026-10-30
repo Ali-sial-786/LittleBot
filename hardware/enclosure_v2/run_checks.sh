@@ -11,7 +11,8 @@ one() {
     local tag; tag=$(echo "$name $*" | tr -c 'a-zA-Z0-9_' '_')
     openscad -o "$tmp/$tag.stl" -D "check=\"$name\"" "$@" checks.scad > "$tmp/$tag.log" 2>&1
     # Empty result, or only zero-volume contact (parts designed to touch), counts as a pass.
-    if grep -q "Current top level object is empty" "$tmp/$tag.log" || ! grep -q "facet" "$tmp/$tag.stl" 2>/dev/null; then
+    if grep -q "Current top level object is empty" "$tmp/$tag.log" || ! grep -q "facet" "$tmp/$tag.stl" 2>/dev/null \
+       || python3 stl_tools.py volume "$tmp/$tag.stl" 2>/dev/null | awk '{ exit !($1 < 0.01) }'; then
         printf 'PASS  %-26s %s\n' "$name" "$*"
     else
         printf 'FAIL  %-26s %s  (overlap: %s)\n' "$name" "$*" "$tmp/$tag.stl"
@@ -21,7 +22,7 @@ export -f one; export tmp
 {
     if (($#)); then printf '%s\n' "$@"; else
     for c in electronics_vs_torso electronics_overlap torso_parts_vs_electronics frame_vs_servo pinion_vs_torso \
-             gears_mesh_clear back_cover_vs_torso stack_vs_head pi_screws_clear stack_internal camera_vs_head bracket_vs_pod \
+             gears_mesh_clear back_cover_vs_torso screen_vs_head ups_internal camera_vs_head bracket_vs_pod \
              head_parts_overlap torso_vs_base base_parts_overlap electronics_vs_base sonar_vs_base \
              wheels_vs_mobile_base; do echo "$c"; done
     for a in -60 -30 0 30 60; do echo "neck_vs_torso -D head_angle=$a"; echo "head_vs_torso -D head_angle=$a"; done
@@ -38,10 +39,5 @@ if (($# == 0)); then
     # The self-test must find an overlap, otherwise the checks above prove nothing.
     openscad -o "$tmp/selftest.stl" -D 'check="selftest_must_fail"' checks.scad > "$tmp/selftest.log" 2>&1
     if grep -q "facet" "$tmp/selftest.stl" 2>/dev/null; then echo "PASS  selftest_must_fail (an overlap is detected)"; else echo "FAIL  selftest_must_fail"; status=1; fi
-    # Parts compatibility from the drawings (not the enclosure): reported, never fails the run.
-    openscad -o "$tmp/info.stl" -D 'check="info_cooler_vs_screen"' checks.scad > "$tmp/info.log" 2>&1
-    if grep -q "facet" "$tmp/info.stl" 2>/dev/null; then
-        echo "INFO  Active Cooler vs screen (drawings): overlap $(python3 stl_tools.py bbox "$tmp/info.stl") - see README, 'The screen sits on the Pi'"
-    else echo "INFO  Active Cooler vs screen (drawings): no overlap"; fi
 fi
 exit $status

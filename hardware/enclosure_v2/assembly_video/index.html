@@ -70,51 +70,54 @@ async function loadAll() {
 
 // ---------- the story ----------
 const TORSO_G = ['torso','torso_back','coupler','ring_gear','pinion','servo_frame','head_servo','arm_servo_left','arm_servo_right','speaker','mic'];
-const STACK_G = ['pi_carrier','pi','pi_ports','cooler','screen_glass','screen_pcb','hdmi_adapter'];
-const HEAD_G = ['head','head_back','visor','ear_left','ear_right','camera_pod','camera_bracket','camera_board', ...STACK_G];
+const FLOOR_G = ['base_floor','ups_plate','ups_cells','ups_board','ups_standoffs','pi','pi_ports','cooler','pca9685','usbc_socket'];
+const HEAD_G = ['head','head_back','visor','ear_left','ear_right','camera_pod','camera_bracket','camera_board','screen_glass','screen_pcb','screen_clamp'];
 const ROBOT = { t: [0, 76, 190], az: -28, el: 16, d: 980 };
 // each step: parts it installs and where they come from (offset, mm); camera; see-through shells
 const STEPS = [
-  { title: 'The finished robot', detail: 'Here is what we are building. Now let’s put it together, step by step.', dur: 5.0, intro: true, view: { ...ROBOT, az: -40 }, view2: { ...ROBOT, az: 35 } },
-  { title: 'Neck bearing', detail: 'PTFE tape (or a drop of grease) on the coupler’s ring, then drop it into the top of the torso.',
+  { title: 'The finished robot', detail: 'Here is what we are building. Now let\u2019s put it together, step by step.', dur: 5.0, intro: true, view: { ...ROBOT, az: -40 }, view2: { ...ROBOT, az: 35 } },
+  { title: 'Neck bearing', detail: 'PTFE tape (or a drop of grease) on the coupler\u2019s ring, then drop it into the top of the torso.',
     add: { torso: null, coupler: [0, 0, 60] }, view: { t: [0, 76, 215], az: -32, el: 28, d: 560 } },
-  { title: 'Ring gear, from below', detail: 'Reach inside and screw the ring gear onto the coupler’s spigot: 3 × M2.5 × 12.',
+  { title: 'Ring gear, from below', detail: 'Reach inside and screw the ring gear onto the coupler\u2019s spigot: 3 \u00d7 M2.5 \u00d7 12.',
     add: { ring_gear: [0, 0, -70] }, see: { torso: 0.22 }, view: { t: [0, 80, 225], az: -38, el: 12, d: 470 } },
-  { title: 'Head servo and pinion', detail: 'Horn into the pinion’s pocket, servo at 90°, slide the pinion up into mesh. Frame onto the pillars (2 × M3 × 10), servo tabs onto the frame.',
+  { title: 'Head servo and pinion', detail: 'Horn into the pinion\u2019s pocket, servo at 90\u00b0, slide the pinion up into mesh. Frame onto the pillars (2 \u00d7 M3 \u00d7 10), servo tabs onto the frame.',
     add: { pinion: [0, 0, -55], head_servo: [0, 0, -70], servo_frame: [0, 0, -85] }, see: { torso: 0.22 }, view: { t: [0, 70, 215], az: -45, el: 8, d: 470 } },
   { title: 'Arm servos', detail: 'From inside, push each servo through its rib window until the round boss pokes out of the side. Screw the tabs to the rib.',
     add: { arm_servo_left: [40, 0, 0], arm_servo_right: [-40, 0, 0] }, see: { torso: 0.22 }, view: { t: [0, 76, 225], az: -18, el: 14, d: 520 } },
-  { title: 'Speaker and microphone', detail: 'Speaker into the chest cradle behind the grille (2 zip ties), mic into its sleeve, holes facing out. Feed the cables up through the neck.',
+  { title: 'Speaker and microphone', detail: 'Speaker into the chest cradle behind the grille (2 zip ties), mic into its sleeve, holes facing out. Their cables go down to the base.',
     add: { speaker: [0, 110, 0], mic: [0, 110, 0] }, see: { torso: 0.22 }, view: { t: [0, 80, 205], az: 148, el: 20, d: 600 } },
-  { title: 'Torso onto the base', detail: 'Run the USB-C power cable up through the base and the neck, then fix the torso with 4 × M3 × 10 from inside the base.',
-    add: { base: [0, 0, -40] }, torsoDown: true, view: { t: [0, 76, 130], az: -30, el: 16, d: 760 } },
-  { title: 'Torso back cover', detail: '4 × M3 × 12 countersunk.',
-    add: { torso_back: [0, 80, 0] }, view: { t: [0, 100, 130], az: 145, el: 16, d: 640 } },
-  { title: 'Servo board and shelf', detail: 'PCA9685 onto the shelf’s standoffs (4 × M2.5 × 6), shelf onto its posts (4 × M3 × 8). Optional ballast in the battery bay underneath.',
-    add: { shelf: [0, 0, -90], pca9685: [0, 0, -90] }, see: { base: 0.22 }, view: { t: [0, 76, 40], az: -34, el: 6, d: 540 } },
-  { title: 'Floor', detail: 'From below: 4 × M3 × 10 countersunk.',
-    add: { base_floor: [0, 0, -80] }, see: { base: 0.22 }, view: { t: [0, 76, 35], az: -34, el: -10, d: 560 } },
-  { title: 'Side covers and plates', detail: 'Wheel-well covers (4 screws each), the light-bar plate at the front and the cable plate at the back (2 screws each).',
+  { title: 'The floor', detail: 'The electronics go onto the floor first, outside the robot, where you can reach everything.',
+    add: { base_floor: null }, view: { t: [0, 76, -85], az: -35, el: 30, d: 560 } },
+  { title: 'Pi + UPS onto the mounting wall', detail: 'Pi and cooler onto the UPS as Waveshare shows, cells in V1\u2013V4 order. Swap the UPS\u2019s 4 bottom screws for M3 \u00d7 12 and screw it to the wall through the clear plate, ports up.',
+    add: { ups_plate: [0, 90, 0], ups_cells: [0, 90, 0], ups_board: [0, 90, 0], ups_standoffs: [0, 90, 0], pi: [0, 90, 0], pi_ports: [0, 90, 0], cooler: [0, 90, 0] },
+    view: { t: [0, 95, -85], az: 140, el: 28, d: 520 } },
+  { title: 'Servo board and charging socket', detail: 'PCA9685 onto its standoffs (4 \u00d7 M2.5 \u00d7 6). USB-C extension into the UPS, its socket zip-tied into the holder. Plug in the HDMI and screen-power cables and the jumpers.',
+    add: { pca9685: [0, 0, 60], usbc_socket: [0, 0, 60] }, view: { t: [0, 80, -90], az: -30, el: 38, d: 540 } },
+  { title: 'Torso onto the base', detail: 'Feed the screen\u2019s cables up through the base\u2019s cable hole and the torso, then screw the torso on: 4 \u00d7 M3 \u00d7 10 from inside the base.',
+    add: { base: [0, 0, -40] }, torsoDown: true, view: { t: [0, 76, 40], az: -30, el: 14, d: 940 } },
+  { title: 'Floor into the base', detail: 'From below: 4 \u00d7 M3 \u00d7 12. Plug the camera, speaker and mic into the Pi\u2019s USB ports.',
+    floorIn: true, see: { base: 0.22 }, view: { t: [0, 76, 25], az: -32, el: 6, d: 700 } },
+  { title: 'Side covers and plates', detail: 'Wheel-well covers (4 screws each), the light-bar plate at the front and the cable plate at the back (2 screws each): its slot lines up with the charging socket.',
     add: { well_cover_left: [-70, 0, 0], well_cover_right: [70, 0, 0], front_plate: [0, -70, 0], rear_plate: [0, 70, 0] }, view: { t: [0, 76, 40], az: -42, el: 18, d: 600 } },
+  { title: 'Torso back cover', detail: 'Switch the UPS on first: it sits under the cable hole. Then 4 \u00d7 M3 \u00d7 12 countersunk.',
+    add: { torso_back: [0, 80, 0] }, view: { t: [0, 100, 130], az: 145, el: 16, d: 640 } },
   { title: 'The head', detail: 'Printed face-down; the screen window faces forward. The head is built off the robot, then lowered onto the neck.',
     add: { head: null }, view: { t: [0, 80, 450], az: -30, el: 14, d: 560 } },
-  { title: 'Visor', detail: 'Foam tape around the window on the back of the visor, then into the face recess: 4 × M2.5 × 6 from inside the head.',
+  { title: 'Visor', detail: 'Foam tape around the window on the back of the visor, then into the face recess: 4 \u00d7 M2.5 \u00d7 6 from inside the head.',
     add: { visor: [0, -80, 0] }, view: { t: [0, 70, 450], az: -24, el: 8, d: 500 } },
-  { title: 'Pi 5 onto the Pi carrier', detail: 'Active Cooler on the Pi first. Then 4 × M2.5 × 8 through the Pi into the carrier’s four corner standoffs.',
-    add: { pi_carrier: null, pi: [0, -50, 0], pi_ports: [0, -50, 0], cooler: [0, -50, 0] }, see: { head: 0.14 }, view: { t: [0, 285, 448], az: 125, el: 16, d: 330 } },
-  { title: 'Screen onto the Pi', detail: 'Press the screen onto the Pi’s header (pins 1–26) and plug the HDMI U adapter between the Pi and the screen.',
-    add: { screen_glass: [0, -55, 0], screen_pcb: [0, -55, 0], hdmi_adapter: [0, -55, 0] }, see: { head: 0.14 }, view: { t: [0, 285, 448], az: 48, el: 14, d: 330 } },
-  { title: 'Into the head', detail: 'In through the back: the glass sits in the visor’s ribs, the carrier screws onto the visor’s 4 posts (4 × M2.5 × 8). Press the glass gently forward while tightening.',
-    stackIn: true, see: { head: 0.25 }, view: { t: [0, 170, 450], az: 80, el: 12, d: 640 } },
-  { title: 'Ears', detail: '2 × M3 × 20 each, from inside the head. LED rings go in later.',
+  { title: 'Screen into the visor', detail: 'In through the back of the head: glass first, HDMI socket down, into the visor\u2019s ribs on the foam.',
+    add: { screen_glass: [0, 75, 0], screen_pcb: [0, 75, 0] }, see: { head: 0.2 }, view: { t: [0, 70, 450], az: 135, el: 16, d: 460 } },
+  { title: 'Screen clamp', detail: 'Onto the visor\u2019s 4 posts (4 \u00d7 M2.5 \u00d7 8). Its fingers press the screen\u2019s tabs; the lower ones hook under them, so the screen can\u2019t slide down.',
+    add: { screen_clamp: [0, 75, 0] }, see: { head: 0.2 }, view: { t: [0, 70, 450], az: 125, el: 14, d: 440 } },
+  { title: 'Ears', detail: '2 \u00d7 M3 \u00d7 20 each, from inside the head. LED rings go in later.',
     add: { ear_left: [-60, 0, 0], ear_right: [60, 0, 0] }, view: { t: [0, 80, 450], az: -32, el: 12, d: 560 } },
-  { title: 'Camera', detail: 'Camera board onto its bracket, bracket into the pod (2 × M2 × 8), pod onto the head (2 × M3 × 10). Camera cable into a blue USB port.',
+  { title: 'Camera', detail: 'Camera board onto its bracket, bracket into the pod (2 \u00d7 M2 \u00d7 8), pod onto the head (2 \u00d7 M3 \u00d7 10). Its cable goes behind the clamp and down the neck.',
     add: { camera_board: [0, 0, 75], camera_bracket: [0, 0, 75], camera_pod: [0, 0, 75] }, view: { t: [0, 60, 480], az: -30, el: 26, d: 500 } },
-  { title: 'Head onto the neck', detail: '3 × M3 × 10 from inside the head. Plug in the speaker, mic and USB-C power that come up the neck.',
+  { title: 'Head onto the neck', detail: '3 \u00d7 M3 \u00d7 10 from inside the head. Plug in the HDMI (right-angle plug), the screen\u2019s power and the touch wires; leave slack for the head to turn.',
     headDown: true, view: { ...ROBOT } },
-  { title: 'Back cap', detail: '4 × M3 × 30 countersunk, through the cap into the head.',
+  { title: 'Back cap', detail: '4 \u00d7 M3 \u00d7 30 countersunk, through the cap into the head.',
     add: { head_back: [0, 80, 0] }, view: { t: [0, 110, 285], az: 148, el: 16, d: 780 } },
-  { title: 'Arms', detail: 'Arm servos at their neutral position, horn into the arm’s pocket, arm onto the spline, then the centre screw.',
+  { title: 'Arms', detail: 'Arm servos at their neutral position, horn into the arm\u2019s pocket, arm onto the spline, then the centre screw.',
     add: { arm_left: [-60, 0, 0], arm_right: [60, 0, 0] }, view: { t: [0, 70, 170], az: -20, el: 12, d: 840 } },
   { title: 'Done!', detail: 'Keep motion switched off until the servos are calibrated (docs/MOTION_SAFETY.md).', dur: 7.5, outro: true, view: { ...ROBOT, az: -20 } },
 ];
@@ -125,8 +128,8 @@ const TOTAL = T0;
 const installAt = {};
 STEPS.forEach((s, i) => Object.keys(s.add || {}).forEach(n => installAt[n] = i));
 const stepIdx = name => STEPS.findIndex(s => s[name]);
-const TORSO_DOWN = stepIdx('torsoDown'), HEAD_DOWN = stepIdx('headDown'), STACK_IN = stepIdx('stackIn'), OUTRO = STEPS.length - 1;
-const TORSO_UP = [0, 0, 70], HEAD_UP = [0, 0, 175], STACK_BACK = [0, 235, 0];
+const TORSO_DOWN = stepIdx('torsoDown'), HEAD_DOWN = stepIdx('headDown'), FLOOR_IN = stepIdx('floorIn'), OUTRO = STEPS.length - 1;
+const TORSO_UP = [0, 0, 70], HEAD_UP = [0, 0, 175], FLOOR_OUT = [0, 0, -120];
 
 function groupMove(i, u, at, from) {      // offset that is `from` before step `at`, eases to 0 during it
   if (i < at) return from; if (i > at) return [0, 0, 0];
@@ -166,7 +169,7 @@ function render(t) {
   gl.viewport(0, 0, 1280, 720); gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
   gl.enable(gl.DEPTH_TEST); gl.disable(gl.CULL_FACE);
   gl.uniformMatrix4fv(uVP, false, VP); gl.uniform3fv(uEye, eye);
-  const torsoOff = groupMove(i, u, TORSO_DOWN, TORSO_UP), headOff = groupMove(i, u, HEAD_DOWN, HEAD_UP), stackOff = groupMove(i, u, STACK_IN, STACK_BACK);
+  const torsoOff = groupMove(i, u, TORSO_DOWN, TORSO_UP), headOff = groupMove(i, u, HEAD_DOWN, HEAD_UP), floorOff = groupMove(i, u, FLOOR_IN, FLOOR_OUT);
   const draws = [];
   for (const name in P) {
     let off = [0, 0, 0], alpha = 1, hi = 0;
@@ -185,7 +188,7 @@ function render(t) {
     if (!s.intro && !s.outro) {
       if (TORSO_G.includes(name)) off = V.add(off, torsoOff);
       if (HEAD_G.includes(name)) off = V.add(off, headOff);
-      if (STACK_G.includes(name)) off = V.add(off, stackOff);
+      if (FLOOR_G.includes(name)) off = V.add(off, floorOff);
       if (['torso', 'base', 'head'].includes(name)) alpha *= seeThrough(name, i, u);
       if (name === 'head' && i === HEAD_DOWN) hi = 0;
     }

@@ -138,6 +138,15 @@ Needed only if the screen is mounted upside down or portrait.
 The face and the parent dashboard (on a phone) do not need the touchscreen. Do this only
 once everything else works, and keep a backup of `config.txt`.
 
+**Screen not on the Pi's header** (the v2 enclosure since 2026-10-30: the Pi on its UPS in the
+base, the screen in the head): touch needs 6 wires from the Pi's header to the **same pin
+numbers** on the screen's 2 x 13 socket (the socket is numbered like the header it normally
+plugs onto): 19, 21, 23 (SPI), 26 (chip select), 22 (pen interrupt, GPIO 25) and 20 (ground).
+Male-to-female jumpers: female on the Pi, male into the screen's socket. Power the screen
+through its micro-USB socket, not the header. If touch doesn't respond, add pin 1 (3.3 V) to
+pin 1. The controller is read at 50 kHz (`speed=50000` below), so about 40 cm of wire is fine.
+The settings below are the same either way.
+
 ### 5.1 Enable SPI and the ads7846 overlay (UNVERIFIED on Pi 5)
 
 The Pi 5's GPIO header is driven by the RP1 chip but keeps the same pin functions

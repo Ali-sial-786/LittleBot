@@ -11,10 +11,14 @@ Colours are never mixed on a plate, even with an AMS: the black visor is 33 mm t
 plate changes filament on every layer up to there (hundreds of swaps, hours and lots of purge).
 Each part is its own named object, so per-object settings (slow gears) are easy in the slicer.
 The stationary build only; the wheel-phase parts stay in plates/.
+
+Plates already printed (PRINTED) are kept exactly as they are: their files aren't rewritten and their
+parts aren't packed again, so a design change only ever adds or changes the plates still to print.
 """
 from __future__ import annotations
 
 import sys
+import xml.etree.ElementTree as ET
 import zipfile
 from pathlib import Path
 
@@ -28,17 +32,20 @@ MARGIN = 5.0              # from the bed edge. Parts this close get NO brim: a b
 EXCLUDE = (18.0, 28.0)    # front-left corner Bambu Lab X1 / P1 keep free
 # Tall parts stay further in, with room for a brim: the edges of a plate hold least, and the pull
 # on a tall part grows as it rises. The torso (125 mm) came off twice 6.5 mm from the front edge.
-TALL = 60.0               # taller than this (mm)
+TALL = 60.0               # taller than this (mm) and than 0.6 x the shorter side of its footprint: a low, wide
+TALL_RATIO = 0.6          # part (the floor with its mounting wall) can't be levered off the bed
 TALL_EDGE = 20.0          # ... at least this far from every bed edge
 BRIM = 8.0                # ... and this much more room all round than other parts get
 
 GROUPS = [
     ("main", "main colour", ["base", "torso", "head", "camera_pod", "base_floor", "well_cover", "well_cover",
-                             "head_back", "shelf", "torso_back", "arm_left", "arm_right", "coupler", "ring_gear",
-                             "pinion", "servo_frame", "camera", "rear_usb", "pi_carrier"]),
+                             "head_back", "torso_back", "arm_left", "arm_right", "coupler", "ring_gear",
+                             "pinion", "servo_frame", "camera", "rear_usb", "screen_clamp"]),
     ("black", "black", ["visor"]),
     ("glow", "white / natural / translucent", ["ear_left", "ear_right", "front_blank"]),
 ]
+# Printed on 2026-10-29, before the Pi and the UPS moved into the base (their Pi carrier is no longer used).
+PRINTED = {256: ["01_main", "02_main", "03_main"]}
 
 
 def load(name: str) -> np.ndarray:
@@ -86,8 +93,12 @@ class Plate:
                                                 and a[1] + a[3] <= b[1] + b[3] for b in free)]
 
 
+def tall(size) -> bool:
+    return bool(size[2] > TALL and size[2] > TALL_RATIO * min(size[0], size[1]))
+
+
 def is_tall(name: str) -> bool:
-    return bool(load(name).reshape(-1, 3).max(0)[2] > TALL)
+    return tall(load(name).reshape(-1, 3).max(0))
 
 
 def pack(names: list[str], usable: float) -> list[Plate]:
@@ -95,12 +106,12 @@ def pack(names: list[str], usable: float) -> list[Plate]:
     tall_off = max(0.0, TALL_EDGE - MARGIN - BRIM)  # how far in the padded rectangle of a tall part starts
     plates: list[Plate] = []
     # tall parts first (they need the middle), then largest first
-    for n in sorted(names, key=lambda n: (sizes[n][2] <= TALL, -sizes[n][0] * sizes[n][1])):
-        tall = sizes[n][2] > TALL
-        pad = 2 * BRIM if tall else 0.0
+    for n in sorted(names, key=lambda n: (not tall(sizes[n]), -sizes[n][0] * sizes[n][1])):
+        is_t = tall(sizes[n])
+        pad = 2 * BRIM if is_t else 0.0
         w, h = sizes[n][:2] + GAP + pad
         for p in plates + [Plate(usable)]:
-            s = p.spot(w, h, tall_off if tall else 0.0)
+            s = p.spot(w, h, tall_off if is_t else 0.0)
             if s:
                 p.take(*s[1:5])
                 p.parts.append((n, s[1] + pad / 2, s[2] + pad / 2, s[5]))
@@ -145,6 +156,12 @@ def write_3mf(path: Path, parts: list[tuple[str, np.ndarray]], label: str) -> No
              'xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">'
              f'<metadata name="Title">LittleBot v2 {path.stem}</metadata>'
              f'<resources>{"".join(objects)}</resources><build>{"".join(items)}</build></model>')
+    if path.exists():   # same parts in the same places: leave the file as it is (no new timestamp)
+        try:
+            if zipfile.ZipFile(path).read("3D/3dmodel.model").decode() == model:
+                return
+        except (zipfile.BadZipFile, KeyError):
+            pass
     with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
         z.writestr("[Content_Types].xml",
                    '<?xml version="1.0" encoding="UTF-8"?>\n<Types xmlns="http://schemas.openxmlformats.org/package/2006/'
@@ -158,6 +175,20 @@ def write_3mf(path: Path, parts: list[tuple[str, np.ndarray]], label: str) -> No
         z.writestr("3D/3dmodel.model", model)
 
 
+def read_3mf(path: Path) -> list[tuple[str, np.ndarray]]:
+    """The parts of a plate written by write_3mf: (name, triangles on the bed)."""
+    ns = {"m": "http://schemas.microsoft.com/3dmanufacturing/core/2015/02"}
+    root = ET.fromstring(zipfile.ZipFile(path).read("3D/3dmodel.model"))
+    objs = {o.get("id"): o for o in root.find("m:resources", ns)}
+    out = []
+    for it in root.find("m:build", ns):
+        o = objs[it.get("objectid")]
+        v = np.array([[float(e.get(k)) for k in "xyz"] for e in o.find("m:mesh/m:vertices", ns)])
+        f = np.array([[int(e.get(k)) for k in ("v1", "v2", "v3")] for e in o.find("m:mesh/m:triangles", ns)])
+        out.append((o.get("name").split(" (")[0], v[f] + [float(x) for x in it.get("transform").split()[9:12]]))
+    return out
+
+
 def check(parts: list[tuple[str, np.ndarray]], bed: float) -> list[str]:
     """Every part on the bed, out of the corner, >= GAP from every other part (+ BRIM next to a tall part),
     and tall parts >= TALL_EDGE from every edge (bounding boxes)."""
@@ -165,10 +196,10 @@ def check(parts: list[tuple[str, np.ndarray]], bed: float) -> list[str]:
     bad = [f"{n} off the bed" for n, lo, hi in boxes if lo[:2].min() < MARGIN - 1e-6 or hi[:2].max() > bed - MARGIN + 1e-6]
     bad += [f"{n} in the corner" for n, lo, hi in boxes if lo[0] < EXCLUDE[0] and lo[1] < EXCLUDE[1]]
     bad += [f"{n} (tall) within {TALL_EDGE:.0f} mm of an edge" for n, lo, hi in boxes
-            if hi[2] > TALL and (lo[:2].min() < TALL_EDGE - 1e-6 or hi[:2].max() > bed - TALL_EDGE + 1e-6)]
+            if tall(hi - lo) and (lo[:2].min() < TALL_EDGE - 1e-6 or hi[:2].max() > bed - TALL_EDGE + 1e-6)]
     for i, (a, alo, ahi) in enumerate(boxes):
         for b, blo, bhi in boxes[i + 1:]:
-            g = GAP + (BRIM if max(ahi[2], bhi[2]) > TALL else 0.0) - 1e-6
+            g = GAP + (BRIM if tall(ahi - alo) or tall(bhi - blo) else 0.0) - 1e-6
             if not (alo[0] >= bhi[0] + g or blo[0] >= ahi[0] + g or alo[1] >= bhi[1] + g or blo[1] >= ahi[1] + g):
                 bad.append(f"{a} and {b} closer than {g:.0f} mm")
     return bad
@@ -198,11 +229,22 @@ def main(argv: list[str]) -> int:
     bed = float(argv[0]) if argv else 256.0
     out = Path(f"plates_{bed:.0f}")
     out.mkdir(exist_ok=True)
-    for old in out.glob("*.3mf"):
-        old.unlink()
+    keep = PRINTED.get(int(bed), [])
     done, bad, k = [], [], 0
+    printed: list[str] = []
     print(f"{'plate':<14}{'parts':>6}  {'filament':<32}parts")
+    for name in keep:
+        parts = read_3mf(out / f"{name}.3mf")
+        printed += [n for n, _ in parts]
+        done.append((name, name.split("_", 1)[1], parts)); k += 1
+        print(f"{name:<14}{len(parts):>6}  {'(printed, kept as it is)':<32}{', '.join(n for n, _ in parts)}")
     for group, colour, names in GROUPS:
+        names = list(names)
+        for n in printed:
+            if n in names:
+                names.remove(n)
+        if not names:
+            continue
         for p in pack(names, bed - 2 * MARGIN):
             k += 1
             name = f"{k:02d}_{group}"
@@ -211,6 +253,9 @@ def main(argv: list[str]) -> int:
             write_3mf(out / f"{name}.3mf", parts, colour.split(" /")[0])
             done.append((name, group, parts))
             print(f"{name:<14}{len(parts):>6}  {colour:<32}{', '.join(n for n, _ in parts)}")
+    for old in out.glob("*.3mf"):   # plates that no longer exist
+        if old.stem not in [d[0] for d in done]:
+            old.unlink()
     Path("images").mkdir(exist_ok=True)
     preview(Path("images") / f"plates_{bed:.0f}.png", done, bed)
     for b in bad:

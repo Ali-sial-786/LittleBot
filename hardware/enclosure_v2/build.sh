@@ -9,7 +9,7 @@ OUT=${OUT:-stl}
 IMG=${IMG:-images}
 PARTS=(base base_floor base_floor_mobile shelf well_cover front_blank front_sonar rear_blank rear_usb
        torso torso_back coupler ring_gear pinion servo_frame
-       head head_back visor ear_left ear_right camera_pod camera pi_carrier arm_left arm_right)
+       head head_back visor ear_left ear_right camera_pod camera screen_clamp arm_left arm_right)
 (($#)) && PARTS=("$@")
 mkdir -p "$OUT" "$IMG"
 render() { openscad -q -o "$OUT/$1.stl" -D "part=\"$1\"" "$SCAD" && python3 stl_tools.py binary "$OUT/$1.stl" && echo "==> $1"; }
@@ -29,6 +29,8 @@ if (($# == 0)) && command -v xvfb-run >/dev/null; then
     wait
     shot section_side section_side "0,76,165,90,0,90,1150" 0 o &
     shot section_plan section_plan "0,76,60,0,0,0,700" 150 o &
+    xvfb-run -a -s "-screen 0 1600x1200x24" openscad -q -o "$IMG/section_base.png" -D 'part="section_plan"' -D section_cut=45 \
+        --imgsize=1100,1000 --camera="0,76,20,0,0,0,560" --colorscheme=Tomorrow --projection=o "$SCAD" &   # the Pi + UPS in the base
     wait
 fi
 exit $status
