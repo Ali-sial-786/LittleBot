@@ -271,9 +271,17 @@ class RobotToolbox:
             if t.name == BATTERY_TOOL and self._power() is None:
                 continue
             out.append({"name": t.name, "description": t.description, "parameters": t.parameters})
+        hub = self._skills()
+        if hub is not None:  # memory, reminders, lists, smart home, voice games ... (littlebot/skills)
+            names = {o["name"] for o in out}
+            out.extend(s for s in _safe(hub.specs) or [] if s.get("name") not in names)
         if self.web_search:
             out.append(dict(WEB_SEARCH))
         return out
+
+    def _skills(self) -> Any:
+        hub = getattr(self.ctx, "skills", None)
+        return hub if hub is not None and hasattr(hub, "specs") else None
 
     @property
     def web_search(self) -> bool:
@@ -286,6 +294,10 @@ class RobotToolbox:
     async def run(self, name: str, arguments: str | dict[str, Any] | None = None) -> str:
         """Run one tool call; returns what to tell the model. Never raises (except cancellation)."""
         tool = next((t for t in TOOLS if t.name == name and self.mode in t.modes), None)
+        hub = self._skills()
+        if tool is None and hub is not None and _safe(lambda: hub.owns(name)):
+            self.calls.append(str(name))
+            return await hub.run(name, arguments)
         if tool is None:
             return _err(f"there is no tool called {str(name)[:40]}")
         if isinstance(arguments, dict):
@@ -1077,7 +1089,7 @@ class RobotToolbox:
         try:
             from littlebot.screens.base import card_types  # noqa: PLC0415
 
-            return card_types()
+            return card_types(offered_only=True)
         except Exception:  # noqa: BLE001 - no cards is fine
             log.debug("no card types", exc_info=True)
             return {}

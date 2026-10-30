@@ -148,6 +148,9 @@ class CardType:
     build: Builder
     required: tuple[str, ...] = ()
     actions: dict[str, str] = field(default_factory=dict)
+    # False: shown only by LittleBot's own code (a voice game's quiz card, a reminder ringing), never offered to
+    # the AI's show_on_screen or the screen director.
+    offered: bool = True
 
 
 _TYPES: dict[str, CardType] = {}
@@ -158,11 +161,12 @@ def register(card_type: CardType) -> CardType:
     return card_type
 
 
-def card_types() -> dict[str, CardType]:
-    """Every registered card type (importing littlebot.screens.cards registers the built-in ones)."""
+def card_types(*, offered_only: bool = False) -> dict[str, CardType]:
+    """Every registered card type (importing littlebot.screens.cards registers the built-in ones);
+    ``offered_only``: the ones the AI may ask for (not the internal ones, ``CardType.offered``)."""
     import littlebot.screens.cards  # noqa: F401, PLC0415
 
-    return dict(_TYPES)
+    return {k: v for k, v in _TYPES.items() if v.offered or not offered_only}
 
 
 async def build(spec: dict[str, Any], ctx: Any, host: CardHost) -> Card | None:

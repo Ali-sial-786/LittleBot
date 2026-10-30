@@ -376,6 +376,92 @@ class ClaudeConfig(_Section):
     key_file: str = "anthropic_api_key"  # under data_dir; read only when no other user can read it (chmod 600)
 
 
+class AssistantConfig(_Section):
+    """The fast voice pipeline (littlebot/assistant, docs/ASSISTANT.md): streaming speech-to-text with end-of-turn
+    detection -> one brain call that talks, uses tools, sets the face and puts cards up -> streaming text-to-speech,
+    with barge-in and a follow-up window. GPT-Live stays as the fallback (``pipeline: auto``)."""
+
+    # auto: the assistant when a streaming STT key (Deepgram) and a fast TTS key (Cartesia or ElevenLabs) are set,
+    # else GPT-Live as before; cascade: always the assistant (with what is there: OpenAI or local speech); live:
+    # always GPT-Live.
+    pipeline: Literal["auto", "cascade", "live"] = "auto"
+    # Speech-to-text, first that works: deepgram (streaming, end-of-turn built in), openai (after LittleBot's own
+    # end-of-turn), vosk (on the robot, offline).
+    stt: list[Literal["deepgram", "openai", "vosk"]] = Field(default_factory=lambda: ["deepgram", "openai", "vosk"])
+    deepgram_model: str = "flux-general-en"
+    deepgram_eot_threshold: float = Field(default=0.7, ge=0.5, le=0.9)  # Flux: how sure the turn ended
+    deepgram_eot_timeout_ms: int = Field(default=3000, ge=500, le=10000)  # Flux: a turn ends after this much quiet
+    openai_stt_model: str = "gpt-4o-mini-transcribe"
+    language: str = "en"
+    # Text-to-speech, first that works: cartesia (fastest first audio), elevenlabs, openai, local (piper / espeak).
+    tts: list[Literal["cartesia", "elevenlabs", "openai", "local"]] = Field(
+        default_factory=lambda: ["cartesia", "elevenlabs", "openai", "local"])
+    cartesia_model: str = "sonic-3"
+    cartesia_voice: str = "f786b574-daa5-4673-aa0c-cbe3e8534c02"  # "Katie - Friendly Fixer" (stable, natural)
+    cartesia_speed: Literal["slowest", "slow", "normal", "fast", "fastest"] = "normal"
+    elevenlabs_model: str = "eleven_flash_v2_5"
+    elevenlabs_voice: str = "cgSgspJ2msm6clMCkdW9"  # "Jessica": warm, conversational
+    openai_tts_model: str = "gpt-4o-mini-tts"
+    openai_tts_voice: str = "coral"
+    tts_first_audio_timeout_seconds: float = Field(default=2.5, ge=0.3, le=10.0)  # then the next TTS is asked
+    # The brain: claude.model (Haiku 5.5) with claude.fallback_models then ChatGPT (littlebot/brain/text_model.py).
+    max_reply_tokens: int = Field(default=600, ge=64, le=4000)
+    reply_timeout_seconds: float = Field(default=20.0, ge=3.0, le=120.0)
+    # think_harder: hard questions go to this model (adaptive thinking) while a short line plays. None: off.
+    deep_model: str | None = "claude-sonnet-5-5"
+    deep_timeout_seconds: float = Field(default=45.0, ge=5.0, le=180.0)
+    # Turn-taking without a streaming STT: quiet this long after speech ends the turn (shorter after a complete
+    # sentence, longer after "and", "um" ...).
+    end_of_turn_ms: int = Field(default=650, ge=200, le=3000)
+    max_turn_seconds: float = Field(default=30.0, ge=3.0, le=120.0)
+    # After an answer LittleBot keeps listening this long for a follow-up (no wake word needed), then the
+    # session ends. 0: one question per wake word.
+    follow_up_seconds: float = Field(default=8.0, ge=0.0, le=60.0)
+    first_words_seconds: float = Field(default=7.0, ge=2.0, le=30.0)  # after the wake word, wait this long for words
+    session_minutes: float = Field(default=20.0, ge=1.0, le=240.0)
+    history_turns: int = Field(default=12, ge=0, le=60)  # earlier exchanges sent with each question
+    history_minutes: float = Field(default=15.0, ge=0.0, le=240.0)  # kept in memory (RAM only) between sessions
+    barge_in: bool = True  # talk over LittleBot to interrupt it (needs echo cancelling, as GPT-Live's)
+    thinking_sound: bool = True  # a soft sound while a slow tool runs
+    earcon: bool = True  # a short sound when the wake word is heard (skipped when they keep talking)
+    expressions: bool = True  # the brain's [happy] / [curious] tags drive the face sentence by sentence
+    log_timings: bool = True  # one "assistant turn:" line per answer (stt, brain, first audio; never the words)
+
+
+class SkillsConfig(_Section):
+    """LittleBot's skills (littlebot/skills): tools for both voices. Each one can be switched off here."""
+
+    memory: bool = True  # remember / recall / forget facts about the family (SQLite, on the robot only)
+    memory_prompt_facts: int = Field(default=40, ge=0, le=200)  # the most recent facts sent with every question
+    reminders: bool = True  # reminders and alarms ("remind me at 6 to call mom", "wake me at 7")
+    reminder_snooze_minutes: int = Field(default=9, ge=1, le=60)
+    alarm_ring_seconds: int = Field(default=60, ge=5, le=600)
+    lists: bool = True  # shopping, to-do and any named list
+    persona: str = "warm"  # warm | witty | calm | concise | playful (or changed by voice: "be more concise")
+    briefing: bool = True  # "good morning": weather, reminders, lists, headlines
+    news_feeds: list[str] = Field(default_factory=lambda: [
+        "https://www.cbc.ca/webfeed/rss/rss-topstories",
+        "https://feeds.bbci.co.uk/news/world/rss.xml",
+    ])
+    news_items: int = Field(default=5, ge=1, le=15)
+    routines: bool = True  # "when I say good night, turn off the lights and set an alarm for 7"
+    translator: bool = True
+    music: bool = True  # "play some jazz": YouTube audio with a now-playing screen
+    # Home Assistant (smart home): its address, e.g. http://homeassistant.local:8123; the long-lived access token
+    # goes in .env (HOME_ASSISTANT_TOKEN) or data/home_assistant_token (chmod 600). Empty: no smart-home tools.
+    home_assistant_url: str = ""
+    home_timeout_seconds: float = Field(default=5.0, gt=0, le=30)
+
+
+class VoiceGamesConfig(_Section):
+    """Voice + screen games for grown-ups and the family (littlebot/games/voice): trivia, hangman, 20 questions,
+    riddles, would you rather. Scores are kept on the robot."""
+
+    enabled: bool = True
+    trivia_questions: int = Field(default=10, ge=3, le=30)  # per round
+    use_model_questions: bool = True  # fresh trivia from the text model; off (or no model): the built-in bank
+
+
 class InfoConfig(_Section):
     """Live information for the tools: the weather (Open-Meteo, no key) and the time (littlebot/info).
 
@@ -651,6 +737,9 @@ class LittleBotConfig(BaseModel):
     text: TextConfig = Field(default_factory=TextConfig)
     claude: ClaudeConfig = Field(default_factory=ClaudeConfig)
     info: InfoConfig = Field(default_factory=InfoConfig)
+    assistant: AssistantConfig = Field(default_factory=AssistantConfig)
+    skills: SkillsConfig = Field(default_factory=SkillsConfig)
+    voice_games: VoiceGamesConfig = Field(default_factory=VoiceGamesConfig)
     screens: ScreensConfig = Field(default_factory=ScreensConfig)
     browser: BrowserConfig = Field(default_factory=BrowserConfig)
     decide: DecideConfig = Field(default_factory=DecideConfig)
@@ -666,6 +755,11 @@ class LittleBotConfig(BaseModel):
     anthropic_api_key: SecretStr | None = Field(default=None, exclude=True)
     openai_api_key: SecretStr | None = Field(default=None, exclude=True)
     typesafe_api_key: SecretStr | None = Field(default=None, exclude=True)  # Jev (littlebot/decide)
+    # The fast voice pipeline's speech services and the smart home (littlebot/assistant, littlebot/skills/home.py).
+    deepgram_api_key: SecretStr | None = Field(default=None, exclude=True)
+    cartesia_api_key: SecretStr | None = Field(default=None, exclude=True)
+    elevenlabs_api_key: SecretStr | None = Field(default=None, exclude=True)
+    home_assistant_token: SecretStr | None = Field(default=None, exclude=True)
 
     @field_validator("mode", mode="before")
     @classmethod
@@ -687,12 +781,30 @@ class LittleBotConfig(BaseModel):
         d["has_anthropic_key"] = bool(self.anthropic_api_key and self.anthropic_api_key.get_secret_value())
         d["has_openai_key"] = bool(self.openai_api_key and self.openai_api_key.get_secret_value())
         d["has_typesafe_key"] = bool(self.typesafe_api_key and self.typesafe_api_key.get_secret_value())
+        for name, _env, _file in EXTRA_KEYS:
+            key = getattr(self, name)
+            d[f"has_{name}"] = bool(key and key.get_secret_value())
         return d
+
+    def secret(self, name: str) -> str:
+        """The key ``name`` (e.g. "deepgram_api_key") as a plain string, "" when unset. Never log it."""
+        key = getattr(self, name, None)
+        return key.get_secret_value() if isinstance(key, SecretStr) else ""
 
 
 # ---------------------------------------------------------------------------
 # Loading helpers
 # ---------------------------------------------------------------------------
+
+# (config attribute, environment variable, key file under data_dir): the rethink's keys, read like the Anthropic one
+# (the environment / .env first, else a file only the robot's user can read).
+EXTRA_KEYS: tuple[tuple[str, str, str], ...] = (
+    ("deepgram_api_key", "DEEPGRAM_API_KEY", "deepgram_api_key"),
+    ("cartesia_api_key", "CARTESIA_API_KEY", "cartesia_api_key"),
+    ("elevenlabs_api_key", "ELEVENLABS_API_KEY", "elevenlabs_api_key"),
+    ("home_assistant_token", "HOME_ASSISTANT_TOKEN", "home_assistant_token"),
+)
+
 
 def read_key_file(path: Path) -> str | None:
     """An API key kept in a file (one line), only when the file is the robot user's alone (chmod 600): a key
@@ -812,6 +924,8 @@ def load_config(
     data.pop("anthropic_api_key", None)
     data.pop("openai_api_key", None)
     data.pop("typesafe_api_key", None)
+    for name, _env, _file in EXTRA_KEYS:
+        data.pop(name, None)
 
     cfg = LittleBotConfig.model_validate(data)
     if chosen != Mode.OFFLINE:
@@ -825,6 +939,10 @@ def load_config(
             key = read_key_file(cfg.data_path / cfg.claude.key_file)
             if key:
                 cfg.anthropic_api_key = SecretStr(key)
+        for name, env_name, file_name in EXTRA_KEYS:
+            value = env.get(env_name) or read_key_file(cfg.data_path / file_name)
+            if value:
+                setattr(cfg, name, SecretStr(value))
     if chosen == Mode.OFFLINE:
         # Offline demo: never touch the network, whatever the overrides say.
         cfg.privacy.cloud_enabled = False

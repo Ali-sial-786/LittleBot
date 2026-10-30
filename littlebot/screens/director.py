@@ -1481,7 +1481,7 @@ class ScreenDirector:
             return self._types_fn()
         from littlebot.screens.base import card_types  # noqa: PLC0415
 
-        return card_types()
+        return card_types(offered_only=True)
 
     def _actions(self, kind: str | None) -> dict[str, Any]:
         ct = self._types().get(kind) if kind else None

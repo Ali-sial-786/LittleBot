@@ -41,7 +41,9 @@ SUBSYSTEMS: tuple[tuple[str, str], ...] = (
     ("screens", "littlebot.screens"),  # info cards over the face while the voice talks (a game wins)
     ("voices", "littlebot.voices"),  # the family's voices (opt-in): before live voice, which uses them
     ("browser", "littlebot.browser"),  # Google on the screen when a grown-up asks (one Chromium with the videos)
+    ("skills", "littlebot.skills"),  # tools for both voices (memory, reminders, lists, games ...): before them
     ("live", "littlebot.chatgpt"),
+    ("assistant", "littlebot.assistant"),  # the fast voice pipeline (GPT-Live stays the fallback)
     ("wake", "littlebot.audio.wakeword"),  # after audio + live: it shares the mic and starts live voice
     ("power", "littlebot.power"),  # the battery monitor (quiet, "not fitted", on mains power); uses the rest when empty
 )

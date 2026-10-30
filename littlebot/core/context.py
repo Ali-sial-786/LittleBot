@@ -54,6 +54,8 @@ class RobotContext:
     wake: Any = None  # wake word, "Hey LittleBot" (littlebot.audio.wakeword.WakeWordService)
     voices: Any = None  # the family's voices, opt-in (littlebot.voices.service.VoiceRecognition; get_voices(ctx))
     power: Any = None  # the battery, when a monitor is fitted (littlebot.power.service.PowerService)
+    skills: Any = None  # memory, reminders, lists, briefings, smart home, voice games ... (littlebot.skills.hub.SkillHub)
+    assistant: Any = None  # the fast voice pipeline (littlebot.assistant.service.AssistantService)
     extras: dict[str, Any] = field(default_factory=dict)
 
     def age_policy(self) -> AgePolicy:
