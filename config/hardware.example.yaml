@@ -85,7 +85,8 @@ media:
   browser_command: null
 
 # ---------------------------------------------------------------------------
-# Motion: 3x MG90S on a PCA9685. Follow docs/MOTION_SAFETY.md step by step:
+# Motion: 3-4x MG90S on a PCA9685 (head pan, arms, optional head tilt; docs/MOVEMENT.md).
+# Follow docs/MOTION_SAFETY.md step by step:
 #   1. physical_enabled: false, backend: mock   <- start here (simulated servos)
 #   2. servos wired to their OWN regulated supply (common ground with the Pi),
 #      MOTION_SAFETY.md checklist A-C done -> physical_enabled: true, backend STILL mock

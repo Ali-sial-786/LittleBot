@@ -1,6 +1,8 @@
 # Motion module (`littlebot/motion/`)
 
-Servo control for head turn and both arms: three MG90S servos on a PCA9685 over I2C.
+Servo control for the head (pan `head` + tilt `head_tilt`) and both arms: four MG90S servos on a
+PCA9685 over I2C, plus body language and a drive base for the wheels phase (overview and wiring
+guide: [MOVEMENT.md](../MOVEMENT.md)).
 **Simulated by default.** Physical output needs two independent keys (config + parent
 arming); see [MOTION_SAFETY.md](../MOTION_SAFETY.md), which also covers wiring, power,
 calibration and the verification checklist.
@@ -15,6 +17,9 @@ calibration and the verification checklist.
 | `joints.py` | `JointSpec` (limits, angle <-> pulse, normalised positions), validation, calibration file load/save |
 | `interpolation.py` | minimum-jerk segments, duration planning under speed + acceleration limits, brake segments, rate limiter |
 | `gestures.py` | gesture library (keyframes in normalised positions) + validation |
+| `look.py` | `LookPlanner`: gaze target -> head pan / tilt, the eyes-lead-head-follows rule (pure logic) |
+| `body.py` | `BodyLanguage`: conversation events -> face glances / nods and gestures (started by `app/behaviours.py`) |
+| `drive.py` | wheels phase: `DriveBase` protocol, `Drive` (limits, ramps, watchdog, e-stop, pose), `MockDrive`, `MotorHatWheels` placeholder |
 | `scripts/calibrate_servos.py` | interactive one-servo-at-a-time calibration (`--simulate` works anywhere) |
 | `scripts/servo_test_pattern.py` | slow sweep within limits (simulated by default, `--fast` for no waiting) |
 | `config/calibration.example.yaml` | calibration file format (the real file `config/calibration.yaml` is git-ignored) |
@@ -49,7 +54,7 @@ simulator shows calibrated limits. An invalid one is ignored and reported in
   `[min_pulse_us, max_pulse_us]` and the absolute 500..2500 us (also enforced in the driver).
 * **Normalised position** (gestures, `status().joints[*].position`): 0 = neutral, +1 = the
   limit named by `positive_toward`, -1 = the other limit. For the arms +1 = fully raised; for
-  the head +1 = looking to the robot's LEFT. Default config: `right_arm.positive_toward: min`
+  the head (pan) +1 = looking to the robot's LEFT; for `head_tilt` +1 = looking UP. Default config: `right_arm.positive_toward: min`
   (its angle decreases as it rises). UIs should draw from `position`, not raw angles.
 
 Default joints (`core/config.py::_default_servos`):
@@ -59,8 +64,12 @@ Default joints (`core/config.py::_default_servos`):
 | head | 0 | 90 | 50..130 | 60 deg/s | no | max |
 | left_arm | 1 | 20 | 10..150 | 90 deg/s | no | max |
 | right_arm | 2 | 160 | 30..170 | 90 deg/s | yes | min |
+| head_tilt | 3 | 90 | 70..110 | 60 deg/s | no | max |
 
-All joints: `max_accel_dps2: 200`, pulses 500..2500 us. Hard ceilings: 180 deg/s, 720 deg/s^2.
+All joints: `max_accel_dps2: 200`, pulses 500..2500 us, `soft_margin_deg: 2` (look_at and body
+language stay that far inside the limits). Hard ceilings: 180 deg/s, 720 deg/s^2. Any subset of
+joints may be configured (a robot without the tilt servo lists the other three): gestures and
+look_at leave missing joints out, and a gesture with nothing left to move (`nod`) is refused.
 
 ## Trajectories
 
@@ -129,10 +138,11 @@ be written after an e-stop's `all_off()`.
 
 | method | notes |
 |--------|-------|
-| `gestures() -> list[str]` | `wave, look_left, look_right, raise_arms, celebrate, dance, shake, neutral` |
+| `gestures() -> list[str]` | `core.interfaces.GESTURE_NAMES`: `wave, look_left, look_right, raise_arms, celebrate, dance, shake, nod, nod_small, head_shake, tilt_curious, look_up_think, shrug, perk_up, point_screen, wave_hello, wave_goodbye, arm_wiggle, droop, idle_shift, neutral` |
 | `async run_gesture(name, *, priority=None, owner=None) -> bool` | `False` if unknown, refused (estop / not armed / lease / config) or cancelled |
 | `async move_joint(joint, angle, *, speed_dps=None, priority=None, owner=None) -> bool` | angle clamped to limits; unknown joint / non-finite angle / speed <= 0 -> `False` |
 | `async neutral(*, priority=None, owner=None) -> bool` | all joints to neutral at 60 % speed |
+| `look_at(x, y, *, priority=None, owner=None) -> bool` | sync, thread-safe, cheap: head toward a gaze target (view coordinates) once it stays > 0.15 off-centre for 0.4 s; polite (never interrupts a gesture); default priority REACTIVE |
 | `cancel()` | thread-safe |
 | `emergency_stop(source="unknown")` | thread-safe, synchronous all-off, latched |
 | `reset_emergency_stop() -> bool` | thread-safe |
@@ -140,7 +150,7 @@ be written after an e-stop's `all_off()`.
 
 `priority` and `owner` are optional keyword extensions to the protocol. Extras:
 `gesture_info()` (`[{name, description}]`), `joint_names()`, `specs`, `driver`, `physical`,
-`health()`.
+`drive` (the wheels, `motion/drive.py`), `health()`.
 
 `status()`:
 ```
@@ -148,7 +158,9 @@ be written after an e-stop's `all_off()`.
  moving, gesture, simulation_only, reason, error, outputs_energised, gestures, update_hz,
  calibration: {file, loaded, error}, driver: {...describe()},
  joints: {name: {angle, target, min, max, neutral, channel, known, energised, pulse_us,
-                 position, positive_toward}}}
+                 position, positive_toward}},
+ look: {target, off_centre, waiting, follows, camera_on_head},
+ drive: {enabled, physical, moving, estop, pose: {x, y, heading}, linear, angular, command, reason, ...}}
 ```
 
 ## Events
@@ -160,6 +172,7 @@ be written after an e-stop's `all_off()`.
 | `motion.gesture_finished` | `{gesture, cancelled}` | completed, superseded, cancelled, preempted or e-stopped |
 | `motion.estop` | `{active, source}` | latch set (`active: true`) / reset (`active: false, source: "reset"`) |
 | `system.error` | `{module: "motion", error, recoverable: true}` | driver/I2C failure |
+| `motion.drive` | `{x, y, heading, linear, angular, moving, command, estop, simulated}` | wheels: ~5 Hz while moving, once when stopped |
 
 Subscribed: `system.stop_all`, `settings.changed` (`motion.physical_armed`).
 
@@ -170,7 +183,8 @@ Subscribed: `system.stop_all`, `settings.changed` (`motion.physical_armed`).
 max_speed_dps, max_accel_dps2, inverted, min_pulse_us, max_pulse_us, positive_toward`),
 `calibration_file`, `positions_hz`, `speed_scale` (0-1], `min_move_seconds`,
 `settle_seconds`, `stop_all_returns_to_neutral`, `homing_speed_factor`,
-`release_when_idle_seconds`. Invalid values do not crash the app: motion is disabled,
+`release_when_idle_seconds`, `body_language`, `body_language_gap_seconds`, `idle_motion_seconds`,
+`look: {...}` and `drive: {...}` (see MOVEMENT.md). Invalid values do not crash the app: motion is disabled,
 health is FAILED, and `status().reason` explains why.
 
 ## Testing

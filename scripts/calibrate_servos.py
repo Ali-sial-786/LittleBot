@@ -128,8 +128,12 @@ class JointCalibration:
 
     # -- direction ---------------------------------------------------------
     def direction_check(self) -> None:
-        question = ("Step UP (+) moves the head toward the robot's LEFT? [y/n] " if self.name == "head" else
-                    f"Step UP (+) RAISES the {self.name.replace('_', ' ')}? [y/n] ")
+        if self.name == "head":  # the PAN axis
+            question = "Step UP (+) turns the head toward the robot's LEFT? [y/n] "
+        elif self.name == "head_tilt":
+            question = "Step UP (+) tilts the head UP (LittleBot looks up)? [y/n] "
+        else:
+            question = f"Step UP (+) RAISES the {self.name.replace('_', ' ')}? [y/n] "
         answer = self.ask(question).strip().lower()
         if answer.startswith("y"):
             self.positive_toward = "max"

@@ -6,3 +6,5 @@ display:
 motion:
   backend: mock
   physical_enabled: false
+  look:
+    camera_on_head: false   # a laptop webcam (or the Simulator's pretend face) doesn't turn with the drawn head

@@ -18,8 +18,10 @@ FULL_CALIBRATION = {
         "left_arm": {"channel": 1, "neutral": 22.0, "min_angle": 12.0, "max_angle": 140.0},
         "right_arm": {"channel": 2, "neutral": 158.0, "min_angle": 40.0, "max_angle": 168.0, "inverted": True,
                       "positive_toward": "min"},
+        "head_tilt": {"channel": 3, "neutral": 88.0, "min_angle": 72.0, "max_angle": 108.0},
     },
 }
+DEFAULT_JOINTS = {"head", "head_tilt", "left_arm", "right_arm"}
 
 
 def write_calibration(path: Path, data: dict[str, Any] | None = None) -> Path:

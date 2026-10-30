@@ -652,17 +652,59 @@ class ServoChannelConfig(_Section):
     min_pulse_us: int = 500  # servo pulse at servo angle 0 (absolute bounds 500..2500)
     max_pulse_us: int = 2500  # servo pulse at servo angle 180
     # Which limit a positive normalised gesture value moves toward: "raise" for arms,
-    # "look to the robot's left" for the head.
+    # "look to the robot's left" for the head (pan), "look up" for head_tilt.
     positive_toward: Literal["max", "min"] = "max"
+    # Soft limits: look_at() and body language stay this many degrees inside min/max (gestures stay within
+    # 85 % of the range anyway; parent slider moves may use the full, hard-clamped range).
+    soft_margin_deg: float = 2.0
 
 
 def _default_servos() -> dict[str, ServoChannelConfig]:
+    # "head" is the PAN axis (turn left / right; name kept for compatibility), "head_tilt" the TILT axis
+    # (nod up / down). A robot without one of them lists the others only (motion.servos replaces this whole map).
     return {
         "head": ServoChannelConfig(channel=0, neutral=90, min_angle=50, max_angle=130, max_speed_dps=60),
         "left_arm": ServoChannelConfig(channel=1, neutral=20, min_angle=10, max_angle=150, max_speed_dps=90),
         "right_arm": ServoChannelConfig(channel=2, neutral=160, min_angle=30, max_angle=170, max_speed_dps=90, inverted=True,
                                         positive_toward="min"),
+        "head_tilt": ServoChannelConfig(channel=3, neutral=90, min_angle=70, max_angle=110, max_speed_dps=60,
+                                        max_accel_dps2=200),
     }
+
+
+class LookConfig(_Section):
+    """``motion.look``: how MotionAPI.look_at(x, y) turns a gaze target into head pan / tilt (eyes lead, head follows)."""
+
+    # The camera sits in the head's top pod (hardware/enclosure_v2): x/y from vision are then relative to where the
+    # head points now. false = a camera fixed to the body (x/y are absolute directions).
+    camera_on_head: bool = True
+    fov_h_deg: float = 70.0  # the camera's horizontal field of view: x 0..1 spans this many degrees
+    fov_v_deg: float = 45.0  # ... vertical (y 0..1)
+    # Eyes lead, head follows: the eyes take small shifts at once; the head turns only when the target stays more
+    # than follow_offset (0..0.5 of the view) off-centre for longer than follow_after_seconds.
+    follow_offset: float = 0.15
+    follow_after_seconds: float = 0.4
+    gain: float = 0.8  # fraction of the offset the head turns per follow (< 1: no overshoot, converges in 2-3 steps)
+    settle_seconds: float = 0.6  # after a head turn, wait this long (the camera catches up) before judging again
+    speed: float = 0.5  # fraction of each head joint's max speed used by look_at moves
+
+
+class DriveConfig(_Section):
+    """``motion.drive``: the wheels phase (littlebot/motion/drive.py). Off by default; nothing calls it yet."""
+
+    enabled: bool = False  # commands are refused while false
+    backend: Literal["mock", "motor_hat"] = "mock"  # motor_hat: placeholder for the future motor HAT driver
+    max_linear_mps: float = 0.15  # forward / back speed limit (hard ceiling in code: 0.5)
+    max_angular_dps: float = 60.0  # turning speed limit (hard ceiling: 180)
+    max_linear_accel_mps2: float = 0.3  # speeds ramp at most this fast (no jerks, no tipping)
+    max_angular_accel_dps2: float = 180.0
+    cruise_linear_mps: float = 0.10  # forward(meters) / turn(degrees) use these speeds
+    cruise_angular_dps: float = 45.0
+    watchdog_seconds: float = 1.0  # an open-ended drive() stops unless re-sent within this long
+    max_duration_seconds: float = 10.0  # no single command runs longer than this
+    update_hz: float = 20.0  # control loop rate while moving (idle: no ticks)
+    publish_hz: float = 5.0  # motion.drive events while moving
+    wheel_base_m: float = 0.12  # distance between the two wheels (differential drive)
 
 
 class MotionConfig(_Section):
@@ -681,6 +723,13 @@ class MotionConfig(_Section):
     stop_all_returns_to_neutral: bool = True  # parent STOP: halt smoothly, then drift slowly back to neutral
     homing_speed_factor: float = 0.4  # fraction of max speed used for that return to neutral
     release_when_idle_seconds: float = 0.0  # >0: de-energise servos after this long without motion (0 = hold)
+    # Body language (littlebot/motion/body.py): the conversation turned into gaze, nods and small gestures.
+    # The face parts work without servos; the movements run on the simulator until real servos are armed.
+    body_language: bool = True
+    body_language_gap_seconds: float = 1.5  # at most one gesture (and one face nod) per this long
+    idle_motion_seconds: float = 90.0  # a tiny idle shift about this often while nothing happens (0 = never)
+    look: LookConfig = Field(default_factory=LookConfig)
+    drive: DriveConfig = Field(default_factory=DriveConfig)
 
 
 class DashboardConfig(_Section):
