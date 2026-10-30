@@ -654,3 +654,19 @@ details.disclosure > summary { cursor: pointer; font-weight: 650; padding: 4px 0
 .cam-fps { right: 10px; }
 .cam-dot { width: 8px; height: 8px; border-radius: 50%; background: #ef5a5a; }
 .cam-notes { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 8px; color: var(--text-2); font-size: .93rem; }
+
+/* ---------- Assistant page (pages/assistant.js) */
+.chat-log { max-height: 46vh; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }
+.chat-log:empty { display: none; }
+.chat-msg { max-width: 86%; padding: 9px 13px; border-radius: 16px; line-height: 1.4; }
+.chat-msg.user { align-self: flex-end; background: #e8f0ff; border-bottom-right-radius: 4px; }
+.chat-msg.robot { align-self: flex-start; background: #fff0f5; border-bottom-left-radius: 4px; }
+.chat-msg .small { font-size: 0.78em; margin-top: 3px; }
+.row.gap { gap: 8px; align-items: flex-end; }
+.row.gap .input { flex: 1; min-width: 0; }
+.plain-list { list-style: none; padding: 0; margin: 6px 0; display: grid; gap: 4px; }
+.ok-dot { color: #1f9d55; }
+.off-dot { color: #9aa5b1; }
+.skill-row { padding: 6px 0; border-bottom: 1px solid rgba(0, 0, 0, 0.06); }
+.skill-row:last-child { border-bottom: 0; }
+.skill-now { white-space: pre-wrap; font: inherit; font-size: 0.88em; margin: 4px 0 0; color: inherit; opacity: 0.85; }

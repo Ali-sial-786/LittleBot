@@ -4,6 +4,7 @@ import { ApiError, get, onUnauthorized, post, setCsrf } from './api.js';
 import { button, clear, h, icon, miniFace, setText, stateLabel, toast } from './ui.js';
 
 import home from './pages/home.js';
+import assistant from './pages/assistant.js';
 import activities from './pages/activities.js';
 import media from './pages/media.js';
 import face from './pages/face.js';
@@ -20,9 +21,10 @@ import more from './pages/more.js';
 
 export const NAV = [
   { id: 'home', label: 'Home', icon: 'home', tab: true, page: home },
+  { id: 'assistant', label: 'Assistant', icon: 'sparkles', tab: true, page: assistant },
   { id: 'activities', label: 'Activities', icon: 'shapes', tab: true, page: activities },
   { id: 'media', label: 'Videos', icon: 'film', tab: true, page: media },
-  { id: 'face', label: 'Face', icon: 'face', tab: true, page: face },
+  { id: 'face', label: 'Face', icon: 'face', page: face, blurb: 'Expressions and animations' },
   { id: 'camera', label: 'Camera', icon: 'camera', page: camera, blurb: 'Live view from LittleBot' },
   { id: 'games', label: 'Games', icon: 'star', page: games, blurb: 'Fun games on the robot\'s screen' },
   { id: 'profile', label: 'Child profile', icon: 'user', page: profile, blurb: 'Age, name and favourites' },
