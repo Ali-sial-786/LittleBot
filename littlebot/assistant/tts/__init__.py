@@ -109,9 +109,10 @@ class TTSChain:
         for i, p in enumerate(usable):
             last = i == len(usable) - 1
             timeout = max(self.first_audio_timeout, LAST_VOICE_TIMEOUT_S) if last else self.first_audio_timeout
-            chunks = p.stream(text).__aiter__()
+            chunks: Any = None
             started = False
             try:
+                chunks = p.stream(text).__aiter__()
                 try:
                     async with asyncio.timeout(timeout):
                         first = await _first_sound(chunks)
