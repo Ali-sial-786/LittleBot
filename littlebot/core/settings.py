@@ -48,6 +48,9 @@ def build_defaults(cfg: LittleBotConfig) -> dict[str, Any]:
         "audio.input_gain": cfg.audio.microphone.input_gain,
         # wake word: "Hey LittleBot" starts live voice (heard on the robot, offline)
         "wake.enabled": cfg.wake.enabled,
+        # the assistant's personality (littlebot/skills/persona.py): warm | witty | calm | concise | playful, or
+        # "custom: <text>"; changed by voice ("be more concise") or on the dashboard
+        "assistant.persona": cfg.skills.persona,
         # ai
         "ai.enabled": False,  # cloud conversation, parent must opt in
         "ai.provider": cfg.ai.provider,
