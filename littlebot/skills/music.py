@@ -225,7 +225,7 @@ class Music(Skill):
         self._played = [str(r.get("video_id")) for r in picked]
         title = speakable(first.get("title"))
         self._starting = title
-        self._offer(media, first, others, title)
+        self._offer(media, first, others)
         log.info("music: %s for a %s (%d results)", "queued", kind, len(results))
         by = f" by {first['channel']}" if first.get("channel") and kind in ("song", "artist") else ""
         return ok(f"'{title}'{by} starts playing as soon as you have finished speaking; say it in one short line")
@@ -244,7 +244,7 @@ class Music(Skill):
         out = [r for r in found or [] if isinstance(r, dict) and r.get("video_id")]
         return out, None
 
-    def _offer(self, media: Any, first: dict[str, Any], others: list[dict[str, Any]], title: str) -> None:
+    def _offer(self, media: Any, first: dict[str, Any], others: list[dict[str, Any]]) -> None:
         vid = str(first["video_id"])
         presentation = {"presentation": "music"} if _accepts(media.play_video, "presentation") else {}
 

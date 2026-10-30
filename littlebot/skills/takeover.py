@@ -37,6 +37,7 @@ HANDOVER_REASON = "handed over to what was asked for"  # (live voice's own hand-
 # Lease owner -> the ctx field of the voice that holds the speaker for a whole chat.
 VOICES = {"live_voice": "live", "assistant": "assistant"}
 BUSY = (RobotState.SPEAKING, RobotState.THINKING)
+_RUNNING: set[asyncio.Task[Any]] = set()
 
 
 @dataclasses.dataclass
@@ -78,7 +79,9 @@ def offer(ctx: Any, label: str, run: Callable[[], Awaitable[Any]], *, max_wait: 
         loop = asyncio.get_running_loop()
     except RuntimeError:
         return item  # no loop (a test calling it bare): only a host can run it
-    item.fallback = loop.create_task(_fallback(ctx, item, max_wait, on_fail))
+    task = item.fallback = loop.create_task(_fallback(ctx, item, max_wait, on_fail))
+    _RUNNING.add(task)  # (a strong reference while it waits and starts)
+    task.add_done_callback(_RUNNING.discard)
     return item
 
 
