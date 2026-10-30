@@ -157,3 +157,49 @@ come out thinner than their round caps; use `art.capsule`.
 
 Cost on a desktop CPU: 0.6-2.5 ms per frame (update + draw); expect roughly 3-4x on the Pi 5,
 well inside the 33 ms of a 30 fps frame. Colour Burst spends a few ms generating each new splash.
+
+# Voice games (for grown-ups and the family)
+
+Played by talking, with a card on the screen: **Trivia**, **Hangman**, **Twenty Questions**, **Riddles** and
+**Would You Rather** (`littlebot/games/voice`). Say "let's play trivia", "quiz me on history", "play hard
+science trivia", "let's play hangman with animals", "give me a riddle", "how about twenty questions" or "let's
+play would you rather". "Hint", "skip" / "I give up", "repeat", "what's my score" and "stop the game" work in
+every game; "play again" (or "yes" to "Want another round?") starts another. "What's my high score in
+trivia?" reads the scores. The toddler touch games above are separate and unchanged.
+
+| Game | id | How it plays |
+|---|---|---|
+| Trivia | `trivia` | `voice_games.trivia_questions` (10) questions, A to D, read out briefly; instant right/wrong with the answer and a one-line fun fact. 10 points a right answer, +5 from the third in a row, half after a fifty-fifty hint. Topics: general, science, history, geography, sports, movies, music, food, Canada, tech, or any topic when the text model writes the questions; easy / medium / hard. |
+| Hangman | `hangman` | Five words a round, six lives each; the card shows the blanks, the letters tried and the hearts. "E", "is there an S", "T as in Tom", or the whole word. |
+| Twenty Questions | `twenty_questions` | LittleBot thinks of an animal, food, thing, vehicle or something in nature; you ask yes/no questions (the AI answers them honestly, it knows the secret), guesses are judged on the robot. Fewer questions, higher score. |
+| Riddles | `riddles` | Five riddles; any short answer is a guess; a hint comes by itself after two misses, the answer after three. |
+| Would You Rather | `would_you_rather` | Five pairs; LittleBot reacts with its own pick and the household tally ("most people here pick flying, 3 to 1"). Tap a side or say it. No score. |
+
+**Fast.** The new voice pipeline gives the person's words to the running game first
+(`VoiceGames.handle_utterance`): "B", "Paris" or "is there an E" are judged on the robot and the reply is spoken
+straight away, with no model call. Only words that aren't a move ("this one's hard!") go to the AI, which sees the
+game in its context. GPT-Live plays through the tools instead (`start_voice_game`, `game_answer`, `game_hint`,
+`game_skip`, `stop_voice_game`, `game_scores`), whose results carry the exact words to say. Answers are matched
+forgivingly (`answers.py`): "bee", "option b", "the second one", "two", "jupitor", "da vinci", "nineteen
+sixty nine".
+
+**Questions.** With `voice_games.use_model_questions` on, Claude set up and the cloud allowed, Trivia asks the text
+model for the whole round in one structured call (6 s at most; a built-in topic starts with a bank question and
+switches to the model's as they arrive). Otherwise, and whenever the model fails, the offline bank
+(`assets/games/trivia.json`, 113 checked questions) is used. Recently asked questions, words, riddles and
+pairs are remembered so a new round doesn't repeat them.
+
+**Scores** live in the robot's database (`voice_game_scores`: game, score, out_of, best_streak, played_at;
+`voice_game_seen`; `voice_game_votes`). Nothing said is stored.
+
+**Settings** (`voice_games:` in config): `enabled`, `trivia_questions`, `use_model_questions`, `hangman_words`,
+`riddles_per_round`, `would_you_rather_per_round`, `sounds`.
+
+**Cards** (internal, never offered to the AI): `quiz` (the question and four tappable tiles, green / red on an
+answer), `word_game` (blanks, letters tried, hearts) and `game_board` (riddles, would you rather, twenty questions),
+in a night-time game-show look (navy, cyan, white). They follow the live game; a tap answers and the reply is
+spoken through `assistant.announce`.
+
+Adding a voice game: subclass `littlebot.games.voice.base.VoiceGame` (`_begin`, `move`, `hint`, `skip`,
+`describe`, `card_spec`), add it to `GAMES` in `littlebot/games/voice/skill.py`, and test it with
+`tests/games/voice_game_helpers.py`.

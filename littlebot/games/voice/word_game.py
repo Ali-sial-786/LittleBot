@@ -241,7 +241,6 @@ class Hangman(VoiceGame):
 
     def summary(self) -> str:
         if self.end_reason == "stopped":
-            self.out_of = max(0, self.number - (0 if self.result and self.result["id"] == self.number else 1))
             if self.out_of == 0:
                 return f"Okay, we'll stop. The word was {self.word.capitalize()}."
             return (f"Okay, we'll stop. The word was {self.word.capitalize()}. You solved {self.score} of "

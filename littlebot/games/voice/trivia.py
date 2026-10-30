@@ -283,13 +283,14 @@ class Trivia(VoiceGame):
             self.category = "mixed"
             self.free_topic = False
             self._bank = self._bank_pool(seen_keys)
+        if self.free_topic:  # no bank questions on it: the round is as long as the model's questions
+            self.total = min(self.total, max(3, len(self._model_qs)))
         if not self._bank and not self._model_qs:
             self.state = "over"
             return Reply("Sorry, I can't find my trivia questions right now.", done=True)
         what = LABELS.get(self.category, self.category.title()) if self.category != "mixed" else ""
         intro = f"{note}Trivia time! {self.total} {what.lower() + ' ' if what else ''}questions" + (
             f", {self.level}" if self.level != "medium" else "") + ". Say A, B, C or D."
-        intro = intro.replace("general knowledge questions", "general knowledge questions")
         self._advance()
         return Reply(f"{intro} {self._ask_text()}", sound="notes")
 
@@ -418,9 +419,7 @@ class Trivia(VoiceGame):
             "No points yet: this is the first question!"
 
     def summary(self) -> str:
-        n = self.number if self.end_reason == "stopped" and self.current is not None else len(self.asked)
-        played = max(0, n - (1 if self.end_reason == "stopped" and self.current is not None else 0))
-        self.out_of = played
+        played = self.out_of  # the questions answered or skipped (finish() counts them)
         if played == 0:
             return "Okay, no trivia for now."
         if self.end_reason == "stopped":

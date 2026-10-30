@@ -26,6 +26,10 @@ what was asked) is `littlebot/screens/director.py` and the live voice's tools.
 * Pictures from the internet are fetched only when a card needs one (`littlebot/screens/images.py`):
   strict safe search, shown with a small credit line, never saved.
 
+* The voice games' cards (`quiz`, `word_game`, `game_board`; docs/GAMES.md, *Voice games*) are the
+  exception: a night-time game-show look (deep navy, LittleBot's cyan, white text). They are internal
+  (`CardType.offered=False`): only the games show them, and they follow the live game.
+
 See them without a robot: `.venv/bin/python scripts/screen_preview.py --out /tmp/cards` renders every
 card type's samples to PNGs (`--kind weather` for one kind, `--mouth 0.8` for a talking presenter).
 

@@ -299,6 +299,10 @@ class VoiceGames(Skill):
             self._offer_until = -1e9
             try:
                 reply = await g.start()
+            except asyncio.CancelledError:  # the person talked over it, the session ended: no half-started game
+                g.finish("cancelled")
+                self._game = None
+                raise
             except Exception:  # noqa: BLE001
                 log.exception("voice games: %s failed to start", gid)
                 self._game = None

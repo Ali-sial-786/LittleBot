@@ -253,6 +253,19 @@ async def test_trivia_asks_claude_only_when_allowed(monkeypatch):
         ctx.db.close()
 
 
+async def test_a_start_cancelled_while_waiting_for_the_model_leaves_no_game(ctx):
+    model = FakeModel(delay=5.0)
+    sk = VoiceGames(ctx, rng=rng(), model=model)
+    task = asyncio.ensure_future(sk.handle_utterance("quiz me on dinosaurs"))
+    await asyncio.sleep(0.05)
+    assert len(model.calls) == 1
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert sk.active is None
+    assert (await sk.handle_utterance("let's play riddles")).say.startswith("Riddle time!")
+
+
 def test_no_key_means_the_bank(ctx):
     sk = VoiceGames(ctx)
     assert sk._model() is None  # tests have no Claude model or key
