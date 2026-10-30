@@ -22,7 +22,8 @@ WORDS = 5
 HINTS_PER_WORD = 2
 VOWEL_SOUND = set("AEFHILMNORSX")  # letters whose names start with a vowel sound: "an S"
 TOPIC_ALIASES = {"animal": "animals", "foods": "food", "sport": "sports", "planets": "space",
-                 "house": "around the house", "home": "around the house", "household": "around the house", "instruments": "music",
+                 "house": "around the house", "home": "around the house", "household": "around the house",
+                 "instruments": "music",
                  "job": "jobs", "work": "jobs", "country": "countries", "places": "countries", "vehicle": "vehicles",
                  "transport": "vehicles", "cars": "vehicles", "canadian": "canada", "weather": "nature"}
 _GUESS_CUE = re.compile(

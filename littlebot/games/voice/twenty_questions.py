@@ -120,7 +120,8 @@ class TwentyQuestions(VoiceGame):
             for n in [*t["aliases"], t["name"]]:  # the thing's own name last: it wins for its plural
                 key = _singular(_bare(n))
                 if n.strip() and key:
-                    self.display[key] = t["name"] if key == _singular(_bare(t["name"])) else _with_article(n, t["name"])
+                    own = key == _singular(_bare(t["name"]))
+                    self.display[key] = t["name"] if own else _with_article(n, t["name"])
         if self.category_filter:
             pool = [t for t in pool if t["category"] == self.category_filter] or pool
         if not pool:
