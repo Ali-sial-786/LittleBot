@@ -275,7 +275,9 @@ class Brain:
     async def respond(self, text: str, *, history: list[dict[str, str]], toolbox: Any,
                       on_sentence: OnSentence, on_tool: OnTool | None = None,
                       images: list[bytes] | None = None, mark_day: bool = True,
-                      extra: list[str] | None = None) -> TurnResult:
+                      extra: list[str] | None = None,
+                      extra_tools: dict[str, tuple[dict[str, Any], Callable[[dict[str, Any]], Any]]] | None = None,
+                      ) -> TurnResult:
         """Answer ``text``: sentences go to ``on_sentence`` as they are ready (checked for safety first). Never
         raises (except cancellation); a failure is ``result.error``."""
         result = TurnResult()
@@ -311,12 +313,21 @@ class Brain:
                 _call(on_tool, str(name))
             if name == DEEP_TOOL:
                 return await self._think_harder(arguments, history)
+            if extra_tools and name in extra_tools:  # the session's own (who_is_here)
+                try:
+                    return str(await extra_tools[name][1](_args(arguments)))
+                except asyncio.CancelledError:
+                    raise
+                except Exception:  # noqa: BLE001
+                    log.warning("assistant: tool %s failed", name, exc_info=True)
+                    return "error: the action failed"
             return await toolbox.run(name, arguments)
 
         provider = self.provider()
         tools = list(toolbox.specs()) if toolbox is not None else []
         if self.deep_provider() is not None and getattr(self.deep_provider(), "configured", lambda: False)():
             tools.append(_deep_spec())
+        tools += [spec for spec, _ in (extra_tools or {}).values()]
         system = self.system_prompt()
         if toolbox is not None and hasattr(toolbox, "instructions"):
             system += "\n" + toolbox.instructions().strip()
@@ -392,6 +403,18 @@ def _day() -> str:
     import datetime as _dt  # noqa: PLC0415
 
     return (_dt.datetime.now() - _dt.timedelta(hours=4)).strftime("%Y-%m-%d")
+
+
+def _args(arguments: Any) -> dict[str, Any]:
+    import json  # noqa: PLC0415
+
+    if isinstance(arguments, dict):
+        return arguments
+    try:
+        out = json.loads(arguments or "{}")
+    except ValueError:
+        return {}
+    return out if isinstance(out, dict) else {}
 
 
 def _deep_spec() -> dict[str, Any]:

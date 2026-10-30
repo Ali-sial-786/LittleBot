@@ -878,3 +878,18 @@ async def test_the_decision_log_summary_says_who_is_in_view(call):
     assert cf.summary() == "the little one (the baby) and Ali (dad), and 1 face(s) it doesn't know"
     call.stub.reason = "off"
     assert cf.summary() == "off"
+
+
+def test_quality_gate_turned_and_blurred_faces():
+    import cv2
+
+    row = np.zeros(15, np.float32)
+    row[4:10] = [100, 100, 140, 100, 120, 120]  # eyes 40 px apart, nose in the middle: facing
+    assert F.facing(row)
+    row[8] = 140 + 5  # the nose out past an eye: turned away
+    assert not F.facing(row)
+    assert F.facing(np.zeros(5))  # not enough to tell: compared as before
+    rng = np.random.default_rng(1)
+    detailed = (rng.random((112, 112, 3)) * 255).astype(np.uint8)
+    assert F.sharp(detailed)
+    assert not F.sharp(cv2.GaussianBlur(np.full((112, 112, 3), 128, np.uint8), (15, 15), 5))

@@ -89,9 +89,19 @@ Both are opt-in and run on the robot only (only a name reaches the brain, never 
 
 * **Voice** (docs/VOICES.md): with **Recognise family voices** on (dashboard → Privacy) and each grown-up's voice
   recorded (Profile → Who's who), the assistant recognises who said "Hey LittleBot" and who said each turn, in the
-  background, and the brain is told "the person talking sounds like Ali (dad)". It then uses your name now and then
-  and your own memories ("my sister" means *your* sister).
-* **Face**: with face recognition on and a camera plugged in, who is in front of the camera is added the same way.
+  background (an answer never waits for it), and the brain is told "the person talking is Ali (dad)". It then uses
+  your name now and then and your own memories ("my sister" means *your* sister).
+* **Over the whole conversation** (`littlebot/assistant/who.py`): one clear turn is enough; after that a short
+  "yes" or an unclear turn that still sounds closest to you keeps you as the speaker, while a turn that clearly
+  sounds like someone else switches at once (and one that is too close to call makes it "probably" only).
+* **Voice and face together**: a voice that isn't clear on its own but is closest to the one grown-up in front of
+  the camera is them. With face recognition on and no voice to go on, the one grown-up in view is "probably" them.
+* **Learning by talking**: say "I'm Ali" (or "it's her dad") and that turn's voiceprint is kept for you; turns it is
+  very sure about sharpen your voiceprint over time (a few at most, oldest first: recordings are never pushed out).
+* **Faces**: blurred and turned-away faces are no longer compared (that's where most wrong or missed matches came
+  from); new samples must be sharp and facing the camera too.
+* **"Do you know who I am?"**: the brain takes a fresh look and puts the face and the voice together (`who_is_here`),
+  and never guesses a name.
 
 ## Skills (both pipelines)
 

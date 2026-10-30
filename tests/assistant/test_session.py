@@ -381,15 +381,23 @@ async def test_a_long_answer_is_not_cut_by_a_timeout_and_unsaid_news_is_kept() -
 
 
 async def test_the_brain_is_told_who_is_talking_by_voice() -> None:
-    from littlebot.voices.service import VoiceMatch
+    from littlebot.voices.service import Heard, VoiceMatch
 
     class Voices:
+        threshold = 0.5
+        improved = 0
+
         def blocked_reason(self) -> str | None:
             return None
 
-        async def identify(self, samples: Any, rate: int) -> VoiceMatch:
+        async def analyse(self, samples: Any, rate: int, **kw: Any) -> Heard:
             assert rate == 16000 and len(samples) > 0
-            return VoiceMatch(person_id=1, name="Ali", role="dad", score=0.8, is_child=False)
+            m = VoiceMatch(person_id=1, name="Ali", role="dad", score=0.8, is_child=False, margin=0.3)
+            return Heard("ok", 2.5, m, 1, 0.8, 0.4, True)
+
+        def improve(self, heard: Heard) -> bool:
+            self.improved += 1
+            return True
 
     brain = Scripted(["Hi!"], ["Sure."])
     svc, stt, tts, _ = _service(brain, follow_up_seconds=2)
@@ -411,5 +419,72 @@ async def test_the_brain_is_told_who_is_talking_by_voice() -> None:
     await _wait(lambda: svc._session is not None and svc._session.speaker is not None)
     stt.say("what's up")
     await _wait(lambda: "Sure." in tts.said)
-    assert "sounds like Ali (dad)" in seen[1]  # recognised in the background: known by the next turn at the latest
+    assert "the person talking is Ali (dad)" in seen[1]  # recognised in the background: known by the next turn
+    assert svc.ctx.voices.improved >= 1  # a sure turn sharpens their voiceprint
+    await svc.stop_session("test")
+
+
+async def test_saying_who_you_are_teaches_littlebot_your_voice() -> None:
+    from littlebot.voices.service import Heard
+
+    class People:
+        def people(self) -> list[dict[str, Any]]:
+            return [{"id": 2, "name": "Sara", "role": "mum"}]
+
+        def person(self, pid: int) -> dict[str, Any] | None:
+            return {"id": 2, "name": "Sara", "role": "mum"} if pid == 2 else None
+
+    class Store:
+        people = People()
+
+    class Voices:
+        threshold = 0.5
+        store = Store()
+        claimed: list[int] = []
+
+        def blocked_reason(self) -> str | None:
+            return None
+
+        async def analyse(self, samples: Any, rate: int, **kw: Any) -> Heard:
+            return Heard("nobody", 2.2, one_voice=True)
+
+        def keep_claimed(self, person_id: int, heard: Heard) -> dict[str, Any]:
+            self.claimed.append(person_id)
+            return {"ok": True, "reason": "claimed", "first": True}
+
+        def improve(self, heard: Heard) -> bool:
+            return False
+
+    svc, stt, tts, _ = _service(Scripted(["Nice to meet you, Sara!"], ["Sure."]), follow_up_seconds=2)
+    svc.ctx.voices = Voices()
+    await svc.start()
+    await svc.start_session()
+    await _wait(lambda: stt.stream is not None)
+    await asyncio.sleep(0.2)
+    stt.say("Hi, I'm Sara")
+    await _wait(lambda: svc.ctx.voices.claimed == [2])
+    who = svc._session.speaker
+    assert who is not None and who.name == "Sara" and who.sure
+    await svc.stop_session("test")
+
+
+async def test_who_is_here_tool_says_what_it_knows() -> None:
+    brain = Scripted([("who_is_here", "{}"), "I can't tell yet."])
+    svc, stt, tts, _ = _service(brain, follow_up_seconds=1)
+    results: list[str] = []
+    real = svc.brain.respond
+
+    async def spy(*a: Any, **kw: Any) -> Any:
+        tools = kw.get("extra_tools") or {}
+        assert "who_is_here" in tools
+        results.append(await tools["who_is_here"][1]({}))
+        return await real(*a, **kw)
+
+    svc.brain.respond = spy
+    await svc.start()
+    await svc.start_session()
+    await _wait(lambda: stt.stream is not None)
+    stt.say("do you know who I am")
+    await _wait(lambda: "I can't tell yet." in tts.said)
+    assert "voice recognition is off" in results[0] and "Camera:" in results[0]
     await svc.stop_session("test")
