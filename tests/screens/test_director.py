@@ -532,6 +532,33 @@ async def test_it_waits_for_the_voices_answer_not_its_filler(make):
     assert s.screens.shown and s.screens.shown[0][0]["card"] == "recipe"
 
 
+async def test_a_long_answer_makes_its_card_while_it_is_being_said(make):
+    # from a real call: GPT-Live's final caption came 30 s later, when it had finished; the card never showed
+    s = make(FACT, wait_for_answer=True)
+    s.director.heard("Can you tell me the difference between Kublai Khan and Genghis Khan?")
+    await asyncio.sleep(0.05)
+    s.director.saying("Genghis Khan was the founder of")
+    await asyncio.sleep(director_mod.SAID_GRACE_S + 0.2)
+    assert s.provider.calls == []  # a few words aren't enough to go on
+    s.director.saying("Genghis Khan was the founder of the Mongol Empire. He united the Mongol tribes and started")
+    await s.settle()
+    assert "Genghis Khan was the founder of the Mongol Empire" in s.provider.calls[0]["messages"][-1]["content"]
+    assert s.screens.shown  # long before the turn's final caption
+    s.director.said("Genghis Khan was the founder of the Mongol Empire. He united the Mongol tribes and started "
+                    "the big conquests. Kublai Khan was his grandson.")
+    await s.settle()
+    assert len(s.provider.calls) == 1  # the final caption doesn't make a second card
+
+
+async def test_filler_said_bit_by_bit_is_still_not_the_answer(make):
+    s = make(FACT, wait_for_answer=True)
+    s.director.heard("What's the top-grossing movie of all time?")
+    await asyncio.sleep(0.05)
+    s.director.saying("Hold on, let me check that for you, it'll only take me a moment to find out the answer.")
+    await asyncio.sleep(director_mod.SAID_GRACE_S + 0.2)
+    assert s.provider.calls == []
+
+
 async def test_a_bare_sure_is_not_the_answer(make):
     s = make(FACT, wait_for_answer=True)
     s.director.heard("Can you tell me what the weather's like tomorrow?")

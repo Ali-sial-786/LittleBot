@@ -1202,6 +1202,8 @@ class LiveCall:
             else:
                 self._assistant_turn = (self._assistant_turn + event.text)[-2000:]
                 text = self._assistant_turn
+                if self._director is not None:
+                    self._director.saying(text)  # a card while it talks, not after its turn ends
             self._check_reply(text, event.final)
             if not self._voice_face_this_turn and not self._ended.is_set():
                 action = _voice_face(text)

@@ -87,6 +87,9 @@ NOTE_CHARS = 300
 RECENT_S = 10.0  # the same card shown this recently (by the director or a tool) isn't shown again
 ANSWER_WAIT_S = 25.0  # wait_for_answer: at most this long for LittleBot's answer (live.py HANDOFF_TIMEOUT_S)
 SAID_GRACE_S = 0.6  # a caption counts as the answer once this old with no hand-off opened after it
+# The voice's words as it says them (``saying``): this many are enough to go on, so the card comes while it
+# talks. GPT-Live's final caption only comes when its turn ends, 20 s later for a long answer (2026-10-29).
+PARTIAL_WORDS = 15
 ANSWER_CHARS = 600
 VERDICT_WAIT_S = 1.5  # the decider's "has it answered?" (feature answered, on): a caption waits this long for it
 FILLER = re.compile(
@@ -687,6 +690,7 @@ class ScreenDirector:
         self.wait_for_answer = wait_for_answer
         self.answer_wait_s = answer_wait_s
         self._said: collections.deque[tuple[float, str]] = collections.deque(maxlen=LINES)  # (when, caption)
+        self._saying: tuple[float, str] | None = None  # (when it began, words so far) of the voice's turn now
         self._handoffs = 0  # the voice's hand-offs open now
         self._handoff_said: tuple[float, str] | None = None  # (when, answer) of the latest hand-off answer
         self._changed = asyncio.Event()
@@ -784,6 +788,10 @@ class ScreenDirector:
         newest = max((when for when, text in self._said if when >= t0), default=None)
         if words and newest is not None and now - newest >= SAID_GRACE_S:
             return "voice", " ".join(words)[:ANSWER_CHARS]
+        saying = self._saying  # no final caption yet: the words it is saying now, once there are enough
+        if (saying is not None and saying[0] >= t0 and now - saying[0] >= SAID_GRACE_S
+                and len(saying[1].split()) >= PARTIAL_WORDS and not FILLER.match(saying[1])):
+            return "voice", saying[1][:ANSWER_CHARS]
         return None
 
     def _stalling(self, caption: tuple[float, str]) -> bool:
@@ -840,9 +848,22 @@ class ScreenDirector:
         except Exception:  # noqa: BLE001
             log.debug("screen: warming the connection failed", exc_info=True)
 
+    def saying(self, text: str) -> None:
+        """The voice's words so far in the turn it is saying now (each new piece; the final caption follows)."""
+        text = " ".join(str(text or "").split())
+        if not text or self._closed:
+            return
+        begun = self._saying[0] if self._saying is not None and text.startswith(self._saying[1][:40]) else self._now()
+        enough = len(text.split()) >= PARTIAL_WORDS
+        was = self._saying is not None and len(self._saying[1].split()) >= PARTIAL_WORDS
+        self._saying = (begun, text[:ANSWER_CHARS])
+        if enough and not was:
+            self._ping()
+
     def said(self, text: str) -> None:
         """A final caption of what the voice said."""
         text = " ".join(str(text or "").split())
+        self._saying = None
         if text and not self._closed:
             self._lines.append(("robot", text[:LINE_CHARS]))
             caption = (self._now(), text[:LINE_CHARS])
