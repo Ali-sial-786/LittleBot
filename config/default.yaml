@@ -200,13 +200,42 @@ motion:
   homing_speed_factor: 0.4
   release_when_idle_seconds: 0        # >0 de-energises servos after idling this long
   calibration_file: config/calibration.yaml   # written by scripts/calibrate_servos.py (git-ignored)
-  # Per-joint limits (defaults are built in; calibration.yaml overrides them). If you
-  # override `servos` here you must list ALL joints, e.g.:
+  # Per-joint limits (defaults are built in; calibration.yaml overrides them). "head" is the head's
+  # PAN axis (left/right), "head_tilt" its TILT axis (up/down). If you override `servos` here you
+  # must list ALL the joints your robot has (leave out one that is not fitted, e.g. head_tilt):
   # servos:
   #   head:      {channel: 0, neutral: 90,  min_angle: 50, max_angle: 130, max_speed_dps: 60}
   #   left_arm:  {channel: 1, neutral: 20,  min_angle: 10, max_angle: 150, max_speed_dps: 90}
   #   right_arm: {channel: 2, neutral: 160, min_angle: 30, max_angle: 170, max_speed_dps: 90,
   #               inverted: true, positive_toward: min}
+  #   head_tilt: {channel: 3, neutral: 90,  min_angle: 70, max_angle: 110, max_speed_dps: 60}
+  # (each joint also takes max_accel_dps2, min/max_pulse_us and soft_margin_deg: see docs/MOVEMENT.md)
+  # Body language (littlebot/motion/body.py): gaze, nods and small gestures that follow the conversation.
+  # The face parts work without servos; movements stay simulated until real servos are armed.
+  body_language: true
+  body_language_gap_seconds: 1.5   # at most one gesture (and one face nod) this often
+  idle_motion_seconds: 90          # a tiny idle head shift about this often (0 = never)
+  look:                  # look_at(x, y): eyes lead, the head follows
+    camera_on_head: true # the camera sits in the head's top pod (false: fixed to the body)
+    fov_h_deg: 70        # the camera's field of view
+    fov_v_deg: 45
+    follow_offset: 0.15  # the head turns when the target stays this far off-centre (0..0.5 of the view)...
+    follow_after_seconds: 0.4   # ...for this long
+    gain: 0.8            # how much of the offset one head turn takes
+    settle_seconds: 0.6
+    speed: 0.5           # fraction of each head joint's max speed
+  drive:                 # the wheels phase (littlebot/motion/drive.py): nothing calls it yet
+    enabled: false       # commands are refused while false
+    backend: mock        # mock | motor_hat (placeholder: needs physical_enabled + arming, like the servos)
+    max_linear_mps: 0.15
+    max_angular_dps: 60
+    max_linear_accel_mps2: 0.3
+    max_angular_accel_dps2: 180
+    cruise_linear_mps: 0.10
+    cruise_angular_dps: 45
+    watchdog_seconds: 1.0         # an open-ended drive() stops unless re-sent within this long
+    max_duration_seconds: 10
+    wheel_base_m: 0.12
 
 dashboard:
   enabled: true

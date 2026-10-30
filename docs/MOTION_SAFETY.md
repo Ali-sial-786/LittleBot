@@ -1,7 +1,8 @@
 # Motion safety (servos)
 
-LittleBot will get three MG90S micro servos (head turn, left arm, right arm) driven by a
-PCA9685 PWM board on the Raspberry Pi 5's I2C bus. It is meant for a ~10-month-old child.
+LittleBot will get four MG90S micro servos (head pan, head tilt, left arm, right arm; the tilt is
+optional) driven by a PCA9685 PWM board on the Raspberry Pi 5's I2C bus (what the software does
+with them: [MOVEMENT.md](MOVEMENT.md)). It is meant for a ~10-month-old child.
 **Until every step in this document has been done, the servos stay simulated.**
 
 > **Software tests do not establish physical toy safety.** The motion code limits angles,
@@ -51,9 +52,10 @@ PCA9685 PWM board on the Raspberry Pi 5's I2C bus. It is meant for a ~10-month-o
    470-1000 uF electrolytic across V+/GND at the board (observe polarity)
 
  Servo headers (columns: PWM | V+ | GND)        MG90S lead colours
-   channel 0 -> head        orange = PWM, red = V+, brown = GND
+   channel 0 -> head (pan)  orange = PWM, red = V+, brown = GND
    channel 1 -> left_arm
    channel 2 -> right_arm
+   channel 3 -> head_tilt   (optional: without it, list only the other joints in motion.servos)
 ```
 
 **With the MPI3508 screen plugged onto the header** (the way LittleBot's enclosures mount it),
@@ -128,10 +130,11 @@ change the address. Update `motion.i2c_address` if you change them).
 | MG90S moving (light arm) | 100-250 mA | |
 | MG90S **stall** (blocked, or pushed by a child) | | **~0.7-1 A each** |
 | 3 servos all stalled | | **~3 A** |
+| 4 servos all stalled (with head_tilt) | | **~4 A** |
 | PCA9685 logic (from the Pi 3.3 V) | < 10 mA | |
 
 * Use a **regulated 5-6 V supply rated at least 3 A, preferably 4 A** (stall current of all
-  servos plus margin). A 5 V / 4 A adapter or a UBEC is fine. At 6 V the MG90S is faster
+  servos plus margin; with the tilt servo, 4 A, preferably 5 A). A 5 V / 4 A adapter or a UBEC is fine. At 6 V the MG90S is faster
   and stronger. 5 V is gentler and is recommended here.
 * Fit a fuse (~3 A slow-blow or a polyfuse) and an ON/OFF switch in the V+ line. Use wire
   rated for the current (22 AWG or thicker for short runs).
