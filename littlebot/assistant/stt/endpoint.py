@@ -300,6 +300,7 @@ class EndpointedSTT:
         self.end_of_turn_ms = end_of_turn_ms
         self.max_turn_seconds = max_turn_seconds
         self.threshold = threshold
+        self._warming: asyncio.Task[None] | None = None
 
     def missing(self) -> str | None:
         return self.inner.missing()
@@ -310,7 +311,10 @@ class EndpointedSTT:
             raise SpeechError(why)
         warm = getattr(self.inner, "warm", None)
         if warm is not None:
-            await warm()  # Vosk: the model is loaded now, not at the first word
+            if self.is_cloud:  # the connection opens while they start talking (best effort, never waited for)
+                self._warming = asyncio.create_task(warm())
+            else:
+                await warm()  # Vosk: the model is loaded now (or fails now), not at the first word
         return Endpointer(self.inner, on_event, end_of_turn_ms=self.end_of_turn_ms,
                           max_turn_seconds=self.max_turn_seconds, threshold=self.threshold)
 
