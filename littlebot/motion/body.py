@@ -14,7 +14,8 @@ thinking                 eyes glance up and to the side (again every few seconds
 speaking                 sentence ends: a face nod + ``nod_small``; a sentence's expression:
                          celebrating -> ``celebrate``, happy / excited -> ``arm_wiggle``,
                          curious -> ``tilt_curious``, sad -> ``droop``, confused -> ``head_shake``,
-                         surprised -> ``perk_up``; a final nod when the answer ends
+                         surprised -> ``perk_up``; a closing nod when the answer ends (not after an
+                         interruption)
 a card is shown          ``point_screen`` (an arm points at the screen)
 interrupted              stop (back to neutral, smoothly) and look at the person
 session ends             neutral pose, the eyes go back to their own wandering
@@ -96,6 +97,7 @@ THINK_GLANCE = (0.22, 0.24)  # up-and-aside: x offset from the centre, y
 THINK_HOLD_S = 1.2
 THINK_REGLANCE_S = 3.0  # a long think glances again (the other way)
 PERK_EVERY_S = 8.0  # perk_up when listening starts, not again within this long (follow-up turns)
+MIN_ANSWER_S = 0.8  # SPEAKING this long (no sentence events: the live voice) counts as an answer: closing nod
 IDLE_JITTER = (0.6, 1.4)
 
 
@@ -117,6 +119,7 @@ class BodyLanguage:
         self._loop: asyncio.AbstractEventLoop | None = None
         self.mode = IDLE
         self._mode_since = self._now()
+        self.mode_seconds_at_change = 0.0
         self._state = str(getattr(getattr(ctx.state, "state", None), "value", "IDLE"))
         self._estop = False
         self._game = False
@@ -127,7 +130,7 @@ class BodyLanguage:
         self._last_perk = -1e9
         self._think_glance_at = -1e9
         self._think_side = 1.0
-        self._spoke_last = False  # the answer's last sentence started
+        self._spoke = False  # this answer said something (a sentence, or a while in SPEAKING)
         self._interrupted = False
         self._next_idle = self._now() + self._idle_interval()
         self.gestures_run: collections.deque[str] = collections.deque(maxlen=50)  # the latest, for status / tests
@@ -164,7 +167,8 @@ class BodyLanguage:
         self._tasks.clear()
 
     def status(self) -> dict[str, Any]:
-        return {"mode": self.mode, "motion": self._has_motion(), "estop": self._estop, "game": self._game,
+        return {"mode": self.mode, "mode_seconds": round(self._now() - self._mode_since, 1),
+                "motion": self._has_motion(), "estop": self._estop, "game": self._game,
                 "session": self._session, "gestures": self.gesture_count,
                 "last_gesture": self.gestures_run[-1] if self.gestures_run else None, "face_nods": self.face_nods}
 
@@ -215,11 +219,13 @@ class BodyLanguage:
     def _set_mode(self, mode: str, *, quiet: bool = False) -> None:
         if mode == self.mode:
             return
+        self.mode_seconds_at_change = self._now() - self._mode_since
         old, self.mode, self._mode_since = self.mode, mode, self._now()
         if old == SPEAKING:
-            if self._spoke_last and not self._interrupted and not quiet:
+            spoke = self._spoke or self.mode_seconds_at_change >= MIN_ANSWER_S
+            if spoke and not self._interrupted and not quiet:
                 self._nod()  # the answer ended: a small closing nod
-            self._spoke_last = False
+            self._spoke = False
         if quiet or not self._can_act():
             return
         if mode == ATTENDING:
@@ -239,8 +245,7 @@ class BodyLanguage:
     def _on_sentence(self, event: Event) -> None:
         if self.mode != SPEAKING:  # a sentence means LittleBot is talking, whatever came before
             self._set_mode(SPEAKING)
-        if bool(event.get("last", False)):
-            self._spoke_last = True
+        self._spoke = True
         if not self._can_act():
             return
         expression = str(event.get("expression") or "")
@@ -256,7 +261,7 @@ class BodyLanguage:
 
     def _on_interrupted(self) -> None:
         self._interrupted = True
-        self._spoke_last = False
+        self._spoke = False
         if not self._can_act():
             return
         if self._motion_ok():
@@ -268,7 +273,7 @@ class BodyLanguage:
     def _on_session_end(self) -> None:
         was = self._session
         self._session = False
-        self._spoke_last = False
+        self._spoke = False
         self.mode, self._mode_since = IDLE, self._now()
         face = self.ctx.face
         if face is not None and self._face_ok():

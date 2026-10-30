@@ -206,6 +206,34 @@ async def test_nods_on_sentence_ends_and_a_closing_nod(rig):
     assert len(face_calls(ctx, "play_animation")) == 2
 
 
+async def test_closing_nod_for_every_pipeline(rig):
+    ctx, body, clock = await rig()
+    # the assistant (its sentences always say last: false)
+    publish(ctx, "assistant.phase", {"phase": "speaking"})
+    publish(ctx, "assistant.sentence", {"index": 0, "chars": 30, "expression": None, "last": False})
+    await settle()
+    clock.advance(0.5)
+    publish(ctx, "assistant.phase", {"phase": "listening"})
+    await settle()
+    assert len(face_calls(ctx, "play_animation")) == 1 and gestures(ctx)[-1] == "nod_small"
+    # the live voice: only the robot state, no sentence events
+    clock.advance(3.0)
+    ctx.state.transition(RobotState.SPEAKING, "live")
+    await settle()
+    clock.advance(2.0)
+    ctx.state.transition(RobotState.LISTENING, "live")
+    await settle()
+    assert len(face_calls(ctx, "play_animation")) == 2
+    # a flicker of SPEAKING with nothing said is not an answer
+    clock.advance(3.0)
+    ctx.state.transition(RobotState.SPEAKING, "live")
+    await settle()
+    clock.advance(0.2)
+    ctx.state.transition(RobotState.LISTENING, "live")
+    await settle()
+    assert len(face_calls(ctx, "play_animation")) == 2
+
+
 async def test_heard_gets_a_small_face_nod(rig):
     ctx, body, clock = await rig()
     publish(ctx, "assistant.heard", {"words": 5, "ms": 1800})
