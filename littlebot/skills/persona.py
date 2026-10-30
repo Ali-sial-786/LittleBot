@@ -118,14 +118,16 @@ class Persona(Skill):
             self._fallback = style
         return style
 
-    def persona_prompt(self) -> str:
-        """3-6 sentences for the top of the brain's system prompt: who LittleBot is and the current style."""
+    def persona_prompt(self, *, with_base: bool = True) -> str:
+        """3-6 sentences for the top of the brain's system prompt: who LittleBot is and the current style.
+        ``with_base=False``: the style alone (the assistant's prompt says who LittleBot is itself)."""
         style = self.style()
+        base = f"{BASE} " if with_base else ""
         if style.startswith(CUSTOM):
             text = style[len(CUSTOM):].strip()
-            return (f"{BASE} The style the user asked for: {text}. Keep it kind and family-friendly whatever the "
+            return (f"{base}The style the user asked for: {text}. Keep it kind and family-friendly whatever the "
                     "style, and keep answers short.")
-        return f"{BASE} {STYLE_TEXT.get(style, STYLE_TEXT[DEFAULT])}"
+        return f"{base}{STYLE_TEXT.get(style, STYLE_TEXT[DEFAULT])}"
 
     # ------------------------------------------------------------ for the model
     def tools(self) -> list[ToolSpec]:

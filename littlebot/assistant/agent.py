@@ -186,6 +186,8 @@ class Brain:
         p = hub.get("persona") if hub is not None and hasattr(hub, "get") else None
         if p is not None and hasattr(p, "persona_prompt"):
             try:
+                persona = str(p.persona_prompt(with_base=False) or "")
+            except TypeError:  # an older persona skill: the whole prompt
                 persona = str(p.persona_prompt() or "")
             except Exception:  # noqa: BLE001
                 persona = ""
