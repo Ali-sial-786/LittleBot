@@ -584,18 +584,28 @@ async def test_a_quick_stop_word_interrupts_however_short(call, caplog):
     assert words.closed
 
 
-@pytest.mark.parametrize("f0,late", [
-    (255.0, 3),  # a parent's voice near live_barge_in_max_pitch_hz (on the robot 200-260 Hz) reads as a child's
-    (120.0, 60),  # the recogniser on the robot lagged over a second behind
-])
-async def test_a_stop_word_said_high_or_recognised_late_still_stops_it(call, f0, late):
+async def test_a_stop_word_recognised_late_still_stops_it(call):
     audio, c = call()
     words = FakeStopWords()
     audio.setup_barge_in(on_change=lambda what, info: c.events.append(what), stop_words=words)
     try:
         await c.warm_up()
-        await short_word(c, words, f0=f0, late=late)
+        await short_word(c, words, late=60)  # the recogniser on the robot lagged over a second behind
         assert c.events == ["interrupted", "stop_word"]
+    finally:
+        audio.close()
+
+
+async def test_a_stop_word_in_a_childs_voice_or_its_own_echo_does_not(call, caplog):
+    caplog.set_level(logging.INFO, logger="littlebot.chatgpt.live")
+    audio, c = call()
+    words = FakeStopWords()
+    audio.setup_barge_in(on_change=lambda what, info: c.events.append(what), stop_words=words)
+    try:
+        await c.warm_up()
+        await short_word(c, words, f0=400.0)
+        assert c.events == [] and not audio.interrupted
+        assert "heard 'stop', but it sounded like a child or its own voice" in caplog.text
     finally:
         audio.close()
 

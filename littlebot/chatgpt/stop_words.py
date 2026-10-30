@@ -8,9 +8,9 @@ wake word's offline model, ``wake.model_path``) in grammar mode: only ``STOP_PHR
 so a stop word counts as soon as it is said, not when the sentence ends.
 
 ``LiveAudio`` only acts on a stop word when the detector saw a sound louder than what is left of the voice's own
-echo when it was said (so the voice saying "wait" can't stop itself); no pitch rule (a parent's voice near
-``live_barge_in_max_pitch_hz`` read as a child's, 2026-10-29), but voice recognition saying "the child" still
-vetoes. Then the call goes quiet as for a "stop" in ChatGPT's caption (live.py ``_asked_to_stop``), without
+echo when it was said (so the voice saying "wait" can't stop itself), not mostly above
+``live_barge_in_max_pitch_hz`` (a child, or the voice's own echo leaking through) and not the child by voice
+recognition. Then the call goes quiet as for a "stop" in ChatGPT's caption (live.py ``_asked_to_stop``), without
 waiting for that caption: for a word this short it often never came. Each frame carries the time it was heard,
 so a recogniser that lags on the robot still finds the right moment. Audio stays in memory, in a short queue;
 nothing is kept or sent anywhere. Recognition runs in its own thread: the call's audio never waits for it.

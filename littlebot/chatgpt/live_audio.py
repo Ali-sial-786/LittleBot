@@ -87,7 +87,7 @@ ID_TIMEOUT_S = 1.0
 FAST_SPEECH_S = 0.2  # voice recognition says a grown-up: this much speech is enough
 # A stop word ("stop", "wait" ... littlebot/chatgpt/stop_words.py) quiets the voice however short it was, when the
 # detector heard this many frames louder than the voice's echo in a run that was still going at most STOP_RUN_S
-# before the audio the word was found in ended (no pitch rule: a parent's voice near max_pitch_hz read as a child's).
+# before the audio the word was found in ended, and not mostly above max_pitch_hz (a child, or its own echo).
 STOP_LOUD_FRAMES = 3
 STOP_RUN_S = 1.5
 PREROLL_MAX_S = 0.8  # the microphone kept for the pre-roll (in memory, the last 0.8 s only)
@@ -746,8 +746,12 @@ class LiveAudio:
             log.info("live voice: heard '%s' while the voice talked (%d ms ago), but nothing louder than its own "
                      "echo then: it carried on", said, late)
             return False
-        if run.vetoed:
-            log.info("live voice: heard '%s', but voice recognition says it was the child: it carried on", said)
+        if run.vetoed or run.child > run.adult:
+            # a child, or the voice's own echo leaking through (on the robot its false alarms were 240-259 Hz, the
+            # parent 107-154 Hz, 2026-10-29): the voice saying "wait" must not stop itself
+            log.info("live voice: heard '%s', but it sounded like %s: it carried on", said,
+                     "the child (voice recognition)" if run.vetoed else
+                     f"a child or its own voice ({round(BargeInDetector.pitch_of(run))} Hz)")
             return False
         det.fired, det.run = run, None
         self._stop_said = (said, late)

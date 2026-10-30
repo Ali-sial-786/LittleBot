@@ -192,10 +192,12 @@ async def test_most_turns_cost_nothing(make):
     s = make(WEATHER)
     for text in ("hi", "ba ba ba", "mama", "yes please", "How are you?", "how many fingers am I holding up?",
                  "stop", "play the baby shark video", "make a happy face", "sing twinkle twinkle little star",
-                 "she is so cute", "say hello to the baby", "I love you", "what is your favourite colour",
+                 "so cute", "say hello to the baby", "I love you", "what is your favourite colour",
                  "who am I", ""):
         await s.heard(text)
     assert s.provider.calls == [] and s.screens.shown == []
+    await s.heard("she is so cute")  # a longer turn goes to the model, question word or not; it says "none"
+    assert len(s.provider.calls) == 1
 
 
 @pytest.mark.parametrize("text,why", [
@@ -211,14 +213,16 @@ def test_the_pre_filter(text, why):
     "what's the weather tomorrow", "What does serendipity mean?", "How do I make pancakes?",
     "set a timer for 10 minutes", "what's 15 percent of 80", "what time is it in Tokyo", "convert 5 miles to km",
     "tell me about dinosaurs", "Is it going to rain?",
+    # no question word, but more than a word or two: the model decides (on the robot these got no card, 2026-10-29)
+    "and Alexander the Great?", "Talk to me about Genghis Khan and Kublai Khan please",
 ])
 def test_questions_go_to_the_model(text):
     assert prefilter(text) is None
 
 
 def test_with_a_card_up_follow_ups_go_to_the_model():
-    assert prefilter("and on saturday?") == "no question"
-    assert prefilter("and on saturday?", card_up=True) is None
+    assert prefilter("on saturday?") == "no question"
+    assert prefilter("on saturday?", card_up=True) is None
     assert prefilter("thanks", card_up=True) == "chit-chat"
 
 

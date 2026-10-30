@@ -214,7 +214,9 @@ CHAT_QUESTIONS = re.compile(
     r"what is your favou?rite)\b")
 TO_THE_BABY = re.compile(r"^(?:(?:can|could|will) you )?(?:say (?:hi|hello|hey|bye|goodbye|good night|night night)\b|"
                          r"say \w+ to\b|say [a-z']+$|tell (?:her|him|the baby) )")
-# With no card up, only a question or a request for information is worth asking the model about.
+# With no card up, a turn of fewer than NO_QUESTION_WORDS words is worth asking the model about only when it is a
+# question or a request for information (prefilter).
+NO_QUESTION_WORDS = 3
 INFO_CUE = re.compile(
     r"\b(?:what|how|when|where|which|who|why|whose|tell me|show me|explain|define|definition|meaning|mean|means|"
     r"spell|recipe|recipes|cook|cooking|bake|baking|ingredients|timer|remind me|count ?down|minutes?|hours?|seconds?|"
@@ -331,7 +333,10 @@ def prefilter(text: str, *, card_up: bool = False) -> str | None:
         return "chit-chat"
     if TO_THE_BABY.match(plain):
         return "talking to the baby"
-    if not card_up and not INFO_CUE.search(plain):
+    # Only a word or two with nothing of a question in them ("she's tired"): longer turns go to the model, which
+    # answers "none" for what isn't worth a card. On the robot (2026-10-29) this word list kept a 10-word question
+    # about the Khans and "and Alexander the Great?" from ever being asked about: no card.
+    if not card_up and not INFO_CUE.search(plain) and len(words) < NO_QUESTION_WORDS:
         return "no question"
     return None
 
