@@ -1,5 +1,6 @@
 // Assistant: type to LittleBot (the same brain as its voice), intercom, notes to its screen, which voice pipeline
-// is on and why, and what its skills hold right now (lists, reminders, memories, games ...).
+// is on and why, Spotify (connect, what plays, where music plays from), and what its skills hold right now (lists,
+// reminders, memories, games ...).
 
 import { get, post } from '../api.js';
 import { append, banner, button, clear, h, icon, pageHead, setText, switchRow, toast } from '../ui.js';
@@ -12,6 +13,108 @@ const KEY_HELP = {
   openai: 'OPENAI_API_KEY: backup speech-to-text and voice',
   anthropic: 'ANTHROPIC_API_KEY: Claude, the brain',
 };
+
+const SPOTIFY_DEVELOPER = 'https://developer.spotify.com/dashboard'; // a link the owner opens (nothing is loaded)
+const MUSIC_FROM = [
+  ['auto', 'Spotify when it’s ready, else YouTube (recommended)'],
+  ['spotify', 'Always Spotify'],
+  ['youtube', 'Always YouTube'],
+];
+
+// Spotify (littlebot/skills/spotify.py, docs/SPOTIFY.md): connect with PKCE (the Client ID, Spotify's page in a new
+// tab, then the address it lands on pasted back), whether the robot's Spotify speaker is visible, what it plays.
+function spotifySection(app) {
+  const body = h('div', { class: 'stack-sm' });
+  const cidInput = h('input', { class: 'input', id: 'spotify-client-id', maxlength: 80, autocomplete: 'off', spellcheck: 'false', placeholder: '32 letters and numbers' });
+  const pasteInput = h('textarea', { class: 'input', id: 'spotify-paste', rows: 2, maxlength: 4000, spellcheck: 'false', placeholder: 'http://127.0.0.1:8888/callback?code=…&state=…' });
+  const provider = h('select', { id: 'music-provider' }, MUSIC_FROM.map(([value, text]) => h('option', { value, text })));
+  provider.addEventListener('change', () => app.act(() => post('/assistant/music/provider', { provider: provider.value }), 'Saved.'));
+  const linkBox = h('p', { class: 'muted small' });
+  let shownKey = '';
+
+  const saveBtn = button('Save', { kind: 'soft small', onClick: async () => {
+    const cid = cidInput.value.trim();
+    if (cid && await app.act(() => post('/assistant/spotify/client_id', { client_id: cid }), 'Client ID saved.')) refresh(true);
+  } });
+  const connectBtn = button('Connect Spotify', { kind: 'primary', iconName: 'external', onClick: async () => {
+    const tab = window.open('about:blank', '_blank'); // opened now: a tab opened after the request is often blocked
+    const cid = cidInput.value.trim();
+    const res = await app.act(() => post('/assistant/spotify/connect', cid ? { client_id: cid } : {}));
+    if (!res || !res.url) { if (tab) tab.close(); return; }
+    if (tab) { try { tab.opener = null; } catch { /* other origin */ } tab.location.href = res.url; }
+    clear(linkBox);
+    linkBox.append('No new tab? ', h('a', { href: res.url, target: '_blank', rel: 'noopener noreferrer', text: 'Open Spotify’s sign-in page' }), '.');
+    refresh(true);
+  } });
+  const finishBtn = button('Finish connecting', { kind: 'primary', iconName: 'check', onClick: async () => {
+    const url = pasteInput.value.trim();
+    if (!url) { toast('Paste the address from the address bar first.', 'error'); return; }
+    if (await app.act(() => post('/assistant/spotify/finish', { url }), 'Spotify is connected.')) {
+      pasteInput.value = '';
+      clear(linkBox);
+      refresh(true);
+    }
+  } });
+  const disconnectBtn = button('Disconnect Spotify', { kind: 'soft small', iconName: 'logout', onClick: async () => {
+    if (await app.act(() => post('/assistant/spotify/disconnect'), 'Spotify is disconnected.')) refresh(true);
+  } });
+  const ctl = (action, label, iconName) => button(label, { kind: 'soft small', iconName, onClick: async () => {
+    if (await app.act(() => post('/assistant/spotify/control', { action }))) refresh(true);
+  } });
+  const dot = (on, text) => h('li', {}, h('span', { class: on ? 'ok-dot' : 'off-dot', text: on ? '● ' : '○ ' }), text);
+
+  function render(s) {
+    const now = s.now && s.now.on_littlebot && s.now.title ? s.now : null;
+    const key = JSON.stringify([s.error, s.connected, s.pending, s.device, s.blocked, s.client_id, s.provider, s.last_error, now && [now.title, now.artist, now.playing]]);
+    if (key === shownKey) return; // unchanged: keep what is being typed (and its focus)
+    shownKey = key;
+    clear(body);
+    if (s.error) { body.append(h('p', { class: 'muted', text: s.error })); return; }
+    if (document.activeElement !== cidInput) cidInput.value = s.client_id || '';
+    provider.value = s.provider || 'auto';
+    const dev = s.device;
+    const name = `“${s.device_name || 'LittleBot'}”`;
+    let speaker = `LittleBot’s Spotify speaker (${name}): connect first.`;
+    if (s.connected && s.available && dev) {
+      speaker = dev.visible ? `LittleBot’s Spotify speaker (${name}) is ready${dev.volume != null ? `, volume ${dev.volume}%` : ''}.`
+        : `LittleBot’s Spotify speaker (${name}) isn’t visible: run scripts/setup_spotify.sh on the robot, then pick ${name} once in the Spotify app on the same Wi-Fi.`;
+    } else if (s.connected) speaker = `LittleBot’s Spotify speaker (${name}): not checked.`;
+    append(body, [
+      h('p', { class: 'muted', text: 'LittleBot plays your Spotify on its own speaker, and it is the default for music (“play some jazz”, “play my liked songs”). It needs Spotify Premium. How to set it up: docs/SPOTIFY.md.' }),
+      h('ul', { class: 'plain-list' }, dot(s.connected, s.connected ? 'Connected to Spotify.' : 'Not connected yet.'), dot(!!(dev && dev.visible), speaker)),
+      s.connected && s.blocked ? banner('info', 'lock', 'Spotify is off right now', s.blocked_text || '') : null,
+      s.last_error ? h('p', { class: 'muted small', text: `Last problem: ${s.last_error}` }) : null,
+    ]);
+    if (s.connected) {
+      append(body, [
+        now ? h('p', {}, h('strong', { text: now.playing ? 'Playing: ' : 'Paused: ' }), `${now.title}${now.artist ? ` · ${now.artist}` : ''}`)
+          : h('p', { class: 'muted', text: 'Nothing is playing on LittleBot. Say “play some jazz”.' }),
+        now ? h('div', { class: 'btn-row' }, now.playing ? ctl('pause', 'Pause', 'pause') : ctl('resume', 'Play', 'play'), ctl('next', 'Next', 'skip')) : null,
+        h('div', { class: 'field mt-2' }, h('label', { for: 'music-provider', text: 'Music plays from' }), provider),
+        h('div', { class: 'btn-row mt-2' }, disconnectBtn),
+      ]);
+      return;
+    }
+    append(body, [
+      h('ol', {},
+        h('li', {}, 'On ', h('a', { href: SPOTIFY_DEVELOPER, target: '_blank', rel: 'noopener noreferrer', text: 'developer.spotify.com' }),
+          ', create an app for the Web API, with this Redirect URI exactly: ', h('code', { text: s.redirect_uri || 'http://127.0.0.1:8888/callback' })),
+        h('li', {}, 'Copy the app’s Client ID below and press Connect Spotify; approve on Spotify’s page.'),
+        h('li', {}, 'You land on a page that doesn’t load (127.0.0.1): that’s expected. Copy the whole address from its address bar and paste it below.')),
+      h('div', { class: 'field' }, h('label', { for: 'spotify-client-id', text: 'Client ID' }), h('div', { class: 'row gap' }, cidInput, saveBtn)),
+      h('div', { class: 'btn-row mt-2' }, connectBtn), linkBox,
+      s.pending ? h('div', { class: 'field mt-2' }, h('label', { for: 'spotify-paste', text: 'The address you landed on' }), pasteInput, h('div', { class: 'btn-row mt-2' }, finishBtn)) : null,
+    ]);
+  }
+
+  async function refresh(force) {
+    if (force) shownKey = '';
+    try { render(await get('/assistant/spotify')); } catch (e) { render({ error: e.message || 'Spotify isn’t available.' }); }
+  }
+
+  const el = h('section', { class: 'card' }, h('div', { class: 'card-head' }, h('h2', {}, icon('music'), 'Spotify')), body);
+  return { el, refresh };
+}
 
 function loadSpeak() {
   try { return localStorage.getItem(SPEAK_KEY) === '1'; } catch { return false; }
@@ -84,6 +187,10 @@ export default {
     const talkBtn = button('Start talking', { kind: 'primary', iconName: 'mic', onClick: () => app.act(() => post('/assistant/session/start'), 'LittleBot is listening.') });
     const stopBtn = button('Stop', { kind: 'soft', iconName: 'stop', onClick: () => app.act(() => post('/assistant/session/stop'), 'Stopped.') });
 
+    // ---------- Spotify
+    const spotify = spotifySection(app);
+    let spotifyTick = 0;
+
     // ---------- skills
     const skillsBody = h('div', { class: 'stack-sm' });
 
@@ -141,6 +248,7 @@ export default {
         h('section', { class: 'card' },
           h('div', { class: 'card-head' }, h('h2', {}, icon('mic'), 'Voice'), h('div', { class: 'btn-row' }, talkBtn, stopBtn)),
           pipeBody),
+        spotify.el,
         h('section', { class: 'card' }, h('div', { class: 'card-head' }, h('h2', {}, icon('star'), 'Lists')), listsBody),
         h('section', { class: 'card' }, h('div', { class: 'card-head' }, h('h2', {}, icon('sun'), 'Reminders and alarms')), remindersBody),
         h('section', { class: 'card' }, h('div', { class: 'card-head' }, h('h2', {}, icon('sparkles'), 'What LittleBot remembers')), memoriesBody),
@@ -175,6 +283,7 @@ export default {
     async function refresh() {
       try { render(await get('/assistant')); } catch { /* the poll shows offline */ }
       refreshData();
+      if (spotifyTick++ % 3 === 0) spotify.refresh(); // every 12 s: it asks Spotify itself
     }
     refresh();
     timer = setInterval(refresh, 4000);
