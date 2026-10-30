@@ -19,7 +19,9 @@
 #   0 < max_speed_dps <= 180, 0 < max_accel_dps2 <= 720, channels 0..15 and unique
 #   joint names must exist in motion.servos; unknown keys are errors (typo protection)
 # positive_toward: which limit a positive gesture value moves toward -
-#   arms: the "raised" limit; head: the limit where the robot looks to ITS left.
+#   arms: the "raised" limit; head (the PAN axis): the limit where the robot looks to ITS left;
+#   head_tilt: the limit where the robot looks UP.
+# soft_margin_deg (optional, default 2): look_at() and body language stay this far inside min/max.
 
 version: 1
 created: "2026-10-20T12:00:00"
@@ -53,3 +55,9 @@ servos:
     max_angle: 170.0
     inverted: true
     positive_toward: min
+  head_tilt:               # the head's up / down axis (leave it out of motion.servos if not fitted)
+    channel: 3
+    neutral: 90.0
+    min_angle: 70.0
+    max_angle: 110.0
+    positive_toward: max   # max = looking up

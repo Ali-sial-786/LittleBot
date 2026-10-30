@@ -17,7 +17,7 @@ from littlebot.motion import create_service
 from littlebot.motion.controller import ARMED_KEY, MotionController, decide_backend
 from littlebot.motion.drivers import DriverError, MockSMBus, PCA9685Chip, PCA9685Driver
 
-from motion_testkit import record_writes, run_until, write_calibration
+from motion_testkit import DEFAULT_JOINTS, record_writes, run_until, write_calibration
 
 STATUS_KEYS = {"backend", "physical_enabled", "armed", "estop", "moving", "gesture", "joints", "simulation_only",
                "reason"}
@@ -53,7 +53,7 @@ async def test_create_service_implements_contract(make_ctx, smbus2_blocker):
         assert STATUS_KEYS <= set(st)
         assert st["backend"] == "mock" and st["simulation_only"] is True and st["physical_enabled"] is False
         assert "simulation only" in st["reason"]
-        assert set(st["joints"]) == {"head", "left_arm", "right_arm"}
+        assert set(st["joints"]) == DEFAULT_JOINTS
         for j in st["joints"].values():
             assert JOINT_KEYS <= set(j)
         assert set(ctx.motion.gestures() if ctx.motion else []) <= set(svc.gestures())
@@ -80,7 +80,7 @@ async def test_run_gesture_end_to_end(make_controller, make_ctx):
     moving = [e for e in positions if e.data["moving"]]
     assert len(moving) >= 20  # ~10 Hz over a multi-second gesture
     assert positions[-1].data["moving"] is False
-    assert set(positions[-1].data["joints"]) == {"head", "left_arm", "right_arm"}
+    assert set(positions[-1].data["joints"]) == DEFAULT_JOINTS
     # ~10 Hz: consecutive publishes at least 0.1 s apart in simulated time
     assert c.status()["gesture"] is None and c.status()["moving"] is False
     st = c.status()["joints"]
@@ -611,7 +611,7 @@ async def test_status_is_thread_safe_during_motion(make_controller):
         try:
             while not stop.is_set():
                 st = c.status()
-                assert set(st["joints"]) == {"head", "left_arm", "right_arm"}
+                assert set(st["joints"]) == DEFAULT_JOINTS
         except BaseException as e:  # noqa: BLE001
             errors.append(e)
 

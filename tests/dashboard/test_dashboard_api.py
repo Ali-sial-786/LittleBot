@@ -522,7 +522,7 @@ async def test_vision_endpoints(authed, dctx, fakes):
 async def test_motion_info_is_simulation_only(authed):
     info = (await authed.get("/api/motion")).json()
     assert info["simulation_only"] is True and info["physical_enabled"] is False and info["armed"] is False
-    assert "wave" in info["gestures"] and set(info["servos"]) == {"head", "left_arm", "right_arm"}
+    assert "wave" in info["gestures"] and set(info["servos"]) == {"head", "head_tilt", "left_arm", "right_arm"}
     assert info["reason"] == "fake motion"  # the motion module's own explanation is passed through
     assert info["status"]["joints"]["left_arm"]["position"] == 0.0
 

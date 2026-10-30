@@ -173,12 +173,18 @@ class FakeMotion(_Recorder):
         self.estop = False
 
     def gestures(self) -> list[str]:
-        return ["wave", "look_left", "look_right", "raise_arms", "celebrate", "dance", "shake", "neutral"]
+        from littlebot.core.interfaces import GESTURE_NAMES  # noqa: PLC0415
+
+        return list(GESTURE_NAMES)
 
     async def run_gesture(self, name: str, *, priority: int | None = None, owner: str | None = None) -> bool:
         self._rec("run_gesture", name)
         await asyncio.sleep(0)
         return not self.estop and name in self.gestures()
+
+    def look_at(self, x: float, y: float, *, priority: int | None = None, owner: str | None = None) -> bool:
+        self._rec("look_at", x, y)
+        return not self.estop
 
     async def move_joint(self, joint: str, angle: float, *, speed_dps: float | None = None,
                          priority: int | None = None, owner: str | None = None) -> bool:
@@ -205,6 +211,7 @@ class FakeMotion(_Recorder):
             "head": {"angle": 90.0, "target": 90.0, "min": 50.0, "max": 130.0, "neutral": 90.0, "channel": 0, "position": 0.0},
             "left_arm": {"angle": 20.0, "target": 20.0, "min": 10.0, "max": 150.0, "neutral": 20.0, "channel": 1, "position": 0.0},
             "right_arm": {"angle": 160.0, "target": 160.0, "min": 30.0, "max": 170.0, "neutral": 160.0, "channel": 2, "position": 0.0},
+            "head_tilt": {"angle": 90.0, "target": 90.0, "min": 70.0, "max": 110.0, "neutral": 90.0, "channel": 3, "position": 0.0},
         }
         return {"backend": "fake", "physical_enabled": False, "armed": False, "estop": self.estop,
                 "moving": False, "gesture": None, "simulation_only": True, "reason": "fake motion",

@@ -1,12 +1,15 @@
 """Gesture library: short keyframe sequences in normalised joint positions.
 
 Positions are normalised per joint (see ``JointSpec.resolve``): 0 = neutral, +1 = the
-limit named by ``positive_toward`` (arms: raised; head: turned to the robot's LEFT),
--1 = the opposite limit. Gestures therefore follow whatever limits calibration found
-and can never leave them. Every gesture is deliberately gentle: small amplitudes,
-reduced speed (``speed`` is a fraction of each joint's max speed) and it ends at neutral.
+limit named by ``positive_toward`` (arms: raised; ``head`` (pan): turned to the robot's
+LEFT; ``head_tilt``: looking UP), -1 = the opposite limit. Gestures therefore follow
+whatever limits calibration found and can never leave them. Every gesture is deliberately
+gentle: small amplitudes (|position| <= 0.85), reduced speed (``speed`` is a fraction of
+each joint's max speed, <= 0.8) and it ends at neutral.
 
-Joints named in a keyframe but not configured are skipped.
+Joints named in a keyframe but not configured are skipped, so every gesture works with any
+subset of joints (no ``head_tilt`` servo: ``nod`` has nothing to move and is refused, the
+others simply leave that axis out).
 """
 
 from __future__ import annotations
@@ -38,7 +41,7 @@ def _kf(duration: float = 0.0, hold: float = 0.0, speed: float = 1.0, **pose: fl
     return Keyframe(pose=dict(pose), duration=duration, hold=hold, speed=speed)
 
 
-_HOME = dict(head=0.0, left_arm=0.0, right_arm=0.0)
+_HOME = dict(head=0.0, head_tilt=0.0, left_arm=0.0, right_arm=0.0)
 
 
 def _home(speed: float = 0.6, hold: float = 0.0) -> Keyframe:
@@ -69,32 +72,108 @@ GESTURES: dict[str, Gesture] = {g.name: g for g in (
         _kf(left_arm=0.80, right_arm=0.80, speed=0.6, hold=1.2),
         _home(speed=0.5),
     ), ("movement",)),
-    Gesture("celebrate", "Arms up with two small pumps and a little head wiggle.", (
-        _kf(left_arm=0.65, right_arm=0.65, speed=0.7),
-        _kf(left_arm=0.80, right_arm=0.80, head=0.15, speed=0.7),
-        _kf(left_arm=0.60, right_arm=0.60, head=-0.15, speed=0.7),
-        _kf(left_arm=0.80, right_arm=0.80, head=0.15, speed=0.7),
-        _kf(left_arm=0.65, right_arm=0.65, head=0.0, speed=0.7, hold=0.3),
+    Gesture("celebrate", "Arms up with two small pumps, head up with a little wiggle.", (
+        _kf(left_arm=0.65, right_arm=0.65, head_tilt=0.20, speed=0.7),
+        _kf(left_arm=0.80, right_arm=0.80, head=0.15, head_tilt=0.30, speed=0.7),
+        _kf(left_arm=0.60, right_arm=0.60, head=-0.15, head_tilt=0.20, speed=0.7),
+        _kf(left_arm=0.80, right_arm=0.80, head=0.15, head_tilt=0.30, speed=0.7),
+        _kf(left_arm=0.65, right_arm=0.65, head=0.0, head_tilt=0.15, speed=0.7, hold=0.3),
         _home(speed=0.5),
     ), ("social", "celebration")),
-    Gesture("dance", "Slow, small sway: head side to side with alternating arms.", (
-        _kf(head=0.25, left_arm=0.30, right_arm=0.10, speed=0.4),
-        _kf(head=-0.25, left_arm=0.10, right_arm=0.30, speed=0.4),
-        _kf(head=0.25, left_arm=0.30, right_arm=0.10, speed=0.4),
-        _kf(head=-0.25, left_arm=0.10, right_arm=0.30, speed=0.4),
+    Gesture("dance", "Slow, small sway: head side to side and bobbing, with alternating arms.", (
+        _kf(head=0.25, head_tilt=0.15, left_arm=0.30, right_arm=0.10, speed=0.4),
+        _kf(head=-0.25, head_tilt=-0.10, left_arm=0.10, right_arm=0.30, speed=0.4),
+        _kf(head=0.25, head_tilt=0.15, left_arm=0.30, right_arm=0.10, speed=0.4),
+        _kf(head=-0.25, head_tilt=-0.10, left_arm=0.10, right_arm=0.30, speed=0.4),
         _home(speed=0.4),
     ), ("music", "movement")),
-    Gesture("shake", "Gentle head shake (side to side) - the head only turns, it cannot nod.", (
+    Gesture("shake", "Gentle head shake (side to side) on the pan axis only.", (
         _kf(head=0.30, speed=0.6),
         _kf(head=-0.30, speed=0.6),
         _kf(head=0.30, speed=0.6),
         _kf(head=-0.30, speed=0.6),
         _home(speed=0.6),
     ), ("social",)),
+    # ---- head pan + tilt and conversation gestures (body language: littlebot/motion/body.py) ----
+    Gesture("nod", "Yes-nod: the head dips down and back up twice (needs the head_tilt servo).", (
+        _kf(head_tilt=-0.45, speed=0.7),
+        _kf(head_tilt=0.10, speed=0.7),
+        _kf(head_tilt=-0.35, speed=0.7),
+        _home(speed=0.6),
+    ), ("social", "conversation")),
+    Gesture("nod_small", "One small nod, as at the end of a sentence (needs the head_tilt servo).", (
+        _kf(head_tilt=-0.30, speed=0.6),
+        _home(speed=0.5),
+    ), ("conversation",)),
+    Gesture("head_shake", "Small 'no' / 'hmm, not sure': quick little shake with the chin slightly down.", (
+        _kf(head=0.22, head_tilt=-0.10, speed=0.7),
+        _kf(head=-0.22, head_tilt=-0.10, speed=0.7),
+        _kf(head=0.16, head_tilt=-0.10, speed=0.7),
+        _kf(head=-0.12, head_tilt=-0.05, speed=0.7),
+        _home(speed=0.6),
+    ), ("social", "conversation")),
+    Gesture("tilt_curious", "Curious: the head turns a little to one side and lifts, as if asking 'hmm?'.", (
+        _kf(head=0.22, head_tilt=0.35, left_arm=0.12, speed=0.5, hold=1.0),
+        _home(speed=0.5),
+    ), ("conversation",)),
+    Gesture("look_up_think", "Thinking: look up and to the side, one arm lifts a little (hand to chin).", (
+        _kf(head=-0.30, head_tilt=0.55, right_arm=0.30, speed=0.5, hold=1.4),
+        _home(speed=0.4),
+    ), ("conversation",)),
+    Gesture("shrug", "Shrug: both arms lift a little while the head dips and turns slightly, then relax.", (
+        _kf(left_arm=0.35, right_arm=0.35, head=0.10, head_tilt=-0.20, speed=0.7, hold=0.5),
+        _home(speed=0.5),
+    ), ("conversation",)),
+    Gesture("perk_up", "Listening: perk up - the head lifts a little, the arms twitch up, then settle.", (
+        _kf(head_tilt=0.30, left_arm=0.12, right_arm=0.12, speed=0.7, hold=0.8),
+        _home(speed=0.4),
+    ), ("conversation",)),
+    Gesture("point_screen", "Look at this: the right arm points at the screen while the head dips toward it.", (
+        _kf(right_arm=0.50, head=-0.08, head_tilt=-0.12, speed=0.6, hold=0.4),
+        _kf(right_arm=0.58, speed=0.5),
+        _kf(right_arm=0.50, speed=0.5, hold=1.0),
+        _home(speed=0.5),
+    ), ("conversation", "screen")),
+    Gesture("wave_hello", "Hello: the right arm goes up for three cheerful waves, the head lifts.", (
+        _kf(right_arm=0.70, head=-0.12, head_tilt=0.20, speed=0.8, hold=0.1),
+        _kf(right_arm=0.85, speed=0.8),
+        _kf(right_arm=0.65, speed=0.8),
+        _kf(right_arm=0.85, speed=0.8),
+        _kf(right_arm=0.65, speed=0.8),
+        _kf(right_arm=0.85, speed=0.8),
+        _kf(right_arm=0.70, speed=0.8, hold=0.2),
+        _home(speed=0.7),
+    ), ("social",)),
+    Gesture("wave_goodbye", "Goodbye: two slower waves, then the head dips a little.", (
+        _kf(right_arm=0.65, head=-0.10, speed=0.6),
+        _kf(right_arm=0.80, speed=0.6),
+        _kf(right_arm=0.60, speed=0.6),
+        _kf(right_arm=0.80, speed=0.6),
+        _kf(right_arm=0.60, head_tilt=-0.15, speed=0.5, hold=0.4),
+        _home(speed=0.5),
+    ), ("social",)),
+    Gesture("arm_wiggle", "Happy wiggle: the arms twitch up a tiny bit, left-right-left.", (
+        _kf(left_arm=0.18, right_arm=0.08, speed=0.7),
+        _kf(left_arm=0.08, right_arm=0.18, speed=0.7),
+        _kf(left_arm=0.18, right_arm=0.08, speed=0.7),
+        _home(speed=0.6),
+    ), ("conversation",)),
+    Gesture("droop", "Sad: the head slowly lowers a little, rests, then comes back up.", (
+        _kf(head_tilt=-0.45, speed=0.35, hold=1.5),
+        _home(speed=0.35),
+    ), ("conversation",)),
+    Gesture("idle_shift", "Idle: a tiny, slow shift of the head, as if glancing around.", (
+        _kf(head=0.10, head_tilt=0.08, speed=0.25, hold=1.2),
+        _home(speed=0.25),
+    ), ("idle",)),
 )}
 
-GESTURE_ORDER: tuple[str, ...] = ("wave", "look_left", "look_right", "raise_arms", "celebrate", "dance", "shake",
-                                  "neutral")
+GESTURE_ORDER: tuple[str, ...] = (
+    "wave", "look_left", "look_right", "raise_arms", "celebrate", "dance", "shake",
+    "nod", "nod_small", "head_shake", "tilt_curious", "look_up_think", "shrug", "perk_up", "point_screen",
+    "wave_hello", "wave_goodbye", "arm_wiggle", "droop", "idle_shift",
+    "neutral",
+)
 
 
 def gesture_names() -> list[str]:

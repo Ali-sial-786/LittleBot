@@ -9,7 +9,14 @@ Angle conventions (see docs/modules/motion.md):
 * Every command is HARD-clamped to ``[min_angle, max_angle]`` and every pulse to
   ``[min_pulse_us, max_pulse_us]`` and to the absolute 500..2500 us window.
 * Gestures use **normalised positions**: 0 = neutral, +1 = the limit named by
-  ``positive_toward`` (arms: raised; head: looking to the robot's left), -1 = the other.
+  ``positive_toward`` (arms: raised; head (pan): looking to the robot's left; head_tilt:
+  looking up), -1 = the other.
+* **Soft limits** (``soft_min`` .. ``soft_max``, ``soft_margin_deg`` inside the hard ones) bound
+  look_at() and body-language targets; the hard limits bound everything.
+
+Joint names: ``head`` is the head's PAN axis (kept as "head" for compatibility with configs,
+calibration files and activities), ``head_tilt`` its TILT axis, ``left_arm`` / ``right_arm``
+the shoulders. Any subset may be configured: gestures and look_at skip missing joints.
 
 Calibration overrides live in a YAML file (``config/calibration.yaml``, git-ignored),
 written by ``scripts/calibrate_servos.py``; the format is documented in
@@ -34,6 +41,13 @@ from littlebot.motion.drivers import ABS_MAX_PULSE_US, ABS_MIN_PULSE_US, NUM_CHA
 SERVO_RANGE_DEG = 180.0
 HARD_MAX_SPEED_DPS = 180.0  # no configuration can make a joint faster than this
 HARD_MAX_ACCEL_DPS2 = 720.0
+MAX_SOFT_MARGIN_DEG = 20.0
+
+HEAD_PAN = "head"  # turn left / right (+ = the robot's left)
+HEAD_TILT = "head_tilt"  # nod up / down (+ = up)
+LEFT_ARM = "left_arm"
+RIGHT_ARM = "right_arm"
+HEAD_JOINTS = (HEAD_PAN, HEAD_TILT)
 MIN_PWM_HZ, MAX_PWM_HZ = 40, 60  # analog hobby servos (MG90S) want ~50 Hz
 MIN_UPDATE_HZ, MAX_UPDATE_HZ = 5.0, 200.0
 CALIBRATION_VERSION = 1
@@ -42,7 +56,7 @@ _NAME_RE = re.compile(r"^[a-z0-9_]{1,40}$")
 
 CALIBRATION_JOINT_KEYS = frozenset({
     "channel", "neutral", "min_angle", "max_angle", "max_speed_dps", "max_accel_dps2", "inverted",
-    "min_pulse_us", "max_pulse_us", "positive_toward",
+    "min_pulse_us", "max_pulse_us", "positive_toward", "soft_margin_deg",
 })
 CALIBRATION_REQUIRED_KEYS = frozenset({"neutral", "min_angle", "max_angle"})
 CALIBRATION_TOP_KEYS = frozenset({"version", "created", "tool", "notes", "pwm_frequency", "i2c_address", "servos"})
@@ -74,6 +88,7 @@ class JointSpec:
     min_pulse_us: float = 500.0
     max_pulse_us: float = 2500.0
     positive_toward: str = "max"
+    soft_margin_deg: float = 0.0
 
     @classmethod
     def from_config(cls, name: str, cfg: ServoChannelConfig) -> "JointSpec":
@@ -83,6 +98,7 @@ class JointSpec:
             max_speed_dps=float(cfg.max_speed_dps), max_accel_dps2=float(cfg.max_accel_dps2),
             inverted=bool(cfg.inverted), min_pulse_us=float(cfg.min_pulse_us),
             max_pulse_us=float(cfg.max_pulse_us), positive_toward=str(cfg.positive_toward),
+            soft_margin_deg=float(cfg.soft_margin_deg),
         )
 
     # -- limits -----------------------------------------------------------
@@ -112,6 +128,24 @@ class JointSpec:
 
     def is_within(self, angle: float, tol: float = 1e-6) -> bool:
         return self.min_angle - tol <= angle <= self.max_angle + tol
+
+    @property
+    def soft_min(self) -> float:
+        """Lower soft limit: ``soft_margin_deg`` inside min_angle (never past neutral)."""
+        return min(self.neutral, self.min_angle + max(0.0, self.soft_margin_deg))
+
+    @property
+    def soft_max(self) -> float:
+        return max(self.neutral, self.max_angle - max(0.0, self.soft_margin_deg))
+
+    def soft_clamp(self, angle: float) -> float:
+        """Clamp to the soft limits (look_at / body language targets). Non-finite -> ValueError."""
+        a = self.clamp(angle)
+        return min(self.soft_max, max(self.soft_min, a))
+
+    def toward(self, angle: float, degrees: float) -> float:
+        """``angle`` moved ``degrees`` in the positive (normalised) direction; not clamped."""
+        return float(angle) + (float(degrees) if self.positive_toward == "max" else -float(degrees))
 
     # -- mapping --------------------------------------------------------------
     def servo_angle(self, angle: float) -> float:
@@ -163,7 +197,7 @@ def validate_joint(spec: JointSpec) -> list[str]:
     if not _NAME_RE.match(n):
         errs.append(f"joint name {n!r} must be lowercase letters, digits or _")
     nums = {k: getattr(spec, k) for k in ("neutral", "min_angle", "max_angle", "max_speed_dps", "max_accel_dps2",
-                                          "min_pulse_us", "max_pulse_us")}
+                                          "min_pulse_us", "max_pulse_us", "soft_margin_deg")}
     bad = [k for k, v in nums.items() if not isinstance(v, (int, float)) or not math.isfinite(float(v))]
     if bad:
         return errs + [f"{n}: {', '.join(bad)} must be finite numbers"]
@@ -181,6 +215,8 @@ def validate_joint(spec: JointSpec) -> list[str]:
                     f"(got {spec.min_pulse_us:g}..{spec.max_pulse_us:g})")
     if spec.positive_toward not in ("max", "min"):
         errs.append(f"{n}: positive_toward must be 'max' or 'min'")
+    if not 0.0 <= spec.soft_margin_deg <= MAX_SOFT_MARGIN_DEG:
+        errs.append(f"{n}: soft_margin_deg must be 0..{MAX_SOFT_MARGIN_DEG:g} (got {spec.soft_margin_deg:g})")
     return errs
 
 
@@ -323,7 +359,8 @@ def calibration_document(joints: Mapping[str, Mapping[str, Any]], *, pwm_frequen
     servos: dict[str, dict[str, Any]] = {}
     for name, values in joints.items():
         entry = {k: values[k] for k in ("channel", "neutral", "min_angle", "max_angle", "inverted", "positive_toward",
-                                        "min_pulse_us", "max_pulse_us", "max_speed_dps", "max_accel_dps2")
+                                        "min_pulse_us", "max_pulse_us", "max_speed_dps", "max_accel_dps2",
+                                        "soft_margin_deg")
                  if k in values}
         for k in ("neutral", "min_angle", "max_angle"):
             entry[k] = round(float(entry[k]), 1)

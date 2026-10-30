@@ -35,8 +35,12 @@ FACE_ANIMATIONS: tuple[str, ...] = (
 )
 
 # Motion gestures (motion/gestures.py implements them; activities may reference them).
+# Joints: "head" = head PAN, "head_tilt" = head TILT, "left_arm", "right_arm" (any subset may be fitted).
 GESTURE_NAMES: tuple[str, ...] = (
-    "wave", "look_left", "look_right", "raise_arms", "celebrate", "dance", "shake", "neutral",
+    "wave", "look_left", "look_right", "raise_arms", "celebrate", "dance", "shake",
+    "nod", "nod_small", "head_shake", "tilt_curious", "look_up_think", "shrug", "perk_up", "point_screen",
+    "wave_hello", "wave_goodbye", "arm_wiggle", "droop", "idle_shift",
+    "neutral",
 )
 
 # Built-in sound effects (generated procedurally into assets/sounds/*.wav).
@@ -244,6 +248,14 @@ class MotionAPI(Protocol):
 
     async def neutral(self, *, priority: int | None = None, owner: str | None = None) -> bool: ...
 
+    def look_at(self, x: float, y: float, *, priority: int | None = None, owner: str | None = None) -> bool:
+        """Point the head (pan ``head`` / tilt ``head_tilt``) toward a gaze target in normalised view
+        coordinates (0..1, 0.5/0.5 = centre; x toward screen-right = the robot's left, y down), e.g. a
+        tracked face's ``gaze_x``/``gaze_y``. Synchronous, cheap, thread-safe: call it as often as the
+        target updates. Eyes lead, head follows: the caller moves the eyes (FaceAPI) at once; the head only
+        turns once the target has stayed more than ``motion.look.follow_offset`` off-centre for
+        ``follow_after_seconds``. False if refused (estop, not armed, no head joint, lease, invalid)."""
+
     def cancel(self) -> None: ...
 
     def emergency_stop(self, source: str = "unknown") -> None:
@@ -254,7 +266,8 @@ class MotionAPI(Protocol):
     def status(self) -> dict[str, Any]:
         """{backend, physical_enabled, armed, estop, moving, gesture, simulation_only, reason,
         joints: {name: {angle, target, min, max, neutral, channel, position}}}
-        (position: -1..1 normalised, 0 = neutral, +1 = arm raised / head turned to robot's left)"""
+        (position: -1..1 normalised, 0 = neutral, +1 = arm raised / head turned to robot's left /
+        head_tilt looking up); optional extras: look {...}, drive {...} (the wheels, when present)"""
 
 
 @runtime_checkable
