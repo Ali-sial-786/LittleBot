@@ -167,13 +167,16 @@ async def test_flux_turn_events():
     await settle()
     assert events == [STTEvent("start_of_turn"), STTEvent("partial", text="what's the"),
                       STTEvent("partial", text="what's the weather"),
+                      STTEvent("eager_end_of_turn", text="what's the weather"),
+                      STTEvent("turn_resumed", text="what's the weather"),
                       STTEvent("end_of_turn", text="what's the weather today", confidence=0.9)]
     ws.turn("Update", 0, "late words of turn 0")  # an ended turn's stragglers: ignored
     ws.turn("StartOfTurn", 1)
-    ws.turn("EndOfTurn", 1, "")  # noise: no words, no end_of_turn
+    ws.turn("EndOfTurn", 1, "")  # noise: no words, an empty end (the session stops waiting)
     ws.turn("Update", 2, "and another")  # a turn seen first in an Update still starts
     await settle()
-    assert events.kinds()[4:] == ["start_of_turn", "start_of_turn", "partial"]
+    assert events.kinds()[6:] == ["start_of_turn", "end_of_turn", "start_of_turn", "partial"]
+    assert events[7].text == ""
     await stream.aclose()
 
 

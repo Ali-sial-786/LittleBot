@@ -57,7 +57,7 @@ class StreamingTTS(Protocol):
 
 @dataclasses.dataclass(frozen=True)
 class STTEvent:
-    kind: str  # "start_of_turn" | "partial" | "end_of_turn" | "error"
+    kind: str  # "start_of_turn" | "partial" | "eager_end_of_turn" | "turn_resumed" | "end_of_turn" | "error"
     text: str = ""
     confidence: float = 1.0
     detail: str = ""  # error: SpeechError.kind

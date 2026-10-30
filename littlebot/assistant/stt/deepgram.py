@@ -12,6 +12,8 @@ messages of 80 ms (Deepgram's strong recommendation: 2,560 bytes of 16-bit sampl
 Client messages: ``{"type": "ForceEndTurn"}`` ends the turn now, ``{"type": "CloseStream"}`` before closing.
 
 Here: StartOfTurn -> ``start_of_turn``; Update (and the eager ones) -> ``partial`` with the words so far;
+EagerEndOfTurn -> also ``eager_end_of_turn`` (the session starts the answer, says it only after EndOfTurn);
+TurnResumed -> ``turn_resumed`` (that answer is dropped);
 EndOfTurn -> ``end_of_turn`` with the turn's words (confidence: the words' average). ``finish()`` sends ForceEndTurn;
 ``reset()`` forgets the turn in progress (ForceEndTurn, and that turn's late events are ignored), so the next words
 are a new turn. A failure (connection lost, key refused, Flux's Error) is one ``error`` event with its kind; the
@@ -223,11 +225,16 @@ class FluxStream:
             await emit(self._on_event, STTEvent("start_of_turn"))
         if event == "EndOfTurn":
             self._turn, self._old, self._partial = None, max(self._old, index), ""
-            if text:
-                await emit(self._on_event, STTEvent("end_of_turn", text=text, confidence=_confidence(m.get("words"))))
-        elif text and text != self._partial:  # Update, StartOfTurn with words, EagerEndOfTurn, TurnResumed
+            # no words (a cough): an empty end, so the session stops waiting for them
+            await emit(self._on_event, STTEvent("end_of_turn", text=text, confidence=_confidence(m.get("words"))))
+            return
+        if text and text != self._partial:  # Update, StartOfTurn with words, EagerEndOfTurn, TurnResumed
             self._partial = text
             await emit(self._on_event, STTEvent("partial", text=text))
+        if event == "EagerEndOfTurn" and text:  # probably done: the answer may start (said only after EndOfTurn)
+            await emit(self._on_event, STTEvent("eager_end_of_turn", text=text))
+        elif event == "TurnResumed":  # they went on talking: a started answer is dropped
+            await emit(self._on_event, STTEvent("turn_resumed", text=text))
 
     async def _fail(self, kind: str) -> None:
         if self._failed or self._closed:

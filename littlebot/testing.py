@@ -567,6 +567,13 @@ class FakeSTT:
         self.stream.on_event(STTEvent("partial", text))
         self.stream.on_event(STTEvent("end_of_turn", text))
 
+    def event(self, kind: str, text: str = "") -> None:
+        """One event as it is (``eager_end_of_turn``, ``turn_resumed``, ``end_of_turn`` ...)."""
+        from littlebot.assistant.speech import STTEvent  # noqa: PLC0415
+
+        assert self.stream is not None, "no stream open"
+        self.stream.on_event(STTEvent(kind, text))
+
 
 class FakeTTS:
     """Text-to-speech that makes 10 ms of silence per character (48 kHz) and remembers what it was asked."""

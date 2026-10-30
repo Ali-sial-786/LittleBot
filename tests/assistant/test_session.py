@@ -27,9 +27,9 @@ class Scripted:
                     tools: Any = None, run_tool: Any = None, max_tool_rounds: int = 6, effort: Any = None,
                     on_delta: Any = None, final_tools: Any = ()) -> ProviderReply:
         self.questions.append(messages[-1]["content"].split("\n")[-1])
+        script = self.scripts.pop(0) if self.scripts else ["Okay."]
         if self.delay:
             await asyncio.sleep(self.delay)
-        script = self.scripts.pop(0) if self.scripts else ["Okay."]
         for step in script:
             if isinstance(step, tuple):
                 await run_tool(step[0], step[1])
@@ -210,3 +210,39 @@ async def test_voice_front_falls_back_to_gpt_live_without_speech_to_text() -> No
     assert voice_front(svc.ctx) is svc
     svc._stt_factory = lambda: None
     assert voice_front(svc.ctx) is svc.ctx.live
+
+
+async def test_an_early_answer_is_said_only_once_the_turn_really_ends() -> None:
+    brain = Scripted(["Lima is the capital of Peru."])
+    svc, stt, tts, _ = _service(brain, follow_up_seconds=0.3)
+    await svc.start()
+    await svc.start_session()
+    await _wait(lambda: stt.stream is not None)
+    stt.event("start_of_turn")
+    stt.event("eager_end_of_turn", "what's the capital of Peru")
+    await _wait(lambda: brain.questions == ["what's the capital of Peru"])  # the brain started early
+    await asyncio.sleep(0.1)
+    assert tts.said == []  # ...but nothing is said yet
+    stt.event("end_of_turn", "What's the capital of Peru?")
+    await _wait(lambda: tts.said == ["Lima is the capital of Peru."])
+    assert len(brain.questions) == 1  # no second request
+    await _wait(lambda: not svc.status()["active"])
+    assert svc.last_call["turns"] == 1
+
+
+async def test_an_early_answer_is_dropped_when_they_go_on() -> None:
+    brain = Scripted(["The weather today is sunny.", ("set_volume", '{"percent": 10}')],
+                     ["Tomorrow it rains."], delay=0.05)
+    svc, stt, tts, _ = _service(brain, follow_up_seconds=0.3)
+    await svc.start()
+    await svc.start_session()
+    await _wait(lambda: stt.stream is not None)
+    stt.event("start_of_turn")
+    stt.event("eager_end_of_turn", "what's the weather")
+    await _wait(lambda: len(brain.questions) == 1)
+    stt.event("turn_resumed")
+    stt.event("end_of_turn", "what's the weather tomorrow")
+    await _wait(lambda: "Tomorrow it rains." in tts.said)
+    assert "The weather today is sunny." not in tts.said
+    assert brain.questions[-1] == "what's the weather tomorrow"
+    assert svc.ctx.settings.get("audio.volume") != 0.1  # the dropped answer's tool never ran

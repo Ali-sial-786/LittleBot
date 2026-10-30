@@ -134,6 +134,12 @@ class STTChain:
                 "last": self.last_provider, "last_error": self.last_error, "providers": rows}
 
 
+def _eager(a: Any) -> float | None:
+    """Flux's eager end-of-turn threshold (never above the end-of-turn one), or None: off."""
+    eager = getattr(a, "deepgram_eager_eot_threshold", None)
+    return None if eager is None else min(float(eager), float(a.deepgram_eot_threshold))
+
+
 def build_stt(ctx: Any, *, transport: Any = None, ws_connect: WsConnect | None = None,
               cloud_ok: CloudOk | None = None) -> STTChain | None:
     """The providers of ``ctx.config.assistant.stt`` in order, or None when none can be used now.
@@ -148,7 +154,8 @@ def build_stt(ctx: Any, *, transport: Any = None, ws_connect: WsConnect | None =
         if name == "deepgram":
             providers.append(DeepgramFlux(key=key_reader(ctx, "deepgram_api_key"), cloud_ok=ok, model=a.deepgram_model,
                                           eot_threshold=a.deepgram_eot_threshold,
-                                          eot_timeout_ms=a.deepgram_eot_timeout_ms, ws_connect=ws_connect))
+                                          eot_timeout_ms=a.deepgram_eot_timeout_ms,
+                                          eager_eot_threshold=_eager(a), ws_connect=ws_connect))
         elif name == "openai":
             providers.append(EndpointedSTT(OpenAITranscriber(key=key_reader(ctx, "openai_api_key"), cloud_ok=ok,
                                                              model=a.openai_stt_model, language=a.language,

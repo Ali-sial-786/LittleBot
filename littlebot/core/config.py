@@ -391,6 +391,9 @@ class AssistantConfig(_Section):
     deepgram_model: str = "flux-general-en"
     deepgram_eot_threshold: float = Field(default=0.7, ge=0.5, le=0.9)  # Flux: how sure the turn ended
     deepgram_eot_timeout_ms: int = Field(default=3000, ge=500, le=10000)  # Flux: a turn ends after this much quiet
+    # Flux's "probably done" signal: the brain starts then (its words are said, and its tools run, only once the turn
+    # really ended; if they go on talking it is dropped). ~0.2 s sooner answers for a few cancelled requests. None: off.
+    deepgram_eager_eot_threshold: float | None = Field(default=0.5, ge=0.3, le=0.9)
     openai_stt_model: str = "gpt-4o-mini-transcribe"
     language: str = "en"
     # Text-to-speech, first that works: cartesia (fastest first audio), elevenlabs, openai, local (piper / espeak).

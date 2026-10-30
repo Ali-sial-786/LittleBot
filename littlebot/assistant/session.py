@@ -25,6 +25,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import re
 import time
 from typing import Any
 
@@ -46,6 +47,7 @@ POLL_S = 0.05
 THINKING_AFTER_S = 0.9  # a tool still running after this long: the soft thinking sound (again every REPEAT)
 THINKING_REPEAT_S = 2.2
 QUESTION_FOLLOW_UP_S = 12.0  # LittleBot asked them something: wait at least this long for the answer
+SPECULATION_MAX_S = 8.0  # an early answer whose turn is neither confirmed nor resumed by then is dropped
 STT_REOPENS = 3  # speech-to-text that fails this often in one session ends it
 HEARING_GRACE_S = 2.0  # a turn that never ends (noise): finished after max_turn_seconds + this
 EXPRESSION_HOLD_S = 6.0
@@ -101,6 +103,9 @@ class VoiceSession:
         self._loop: asyncio.AbstractEventLoop | None = None
         self._failed_stt: list[str] = []
         self._stt_chain: Any = None
+        self._gate: asyncio.Event | None = None  # an early answer's: set once their turn really ended
+        self._confirmed_at: float | None = None
+        self._spec_at = 0.0
 
     # ------------------------------------------------------------ status
     def snapshot(self) -> dict[str, Any]:
@@ -222,6 +227,8 @@ class VoiceSession:
                     await self._stt_failed(str(getattr(e, "kind", "") or type(e).__name__))
 
     async def _stt_failed(self, kind: str) -> None:
+        if self._speculating():
+            self._cut_answer()  # its turn will never be confirmed now
         old, self.stt = self.stt, None
         self._failed_stt.append(self.stt_name)
         log.warning("assistant: speech-to-text %s failed (%s); switching", self.stt_name, kind)
@@ -254,6 +261,8 @@ class VoiceSession:
 
     def _check_time(self) -> None:
         now = self._now()
+        if self._speculating() and now - self._spec_at > SPECULATION_MAX_S:
+            self._cut_answer()  # neither confirmed nor dropped by speech-to-text: never said
         if self._hearing_since is not None and now - self._hearing_since > self.cfg.max_turn_seconds + HEARING_GRACE_S:
             self._hearing_since = None
             if self.stt is not None:
@@ -279,12 +288,27 @@ class VoiceSession:
                 audio.barge_in_heard(event.text, False)  # their words: the held voice is dropped
             if self._hearing_since is None:
                 self._hearing_since = self._now()
+        elif event.kind == "eager_end_of_turn":
+            self._speculate(" ".join(event.text.split()))
+        elif event.kind == "turn_resumed":
+            if self._speculating():
+                log.debug("assistant: they went on talking; the early answer is dropped")
+                self._cut_answer()
+                self._set_phase("hearing")
         elif event.kind == "end_of_turn":
             spoke_ms = int((self._now() - self._hearing_since) * 1000) if self._hearing_since is not None else 0
             self._hearing_since = None
             text = " ".join(event.text.split())
             if getattr(audio, "interrupted", False) and text:
                 audio.barge_in_heard(text, True)
+            if self._speculating():
+                if text and _same_words(text, self._answer_text):
+                    self._confirmed_at = self._now()
+                    self._gate.set()  # the early answer was right: it is said now
+                    self._publish(ev.HEARD, {"words": len(text.split()), "ms": spoke_ms})
+                    self._publish(ev.CAPTION, {"who": "user", "text": text})
+                    return
+                self._cut_answer()  # their words changed: answer the final ones
             if not text:
                 if not self._answering():
                     self._set_phase("listening")
@@ -298,6 +322,36 @@ class VoiceSession:
     def _answering(self) -> bool:
         return self._answer is not None and not self._answer.done()
 
+    def _speculating(self) -> bool:
+        """An early answer (started on "probably done") is waiting for their turn to really end."""
+        return self._answering() and self._gate is not None and not self._gate.is_set()
+
+    def _speculate(self, text: str) -> None:
+        """Flux thinks they are probably done: start the brain now; it says nothing and runs no tool until the turn
+        really ends with the same words (``end_of_turn``), and is dropped if they go on (``turn_resumed``)."""
+        if not text or getattr(self.audio, "interrupted", False) or getattr(self.audio, "speaking", False):
+            return
+        if self._answering() and not self._speculating():
+            return  # an answer they are waiting for is on its way
+        if not self._speculable(text):
+            return
+        if self._speculating():
+            self._cut_answer()
+        self._gate = asyncio.Event()
+        self._spec_at = self._now()
+        self._answer_text = text
+        self._answer = self._spawn(self._respond(text, gate=self._gate))
+
+    def _speculable(self, text: str) -> bool:
+        """Only the brain's answers start early (an instant intent or a game's move is quicker than that anyway)."""
+        media = getattr(self.ctx, "media", None)
+        st = _safe(media.status) if media is not None else None
+        if intents.match(text, media_on=bool(st and st.get("state") in ("playing", "paused", "loading"))):
+            return False
+        hub = getattr(self.ctx, "skills", None)
+        games = hub.get("voice_games") if hub is not None and hasattr(hub, "get") else None
+        return games is None or getattr(games, "active", None) is None
+
     def _start_answer(self, text: str) -> None:
         if self._answering():
             voice = self._voice
@@ -308,13 +362,17 @@ class VoiceSession:
                 self._record_cut()
             self._cut_answer()
         self._answer_text = text
+        self._gate = None
         self._answer = self._spawn(self._respond(text))
 
     # ------------------------------------------------------------ one answer
-    async def _respond(self, text: str) -> None:
+    async def _respond(self, text: str, *, gate: asyncio.Event | None = None) -> None:
+        """Answer ``text``. ``gate``: an early answer (``_speculate``): nothing is said and no tool runs until it
+        is set."""
         t0 = self._now()
-        self.turns += 1
-        self.heard_user = True
+        if gate is None:
+            self.turns += 1
+            self.heard_user = True
         self._set_phase("thinking")
         from littlebot.chatgpt.tools import RobotToolbox  # noqa: PLC0415
 
@@ -322,6 +380,27 @@ class VoiceSession:
         voice = self._voice = VoiceOut(self.svc.tts(), self.audio, on_start=self._sentence_started, now=self._now)
         with contextlib.suppress(Exception):
             self.audio.unmute()
+        held: list[Sentence] = []
+
+        def say(s: Sentence) -> None:
+            if gate is None or gate.is_set():
+                while held:
+                    voice.say(held.pop(0))
+                voice.say(s)
+            else:
+                held.append(s)
+
+        async def opened() -> None:
+            if gate is not None:
+                await gate.wait()
+                self.turns += 1
+                self.heard_user = True
+                t_heard[0] = self._confirmed_at or self._now()
+                while held:
+                    voice.say(held.pop(0))
+
+        t_heard = [t0]
+        waiter = self._spawn(opened()) if gate is not None else None
         said_by = "brain"
         result: Any = None
         try:
@@ -329,20 +408,26 @@ class VoiceSession:
             if local is not None:
                 said_by, words, end = local
                 for s in _sentences(words):
-                    voice.say(s)
+                    say(s)
                 if end:
                     self._end_after = said_by
             else:
-                result = await self.svc.brain.respond(text, history=self.svc.history.messages(), toolbox=box,
-                                                      on_sentence=voice.say, on_tool=self._tool_started)
+                tools = box if gate is None else _GatedToolbox(box, gate)
+                result = await self.svc.brain.respond(text, history=self.svc.history.messages(), toolbox=tools,
+                                                      on_sentence=say, on_tool=self._tool_started)
                 if result.error and not result.sentences:
                     for s in _sentences(SORRY.get(result.error, SORRY_DEFAULT)):
-                        voice.say(s)
+                        say(s)
+            if waiter is not None:
+                await waiter  # an early answer waits here until their turn really ended
             voice.close()
             await voice.done()
         except asyncio.CancelledError:
             voice.cancel()
+            if waiter is not None:
+                waiter.cancel()
             raise
+        t0 = t_heard[0]
         heard = " ".join(voice.heard) or (getattr(result, "text", "") or "")
         if heard and said_by != "stop":
             self.svc.history.add(text, heard)
@@ -431,7 +516,7 @@ class VoiceSession:
                                     "last": False})
 
     def _tool_started(self, name: str) -> None:
-        if self.cfg.thinking_sound:
+        if self.cfg.thinking_sound and not self._speculating():
             self._spawn(self._thinking_while(self._voice))
 
     async def _thinking_while(self, voice: VoiceOut | None) -> None:
@@ -485,6 +570,7 @@ class VoiceSession:
         if self._answer is not None and not self._answer.done():
             self._answer.cancel()
         self._answer = None
+        self._gate = None
 
     # ------------------------------------------------------------ barge-in
     def _setup_barge_in(self) -> None:
@@ -639,6 +725,29 @@ def lease_for(svc: Any, end: Any) -> Any:
     """The session's lease: face, speaker and microphone at the parent's priority (as GPT-Live)."""
     return svc.ctx.arbiter.acquire(OWNER, [Resource.FACE, Resource.AUDIO_OUT, Resource.MICROPHONE], Priority.PARENT,
                                    on_preempt=lambda _lease, why: end(f"stopped ({why})"))
+
+
+class _GatedToolbox:
+    """An early answer's toolbox: a tool runs only once their turn really ended (``gate``)."""
+
+    def __init__(self, box: Any, gate: asyncio.Event) -> None:
+        self._box = box
+        self._gate = gate
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._box, name)
+
+    async def run(self, name: str, arguments: Any = None) -> str:
+        await self._gate.wait()
+        return await self._box.run(name, arguments)
+
+
+def _same_words(a: str, b: str) -> bool:
+    """The same words, whatever the punctuation and case ("What's the weather?" / "what's the weather")."""
+    def norm(t: str) -> str:
+        return " ".join(re.sub(r"[^a-z0-9' ]+", " ", t.lower()).split())
+
+    return norm(a) == norm(b)
 
 
 def _sentences(text: str) -> list[Sentence]:
