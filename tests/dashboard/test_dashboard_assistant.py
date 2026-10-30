@@ -24,7 +24,7 @@ class OneLine:
 def _install(dctx: Any) -> AssistantService:
     from littlebot.assistant.agent import Brain
 
-    svc = AssistantService(dctx, audio_factory=FakeCallAudio, stt_factory=lambda exclude=(): FakeSTT(),
+    svc = AssistantService(dctx, audio_factory=FakeCallAudio, stt_factory=lambda: FakeSTT(),
                            tts_factory=FakeTTS, brain=Brain(dctx, provider=OneLine()))
     dctx.assistant = svc
     return svc

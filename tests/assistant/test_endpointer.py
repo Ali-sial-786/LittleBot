@@ -191,19 +191,22 @@ async def test_a_click_is_not_a_turn():
     assert events == [] and provider.turns == []
     await feed_frames(ep, np.concatenate([tone(120, amp=0.3), quiet(1500)]))  # a bang: starts, too little voice
     await ep.idle()
-    assert events.kinds() == ["start_of_turn"] and provider.turns == []
+    assert events.kinds() == ["start_of_turn", "end_of_turn"] and provider.turns == []
+    assert events[-1].text == ""  # an empty end: the session stops waiting for words
 
 
-async def test_no_words_means_no_end_of_turn():
+async def test_no_words_means_an_empty_end_of_turn():
     events, provider = Events(), FakeBatch("")
     ep = Endpointer(provider, events)
     await feed_frames(ep, np.concatenate([tone(600), quiet(1000)]))
     await ep.idle()
-    assert events.kinds() == ["start_of_turn"] and len(provider.turns) == 1
+    assert events.kinds() == ["start_of_turn", "end_of_turn"] and events[-1].text == ""
+    assert len(provider.turns) == 1
     provider.reply = "second try"
     await feed_frames(ep, np.concatenate([tone(600), quiet(1000)]))
     await ep.idle()
-    assert events.kinds() == ["start_of_turn", "start_of_turn", "end_of_turn"]
+    assert events.kinds() == ["start_of_turn", "end_of_turn", "start_of_turn", "end_of_turn"]
+    assert events[-1].text == "second try"
 
 
 async def test_max_turn_seconds_ends_a_long_turn():

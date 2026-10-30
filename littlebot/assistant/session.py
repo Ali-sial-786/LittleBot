@@ -46,6 +46,7 @@ POLL_S = 0.05
 THINKING_AFTER_S = 0.9  # a tool still running after this long: the soft thinking sound (again every REPEAT)
 THINKING_REPEAT_S = 2.2
 QUESTION_FOLLOW_UP_S = 12.0  # LittleBot asked them something: wait at least this long for the answer
+STT_REOPENS = 3  # speech-to-text that fails this often in one session ends it
 HEARING_GRACE_S = 2.0  # a turn that never ends (noise): finished after max_turn_seconds + this
 EXPRESSION_HOLD_S = 6.0
 SORRY = {
@@ -99,6 +100,7 @@ class VoiceSession:
         self._our_state: RobotState | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._failed_stt: list[str] = []
+        self._stt_chain: Any = None
 
     # ------------------------------------------------------------ status
     def snapshot(self) -> dict[str, Any]:
@@ -176,17 +178,17 @@ class VoiceSession:
         await asyncio.gather(*jobs, return_exceptions=True)
 
     async def _open_stt(self) -> None:
-        provider = self.svc.stt_provider(exclude=self._failed_stt)
-        if provider is None:
+        """Open speech-to-text (the chain tries its providers in order; one that failed lately is skipped)."""
+        if self._stt_chain is None:
+            self._stt_chain = self.svc.stt_provider()
+        chain = self._stt_chain
+        if chain is None:
             raise SessionFailed("no_stt", "no speech-to-text is available")
         try:
-            self.stt = await provider.open(self._on_stt)
-        except Exception as e:  # noqa: BLE001 - SpeechError or anything else: the next one
-            kind = str(getattr(e, "kind", "") or type(e).__name__)
-            log.warning("assistant: speech-to-text %s didn't open (%s); trying the next", provider.name, kind)
-            self._failed_stt.append(provider.name)
-            return await self._open_stt()
-        self.stt_name = str(provider.name)
+            self.stt = await chain.open(self._on_stt)
+        except Exception as e:  # noqa: BLE001 - SpeechError: none of them opened
+            raise SessionFailed("stt_failed", str(getattr(e, "kind", "") or type(e).__name__)) from None
+        self.stt_name = str(getattr(chain, "last_provider", None) or chain.name)
 
     def _on_stt(self, event: STTEvent) -> None:
         """From the STT provider (any thread): into the session's queue."""
@@ -221,11 +223,15 @@ class VoiceSession:
 
     async def _stt_failed(self, kind: str) -> None:
         old, self.stt = self.stt, None
-        log.warning("assistant: speech-to-text %s failed (%s); switching", self.stt_name, kind)
         self._failed_stt.append(self.stt_name)
+        log.warning("assistant: speech-to-text %s failed (%s); switching", self.stt_name, kind)
         if old is not None:
             with contextlib.suppress(Exception):
                 await old.aclose()
+        if len(self._failed_stt) > STT_REOPENS:
+            self.error = "stt_failed"
+            self.end("speech-to-text kept failing")
+            return
         try:
             await self._open_stt()
         except SessionFailed:

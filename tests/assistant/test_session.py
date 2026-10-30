@@ -45,7 +45,7 @@ def _service(provider: Any, **cfg: Any) -> tuple[AssistantService, FakeSTT, Fake
     stt, tts, audio = FakeSTT(), FakeTTS(), FakeCallAudio()
     from littlebot.assistant.agent import Brain
 
-    svc = AssistantService(ctx, audio_factory=lambda: audio, stt_factory=lambda exclude=(): stt,
+    svc = AssistantService(ctx, audio_factory=lambda: audio, stt_factory=lambda: stt,
                            tts_factory=lambda: tts, brain=Brain(ctx, provider=provider))
     ctx.assistant = svc
     return svc, stt, tts, audio
@@ -208,5 +208,5 @@ async def test_voice_front_falls_back_to_gpt_live_without_speech_to_text() -> No
     svc, stt, _, _ = _service(Scripted())
     svc.ctx.live = object()
     assert voice_front(svc.ctx) is svc
-    svc._stt_factory = lambda exclude=(): None
+    svc._stt_factory = lambda: None
     assert voice_front(svc.ctx) is svc.ctx.live

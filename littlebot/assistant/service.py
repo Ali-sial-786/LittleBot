@@ -86,6 +86,7 @@ class AssistantService(Service):
         self._stt_factory = stt_factory
         self._tts_factory = tts_factory
         self._tts: Any = None
+        self._stt: Any = None
         if brain is None:
             from littlebot.assistant.agent import Brain  # noqa: PLC0415
 
@@ -123,9 +124,10 @@ class AssistantService(Service):
         await self.stop_session("service stop")
         with contextlib.suppress(Exception):
             await self.brain.aclose()
-        if self._tts is not None:
-            with contextlib.suppress(Exception):
-                await self._tts.aclose()
+        for chain in (self._tts, self._stt):
+            if chain is not None:
+                with contextlib.suppress(Exception):
+                    await chain.aclose()
         self.set_status(ServiceStatus.STOPPED)
 
     # ------------------------------------------------------------ which pipeline
@@ -207,13 +209,16 @@ class AssistantService(Service):
                 self._tts = build_tts_chain(self.ctx)
         return self._tts
 
-    def stt_provider(self, exclude: list[str] | tuple[str, ...] = ()) -> Any:
-        """The first speech-to-text that works, leaving out ``exclude`` (ones that failed in this session)."""
+    def stt_provider(self) -> Any:
+        """Speech-to-text (``stt.STTChain``: the first of ``assistant.stt`` that works; one that fails is rested and
+        the next opens), or None when none can be used now."""
         if self._stt_factory is not None:
-            return self._stt_factory(exclude=list(exclude))
-        from littlebot.assistant.stt import build_stt  # noqa: PLC0415
+            return self._stt_factory()
+        if self._stt is None or self._stt.missing():  # kept between sessions: it remembers which ones failed lately
+            from littlebot.assistant.stt import build_stt  # noqa: PLC0415
 
-        return build_stt(self.ctx, exclude=list(exclude))
+            self._stt = build_stt(self.ctx)
+        return self._stt
 
     # ------------------------------------------------------------ sessions
     def blocked_reason(self, parent_present: bool = True) -> str | None:
@@ -249,9 +254,10 @@ class AssistantService(Service):
             "history_turns": len(self.history),
             "last_call": self.last_call,
         }
-        if self._tts is not None:
-            with contextlib.suppress(Exception):
-                out["tts"] = self._tts.describe()
+        for name, chain in (("tts", self._tts), ("stt", self._stt)):
+            if chain is not None:
+                with contextlib.suppress(Exception):
+                    out[name] = chain.describe()
         if session is not None:
             out.update(session.snapshot())
         return out

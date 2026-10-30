@@ -12,7 +12,8 @@ The microphone audio (16 kHz) is looked at in 20 ms frames:
   gives them as they are said: Vosk) sound like a whole sentence, 1.8x (at most 2 s) when they stop on "and",
   "um", "the", "because" ...; and after ``assistant.max_turn_seconds`` whatever happens (or ``finish()``);
 * then the turn is transcribed in the background (listening goes on meanwhile) and ``end_of_turn`` comes with
-  the words. No words, or less than 250 ms of voice (a cough, a door): no ``end_of_turn``, just listening again.
+  the words. No words, or less than 250 ms of voice (a cough, a door): an empty ``end_of_turn``, and listening
+  again.
 
 Timing comes only from the audio fed (samples counted, no clock), so a test's synthetic audio gives the same
 result every time. The turn's audio is dropped as soon as it was transcribed (or on ``reset`` / ``aclose``).
@@ -231,6 +232,7 @@ class Endpointer:
         if voiced < MIN_VOICE_MS * self.sample_rate // 1000:
             log.debug("assistant stt: %d ms of sound with little voice: not a turn", ms)
             await _close(decoder)
+            await emit(self._on_event, STTEvent("end_of_turn", text=""))  # the session listens again at once
             return
         log.debug("assistant stt: turn ended (%s) after %d ms", why, ms)
         self._task = asyncio.create_task(self._transcribe(self._task, self._gen, audio, decoder, rest))
@@ -260,7 +262,7 @@ class Endpointer:
             del audio
             await _close(decoder)
         text = (text or "").strip()
-        if text and gen == self._gen and not self._closed:
+        if gen == self._gen and not self._closed:  # no words: an empty end, so the session stops waiting for them
             await emit(self._on_event, STTEvent("end_of_turn", text=text))
 
     async def _back_to_waiting(self) -> None:

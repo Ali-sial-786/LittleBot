@@ -45,6 +45,9 @@ live = ["aiortc>=1.10,<2"]
 voices = ["sherpa-onnx>=1.10"]
 # Optional: Claude as the text model (text.provider: claude, decide.provider: claude; docs/CLAUDE.md).
 claude = ["anthropic>=2.3,<3"]
+# The fast voice pipeline (littlebot/assistant, docs/ASSISTANT.md): Deepgram's streaming speech-to-text needs a
+# websocket client (vosk already brings it in for the wake word); Claude is its brain.
+assistant = ["websockets>=12", "anthropic>=2.3,<3"]
 dev = ["pytest>=8", "pytest-asyncio>=0.23", "pytest-timeout>=2.2"]
 # Optional: drives the YouTube player page in headless Chromium in tests (skipped when absent).
 browser-tests = ["playwright>=1.40"]
