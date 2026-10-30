@@ -45,6 +45,21 @@ async def test_on_no_card_needs_no_text_model_request(make, ctx):
     assert get_decider(ctx).status()["features"]["cards"]["used"] == 1
 
 
+async def test_on_an_answer_still_being_said_is_given_as_its_first_words(make, ctx):
+    # on the robot the cut-off words read as "hasn't answered yet": none, and no card (2026-10-29)
+    s = make(FACT, wait_for_answer=True)
+    model = use_decision_model(ctx, picks("show_facts"), modes={"cards": "on", "answered": "off"})
+    s.director.heard("Tell me the difference between Genghis Khan and Kublai Khan")
+    s.director.saying("Genghis Khan was the founder of the Mongol Empire. He united the Mongol tribes and started "
+                      "the big conquests across Asia, and Kublai Khan was his grandson who")
+    await asyncio.sleep(director_mod.SAID_GRACE_S + 0.1)
+    await s.settle()
+    state, _questions = model.asked[0]
+    assert "LittleBot_answer_being_said" not in state
+    assert state["LittleBot_answer_first_words"].endswith("(still being said: LittleBot is answering, the rest follows)")
+    assert "a facts card fits" in s.provider.calls[0]["messages"][-1]["content"]
+
+
 async def test_on_a_card_kind_is_a_hint_for_the_text_model(make, ctx):
     s = make(FACT, wait_for_answer=True)
     use_decision_model(ctx, picks("show_recipe"), modes={"cards": "on", "answered": "off"})

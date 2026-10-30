@@ -32,7 +32,9 @@ def card_options(kinds: dict[str, str], card_up: str | None, actions: list[str])
     """"none" first (Jev leans to the first option: the cautious one), then close / steer with a card up, then a
     "show_<kind>" per card kind."""
     opts = {CARD_NONE: "Nothing worth showing on the screen: chit-chat, songs, games, talking to the baby, a "
-                       "question with nothing to see, or LittleBot hasn't actually given the answer yet."}
+                       "question with nothing to see, or LittleBot hasn't actually given the answer yet (it only "
+                       "says hold on or let me check; an answer cut off because it is still being said counts as "
+                       "given)."}
     if card_up:
         opts[CARD_CLOSE] = (f"They want the {card_up} card on the screen gone, or the talk has moved on to something "
                             "it doesn't fit and isn't worth a card.")
@@ -45,12 +47,18 @@ def card_options(kinds: dict[str, str], card_up: str | None, actions: list[str])
 
 
 async def card_pick(ctx: Any, *, kinds: dict[str, str], card_up: str | None, actions: list[str],
-                    lines: list[tuple[str, str]], answer: str | None, robot: str = "LittleBot") -> Answer | None:
+                    lines: list[tuple[str, str]], answer: str | None, partial: bool = False,
+                    robot: str = "LittleBot") -> Answer | None:
+    """``partial``: ``answer`` is only the first words the voice has said so far (it is still saying the rest)."""
     d = get_decider(ctx)
     convo = [f"{'They said' if who == 'heard' else robot}: {_clean(t) if who == 'heard' else t[:TEXT]}"
              for who, t in lines[-STATE_LINES:]]
-    state = {"card_on_screen": card_up or "none", "conversation": convo,
-             f"{robot}_answer_being_said": (answer or "")[:600] or "(no answer yet)"}
+    state = {"card_on_screen": card_up or "none", "conversation": convo}
+    if answer and partial:  # cut off mid-sentence, it read as "hasn't answered yet" (none, on the robot 2026-10-29)
+        state[f"{robot}_answer_first_words"] = (f"{answer[:600]} ... (still being said: {robot} is answering, "
+                                                "the rest follows)")
+    else:
+        state[f"{robot}_answer_being_said"] = (answer or "")[:600] or "(no answer yet)"
     q = Choice(f"{robot} is a small home robot with a screen, answering out loud. Given what they just said and "
                f"{robot}'s answer, what should its screen do? A card shows the gist of {robot}'s answer (a "
                "forecast, a word's meaning, key points, a recipe, a timer, a sum, a fact); most turns show nothing.",

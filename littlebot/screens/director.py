@@ -89,7 +89,7 @@ ANSWER_WAIT_S = 25.0  # wait_for_answer: at most this long for LittleBot's answe
 SAID_GRACE_S = 0.6  # a caption counts as the answer once this old with no hand-off opened after it
 # The voice's words as it says them (``saying``): this many are enough to go on, so the card comes while it
 # talks. GPT-Live's final caption only comes when its turn ends, 20 s later for a long answer (2026-10-29).
-PARTIAL_WORDS = 15
+PARTIAL_WORDS = 25  # 15 was too few for a comparison: only the first of the two had been said (2026-10-29)
 # GPT-Live starts its answer before the person's final caption reaches LittleBot (on the robot ~1 s earlier,
 # 2026-10-29): the words it is saying count for a turn heard up to this long after they began.
 SAYING_LEAD_S = 5.0
@@ -794,7 +794,7 @@ class ScreenDirector:
         saying = self._saying  # no final caption yet: the words it is saying now, once there are enough
         if (saying is not None and saying[0] >= t0 - SAYING_LEAD_S and now - saying[0] >= SAID_GRACE_S
                 and len(saying[1].split()) >= PARTIAL_WORDS and not FILLER.match(saying[1])):
-            return "voice", saying[1][:ANSWER_CHARS]
+            return "saying", saying[1][:ANSWER_CHARS]
         return None
 
     def _stalling(self, caption: tuple[float, str]) -> bool:
@@ -958,7 +958,7 @@ class ScreenDirector:
     async def _decide(self, turn: int, t0: float, *, needs_grownup: bool = False) -> None:
         """``needs_grownup``: a short turn that is a grown-up's only if voice recognition says so by the time the
         answer comes (it may identify them a moment after their words)."""
-        answer = None
+        answer, partial = None, False
         if self.wait_for_answer:
             found = await self._await_answer(turn, t0)
             if turn != self._turn or self._closed:
@@ -971,16 +971,17 @@ class ScreenDirector:
                 self._log("none", t0, "model", "LittleBot put a card up for it already")
                 return
             how, answer = found
+            partial = how == "saying"  # its first words: the rest is still being said
             log.debug("screen: deciding from LittleBot's answer (%s)", how)
         from littlebot.decide import get_decider, uses  # noqa: PLC0415
 
         decider = get_decider(self.ctx)
         mode = decider.mode("cards")
-        shadow = asyncio.ensure_future(self._card_pick(answer)) if mode == "shadow" else None
+        shadow = asyncio.ensure_future(self._card_pick(answer, partial)) if mode == "shadow" else None
         pick, hint = None, None
         try:
             if mode == "on":
-                pick = await self._card_pick(answer)
+                pick = await self._card_pick(answer, partial)
                 if turn != self._turn or self._closed:
                     self._log("dropped", t0, "decider", "they said something else meanwhile")
                     return
@@ -996,7 +997,8 @@ class ScreenDirector:
                         return
                     hint = pick.value[len("show_"):] if pick.value.startswith("show_") else \
                         "steer" if pick.value == uses.CARD_STEER else None
-            label = await self._decide_model(turn, t0, answer, needs_grownup=needs_grownup, hint=hint)
+            label = await self._decide_model(turn, t0, answer, needs_grownup=needs_grownup, hint=hint,
+                                             partial=partial)
         except BaseException:
             if shadow is not None:
                 shadow.cancel()
@@ -1006,13 +1008,13 @@ class ScreenDirector:
         elif pick is not None and label not in ("dropped", "failed"):
             decider.compare("cards", mine=label, theirs=pick.value, answer=pick)
 
-    async def _card_pick(self, answer: str | None) -> Any:
+    async def _card_pick(self, answer: str | None, partial: bool = False) -> Any:
         from littlebot.decide import uses  # noqa: PLC0415
 
         kind = self._current_kind()
         kinds = {k: getattr(ct, "description", "") for k, ct in sorted(self._types().items())}
         return await uses.card_pick(self.ctx, kinds=kinds, card_up=kind, actions=list(self._actions(kind)),
-                                    lines=list(self._lines), answer=answer,
+                                    lines=list(self._lines), answer=answer, partial=partial,
                                     robot=getattr(self.ctx.config, "robot_name", "LittleBot"))
 
     async def _compare_cards(self, shadow: Any, label: str) -> None:
@@ -1030,11 +1032,11 @@ class ScreenDirector:
             get_decider(self.ctx).compare("cards", mine=label, theirs=pick.value, answer=pick)
 
     async def _decide_model(self, turn: int, t0: float, answer: str | None, *, needs_grownup: bool,
-                            hint: str | None = None) -> str:
+                            hint: str | None = None, partial: bool = False) -> str:
         """The text model's decision, acted on. Returns what it decided ("none", "close", "steer", "show_<kind>"),
         or "dropped" / "failed"."""
         try:
-            reply = await asyncio.wait_for(self._ask(answer=answer, hint=hint), self.timeout)
+            reply = await asyncio.wait_for(self._ask(answer=answer, hint=hint, partial=partial), self.timeout)
         except asyncio.CancelledError:
             raise
         except TimeoutError:
@@ -1052,7 +1054,8 @@ class ScreenDirector:
             log.info("screen: the answer had no JSON (%d characters%s); asking once more", len(text),
                      ", starts with text" if text.strip()[:1] not in ("{", "`", "") else "")
             try:
-                retry = await asyncio.wait_for(self._ask(retry=True, answer=answer, hint=hint), RETRY_TIMEOUT_S)
+                retry = await asyncio.wait_for(self._ask(retry=True, answer=answer, hint=hint, partial=partial),
+                                               RETRY_TIMEOUT_S)
                 obj = parse_decision(getattr(retry, "text", "") or "")
             except asyncio.CancelledError:
                 raise
@@ -1087,10 +1090,11 @@ class ScreenDirector:
         self._log(f"show {clean['card']}", t0, path,
                   "" if result.get("ok") else f"not shown ({result.get('error') or 'no card'})")
 
-    async def _ask(self, *, retry: bool = False, answer: str | None = None, hint: str | None = None) -> Any:
+    async def _ask(self, *, retry: bool = False, answer: str | None = None, hint: str | None = None,
+                   partial: bool = False) -> Any:
         provider = self._provider_factory()
         opts = _reply_options(provider.reply, effort=self.effort)
-        content = self._context(answer)
+        content = self._context(answer, partial)
         if hint == "steer":
             content += "\n(A quick check says they are following up on the card on screen.)"
         elif hint:
@@ -1114,8 +1118,9 @@ class ScreenDirector:
             self._system = PROMPT.format(robot=robot, catalogue="\n".join(lines) or "(none)")
         return self._system
 
-    def _context(self, answer: str | None = None) -> str:
-        """The card on screen and the conversation; ``answer``: what LittleBot is saying for their last words."""
+    def _context(self, answer: str | None = None, partial: bool = False) -> str:
+        """The card on screen and the conversation; ``answer``: what LittleBot is saying for their last words
+        (``partial``: only its first words so far)."""
         from littlebot.safety.content import sanitize_user_text  # noqa: PLC0415
 
         kind = self._current_kind()
@@ -1134,7 +1139,11 @@ class ScreenDirector:
             else:
                 out.append(f"{getattr(self.ctx.config, 'robot_name', 'LittleBot')}: {text}")
         robot = getattr(self.ctx.config, "robot_name", "LittleBot")
-        if answer and not any(who == "robot" and text in answer for who, text in lines[-2:]):
+        if answer and partial:
+            out.append(f"{robot}'s answer, being said now (only its first words so far, cut off where it has got "
+                       f"to: it is answering, and the rest follows; the card may also cover what it is plainly "
+                       f"about to say, such as the other thing they asked about, in well-known facts): {answer} ...")
+        elif answer and not any(who == "robot" and text in answer for who, text in lines[-2:]):
             out.append(f"{robot}'s answer, being said now: {answer}")
         elif answer is None and self.wait_for_answer:
             out.append(f"({robot} hasn't answered yet.)")
