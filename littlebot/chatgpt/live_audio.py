@@ -72,7 +72,10 @@ PITCH_RATE = 8000  # the detector looks for a pitch in the microphone at this ra
 ADULT_MIN_HZ = 75.0  # grown-ups' voices: about 80-260 Hz; a baby's babble 300-600 Hz
 PITCH_MAX_HZ = 650.0
 VOICED_R = 0.5  # normalised autocorrelation at the pitch: a voiced (pitched) sound
-ADULT_SHARE = 0.4  # of a run's frames, at least this share voiced at a grown-up's pitch
+# Of a run's frames, at least this share voiced at a grown-up's pitch. Real speech through the ReSpeaker and the
+# echo canceller has far fewer clearly pitched frames than the synthetic voices in the tests: on the robot
+# (2026-10-29) a parent talking over the voice gave 30-56 %, so 0.4 let only one of three through.
+ADULT_SHARE = 0.25
 GAP_S = 0.12  # under the threshold this long: their speech (the run) ended; shorter gaps are consonants
 WARMUP_S = 0.3  # the voice's echo is measured this long in a call before anything can interrupt
 INITIAL_COUPLING = 1.0  # what is left of the voice at the microphone, relative to the speaker, before measuring
@@ -178,7 +181,7 @@ class BargeInDetector:
     speaker played in the last ECHO_REF_S, tracked near the top of its spread (up fast, down slowly) and frozen
     while someone may be talking. Then a run of such frames must go on for ``speech_s`` (gaps of up to GAP_S are
     consonants), with at least ADULT_SHARE of it voiced at a grown-up's pitch (ADULT_MIN_HZ..``max_pitch_hz``)
-    and clearly more of it there than above (a child). So a cough (no pitch), a short "mm" (too short), the
+    and more of it there than above (a child). So a cough (no pitch), a short "mm" (too short), the
     baby (too high), the voice's own echo (not louder than itself) and a quiet TV (the room's noise) don't.
 
     ``step`` costs one 1024-point FFT pair when a frame is loud, nothing more (measured: docs/CHATGPT.md).
@@ -247,7 +250,7 @@ class BargeInDetector:
         frames = max(1.0, (now - run.onset) / FRAME_S)
         need = FAST_SPEECH_S if run.grown_up else self.s.speech_s
         # only while they are still loud: a short "mm" ends, and the gap after it doesn't count as speech
-        if loud and now - run.onset + 1e-6 >= need and run.adult >= ADULT_SHARE * frames and run.adult > 2 * run.child:
+        if loud and now - run.onset + 1e-6 >= need and run.adult >= ADULT_SHARE * frames and run.adult > run.child:
             self.fired, self.run = run, None
             return True
         return False
@@ -263,8 +266,10 @@ class BargeInDetector:
             why = "voice recognition says it was a child"
         elif speech + 1e-6 < (FAST_SPEECH_S if run.grown_up else self.s.speech_s):
             why = f"too short: a pause longer than {GAP_S:.2f} s ended it"
-        else:
+        elif run.adult < ADULT_SHARE * frames:
             why = f"only {run.adult} of {frames} frames voiced at a grown-up's pitch"
+        else:
+            why = f"{run.child} of {frames} frames sounded higher, like a child ({run.adult} at a grown-up's pitch)"
         log.info("live voice: someone talked over the voice for %.2f s (pitch %d Hz) but it didn't stop: %s",
                  speech, round(self.pitch_of(run)), why)
 

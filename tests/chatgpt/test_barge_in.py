@@ -83,6 +83,24 @@ def test_a_grown_up_talking_over_the_echo_interrupts_after_about_300_ms():
     assert first_fire(ECHO + NOISE + at(voiced(90, 1.0, 0.05, seed=4))) is not None
 
 
+def patchy(f0: float, secs: float, level: float, voiced_share: float, *, seed: int = 11) -> np.ndarray:
+    """Speech as the echo-cancelled microphone hears it: only ``voiced_share`` of each 100 ms clearly pitched, the
+    rest breathy and noisy (consonants, the canceller working during double talk) at the same loudness."""
+    pitched = voiced(f0, secs, level, seed=seed)
+    noisy = (np.random.default_rng(seed).standard_normal(len(pitched)) * level).astype(np.float32)
+    block = int(0.1 * RATE)
+    on = (np.arange(len(pitched)) % block) < int(voiced_share * block)
+    return np.where(on, pitched, noisy).astype(np.float32)
+
+
+def test_real_speech_with_few_clearly_pitched_frames_still_interrupts():
+    # on the robot a parent talking over the voice was only 30-56 % clearly pitched and didn't get through
+    # (here 15 % of each 100 ms is pitched; the detector's 40 ms pitch window stretches that to about a third)
+    assert first_fire(ECHO + NOISE + at(patchy(165, 1.3, 0.05, 0.15))) is not None
+    assert first_fire(ECHO + NOISE + at(patchy(450, 1.3, 0.08, 0.15))) is None  # the baby, just as patchy: no
+    assert first_fire(ECHO + NOISE + at(patchy(165, 1.3, 0.05, 0.05))) is None  # hardly pitched at all: noise
+
+
 @pytest.mark.parametrize(("label", "sound"), [
     ("the baby's babble (450 Hz)", voiced(450, 1.2, 0.08, vibrato=0.1, syll=3)),
     ("a high squeal (330 Hz)", voiced(330, 1.2, 0.06, seed=5)),

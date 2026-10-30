@@ -877,8 +877,10 @@ voice is audible:
   best wins, so a baby's 450 Hz never reads as 225 Hz). Voiced (correlation 0.5 or more) at 75 Hz to
   `live_barge_in_max_pitch_hz` (260) counts as a grown-up, above it as a child.
 * *Long enough:* a run of loud frames (gaps under 0.12 s are consonants) fires after
-  `live_barge_in_speech_ms` (300 ms) when at least 40 % of its frames are grown-up voiced and more
-  than twice as many as child voiced. A cough (no pitch), a short "mm" (too short), the baby (too
+  `live_barge_in_speech_ms` (300 ms) when at least 25 % of its frames are grown-up voiced and more
+  of them than child voiced. (It was 40 % and twice as many until 2026-10-29: on the robot, with the
+  ReSpeaker Lite and the echo canceller, a parent's real speech was only 30-56 % clearly pitched and
+  two of three tries didn't get through.) A cough (no pitch), a short "mm" (too short), the baby (too
   high), the voice's own echo (not louder than itself) and a quiet TV (the floor) don't.
 * *Voice recognition* (optional): after 0.2 s of a run, `ctx.voices.identify(samples, 16000)` is
   asked once in the background, if `ctx.voices` has it. A grown-up's match lets it fire after
