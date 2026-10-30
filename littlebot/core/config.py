@@ -460,6 +460,10 @@ class VoiceGamesConfig(_Section):
     enabled: bool = True
     trivia_questions: int = Field(default=10, ge=3, le=30)  # per round
     use_model_questions: bool = True  # fresh trivia from the text model; off (or no model): the built-in bank
+    hangman_words: int = Field(default=5, ge=1, le=20)  # per round
+    riddles_per_round: int = Field(default=5, ge=1, le=20)
+    would_you_rather_per_round: int = Field(default=5, ge=1, le=20)
+    sounds: bool = True  # a chime for right / wrong answers when the skill speaks for itself (tools, card taps)
 
 
 class InfoConfig(_Section):
