@@ -66,15 +66,22 @@ async def test_describe(spec: dict[str, Any], said: str) -> None:
 @pytest.mark.parametrize("spec", [
     {"layout": "number", "title": "x"},
     {"layout": "list", "items": []},
-    {"layout": "compare", "columns": [{"name": "A", "facts": ["1"]}]},
-    {"layout": "compare", "columns": [{"name": "A"}, {"name": "B"}]},
     {"layout": "profile", "title": "Giraffe"},
-    {"layout": "score", "teams": [{"name": "A", "score": 1}]},
     {"layout": "item", "kicker": "Today"},
     {"title": "no layout", "text": "x"},
 ])
 async def test_what_each_layout_needs(spec: dict[str, Any]) -> None:
     assert await base.build({"card": "facts", **spec}, None, base.RecordingHost()) is None
+
+
+@pytest.mark.parametrize(("spec", "items"), [
+    ({"layout": "compare", "columns": [{"name": "A", "facts": ["1"]}]}, ["A", "1"]),
+    ({"layout": "compare", "columns": [{"name": "A"}, {"name": "B"}]}, ["A", "B"]),
+    ({"layout": "score", "teams": [{"name": "A", "score": 1}]}, ["A", "score: 1"]),
+])
+async def test_a_layout_missing_its_part_still_shows_its_text(spec: dict[str, Any], items: list[str]) -> None:
+    card = await make(spec)
+    assert card.layout == "list" and card.items == items
 
 
 LION_TIGER = "Lion or tiger?: Lion vs Tiger: Weight: 190 kg, 220 kg; Lives in: Africa, Asia"
@@ -120,11 +127,30 @@ async def test_a_comparison_with_a_line_for_each_of_them() -> None:
                             {"name": "Kublai Khan", "facts": ["ruled China"]}] and card.rows == []
 
 
-async def test_an_empty_comparison_says_what_it_was_sent(caplog: pytest.LogCaptureFixture) -> None:
+async def test_a_comparison_it_cannot_read_still_shows_its_text(caplog: pytest.LogCaptureFixture) -> None:
+    # whatever shape it comes in, it is shown (the parent's ask, 2026-10-29); the log says how it came
     caplog.set_level("INFO", logger="littlebot.screens")
-    assert await base.build({"card": "facts", "layout": "compare", "title": "A or B", "rows": ["Size", "Age"]},
-                            None, base.RecordingHost()) is None
-    assert "rows=[2 x str]" in caplog.text and "title=str" in caplog.text
+    card = await make({"layout": "compare", "title": "Genghis Khan vs Kublai Khan",
+                       "columns": ["Genghis Khan", "Kublai Khan"],
+                       "rows": ["Genghis Khan built the empire through conquest across Asia.",
+                                "Kublai Khan, his grandson, ruled China as emperor."]})
+    assert card.layout == "list" and card.items[0].startswith("Genghis Khan built") and len(card.items) == 2
+    assert "rows: 9 words, marks .; 8 words, marks ,." in caplog.text  # its shape, never its words
+    assert "conquest" not in caplog.text
+
+
+async def test_any_text_in_any_shape_is_shown() -> None:
+    card = await make({"layout": "compare", "title": "A or B", "rows": ["Size", "Age"]})
+    assert card.layout == "list" and card.items == ["Size", "Age"]
+    card = await make({"layout": "score", "teams": [{"name": "Lions", "score": 3}], "stuff": {"when": "Sunday"}})
+    assert card.layout == "list" and card.items == ["Lions", "score: 3", "when: Sunday"]
+
+
+async def test_a_card_with_no_text_at_all_is_not_made(caplog: pytest.LogCaptureFixture) -> None:
+    caplog.set_level("INFO", logger="littlebot.screens")
+    assert await base.build({"card": "facts", "layout": "compare", "title": "A or B"}, None,
+                            base.RecordingHost()) is None
+    assert "facts card not made" in caplog.text and "title=str" in caplog.text
 
 
 async def test_a_profile_without_its_title_shows_its_facts_as_a_list() -> None:

@@ -123,7 +123,8 @@ def _title_names(title: str) -> list[str]:
 
 # How one line of text holds a value per column ("Conqueror vs Ruler", "Conqueror | Ruler"), tried in this order
 SPLITS = tuple(re.compile(p, re.I) for p in (r"\s+(?:vs\.?|versus)\s+", r"\s*\|\s*", r"\s+/\s+", r"\s*;\s*",
-                                             r"\s+[–—]\s+", r",\s+"))
+                                             r"\s+[-–—]+>?\s+|\s*→\s*", r",?\s+(?:while|whereas|but)\s+",
+                                             r",\s+"))
 
 
 def _owner(label: str, names: list[str]) -> int | None:
@@ -531,17 +532,72 @@ async def _build(spec: dict[str, Any], ctx: Any, host: Any) -> Card | None:
     if _fits(card, pic):
         return FactsCard(spec, host)
     given = dict(spec)
-    given.setdefault("items", list(card.facts))
+    # a comparison whose rows are sentences this card couldn't split into its columns: shown as a list of them
+    lines = [kit.clean(r, 60) for r in (spec.get("rows") or []) if isinstance(r, str) and len(r.split()) >= 3]
+    given["items"] = given.get("items") or list(card.facts) or (lines if card.layout == "compare" else [])
     given.setdefault("facts", list(card.items[:3]))
     if not card.text:
         given["text"] = card.note or (card.facts[0] if card.facts else card.items[0] if card.items else "")
     for layout in dict.fromkeys((card.layout, *FALLBACK_LAYOUTS)):  # its own layout first, with what was given
         if _fits(FactsCard({**given, "layout": layout}, None), pic):
-            log.info("facts card: the %s layout was missing its part; shown as %s", card.layout, layout)
+            log.info("facts card: the %s layout was missing its part; shown as %s (rows: %s)", card.layout, layout,
+                     _row_marks(spec.get("rows")))
             return FactsCard({**given, "layout": layout}, host)
     fields = ", ".join(f"{k}={_shape(v)}" for k, v in sorted(spec.items()) if v not in (None, "", [], {})) or "none"
+    # Whatever shape it came in, the card shows what it was given (the parent's ask, 2026-10-29): every bit of
+    # its text as a list, rather than no card
+    texts = list(dict.fromkeys(t for t in (kit.clean(s, 60) for s in _strings(
+        {k: v for k, v in spec.items() if k not in NOT_TEXT})) if t))[:MAX_ITEMS]
+    if texts:
+        log.info("facts card: the %s layout couldn't be read (fields given: %s; rows: %s); shown as a list of its "
+                 "text", card.layout, fields[:400], _row_marks(spec.get("rows")))
+        layout = "list" if len(texts) > 1 else "item"
+        return FactsCard({"layout": layout, "title": spec.get("title"), "items": texts, "text": texts[0],
+                          "ordered": False}, host)
     log.info("facts card not made: the %s layout had nothing to show (fields given: %s)", card.layout, fields[:400])
     return None
+
+
+NOT_TEXT = ("card", "layout", "title", "picture_query", "ordered", "status", "kicker")  # a caption alone isn't a card
+NAME_KEYS = ("name", "title", *LABEL_KEYS)
+
+
+def _strings(value: Any) -> list[str]:
+    """Every bit of text in ``value``, in order: a record's name first, then "key: value" for its other text."""
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return [str(value)]
+    if isinstance(value, (list, tuple)):
+        return [s for v in value for s in _strings(v)]
+    if isinstance(value, dict):
+        out = [s for k in NAME_KEYS if isinstance(value.get(k), str) for s in [value[k]]]
+        for k, v in value.items():
+            if k in NAME_KEYS:
+                continue
+            scalar = isinstance(v, (str, int, float)) and not isinstance(v, bool)
+            out += [f"{k}: {v}"] if scalar and k not in ("facts", "values", "items") else _strings(v)
+        return out
+    return []
+
+
+_JOINS = re.compile(r"\b(vs|versus|while|whereas|but|and|or|compared)\b", re.I)
+
+
+def _row_marks(rows: Any) -> str:
+    """How each text row is put together (its word count, punctuation and joining words, never its words), so
+    the log shows a format this card can't read yet."""
+    if not isinstance(rows, (list, tuple)):
+        return "none"
+    out = []
+    for r in rows[:4]:
+        if not isinstance(r, str):
+            out.append(type(r).__name__)
+            continue
+        marks = "".join(sorted({c for c in r if not c.isalnum() and not c.isspace()}))
+        joins = "/".join(dict.fromkeys(j.lower() for j in _JOINS.findall(r)))
+        out.append(f"{len(r.split())} words, marks {marks or '-'}" + (f", joined by {joins}" if joins else ""))
+    return "; ".join(out) or "none"
 
 
 register(CardType(
