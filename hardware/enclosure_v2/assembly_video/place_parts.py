@@ -1,5 +1,5 @@
 """Put every printed part (stl/, print orientation) where it sits on the assembled robot, plus box dummies
-for the electronics, all in robot coordinates (mm, z up, front of the base at y = 0). Transforms are the
+for the electronics, the screws and the cables (hardware.json), all in robot coordinates (mm, z up, front of the base at y = 0). Transforms are the
 inverse of print_part() followed by assembly() from littlebot_v2.scad.
 
 The derived positions below are copied from littlebot_v2.scad (2026-10-30): if you change a dimension
@@ -120,8 +120,6 @@ add("cooler", cat(pi_box(6.5, 64, 9, 49, 0, 3), pi_box(7, 27.5, 9, 49, 0, 12), p
 zf = floor_low + 2.4
 add("pca9685", box(-31.115, 31.115, 10, 35.4, zf + 4, zf + 4 + 12), "#2a8a2a", "floor")
 add("usbc_socket", box(14 - 6.5, 14 + 6.5, 152 - 2.6 - 0.5 - 18, 152 - 2.6 - 0.5, 36 - 3.5, 36 + 3.5), "#333333", "floor")
-# the charging cable (charge_cable in littlebot_v2.scad): a USB-C extension from the UPS's USB-C, up through the
-# cable hole and back down behind the cooler to its socket
 def frame(d):
     d = d / np.linalg.norm(d); a = np.array([1.0, 0, 0]) if abs(d[0]) < 0.9 else np.array([0, 1.0, 0])
     u = np.cross(d, a); u /= np.linalg.norm(u); return u, np.cross(d, u)
@@ -133,26 +131,71 @@ def rod(a, b, r, n=12):            # open cylinder from a to b
 def ball(c, r, n=10, m=6):
     c = np.asarray(c, float); pt = lambda i, j: c + r * np.array([np.sin(np.pi * j / m) * np.cos(2 * np.pi * i / n), np.sin(np.pi * j / m) * np.sin(2 * np.pi * i / n), np.cos(np.pi * j / m)])
     return np.array([tri for i in range(n) for j in range(m) for tri in ([pt(i, j), pt(i, j + 1), pt(i + 1, j + 1)], [pt(i, j), pt(i + 1, j + 1), pt(i + 1, j)])])
-charge_port = np.array([stk_x0 + 42, stk_y0 + stk_ups_w0 + 1.6 + 1.7, stk_ztop + 0.8])   # mouth of the UPS's USB-C
-sock_back = np.array([14, 152 - 2.6 - 0.5 - 18, 36])
-p, q = charge_port, sock_back
-path = [p + [0, 0, 24], p + [0, 0, 30], p + [3, 8, 35], p + [6, 14, 30], p + [8, 16.5, 20], p + [8, 16.5, 1],
-        [q[0] - 2, q[1] - 6.4, p[2] - 2.2], [q[0] - 1, q[1] - 3.4, p[2] - 8.2], [q[0] - 0.5, q[1] - 3.4, q[2] + 6],
-        [q[0], q[1] - 3.5, q[2] + 1.5], [q[0], q[1] - 2.3, q[2]]]
-add("charge_cable", cat(box(p[0] - 6.1, p[0] + 6.1, p[1] - 3.4, p[1] + 3.4, p[2], p[2] + 18),                 # male end in the UPS's USB-C
-                        xf(cyl(5.5, 6, 16), I, p + [0, 0, 18]),                                                 # strain relief
-                        *[rod(path[k], path[k + 1], 2) for k in range(len(path) - 1)], *[ball(c, 2) for c in path]),
-    "#2b2b2b", "floor")
+
+# --- screws and cables: hardware.json, exported from littlebot_v2.scad by build.sh (part="hardware_list") ---
+screws, cables = json.loads((Path(__file__).resolve().parent / "hardware.json").read_text())
+def to_z(v):                       # rotation taking +z onto v
+    v = np.asarray(v, float) / np.linalg.norm(v); z = np.array([0, 0, 1.0]); c = float(z @ v)
+    if c > 0.9999: return I
+    if c < -0.9999: return np.diag([1.0, -1, -1])
+    k = np.cross(z, v); k /= np.linalg.norm(k); K = np.array([[0, -k[2], k[1]], [k[2], 0, -k[0]], [-k[1], k[0], 0]])
+    return I + np.sin(np.arccos(c)) * K + (1 - c) * K @ K
+def cone(d1, d2, h, n=16):
+    a = np.linspace(0, 2 * np.pi, n + 1); t = []
+    for i in range(n):
+        p0, p1 = np.array([np.cos(a[i]), np.sin(a[i])]), np.array([np.cos(a[i + 1]), np.sin(a[i + 1])])
+        t += [[(*p0 * d1 / 2, 0), (*p1 * d1 / 2, 0), (*p1 * d2 / 2, h)], [(*p0 * d1 / 2, 0), (*p1 * d2 / 2, h), (*p0 * d2 / 2, h)],
+              [(0, 0, 0), (*p1 * d1 / 2, 0), (*p0 * d1 / 2, 0)], [(0, 0, h), (*p0 * d2 / 2, h), (*p1 * d2 / 2, h)]]
+    return np.array(t, float)
+GROUP = {"ring": "torso", "head_servo": "torso", "arm_servos": "torso", "torso_back": "torso", "stack": "floor", "pca": "floor",
+         "visor": "head", "clamp": "head", "ears": "head", "camera": "head", "head_on": "head", "back_cap": "head"}
+TRAVEL = 22                        # a screw starts this far out along its axis
+CARRIED = {"head_servo": ("horn screws", [0, 0, -55]), "stack": ("M2.5 (UPS kit)", [0, 90, 0]), "camera": (("M2 × 6 + nut", "M2 × 8"), [0, 0, 75])}
+extra = {}                         # name -> manifest extras
+for k, (step, what, d, l, head, pos, v) in enumerate(screws):
+    v = np.asarray(v, float); R = to_z(v)
+    body = cat(cyl(d, l, 12), cone(1.9 * d, 1.9 * d, 0.65 * d) - [0, 0, 0.65 * d]) if head == "pan" else cat(cyl(d, l, 12), cone(2 * d, d, 0.55 * d))
+    name = f"screw{k:02d}_{step}"
+    add(name, xf(body, R, pos), "#39404a", GROUP.get(step, "none"))
+    frm, delay = -v * TRAVEL, 2.3                                   # driven in once the step's parts are in place
+    if step in CARRIED and what in (CARRIED[step][0] if isinstance(CARRIED[step][0], tuple) else (CARRIED[step][0],)):
+        frm, delay = frm + CARRIED[step][1], 0.0                    # comes in with the part it holds
+    if step == "arms" and what == "horn screws":
+        frm, delay = frm + [60 * np.sign(pos[0]), 0, 0], 0.0        # with the arm
+    if step in ("torso_on", "floor_in", "head_on"): delay = 2.7      # after the torso / floor / head has landed
+    extra[name] = {"step": step, "from": [round(float(c), 2) for c in frm], "delay": delay, "screw": what, "axis": int(np.argmax(np.abs(v))), "sign": int(np.sign(v[np.argmax(np.abs(v))]))}
+def tube(pts, r, n=10):            # cable along pts; 4th column = how far along (0..1), for growing it
+    pts = np.asarray(pts, float); L = np.r_[0, np.cumsum(np.linalg.norm(np.diff(pts, axis=0), axis=1))]; L /= L[-1]; t = []
+    for i in range(len(pts) - 1):
+        seg = rod(pts[i], pts[i + 1], r, n); f = np.linalg.norm(seg - pts[i], axis=2) ** 2 < np.linalg.norm(seg - pts[i + 1], axis=2) ** 2
+        t.append(np.concatenate([seg, np.where(f, L[i], L[i + 1])[..., None]], axis=2))
+    for c, li in zip(pts, L):
+        b = ball(c, r, 10, 6); t.append(np.concatenate([b, np.full(b.shape[:2] + (1,), li)], axis=2))
+    return np.concatenate(t)
+DELAY = {"hdmi": 0.4, "power": 1.3, "touch": 2.2, "camera": 3.1, "speaker": 0.4, "mic": 1.3, "servo_head": 2.2, "servo_left": 2.6, "servo_right": 3.0,
+         "i2c": 2.4, "charging": 0.9, "camera_head": 3.0, "hdmi_head": 3.3, "power_head": 3.6, "touch_head": 3.9}
+LABEL_AT = {"i2c": -1, "camera_head": -1, "hdmi_head": -1, "power_head": -1, "touch_head": -1}   # else the route's start
+for name, step, group, colour, d, label, route, plugs in cables:
+    t = tube(route, d / 2)
+    for lo, hi in plugs:
+        b = box(*[c for pair in zip(lo, hi) for c in pair]); end = np.linalg.norm(np.add(lo, hi) / 2 - route[-1]) < np.linalg.norm(np.add(lo, hi) / 2 - route[0])
+        t = np.concatenate([t, np.concatenate([b, np.full(b.shape[:2] + (1,), 1.0 if end else 0.0)], axis=2)])
+    add(name, t, colour, group)
+    extra[name] = {"step": step, "delay": DELAY.get(name, 0.5), "grow": 1.9, "from": None,
+                   "label": None if name == "charging" else label.replace("->", "→"), "label_at": [round(float(c), 1) for c in route[LABEL_AT.get(name, 0)]]}
 
 manifest = []
 for name, tris, colour, group in parts:
     t = tris.astype(np.float32)
+    along = t[:, :, 3] if t.shape[2] == 4 else np.zeros(t.shape[:2], np.float32); t = t[:, :, :3]
     n = np.cross(t[:, 1] - t[:, 0], t[:, 2] - t[:, 0]); ln = np.linalg.norm(n, axis=1, keepdims=True); n = n / np.where(ln > 0, ln, 1)
-    data = np.concatenate([t.reshape(-1, 3), np.repeat(n, 3, axis=0)], axis=1).astype(np.float32)   # x y z nx ny nz per vertex
+    data = np.concatenate([t.reshape(-1, 3), np.repeat(n, 3, axis=0), along.reshape(-1, 1)], axis=1).astype(np.float32)   # x y z nx ny nz along
     (OUT / f"{name}.bin").write_bytes(data.tobytes())
     lo, hi = t.reshape(-1, 3).min(0), t.reshape(-1, 3).max(0)
     manifest.append({"name": name, "file": f"meshes/{name}.bin", "colour": colour, "group": group, "tris": len(t),
-                     "lo": [round(float(v), 1) for v in lo], "hi": [round(float(v), 1) for v in hi]})
+                     "lo": [round(float(v), 1) for v in lo], "hi": [round(float(v), 1) for v in hi], **extra.get(name, {})})
 (OUT.parent / "manifest.json").write_text(json.dumps(manifest, indent=1))
-for m in manifest: print(f"{m['name']:<18}{m['tris']:>7}  x {m['lo'][0]:7.1f}..{m['hi'][0]:7.1f}  y {m['lo'][1]:7.1f}..{m['hi'][1]:7.1f}  z {m['lo'][2]:7.1f}..{m['hi'][2]:7.1f}")
-print("total triangles", sum(m["tris"] for m in manifest))
+for m in manifest:
+    if m["name"].startswith("screw"): continue
+    print(f"{m['name']:<18}{m['tris']:>7}  x {m['lo'][0]:7.1f}..{m['hi'][0]:7.1f}  y {m['lo'][1]:7.1f}..{m['hi'][1]:7.1f}  z {m['lo'][2]:7.1f}..{m['hi'][2]:7.1f}")
+print("screws", sum(m["name"].startswith("screw") for m in manifest), " total triangles", sum(m["tris"] for m in manifest))

@@ -102,6 +102,17 @@ if (check == "electronics_vs_base")   intersection() { union() { base_parts(); p
 // printed parts (base, floor, torso and its back cover, rear plate) and of everything else in the base
 if (check == "charge_cable_clear")    intersection() { charge_cable(s); union() { base_parts(); place_torso() { torso_shell(); translate([-46 + clr, torso_d - torso_wall, 0]) torso_back(); }
     place_rear_plate() port_plate(rear_w, rear_h, "rear_usb"); ups_stack(s); for (i = [0, 1, 3, 4, 5]) ups_plug(i, s); pca_floor(s); usbc_socket(s); } }
+// every cable route (littlebot_v2.scad hw_cables(), without its plugs) clear of the printed parts and the other electronics:
+// the body's cables (base, torso, up the neck) and the head's (from the neck to the screen and the camera)
+if (check == "cables_body")           intersection() { union() { for (c = hw_cables()) if (c[2] != "head") cable_route(c, s); }
+    union() { base_parts(); place_rear_plate() port_plate(rear_w, rear_h, "rear_usb"); place_front_plate() port_plate(front_w, front_h, "blank");
+        for (k = [-1, 1]) place_well_cover(k) well_cover(); ups_stack(s); pca_floor(s); usbc_socket(s); place_head() head_shell();
+        place_torso() { torso_shell(); translate([-46 + clr, torso_d - torso_wall, 0]) torso_back(); translate([0, neck_yt, torso_h + s]) coupler();
+            translate([0, neck_yt, gear_z0]) ring_gear(); translate([0, pinion_yt, gear_z0]) rotate(7.5) pinion();
+            translate([0, pinion_yt, hs_tab_top - sv_tab_t - frame_t]) servo_frame(); torso_electronics_s(); } } }
+if (check == "cables_head")           intersection() { union() { for (c = hw_cables()) if (c[2] == "head") cable_route(c, s); }
+    place_head() union() { head_shell(); head_back(); visor(); screen_clamp(); ear(); mirror([1, 0, 0]) ear(); camera_pod();
+        translate([0, cam_board_y - 2.5, cam_z]) camera_bracket(); screen_dummy(s); camera_s(); } }
 if (check == "sonar_vs_base")         intersection() { union() { base_parts(); place_front_plate() port_plate(front_w, front_h, "sonar"); } sonar_s(); }
 if (check == "wheels_vs_mobile_base") intersection() { union() { base_shell(); base_floor(true); place_torso() torso_shell(); } wheels_s(); }
 if (check == "arms_vs_torso")         intersection() { place_torso() torso_shell(); arms_at(arm_angle); }

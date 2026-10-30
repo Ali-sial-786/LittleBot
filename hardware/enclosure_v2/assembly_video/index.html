@@ -14,7 +14,7 @@
   #bar { position: absolute; left: 0; bottom: 0; height: 5px; background: #c0632b; }
   #labels, #lines { position: absolute; inset: 0; }
   .lab { position: absolute; transform: translate(-50%, -100%); background: rgba(255,255,255,.95); border: 2.5px solid; border-radius: 10px;
-         padding: 5px 12px 6px; font-size: 17px; font-weight: bold; white-space: nowrap; box-shadow: 0 3px 12px rgba(30,40,60,.16); }
+         padding: 4px 11px 5px; font-size: 16px; font-weight: bold; white-space: nowrap; box-shadow: 0 3px 12px rgba(30,40,60,.16); }
 </style></head>
 <body>
 <div id="bg"></div>
@@ -40,11 +40,12 @@ const gl = document.getElementById('c').getContext('webgl2', { antialias: true, 
 function sh(type, src) { const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s); if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw gl.getShaderInfoLog(s); return s; }
 const prog = gl.createProgram();
 gl.attachShader(prog, sh(gl.VERTEX_SHADER, `#version 300 es
-in vec3 aPos; in vec3 aNor; uniform mat4 uVP; uniform vec3 uOff; out vec3 vN; out vec3 vW;
-void main() { vec3 w = aPos + uOff; vW = w; vN = aNor; gl_Position = uVP * vec4(w, 1.0); }`));
+in vec3 aPos; in vec3 aNor; in float aT; uniform mat4 uVP; uniform vec3 uOff; out vec3 vN; out vec3 vW; out float vT;
+void main() { vec3 w = aPos + uOff; vW = w; vN = aNor; vT = aT; gl_Position = uVP * vec4(w, 1.0); }`));
 gl.attachShader(prog, sh(gl.FRAGMENT_SHADER, `#version 300 es
-precision highp float; in vec3 vN; in vec3 vW; uniform vec3 uCol; uniform float uAlpha; uniform float uHi; uniform float uEmit; uniform vec3 uEye; out vec4 o;
+precision highp float; in vec3 vN; in vec3 vW; in float vT; uniform vec3 uCol; uniform float uAlpha; uniform float uHi; uniform float uEmit; uniform float uGrow; uniform vec3 uEye; out vec4 o;
 void main() {
+  if (vT > uGrow + 0.0001) discard;                       // cables grow along their route
   vec3 n = normalize(vN); vec3 v = normalize(uEye - vW); if (dot(n, v) < 0.0) n = -n;
   vec3 key = normalize(vec3(-0.45, -0.7, 0.75)), fill = normalize(vec3(0.7, -0.2, 0.3)), rim = normalize(vec3(0.2, 0.9, 0.4));
   float d = 0.36 + 0.55 * max(dot(n, key), 0.0) + 0.22 * max(dot(n, fill), 0.0) + 0.18 * max(dot(n, rim), 0.0) + 0.06 * n.z;
@@ -56,81 +57,91 @@ void main() {
 }`));
 gl.linkProgram(prog); gl.useProgram(prog);
 const U = n => gl.getUniformLocation(prog, n);
-const uVP = U('uVP'), uOff = U('uOff'), uCol = U('uCol'), uAlpha = U('uAlpha'), uHi = U('uHi'), uEye = U('uEye'), uEmit = U('uEmit');
-const aPos = gl.getAttribLocation(prog, 'aPos'), aNor = gl.getAttribLocation(prog, 'aNor');
+const uVP = U('uVP'), uOff = U('uOff'), uCol = U('uCol'), uAlpha = U('uAlpha'), uHi = U('uHi'), uEye = U('uEye'), uEmit = U('uEmit'), uGrow = U('uGrow');
+const aPos = gl.getAttribLocation(prog, 'aPos'), aNor = gl.getAttribLocation(prog, 'aNor'), aT = gl.getAttribLocation(prog, 'aT');
 
-const P = {};          // name -> {vao, count, col, group, centre}
+const P = {};          // name -> {vao, count, col, emit, centre, group, m (its manifest entry)}
 async function loadAll() {
   const man = await (await fetch('manifest.json')).json();
   for (const m of man) {
     const buf = await (await fetch(m.file)).arrayBuffer();
     const vao = gl.createVertexArray(); gl.bindVertexArray(vao);
     const vb = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, vb); gl.bufferData(gl.ARRAY_BUFFER, buf, gl.STATIC_DRAW);
-    gl.enableVertexAttribArray(aPos); gl.vertexAttribPointer(aPos, 3, gl.FLOAT, false, 24, 0);
-    gl.enableVertexAttribArray(aNor); gl.vertexAttribPointer(aNor, 3, gl.FLOAT, false, 24, 12);
-    P[m.name] = { vao, count: buf.byteLength / 24, col: hex(m.colour), emit: m.group === 'eyes' ? 1 : 0, centre: V.mul(V.add(m.lo, m.hi), 0.5) };
+    gl.enableVertexAttribArray(aPos); gl.vertexAttribPointer(aPos, 3, gl.FLOAT, false, 28, 0);
+    gl.enableVertexAttribArray(aNor); gl.vertexAttribPointer(aNor, 3, gl.FLOAT, false, 28, 12);
+    gl.enableVertexAttribArray(aT); gl.vertexAttribPointer(aT, 1, gl.FLOAT, false, 28, 24);
+    P[m.name] = { vao, count: buf.byteLength / 28, col: hex(m.colour), emit: m.group === 'eyes' ? 1 : 0, centre: V.mul(V.add(m.lo, m.hi), 0.5), group: m.group, m };
+  }
+  // screws and cables say which step they belong to (manifest "step" = a step's id)
+  for (const name in P) {
+    const m = P[name].m; if (!m.step) continue;
+    const k = STEPS.findIndex(s => s.id === m.step); if (k < 0) throw 'no step ' + m.step;
+    STEPS[k].add = STEPS[k].add || {}; STEPS[k].add[name] = m.from; installAt[name] = k;
   }
 }
 
 // ---------- the story ----------
-const TORSO_G = ['torso','torso_back','coupler','ring_gear','pinion','servo_frame','head_servo','arm_servo_left','arm_servo_right','speaker','mic'];
-const FLOOR_G = ['base_floor','ups_plate','ups_cells','ups_board','ups_standoffs','pi','pi_ports','cooler','pca9685','usbc_socket','charge_cable'];
-const HEAD_G = ['head','head_back','visor','ear_left','ear_right','camera_pod','camera_bracket','camera_board','screen_glass','screen_pcb','screen_clamp'];
 const ROBOT = { t: [0, 76, 190], az: -28, el: 16, d: 980 };
-// each step: parts it installs and where they come from (offset, mm); camera; see-through shells
+const BODY_SEE = { base: 0.15, torso: 0.15 };
+// each step: parts it installs and where they come from (offset, mm); camera; see-through shells. Screws and cables
+// join their step from the manifest (hardware.json), each driven in along its own axis or growing along its route.
 const STEPS = [
-  { title: 'The finished robot', detail: 'Here is what we are building. Now let\u2019s put it together, step by step.', dur: 5.0, intro: true, view: { ...ROBOT, az: -40 }, view2: { ...ROBOT, az: 35 } },
-  { title: 'Neck bearing', detail: 'PTFE tape (or a drop of grease) on the coupler\u2019s ring, then drop it into the top of the torso.',
+  { title: 'The finished robot', detail: 'Here is what we are building. Now let’s put it together, step by step.', dur: 5.0, intro: true, view: { ...ROBOT, az: -40 }, view2: { ...ROBOT, az: 35 } },
+  { id: 'neck', title: 'Neck bearing', detail: 'PTFE tape (or a drop of grease) on the coupler’s ring, then drop it into the top of the torso.',
     add: { torso: null, coupler: [0, 0, 60] }, view: { t: [0, 76, 215], az: -32, el: 28, d: 560 } },
-  { title: 'Ring gear, from below', detail: 'Reach inside and screw the ring gear onto the coupler\u2019s spigot: 3 \u00d7 M2.5 \u00d7 12.',
+  { id: 'ring', title: 'Ring gear, from below', detail: 'Reach inside and screw the ring gear onto the coupler’s spigot: 3 × M2.5 × 12.',
     add: { ring_gear: [0, 0, -70] }, see: { torso: 0.22 }, view: { t: [0, 80, 225], az: -38, el: 12, d: 470 } },
-  { title: 'Head servo and pinion', detail: 'Horn into the pinion\u2019s pocket, servo at 90\u00b0, slide the pinion up into mesh. Frame onto the pillars (2 \u00d7 M3 \u00d7 10), servo tabs onto the frame.',
+  { id: 'head_servo', title: 'Head servo and pinion', detail: 'Horn into the pinion’s pocket (2 small screws), servo at 90°, pinion up into mesh. Frame onto the pillars (2 × M3 × 10), servo onto the frame (2 servo screws).',
     add: { pinion: [0, 0, -55], head_servo: [0, 0, -70], servo_frame: [0, 0, -85] }, see: { torso: 0.22 }, view: { t: [0, 70, 215], az: -45, el: 8, d: 470 } },
-  { title: 'Arm servos', detail: 'From inside, push each servo through its rib window until the round boss pokes out of the side. Screw the tabs to the rib.',
+  { id: 'arm_servos', title: 'Arm servos', detail: 'From inside, push each servo through its rib window until the round boss pokes out of the side. Screw the tabs to the rib: 2 servo screws each.',
     add: { arm_servo_left: [40, 0, 0], arm_servo_right: [-40, 0, 0] }, see: { torso: 0.22 }, view: { t: [0, 76, 225], az: -18, el: 14, d: 520 } },
-  { title: 'Speaker and microphone', detail: 'Speaker into the chest cradle behind the grille (2 zip ties), mic into its sleeve, holes facing out. Their cables go down to the base.',
+  { id: 'speaker', title: 'Speaker and microphone', detail: 'Speaker into the chest cradle behind the grille (2 zip ties), mic into its sleeve, holes facing out. Their cables go down to the base.',
     add: { speaker: [0, 110, 0], mic: [0, 110, 0] }, see: { torso: 0.22 }, view: { t: [0, 80, 205], az: 148, el: 20, d: 600 } },
-  { title: 'The floor', detail: 'The electronics go onto the floor first, outside the robot, where you can reach everything.',
+  { id: 'floor', title: 'The floor', detail: 'The electronics go onto the floor first, outside the robot, where you can reach everything.',
     add: { base_floor: null }, view: { t: [0, 76, -85], az: -35, el: 30, d: 560 } },
-  { title: 'Pi + UPS onto the mounting wall', detail: 'Pi and cooler onto the UPS as Waveshare shows, cells in V1\u2013V4 order. Swap the UPS\u2019s 4 bottom screws for M3 \u00d7 12 and screw it to the wall through the clear plate, ports up.',
+  { id: 'stack', title: 'Pi + UPS onto the mounting wall', detail: 'Pi and cooler onto the UPS with the UPS kit’s 4 screws, cells in V1–V4 order. Then swap the UPS’s 4 bottom screws for M3 × 12, through the wall and the clear plate, ports up.',
     add: { ups_plate: [0, 90, 0], ups_cells: [0, 90, 0], ups_board: [0, 90, 0], ups_standoffs: [0, 90, 0], pi: [0, 90, 0], pi_ports: [0, 90, 0], cooler: [0, 90, 0] },
-    view: { t: [0, 95, -85], az: 140, el: 28, d: 520 } },
-  { title: 'Servo board', detail: 'PCA9685 onto its standoffs (4 \u00d7 M2.5 \u00d7 6). Plug in the HDMI and screen-power cables and the jumper wires.',
-    add: { pca9685: [0, 0, 60] }, view: { t: [0, 80, -90], az: -30, el: 38, d: 540 } },
-  { title: 'Charging cable into the UPS', detail: 'USB-C extension: its plug goes into the UPS\u2019s USB-C (on the blue UPS board, beside the Pi\u2019s second HDMI port), not into the Pi\u2019s own USB-C. Zip-tie its socket into the holder at the back.',
-    add: { charge_cable: [0, 0, 70], usbc_socket: [0, 70, 0] }, dur: 6.0,
-    labels: [{ at: [2, 102.3, 72], text: 'UPS USB-C: charging \u2713', col: '#17803a', dx: -170, dy: -150 },
-             { at: [-28.8, 113.6, 64.9], text: 'Pi USB-C: leave empty \u2717', col: '#c0392b', dx: 150, dy: -110 }],
+    dur: 5.4, view: { t: [0, 85, -85], az: 140, el: 28, d: 560 } },
+  { id: 'pca', title: 'Servo board', detail: 'PCA9685 onto its standoffs (4 × M2.5 × 6), servo pins towards the Pi. Jumpers from Pi pins 1, 3, 5, 6 to its I2C pins at the near end (the UPS’s battery cable goes on the far end).',
+    add: { pca9685: [0, 0, 60] }, dur: 5.6, view: { t: [-15, 70, -95], az: -55, el: 34, d: 520 } },
+  { id: 'charge', title: 'Charging cable into the UPS', detail: 'USB-C extension: its plug goes into the UPS’s USB-C (on the blue UPS board, beside the Pi’s second HDMI port), not into the Pi’s own USB-C. Zip-tie its socket into the holder at the back.',
+    add: { usbc_socket: [0, 70, 0] }, dur: 6.0,
+    labels: [{ at: [2, 102.3, 72], group: 'floor', text: 'UPS USB-C: charging ✓', col: '#17803a', dx: -170, dy: -150, t: 2.6 },
+             { at: [-28.8, 113.6, 64.9], group: 'floor', text: 'Pi USB-C: leave empty ✗', col: '#c0392b', dx: 150, dy: -110, t: 2.6 }],
     view: { t: [-8, 112, -64], az: 158, el: 34, d: 310 } },
-  { title: 'Torso onto the base', detail: 'Feed the screen\u2019s cables up through the base\u2019s cable hole and the torso, then screw the torso on: 4 \u00d7 M3 \u00d7 10 from inside the base.',
-    add: { base: [0, 0, -40] }, torsoDown: true, view: { t: [0, 76, 40], az: -30, el: 14, d: 940 } },
-  { title: 'Floor into the base', detail: 'From below: 4 \u00d7 M3 \u00d7 12. Plug the camera, speaker and mic into the Pi\u2019s USB ports.',
-    floorIn: true, see: { base: 0.22 }, view: { t: [0, 76, 25], az: -32, el: 6, d: 700 } },
-  { title: 'Side covers and plates', detail: 'Wheel-well covers (4 screws each), the light-bar plate at the front and the cable plate at the back (2 screws each). Its slot lines up with the charging socket: the charger plugs in there.',
-    add: { well_cover_left: [-70, 0, 0], well_cover_right: [70, 0, 0], front_plate: [0, -70, 0], rear_plate: [0, 70, 0] }, view: { t: [0, 76, 40], az: -42, el: 18, d: 600 } },
-  { title: 'Torso back cover', detail: 'Switch the UPS on first: it sits under the cable hole. Then 4 \u00d7 M3 \u00d7 12 countersunk.',
+  { id: 'torso_on', title: 'Torso onto the base', detail: 'Plug the HDMI, screen-power, touch and camera cables into the Pi and UPS and feed them up through the cable hole, the torso and the neck. Torso on: 4 × M3 × 10 from inside the base.',
+    add: { base: [0, 0, -40] }, torsoDown: true, dur: 5.4, view: { t: [0, 76, 40], az: -30, el: 14, d: 940 } },
+  { id: 'floor_in', title: 'Floor into the base', detail: 'First plug the speaker and mic into the Pi’s USB ports and the servos into the PCA9685. Then the floor goes in from below: 4 × M3 × 12.',
+    floorIn: true, see: { base: 0.22 }, dur: 5.4, view: { t: [0, 76, 25], az: -32, el: 6, d: 700 } },
+  { id: 'cables_up', title: 'The cables to the head', detail: 'HDMI, screen power, touch wires and the camera cable run from the Pi and UPS up through the cable hole and the torso, out of the neck. They wait there for the head.',
+    see: BODY_SEE, dur: 7.4, view: { t: [0, 92, 150], az: 150, el: 12, d: 760 } },
+  { id: 'cables_body', title: 'Speaker, mic and servo cables', detail: 'Speaker and mic down to the Pi’s USB ports. The three servo leads go down the cable hole, flat over the top of the clear plate, to the PCA9685: head 0, left arm 1, right arm 2.',
+    see: BODY_SEE, dur: 7.4, view: { t: [0, 70, 120], az: -38, el: 16, d: 760 } },
+  { id: 'covers', title: 'Side covers and plates', detail: 'Wheel-well covers (4 screws each), the light-bar plate at the front and the cable plate at the back (2 screws each). Its slot lines up with the charging socket: the charger plugs in there.',
+    add: { well_cover_left: [-70, 0, 0], well_cover_right: [70, 0, 0], front_plate: [0, -70, 0], rear_plate: [0, 70, 0] }, dur: 5.2, view: { t: [0, 76, 40], az: -42, el: 18, d: 600 } },
+  { id: 'torso_back', title: 'Torso back cover', detail: 'Switch the UPS on first: it sits under the cable hole. The cover goes on with its lip outwards: 4 × M3 × 12 pan head.',
     add: { torso_back: [0, 80, 0] }, view: { t: [0, 100, 130], az: 145, el: 16, d: 640 } },
-  { title: 'The head', detail: 'Printed face-down; the screen window faces forward. The head is built off the robot, then lowered onto the neck.',
+  { id: 'head', title: 'The head', detail: 'Printed face-down; the screen window faces forward. The head is built off the robot, then lowered onto the neck.',
     add: { head: null }, view: { t: [0, 80, 450], az: -30, el: 14, d: 560 } },
-  { title: 'Visor', detail: 'Foam tape around the window on the back of the visor, then into the face recess: 4 \u00d7 M2.5 \u00d7 6 from inside the head.',
+  { id: 'visor', title: 'Visor', detail: 'Foam tape around the window on the back of the visor, then into the face recess: 4 × M2.5 × 6 from inside the head.',
     add: { visor: [0, -80, 0] }, view: { t: [0, 70, 450], az: -24, el: 8, d: 500 } },
-  { title: 'Screen into the visor', detail: 'In through the back of the head: glass first, HDMI socket down, into the visor\u2019s ribs on the foam.',
+  { id: 'screen', title: 'Screen into the visor', detail: 'In through the back of the head: glass first, HDMI socket down, into the visor’s ribs on the foam.',
     add: { screen_glass: [0, 75, 0], screen_pcb: [0, 75, 0] }, see: { head: 0.2 }, view: { t: [0, 70, 450], az: 135, el: 16, d: 460 } },
-  { title: 'Screen clamp', detail: 'Onto the visor\u2019s 4 posts (4 \u00d7 M2.5 \u00d7 8). Its fingers press the screen\u2019s tabs; the lower ones hook under them, so the screen can\u2019t slide down.',
+  { id: 'clamp', title: 'Screen clamp', detail: 'Onto the visor’s 4 posts (4 × M2.5 × 8). Its fingers press the screen’s tabs; the lower ones hook under them, so the screen can’t slide down.',
     add: { screen_clamp: [0, 75, 0] }, see: { head: 0.2 }, view: { t: [0, 70, 450], az: 125, el: 14, d: 440 } },
-  { title: 'Ears', detail: '2 \u00d7 M3 \u00d7 20 each, from inside the head. LED rings go in later.',
+  { id: 'ears', title: 'Ears', detail: '2 × M3 × 20 each, from inside the head. LED rings go in later.',
     add: { ear_left: [-60, 0, 0], ear_right: [60, 0, 0] }, view: { t: [0, 80, 450], az: -32, el: 12, d: 560 } },
-  { title: 'Camera', detail: 'Camera board onto its bracket, bracket into the pod (2 \u00d7 M2 \u00d7 8), pod onto the head (2 \u00d7 M3 \u00d7 10). Its cable goes behind the clamp and down the neck.',
-    add: { camera_board: [0, 0, 75], camera_bracket: [0, 0, 75], camera_pod: [0, 0, 75] }, view: { t: [0, 60, 480], az: -30, el: 26, d: 500 } },
-  { title: 'Head onto the neck', detail: '3 \u00d7 M3 \u00d7 10 from inside the head. Plug in the HDMI (right-angle plug), the screen\u2019s power and the touch wires; leave slack for the head to turn.',
-    headDown: true, view: { ...ROBOT } },
-  { title: 'Back cap', detail: '4 \u00d7 M3 \u00d7 30 countersunk, through the cap into the head.',
+  { id: 'camera', title: 'Camera', detail: 'Camera board onto its bracket (4 × M2 × 6 + nuts), bracket into the pod (2 × M2 × 8), pod onto the head (2 × M3 × 10 from inside). Its cable comes up the neck later.',
+    add: { camera_board: [0, 0, 75], camera_bracket: [0, 0, 75], camera_pod: [0, 0, 75] }, see: { head: 0.3 }, view: { t: [0, 60, 480], az: -30, el: 26, d: 500 } },
+  { id: 'head_on', title: 'Head onto the neck', detail: 'Hold the head over the neck and plug in the HDMI (right-angle plug), the screen’s power, the touch wires and the camera’s 5-pin plug. Lower it: 3 × M3 × 10 from inside. Leave slack for turning.',
+    headDown: true, see: { head: 0.3 }, dur: 7.8, view: { t: [0, 85, 260], az: 150, el: 14, d: 660 } },
+  { id: 'back_cap', title: 'Back cap', detail: '4 × M3 × 30 countersunk, through the cap into the head.',
     add: { head_back: [0, 80, 0] }, view: { t: [0, 110, 285], az: 148, el: 16, d: 780 } },
-  { title: 'Arms', detail: 'Arm servos at their neutral position, horn into the arm\u2019s pocket, arm onto the spline, then the centre screw.',
-    add: { arm_left: [-60, 0, 0], arm_right: [60, 0, 0] }, view: { t: [0, 70, 170], az: -20, el: 12, d: 840 } },
+  { id: 'arms', title: 'Arms', detail: 'Arm servos at their neutral position. Horn into the arm’s pocket (2 small screws), arm onto the spline, then the centre screw through the hole.',
+    add: { arm_left: [-60, 0, 0], arm_right: [60, 0, 0] }, dur: 5.2, view: { t: [0, 70, 170], az: -20, el: 12, d: 840 } },
   { title: 'Done!', detail: 'Keep motion switched off until the servos are calibrated (docs/MOTION_SAFETY.md).', dur: 7.5, outro: true, view: { ...ROBOT, az: -20 } },
 ];
-const DUR = 4.6;
+const DUR = 4.8;
 STEPS.forEach(s => s.dur = s.dur || DUR);
 let T0 = 0; STEPS.forEach(s => { s.t0 = T0; T0 += s.dur; });
 const TOTAL = T0;
@@ -157,6 +168,32 @@ function viewAt(i, u) {
   const pv = prev.intro ? prev.view2 : prev.view, k = i === 0 ? 1 : ease(u / 1.1);
   return { t: V.lerp(pv.t, v.t, k), az: pv.az + (v.az - pv.az) * k, el: pv.el + (v.el - pv.el) * k, d: pv.d + (v.d - pv.d) * k };
 }
+// this step's labels: its own, one per set of screws it drives in ("4 × M3 × 10", pointing at one of them), one per
+// cable it lays. A set = the same screw along the same axis, going in the same way within 200 mm of another one
+// (or the other way within 60 mm): left and right, or front and back, are two sets.
+function stepLabels(i) {
+  const s = STEPS[i], out = (s.labels || []).slice(), sets = {};
+  for (const name in P) {
+    const m = P[name].m; if (installAt[name] !== i || !m.step) continue;
+    if (m.screw) (sets[m.screw + '|' + m.axis] = sets[m.screw + '|' + m.axis] || []).push(name);
+    if (m.label) out.push({ at: m.label_at, group: P[name].group, text: m.label, col: m.colour, t: (m.delay || 0) + 0.6 });
+  }
+  for (const key in sets) {
+    const left = sets[key].slice();
+    while (left.length) {
+      const set = [left.shift()];
+      for (let grew = true; grew; ) { grew = false;
+        for (let k = left.length - 1; k >= 0; k--) if (set.some(n => { const d = Math.hypot(...V.sub(P[n].centre, P[left[k]].centre)); return d < 60 || (d < 200 && P[n].m.sign === P[left[k]].m.sign); })) { set.push(left.splice(k, 1)[0]); grew = true; } }
+      const c = V.mul(set.reduce((a, n) => V.add(a, P[n].centre), [0, 0, 0]), 1 / set.length);
+      const near = set.reduce((a, n) => Math.hypot(...V.sub(P[n].centre, c)) < Math.hypot(...V.sub(P[a].centre, c)) - 0.01 ? n : a);
+      const m = P[near].m;
+      out.push({ at: P[near].centre, group: P[near].group, text: `${set.length} × ${m.screw}`, col: '#39404a', t: (m.delay || 0) + 1.2 });
+    }
+  }
+  return out;
+}
+const LABELS = [];
+function groupOff(group, offs) { return group === 'torso' ? offs.torso : (group === 'head' || group === 'screen') ? offs.head : group === 'floor' ? offs.floor : [0, 0, 0]; }
 
 function render(t) {
   t = clamp(t, 0, TOTAL - 1e-6);
@@ -169,8 +206,6 @@ function render(t) {
   const capA = clamp(Math.min(u / 0.35, (s.dur - u) / 0.25));
   document.getElementById('cap').style.opacity = s.outro ? 1 : capA;
   document.getElementById('bar').style.width = (100 * t / TOTAL).toFixed(2) + '%';
-  const labA = s.labels ? clamp(Math.min((u - 2.0) / 0.4, (s.dur - 0.25 - u) / 0.25)) : 0;
-  document.getElementById('labels').style.opacity = labA;
   // camera
   const v = viewAt(i, u), az = v.az * Math.PI / 180, el = v.el * Math.PI / 180;
   const eye = V.add(v.t, V.mul([Math.sin(az) * Math.cos(el), -Math.cos(az) * Math.cos(el), Math.sin(el)], v.d));
@@ -180,41 +215,32 @@ function render(t) {
   gl.viewport(0, 0, 1280, 720); gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
   gl.enable(gl.DEPTH_TEST); gl.disable(gl.CULL_FACE);
   gl.uniformMatrix4fv(uVP, false, VP); gl.uniform3fv(uEye, eye);
-  const torsoOff = groupMove(i, u, TORSO_DOWN, TORSO_UP), headOff = groupMove(i, u, HEAD_DOWN, HEAD_UP), floorOff = groupMove(i, u, FLOOR_IN, FLOOR_OUT);
-  // labels pinned to points on the floor unit (they move with it), once the parts have arrived
-  let lines = '', labs = '';
-  if (labA > 0) for (const L of s.labels) {
-    const w = V.add(L.at, floorOff), c = [0, 1, 2, 3].map(r => VP[r] * w[0] + VP[4 + r] * w[1] + VP[8 + r] * w[2] + VP[12 + r]);
-    const x = (c[0] / c[3] + 1) * 640, y = (1 - c[1] / c[3]) * 360, lx = x + L.dx, ly = y + L.dy;
-    lines += `<line x1="${x}" y1="${y}" x2="${lx}" y2="${ly}" stroke="${L.col}" stroke-width="2.5"/><circle cx="${x}" cy="${y}" r="7" fill="none" stroke="${L.col}" stroke-width="3"/>`;
-    labs += `<div class="lab" style="left:${lx}px;top:${ly}px;border-color:${L.col};color:${L.col}">${L.text}</div>`;
-  }
-  document.getElementById('lines').innerHTML = lines; document.getElementById('labs').innerHTML = labs;
+  const offs = { torso: groupMove(i, u, TORSO_DOWN, TORSO_UP), head: groupMove(i, u, HEAD_DOWN, HEAD_UP), floor: groupMove(i, u, FLOOR_IN, FLOOR_OUT) };
+  drawLabels(s.intro || s.outro ? [] : (LABELS[i] = LABELS[i] || stepLabels(i)), s, u, VP, offs);
   const draws = [];
   for (const name in P) {
-    let off = [0, 0, 0], alpha = 1, hi = 0;
+    let off = [0, 0, 0], alpha = 1, hi = 0, grow = 1;
+    const m = P[name].m;
     if (s.intro) { alpha = clamp((s.dur - u) / 0.6); }
     else if (!s.outro) {
       const at = installAt[name];
       if (at === undefined || at > i) continue;
       if (at === i) {
-        const from = STEPS[i].add[name];
-        const k = ease((u - 0.45) / 1.7);
-        alpha = clamp(u / 0.4);
-        if (from) off = V.mul(from, 1 - k);
-        hi = clamp(Math.min(u / 0.4, (s.dur - 0.4 - u) / 0.8));
+        const from = STEPS[i].add[name], w = u - (m.delay || 0);
+        if (w <= 0) continue;
+        if (m.grow) { grow = ease(w / m.grow); alpha = 1; }
+        else { alpha = clamp(w / 0.4); if (from) off = V.mul(from, 1 - ease((w - 0.45) / 1.7)); }
+        hi = clamp(Math.min(w / 0.4, (s.dur - 0.4 - u) / 0.8));
       }
     }
     if (!s.intro && !s.outro) {
-      if (TORSO_G.includes(name)) off = V.add(off, torsoOff);
-      if (HEAD_G.includes(name)) off = V.add(off, headOff);
-      if (FLOOR_G.includes(name)) off = V.add(off, floorOff);
+      off = V.add(off, groupOff(P[name].group, offs));
       if (['torso', 'base', 'head'].includes(name)) alpha *= seeThrough(name, i, u);
       if (name === 'head' && i === HEAD_DOWN) hi = 0;
     }
     if (s.outro && u < 0.01) alpha = 1;
     if (alpha <= 0.003) continue;
-    draws.push({ p: P[name], off, alpha, hi, dist: Math.hypot(...V.sub(V.add(P[name].centre, off), eye)) });
+    draws.push({ p: P[name], off, alpha, hi, grow, dist: Math.hypot(...V.sub(V.add(P[name].centre, off), eye)) });
   }
   const opaque = draws.filter(d => d.alpha > 0.995), clear = draws.filter(d => d.alpha <= 0.995).sort((a, b) => b.dist - a.dist);
   gl.disable(gl.BLEND); gl.depthMask(true);
@@ -225,8 +251,36 @@ function render(t) {
   gl.finish();
   return { step: i, total: TOTAL };
 }
+// labels: a leader from the point to a tag beside it. Tags without their own offset go out sideways (left of the
+// picture's middle to the left, else to the right) and are spread so they don't overlap; they keep clear of the caption.
+function drawLabels(list, s, u, VP, offs) {
+  const items = [];
+  for (const L of list) {
+    const a = clamp(Math.min((u - L.t) / 0.4, (s.dur - 0.25 - u) / 0.25)); if (a <= 0) continue;
+    const w = V.add(L.at, groupOff(L.group, offs)), c = [0, 1, 2, 3].map(r => VP[r] * w[0] + VP[4 + r] * w[1] + VP[8 + r] * w[2] + VP[12 + r]);
+    const x = (c[0] / c[3] + 1) * 640, y = (1 - c[1] / c[3]) * 360, half = (L.text.length * 9.6 + 28) / 2;
+    const it = { L, a, x, y, half, lx: x + (L.dx || 0), ly: y + (L.dy || 0), auto: L.dx === undefined };
+    if (it.auto) { it.side = x < 830 ? -1 : 1; it.lx = x + it.side * (half + 70); it.ly = y - 40; }
+    items.push(it);
+  }
+  for (const side of [-1, 1]) {                      // spread each side's tags vertically
+    const col = items.filter(it => it.auto && it.side === side).sort((p, q) => p.ly - q.ly);
+    for (let k = 1; k < col.length; k++) col[k].ly = Math.max(col[k].ly, col[k - 1].ly + 36);
+    const lim = side < 0 ? 520 : 690;
+    for (let k = col.length - 1; k >= 0; k--) { col[k].ly = Math.min(col[k].ly, k === col.length - 1 ? lim : col[k + 1].ly - 36); col[k].ly = Math.max(col[k].ly, 70); }
+  }
+  let lines = '', labs = '';
+  for (const it of items) {
+    it.lx = clamp(it.lx, it.half + 8, 1272 - it.half);
+    if (it.ly > 530 && it.lx - it.half < 545) it.lx = 545 + it.half;      // not over the caption
+    const col = it.L.col;
+    lines += `<g opacity="${it.a}"><line x1="${it.x}" y1="${it.y}" x2="${it.lx}" y2="${it.ly - 2}" stroke="${col}" stroke-width="2.5"/><circle cx="${it.x}" cy="${it.y}" r="6" fill="none" stroke="${col}" stroke-width="3"/></g>`;
+    labs += `<div class="lab" style="left:${it.lx}px;top:${it.ly}px;border-color:${col};color:${col};opacity:${it.a}">${it.L.text}</div>`;
+  }
+  document.getElementById('lines').innerHTML = lines; document.getElementById('labs').innerHTML = labs;
+}
 function drawOne(d) {
-  gl.bindVertexArray(d.p.vao); gl.uniform3fv(uOff, d.off); gl.uniform3fv(uCol, d.p.col);
+  gl.bindVertexArray(d.p.vao); gl.uniform3fv(uOff, d.off); gl.uniform3fv(uCol, d.p.col); gl.uniform1f(uGrow, d.grow);
   gl.uniform1f(uAlpha, d.alpha); gl.uniform1f(uHi, d.hi); gl.uniform1f(uEmit, d.p.emit); gl.drawArrays(gl.TRIANGLES, 0, d.p.count);
 }
 window.ready = loadAll().then(() => ({ total: TOTAL, steps: STEPS.length }));

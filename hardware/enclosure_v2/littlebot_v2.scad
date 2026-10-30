@@ -18,7 +18,8 @@
 //    base_floor_mobile  floor for the wheel phase      shelf      electronics shelf
 //    well_cover  x2 wheel-well covers (stationary)
 //    front_blank / front_sonar   front plate (light bar; HC-SR04)   rear_blank / rear_usb  rear plate
-//    assembly, exploded, section_side, section_plan, charging   (preview only)
+//    assembly, exploded, section_side, section_plan, charging, cables   (preview only)
+//    hardware_list  echoes every screw and cable route (build.sh -> assembly_video/hardware.json)
 //
 //  Coordinates: x = width (viewer's right +x), y = depth (FRONT of the base at
 //  y = 0, back is +y), z = up (floor/table z = 0).
@@ -1074,6 +1075,143 @@ module assembly(explode = 0) {
 }
 
 // =============================================================================
+//  Screws and cables, as assembled (robot coordinates): the assembly video draws them (build.sh exports
+//  them to assembly_video/hardware.json), checks.scad runs every cable route against the parts, and the
+//  "cables" preview shows them inside the see-through shells.
+// =============================================================================
+function torso_pt(p) = p + [0, torso_y0, torso_z0];
+function head_pt(p) = p + [0, head_y0, head_z0];
+function rot_x(a) = [[1, 0, 0], [0, cos(a), -sin(a)], [0, sin(a), cos(a)]];
+function arm_m(s) = s < 0 ? [[0, 0, -1], [0, -1, 0], [-1, 0, 0]] : [[0, 0, 1], [0, 1, 0], [-1, 0, 0]];
+function arm_dir(s, v) = rot_x(-arm_neutral) * (arm_m(s) * v);            // as place_arm()
+function arm_pt(s, p) = [s * arm_inner_x, torso_y0 + shoulder_yt, torso_z0 + shoulder_zt] + arm_dir(s, p);
+
+// [step, what, d, length, head ("pan" / "csk"), where the head bears (pan) or the top of the countersink, the
+// direction it goes in]. The steps are the video's (assembly order in the README).
+function hw_screws() = concat(
+    [for (a = ring_screw_angles) ["ring", "M2.5 × 12", 2.5, 12, "pan", torso_pt([ring_screw_r * cos(a), neck_yt + ring_screw_r * sin(a), gear_z0 + 2.5]), [0, 0, 1]]],
+    [for (a = [0, 180]) ["head_servo", "horn screws", 2, 5, "pan", torso_pt([7.5 * cos(a + 7.5), pinion_yt + 7.5 * sin(a + 7.5), gear_z0 + 0.6]), [0, 0, 1]]],
+    [for (px = frame_pillar_x) ["head_servo", "M3 × 10", 3, 10, "pan", torso_pt([px, pinion_yt, hs_tab_top - sv_tab_t - frame_t]), [0, 0, 1]]],
+    [for (hx = [sv_hole_a, sv_hole_b]) ["head_servo", "servo screws", 2, 8, "pan", torso_pt([hx, pinion_yt, hs_tab_top]), [0, 0, -1]]],
+    [for (s = [-1, 1]) for (hy = [sv_hole_a, sv_hole_b]) ["arm_servos", "servo screws", 2, 8, "pan", torso_pt([s * (as_tab_top_x - sv_tab_t), shoulder_yt + hy, shoulder_zt]), [s, 0, 0]]],
+    [for (p = pi_hole_pts) ["stack", "M2.5 (UPS kit)", 2.5, 6, "pan", stk(p[0], p[1], stk_pi_w1), [0, -1, 0]]],
+    [for (p = pi_hole_pts) ["stack", "M3 × 12", 3, 12, "pan", stk(p[0], p[1], -mount_t), [0, 1, 0]]],
+    [for (h = pca_holes) ["pca", "M2.5 × 6", 2.5, 6, "pan", [pca_x0 + h[0], pca_y0_floor + h[1], floor_low + floor_low_t + pca_standoff + 1.6], [0, 0, -1]]],
+    [for (p = torso_fix_pts()) ["torso_on", "M3 × 10", 3, 10, "pan", [p[0], torso_y0 + p[1], base_top - base_top_t - 5], [0, 0, 1]]],
+    [for (p = base_corner_pts()) ["floor_in", "M3 × 12", 3, 12, "pan", [p[0], p[1], floor_low + 4], [0, 0, 1]]],
+    [for (s = [-1, 1]) for (u = [-1, 1]) for (zz = [well_low_z, well_screw_z]) ["covers", "M3 × 10 countersunk", 3, 10, "csk", [s * base_w/2, wheel_y + u * well_screw_u, zz], [-s, 0, 0]]],
+    [for (p = front_screw_pts()) ["covers", "M3 × 10 countersunk", 3, 10, "csk", [p[0], -bezel_t, p[1]], [0, 1, 0]]],
+    [for (p = rear_screw_pts()) ["covers", "M3 × 10 countersunk", 3, 10, "csk", [p[0], base_d + bezel_t, p[1]], [0, -1, 0]]],
+    // the back cover fits lip outwards (inwards the lip would hit the screw columns), so its countersinks
+    // face in: pan heads, through the lip
+    [for (s = [-1, 1]) for (zz = [22, 100]) ["torso_back", "M3 × 12", 3, 12, "pan", torso_pt([s * 44, torso_d + 1.6, zz]), [0, -1, 0]]],
+    [for (p = visor_screw_pts()) ["visor", "M2.5 × 6", 2.5, 6, "pan", head_pt([p[0], visor_back_y + 3, p[1]]), [0, -1, 0]]],
+    [for (p = visor_post_pts()) ["clamp", "M2.5 × 8", 2.5, 8, "pan", head_pt([p[0], carrier_y + carrier_t, p[1]]), [0, -1, 0]]],
+    [for (s = [-1, 1]) for (dz = [-ear_screw_dz, ear_screw_dz]) ["ears", "M3 × 20", 3, 20, "pan", head_pt([s * (head_w/2 - 11), ear_y, ear_z + dz]), [s, 0, 0]]],
+    [for (sx = [-1, 1]) for (sz = [-1, 1]) ["camera", "M2 × 6 + nut", 2, 6, "pan", head_pt([sx * 13.6, cam_board_y - 2.5, cam_z + sz * 13.6]), [0, 1, 0]]],
+    [for (s = [-1, 1]) ["camera", "M2 × 8", 2, 8, "pan", head_pt([s * 18, cam_board_y + 5.5, cam_z]), [s, 0, 0]]],
+    [for (p = pod_screw_pts) ["camera", "M3 × 10", 3, 10, "pan", head_pt([p[0], p[1], head_h - head_wall - 2]), [0, 0, 1]]],
+    [for (a = head_screw_angles) ["head_on", "M3 × 10", 3, 10, "pan", head_pt([head_screw_r * cos(a), head_neck_y + head_screw_r * sin(a), head_bottom_t]), [0, 0, -1]]],
+    [for (p = head_back_boss_pts()) ["back_cap", "M3 × 30 countersunk", 3, 30, "csk", head_pt([p[0], head_d, p[1]]), [0, -1, 0]]],
+    [for (s = [-1, 1]) for (a = [0, 180]) ["arms", "horn screws", 2, 5, "pan", arm_pt(s, [7.5 * cos(a), 7.5 * sin(a), 0]), arm_dir(s, [0, 0, 1])]],
+    [for (s = [-1, 1]) ["arms", "centre screw", 2.5, 6, "pan", arm_pt(s, [0, 0, horn_plate_t + 0.6]), arm_dir(s, [0, 0, -1])]]
+);
+module screw_shape(sc, s = 0) {
+    d = sc[2]; l = sc[3]; p = sc[5]; v = sc[6] / norm(sc[6]);
+    b = acos(v[2]); c = atan2(v[1], v[0]);                     // rotate +z onto v
+    translate(p) rotate([0, b, c]) {
+        cylinder(d = d - 2*s, h = l - s, $fn = 12);
+        if (sc[4] == "pan") translate([0, 0, -0.65 * d + s]) cylinder(d = 1.9 * d - 2*s, h = 0.65 * d - s + eps, $fn = 16);
+        else translate([0, 0, s]) cylinder(d1 = 2 * d - 2*s, d2 = d - 2*s, h = 0.55 * d, $fn = 16);
+    }
+}
+
+// Cables: [name, step, group, colour, diameter, label, route, plugs]. The route runs from where the cable
+// starts (the Pi or the UPS for most) to where it plugs in; plugs are boxes [lo, hi] at its ends. The video
+// draws each one growing along its route in its step; "group" says which assembly it moves with there.
+// HDMI, screen power, touch and camera are two pieces each, joined 15 mm above the head's floor: the body
+// piece hangs out of the neck until the head goes on.
+function neck_pt(o, z) = [o[0], neck_y + o[1], z];
+hw_join_z = head_z0 + 15;
+hw_neck = [["hdmi", [-4.5, 2.5]], ["power", [4.5, 3]], ["touch", [0, -5]], ["camera", [4.5, -3.5]]];
+function hw_no(n) = hw_neck[search([n], hw_neck)[0]][1];
+function sbox_pts(u0, u1, v0, v1, w0, w1) = [stk(u0, v1, w0), stk(u1, v0, w1)];     // a box in the stack frame -> [lo, hi]
+function hdr_box(u0, u1) = sbox_pts(u0 - 1.3, u1 + 1.3, pi_pin1[1] - 1.3, pi_pin1[1] + 2.54 + 1.3, stk_pi_w1 + 2.5, stk_pi_w1 + 16.5);   // Dupont housings
+function usb_box(v, h) = [stk(pi_l + 3, v + 8, stk_pi_w1 + h - 4), stk(pi_l + 21, v - 8, stk_pi_w1 + h + 4)];                       // USB-A plug in the Pi
+function pca_ch(k) = [pca_x0 + 12 + 2.54 * k, pca_y0_floor + pca_w - 4, floor_low + floor_low_t + pca_standoff + 1.6];          // servo channel k
+function servo_route(k, top, x) = concat(top, [[x, 95 - (x + 10) / 8, 78], [x, 95 - (x + 10) / 8, 67.2], [x, 70, 67.2], [x, 52, 67.3], [x, 44.5, 67.3], [x, 42, 60], [x, 40, 45],
+                                     pca_ch(k) + [0, 0, 16.5]]);
+pca_i2c = [pca_x0 + 1.9, pca_y0_floor + 10.6];           // the PCA9685's I2C input header (its other end chains on)
+function hw_cables() = let (
+    hdmi0 = stk(25.8, -0.5, stk_pi_w1 + 1.7), usba = stk(ups_ports[1][0], -0.8, stk_ups_w0 + ups_pcb_t + 3.5), cp = charge_port(),
+    tch = stk(35.07, 52.5, stk_pi_w1 + 16.5), i2c = stk(10.94, 52.5, stk_pi_w1 + 16.5),
+    cam_usb = stk(pi_l + 21, 29.1, stk_pi_w1 + 12), spk_usb = stk(pi_l + 21, 47, stk_pi_w1 + 4), mic_usb = stk(pi_l + 21, 47, stk_pi_w1 + 12),
+    hp = [lcd_x0 + lcd_hdmi_x, glass_y + lcd_stack + 10.5, lcd_z0 - 10])
+[
+    ["charging", "charge", "floor", "#2b2b2b", charge_cable_d, "charging: UPS USB-C -> socket at the back",
+        concat([cp + [0, 0, charge_plug[2]]], charge_path()), [[cp - [charge_plug[0]/2, charge_plug[1]/2, 0], cp + [charge_plug[0]/2, charge_plug[1]/2, charge_plug[2]]]]],
+    ["i2c", "pca", "floor", "#d4a017", 4, "I2C: Pi pins 1, 3, 5, 6 -> PCA9685",
+        [i2c, [-40, 134, 14], [-52, 128, 14], [-54, 100, 14], [-54, 52, 18], [-50, 40, 28], [-36, 28, 31], [pca_i2c[0], pca_i2c[1], 27.5]],
+        [hdr_box(7.13 + 1.3, 13.48), [[pca_i2c[0] - 1.3, pca_i2c[1] - 6.4, 13.5], [pca_i2c[0] + 1.3, pca_i2c[1] + 6.4, 27.5]]]],
+    ["hdmi", "cables_up", "none", "#1d1d1d", 5, "HDMI: Pi -> screen",
+        [hdmi0 + [0, 0, 20], [-12, 112, 100], [-8, 100, 140], [-5, 92, 170], neck_pt(hw_no("hdmi"), 180), neck_pt(hw_no("hdmi"), hw_join_z)],
+        [[hdmi0 - [5.5, 3.5, 0], hdmi0 + [5.5, 3.5, 20]]]],
+    ["power", "cables_up", "none", "#c0392b", 3.5, "screen power: UPS USB-A -> screen",
+        [usba + [0, 0, 28], [-8, 100, 120], [2, 94, 165], neck_pt(hw_no("power"), 180), neck_pt(hw_no("power"), hw_join_z)],
+        [[usba - [8, 4.25, 0], usba + [8, 4.25, 28]]]],
+    ["touch", "cables_up", "none", "#2e86de", 4, "touch: Pi pins 19-26 -> screen",
+        [tch, [-5, 134, 16], [-6, 134, 55], [-4, 128, 62], [-4, 120, 67], [-4, 117, 80], [-4, 105, 120], [-2, 90, 165], neck_pt(hw_no("touch"), 180), neck_pt(hw_no("touch"), hw_join_z)],
+        [hdr_box(31.26, 38.88)]],
+    ["camera", "cables_up", "none", "#7d3c98", 3.5, "camera: Pi USB -> camera",
+        [cam_usb, [73, 123, 42], [75, 122, 58], [68, 121, 66], [30, 119, 66], [24, 117, 76], [12, 105, 120], [7, 90, 165], neck_pt(hw_no("camera"), 180), neck_pt(hw_no("camera"), hw_join_z)],
+        [usb_box(29.1, 12)]],
+    ["speaker", "cables_body", "none", "#16a085", 3.5, "speaker -> Pi USB",
+        [torso_pt([spk_w/2 + 1.6, spk_y + spk_d/2, spk_z + spk_h/2]), torso_pt([50, 30, 62]), torso_pt([50, 60, 50]), torso_pt([40, 75, 20]), torso_pt([26, 90, 0]),
+         [28, 118.5, 66], [60, 120, 66], [72, 117, 58], [72, 116, 26], spk_usb], [usb_box(47, 4)]],
+    ["mic", "cables_body", "none", "#e67e22", 3.5, "mic -> Pi USB",
+        [torso_pt([mic_x0 + mic_body + 34, mic_y0 + mic_t/2, mic_zc]), torso_pt([14, 9, 100]), torso_pt([26, 12, 96]), torso_pt([28, 40, 88]), torso_pt([20, 70, 50]),
+         torso_pt([22, 88, 10]), [22, 116, 70], [26, 120, 66], [60, 123, 66], [76, 125, 50], [74, 124, 24], mic_usb], [usb_box(47, 12)]],
+    ["servo_head", "cables_body", "none", "#8d6e63", 2.4, "head servo -> PCA9685 channel 0",
+        servo_route(0, [torso_pt([sv_l - sv_shaft_off + 7.5, pinion_yt, hs_spline_z - sv_spline_h + 3.5]), torso_pt([26, 25, 88.8]), torso_pt([26, 40, 84]),
+                        torso_pt([14, 66, 40]), torso_pt([-10, 68, 14])], -10), [[pca_ch(0) - [1.3, 4, 0], pca_ch(0) + [1.3, 4, 16.5]]]],
+    ["servo_left", "cables_body", "none", "#8d6e63", 2.4, "left arm servo -> PCA9685 channel 1",
+        servo_route(1, [torso_pt([as_spline_x - 29, shoulder_yt + sv_l - sv_shaft_off + 7.5, shoulder_zt]), torso_pt([36, 72, 95]), torso_pt([20, 78, 60]), torso_pt([-6, 68.5, 6])], -6),
+        [[pca_ch(1) - [1.3, 4, 0], pca_ch(1) + [1.3, 4, 16.5]]]],
+    ["servo_right", "cables_body", "none", "#8d6e63", 2.4, "right arm servo -> PCA9685 channel 2",
+        servo_route(2, [torso_pt([-(as_spline_x - 29), shoulder_yt + sv_l - sv_shaft_off + 7.5, shoulder_zt]), torso_pt([-36, 72, 95]), torso_pt([-20, 78, 60]), torso_pt([-14, 67.5, 6])], -14),
+        [[pca_ch(2) - [1.3, 4, 0], pca_ch(2) + [1.3, 4, 16.5]]]],
+    // the head pieces (they go on with the head)
+    ["hdmi_head", "head_on", "head", "#1d1d1d", 5, "HDMI (right-angle plug)",
+        [neck_pt(hw_no("hdmi"), hw_join_z), head_pt([-9, 60, 22]), head_pt([hp[0], 56, hp[2]]), head_pt(hp)],
+        [[head_pt([hp[0] - 11, glass_y + lcd_stack - 1.9, lcd_z0 - 18]), head_pt([hp[0] + 11, glass_y + lcd_stack + 10, lcd_z0 + 1.7])]]],
+    ["power_head", "head_on", "head", "#c0392b", 3.5, "screen power (micro-USB)",
+        [neck_pt(hw_no("power"), hw_join_z), head_pt([-5, 62, 9]), head_pt([-35, 52, 14]), head_pt([-58, 40, 30]), head_pt([-65, 26, 42]), head_pt([-66.5, 16, 48.5]), head_pt([lcd_x0 - 20.5, 12.5, lcd_z0 + 10.1])],
+        [[head_pt([lcd_x0 - 20, glass_y + lcd_stack + 1.7 - 3.75, lcd_z0 + 10.1 - 5.5]), head_pt([lcd_x0 + 0.4, glass_y + lcd_stack + 1.7 + 3.75, lcd_z0 + 10.1 + 5.5])]]],
+    ["touch_head", "head_on", "head", "#2e86de", 4, "touch wires (pins 19-26)",
+        [neck_pt(hw_no("touch"), hw_join_z), head_pt([-9.5, 45, 25]), head_pt([-9.5, 40.5, 40]), head_pt([-9.5, 40.5, 88]), head_pt([-9.5, glass_y + lcd_stack + lcd_sock_h + 14.5, lcd_z0 + lcd_pin1[1] + 1.27])],
+        [[head_pt([lcd_x0 + 8.88 + 9 * 2.54 - 1.6, glass_y + lcd_stack + lcd_sock_h, lcd_z0 + lcd_pin1[1] - 1.6]), head_pt([lcd_x0 + 8.88 + 12 * 2.54 + 1.6, glass_y + lcd_stack + lcd_sock_h + 14, lcd_z0 + lcd_pin1[1] + 2.54 + 1.6])]]],
+    ["camera_head", "head_on", "head", "#7d3c98", 3.5, "camera (5-pin plug)",
+        [neck_pt(hw_no("camera"), hw_join_z), head_pt([7, 50, 40]), head_pt([9, 46, 100]), head_pt([9, 38, 124]), head_pt([9, 36, 136]), head_pt([20.5, 33, 137]),
+         head_pt([20.5, 21, 137]), head_pt([14.5, 19, 137.5]), head_pt([11, 13.8, 138]), head_pt([2, 13.8, cam_z - 12])],
+        [[head_pt([-6, 14, cam_z - 16]), head_pt([10, 26, cam_z - 8])]]]
+];
+module cable_route(c, s = 0) {
+    pts = c[6];
+    for (i = [0 : len(pts) - 2]) hull() for (q = [pts[i], pts[i + 1]]) translate(q) sphere(d = c[4] - 2*s, $fn = 10);
+}
+module cable_plugs(c) { for (b = c[7]) translate(b[0]) cube(b[1] - b[0]); }
+module hw_cable_colour(c) { color(c[3]) { cable_route(c); cable_plugs(c); } }
+// preview: the cables and the electronics inside the see-through shells
+module cables_view() {
+    %base_shell(); %place_torso() torso_shell(); %place_head() head_shell();
+    color("#d9d4c8") base_floor();
+    electronics();
+    place_head() color("#aab") screen_clamp();
+    for (c = hw_cables()) hw_cable_colour(c);
+    color("#3c434d") for (sc = hw_screws()) screw_shape(sc);
+}
+
+// =============================================================================
 //  Print layouts
 // =============================================================================
 module print_part(p) {
@@ -1132,6 +1270,8 @@ module charging_view() {
 section_cut = 0;
 if (part == "assembly") assembly(0);
 else if (part == "charging") charging_view();
+else if (part == "cables") cables_view();
+else if (part == "hardware_list") echo(hw = [hw_screws(), hw_cables()]);
 else if (part == "exploded") assembly(70);
 else if (part == "section_side") difference() { assembly(0); translate([section_cut, -50, -10]) cube([300, 400, 500]); }
 else if (part == "section_plan") difference() { assembly(0); translate([-200, -50, section_cut]) cube([400, 400, 500]); }

@@ -17,6 +17,12 @@ export -f render; export OUT SCAD
 printf '%s\n' "${PARTS[@]}" | xargs -P "${JOBS:-4}" -I{} bash -c 'render {}'
 files=(); for p in "${PARTS[@]}"; do files+=("$OUT/$p.stl"); done
 status=0; python3 stl_tools.py report "${files[@]}" || status=1
+if (($# == 0)); then   # every screw and cable route, for the assembly video
+    openscad -o "$OUT/hardware.echo" -D 'part="hardware_list"' "$SCAD" 2>/dev/null && python3 -c 'import json, re, sys
+d = json.loads(re.search(r"ECHO: hw = (.*)", open(sys.argv[1]).read()).group(1))
+json.dump(d, open(sys.argv[2], "w"), separators=(",", ":"), ensure_ascii=False)' "$OUT/hardware.echo" assembly_video/hardware.json || status=1
+    rm -f "$OUT/hardware.echo"
+fi
 (($# == 0)) && { python3 make_plates.py || status=1; }   # group the parts into build plates
 (($# == 0)) && { python3 pack_plates.py 256 || status=1; }   # fewer, fuller plates for a 256 mm bed (Bambu Lab)
 if (($# == 0)) && command -v xvfb-run >/dev/null; then
