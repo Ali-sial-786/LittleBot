@@ -31,6 +31,8 @@ if (($# == 0)) && command -v xvfb-run >/dev/null; then
     shot section_plan section_plan "0,76,60,0,0,0,700" 150 o &
     xvfb-run -a -s "-screen 0 1600x1200x24" openscad -q -o "$IMG/section_base.png" -D 'part="section_plan"' -D section_cut=45 \
         --imgsize=1100,1000 --camera="0,76,20,0,0,0,560" --colorscheme=Tomorrow --projection=o "$SCAD" &   # the Pi + UPS in the base
+    xvfb-run -a -s "-screen 0 1600x1200x24" openscad -q -o "$IMG/charging.png" -D 'part="charging"' \
+        --imgsize=1100,950 --camera="-2,112,48,45,0,180,440" --colorscheme=Tomorrow "$SCAD" &   # where the charger goes (labels face this view: charging_cam)
     wait
 fi
 exit $status

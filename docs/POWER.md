@@ -198,7 +198,9 @@ receives SIGTERM from systemd); holding it down forces power off - emergencies o
 
 > **Changed 2026-10-30:** the v2 enclosure now holds a **Waveshare UPS HAT (E)** (4 × 21700 cells)
 > in the base, with the Pi screwed onto it and powered through its pogo pins (5 V, 6 A
-> recommended). Charge through the **UPS's** USB-C (up to 40 W PD), never the Pi's. Section 8.1
+> recommended). Charge through the **UPS's** USB-C (up to 40 W PD), never the Pi's: in the robot,
+> a USB-C extension runs from the UPS's USB-C to the socket behind the base's rear slot, and the
+> charger plugs in there (`hardware/enclosure_v2/README.md`, *The Pi and the UPS in the base*). Section 8.1
 > (`PSU_MAX_CURRENT=5000`) applies to it as well: Waveshare's own instructions say the same.
 > The UPS reports its battery over I2C (address 0x2D, pins 3/5); LittleBot doesn't read it yet,
 > so the battery card stays empty until that reader is written. The 2S pack + RP2040-Zero

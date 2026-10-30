@@ -23,7 +23,7 @@ export -f one; export tmp
     if (($#)); then printf '%s\n' "$@"; else
     for c in electronics_vs_torso electronics_overlap torso_parts_vs_electronics frame_vs_servo pinion_vs_torso \
              gears_mesh_clear back_cover_vs_torso screen_vs_head ups_internal camera_vs_head bracket_vs_pod \
-             head_parts_overlap torso_vs_base base_parts_overlap electronics_vs_base sonar_vs_base \
+             head_parts_overlap torso_vs_base base_parts_overlap electronics_vs_base charge_cable_clear sonar_vs_base \
              wheels_vs_mobile_base; do echo "$c"; done
     for a in -60 -30 0 30 60; do echo "neck_vs_torso -D head_angle=$a"; echo "head_vs_torso -D head_angle=$a"; done
     # arm range -90..+100 degrees (+ = forwards/up): the arm never touches the torso and stays

@@ -22,9 +22,9 @@ The base also has room for the later phases: ESP32, TB6612FNG, TT gear motors + 
 |---|---|---|
 | ![side](images/side.png) | ![section](images/section_side.png) | ![plan](images/section_plan.png) |
 
-| The base from above (cut at z = 45 mm): PCA9685 at the front, the mounting wall, then the UPS (clear plate, cells, board) and the Pi with its cooler; the charging socket at the back |
-|---|
-| ![base](images/section_base.png) |
+| The base from above (cut at z = 45 mm): PCA9685 at the front, the mounting wall, then the UPS (clear plate, cells, board) and the Pi with its cooler; the charging socket at the back | Where the charger goes: the extension's plug in the **UPS's** USB-C (not the Pi's), its cable up through the cable hole and back down behind the cooler to the socket behind the rear plate's slot (base and torso hidden) |
+|---|---|
+| ![base](images/section_base.png) | ![charging](images/charging.png) |
 
 **Overall size:** 340 mm tall (about 35 cm, like the reference), base 176 × 152 mm, head 150 × 132 × 120 mm.
 - All parts fit a 220 × 220 × 250 mm bed.
@@ -39,7 +39,7 @@ v1 (`../enclosure/`) is smaller and simpler (212 mm, 11 parts). v2 is bigger, mo
 |---|---|
 | `littlebot_v2.scad` | the parametric model (all dimensions at the top) |
 | `stl/*.stl` | ready-to-slice parts, already in print orientation |
-| `checks.scad`, `run_checks.sh` | 69 automated interference and finger-pinch checks (head ±60°, arms −90…+100°) and a self-test that must find an overlap. A result with no volume (parts designed to touch) passes |
+| `checks.scad`, `run_checks.sh` | 70 automated interference and finger-pinch checks (head ±60°, arms −90…+100°) and a self-test that must find an overlap. A result with no volume (parts designed to touch) passes |
 | `build.sh`, `stl_tools.py` | rebuild the STLs and images. Report per part: size, watertight, number of separate bodies, bed fit, overhang area |
 | `assembly_video/` | `./make_video.sh` renders a video (about 2 minutes) of the assembly order below (every printed part in place, electronics as blocks): `assembly_video/build/LittleBot_assembly.mp4` |
 | `make_plates.py` → `plates/`, `pack_plates.py` → `plates_256/` | the parts grouped into print jobs: 9 for a 220 mm bed, 6 for a 256 mm bed (Bambu Lab) |
@@ -50,6 +50,7 @@ v1 (`../enclosure/`) is smaller and simpler (212 mm, 11 parts). v2 is bigger, mo
 - **`run_checks.sh`:** no part collides with any electronics dummy or other part.
   - The screen and what plugs into it (a right-angle HDMI plug, the micro-USB power plug, the touch wires) fit in the head without touching the head, the visor or the screen clamp (`screen_vs_head`).
   - The Pi + UPS stack and everything plugged into it (HDMI, USB-A and USB-C plugs up through the cable hole into the torso, a finger on the UPS switch, the Pi's USB plugs, the jumper plugs on the GPIO header), the PCA9685 and the charging socket fit the base, the new floor, the plates and the torso, and don't run into each other (`electronics_vs_base`, `ups_internal`). The stack's sizes are estimates from photos – see *Measure before you print*.
+  - The charging cable, from its plug in the UPS's USB-C up through the cable hole and back down behind the cooler to its socket, clears every part (`charge_cable_clear`).
   - The head turns ±60° (the servo's full range) without touching anything.
   - The arms move over −90…+100° without touching anything.
   - Over that arm range the arms stay **≥ 12 mm** from the head and the base.
@@ -159,7 +160,7 @@ Plates 01–03 were printed before the Pi and the UPS moved into the base (2026-
 | USB-A → micro-USB cable, 50 cm (a right-angle micro-USB plug helps) | 1 | the UPS's USB-A output → the screen's power socket |
 | male-to-female jumper wires, about 40 cm (e.g. three 20 cm wires joined, joints taped, kept out of the neck) | 6 (7) | touch: Pi pins 19, 21, 22, 23, 26 and ground (20) → the same pins in the screen's socket (and pin 1 → pin 1 if touch needs it) |
 | female-to-female jumper wires, 20 cm | 4 + 4 | Pi pins 1, 3, 5, 6 → PCA9685; the same pins → the UPS's battery-data header |
-| USB-C extension, male → female, 20–30 cm (socket end about 13 × 7 × 18 mm) | 1 | the UPS's USB-C → the holder behind the rear plate's slot: charge from the back. Zip-tie the socket into its holder |
+| USB-C extension, male → female, **20 cm** (15–30 cm works), rated 3 A / 60 W or more with USB-PD (e.g. one sold as "USB 3.1 / 100 W"); a straight, slim plug (moulding about 12 × 7 mm) and a socket end about 13 × 7 × 18 mm | 1 | **charging:** its plug goes into the **UPS's USB-C** (never the Pi's), its socket zip-ties into the holder behind the rear plate's slot, and the charger plugs in there (see *The Pi and the UPS in the base*) |
 | USB-A extension cable, male → female, 30–50 cm (socket end no bigger than about 18 × 9.5 mm) | 1 | Adafruit mini USB mic in the chest → Pi in the base |
 | **later:** 5.5 × 2.1 mm panel DC jack (8 mm hole) + mini toggle (6 mm hole) | 1 + 1 | separate 5 V servo supply ("SERVO 5V" on the back) |
 | **later:** 2 × 12-LED WS2812 rings (37 mm OD / 23 mm ID), ≤ 5 mm-wide addressable LED strip ~55 mm | | ears + light bar |
@@ -174,7 +175,7 @@ No longer needed since the Pi moved into the base: the micro-HDMI → HDMI "U" a
 | **Head** | **Screen:** the MPI3508 on its own (see *The screen in the head*). The glass sits in locating ribs on the back of the black visor, on 1 mm foam, HDMI socket pointing **down**; the **screen clamp** screws onto the visor's four posts and presses the screen's four PCB tabs forward, and its lower fingers hook under the lower tabs.<br>**Plugs:** a right-angle HDMI plug under the screen (its cable goes back, then down to the neck), the micro-USB power plug at the screen's wide-border end (viewer's left), the touch wires in socket pins 19–26.<br>**Ears:** LED-ring pockets; the wires go into the head through a hole under each ring.<br>**Back cap:** the 4 screws locate it.<br>**Camera:** in the top pod on a tilting bracket. Its cable drops into the head through a small hole, passes behind the screen clamp and goes down the neck to the Pi. |
 | **Neck** | Same geared turntable as v1. The head screws onto a coupler that turns on a hollow spigot (26 mm cable bore). A 36-tooth ring gear under the torso top is driven by a 24-tooth pinion in front of it, so the servo never carries the head and lifting by the head can't pull the shaft out. **Head = 0.67 × servo angle**: the servo's full range gives about ±60°, and all of it is collision-free. Up the bore: the HDMI cable, the screen's power cable, the touch wires and (down) the camera cable; leave slack for the head to turn. |
 | **Torso** | **Front:** speaker behind the pill-shaped chest grille (it matches the speaker's oval front, so both drivers are uncovered), in a cradle with zip-tie slots; the Adafruit mini USB mic lies flat in a sleeve behind the small holes (viewer's left), holes facing out, its plug pointing to the middle where the extension cable's socket plugs on.<br>**Top:** head servo on its frame, gear guard, one arm servo per side on a rib (spline through the side wall).<br>**Middle:** two columns support the top plate. Cables run between them: from the neck down to the base, and the speaker and mic cables down to the Pi. With the torso's back cover off, the UPS's switch is right below, in the cable hole. |
-| **Base** | **Pi + UPS** (see *The Pi and the UPS in the base*): on its side, hanging on the floor's mounting wall, its port edge up under the cable hole to the torso.<br>**Front:** PCA9685 on four M2.5 standoffs on the floor; sensor / light-bar plate.<br>**Rear:** the charging socket behind the rear plate's slot; the servo-supply jack + switch.<br>**Sides:** two wheel wells (covered for now).<br>**Air:** vent slots in the floor beside the cooler's exhaust; the cable hole lets warm air up into the torso and out of its back cover. |
+| **Base** | **Pi + UPS** (see *The Pi and the UPS in the base*): on its side, hanging on the floor's mounting wall, its port edge up under the cable hole to the torso.<br>**Front:** PCA9685 on four M2.5 standoffs on the floor; sensor / light-bar plate.<br>**Rear:** the charging socket behind the rear plate's slot (a USB-C extension from the UPS's USB-C); the servo-supply jack + switch.<br>**Sides:** two wheel wells (covered for now).<br>**Air:** vent slots in the floor beside the cooler's exhaust; the cable hole lets warm air up into the torso and out of its back cover. |
 
 All openings for sound, the mic and cooling are 3 mm or smaller. The camera aperture stays 17 mm with the lens right behind it. The cable slot is 16 × 8 mm, in a 4.6 mm plate.
 
@@ -196,7 +197,12 @@ The Pi 5 sits on the Waveshare UPS HAT (E) as Waveshare intends (its pogo pins p
 - **The Pi's USB-A / Ethernet end** points to the robot's left (+x); the camera, speaker and mic plug in there.
 - **The GPIO header** is on the lower edge: 20 cm female-to-female jumpers to the PCA9685 (front of the floor) and the UPS's battery-data header, and the touch wires, which go up through the cable hole.
 - **The floor sits lower** than before (3 mm above the table, inside the skirt) to make room for the stack on its side: about 64 mm between the floor and the base's top.
-- **Charging:** a short USB-C extension runs from the UPS's USB-C to a holder behind the rear plate's slot. Charge from the back; never through the Pi's own USB-C.
+- **Charging** goes into the **UPS's USB-C**, never the Pi's own USB-C, which stays empty. A 20 cm USB-C extension brings it to the back of the robot:
+  - **Its plug** goes into the UPS's USB-C: on the UPS board (the blue board between the cells and the Pi), beside the Pi's second micro-HDMI port, about 42 mm from the SD-card end. The Pi's own USB-C is on the Pi itself, in the corner by the SD card: leave it empty.
+  - **Its cable** goes up through the cable hole, turns over and comes back down behind the cooler: about 11 cm from plug to socket.
+  - **Its socket** zip-ties into the holder on the floor, right behind the rear plate's 16 × 8 mm slot. **The charger plugs in there**, from the back.
+  - Why not a hole straight onto the UPS's port: it sits on the edge that has to face up into the torso (the HDMI and screen-power cables plug in right beside it), so no outside wall is anywhere near it. With the extension, no printed part has to change.
+  - `images/charging.png` and step 9 of the video show it; `charge_cable_clear` checks the cable's path.
 - **The switch** is under the cable hole: take the torso's back cover off to reach it. Leaving it on and shutting down from the dashboard is the plan (software to come).
 - **Only the photos tell the stack's size so far:** check the *MEASURE* values below before printing the floor.
 
@@ -223,7 +229,8 @@ Plates 01–03 were already printed and are unchanged (the build checks every pa
 - **New floor** (`base_floor`, plate 04): lower, with the mounting wall, the PCA9685 standoffs (the shelf is no longer used), the charging-socket holder and vents.
 - **New screen clamp** (`screen_clamp`, plate 04) instead of the Pi carrier, with hooks so the screen can't slide down.
 - **Visor** (plate 05): two posts moved, clear of the micro-USB plug and the clamp's upper-right finger.
-- **Checks:** the head and base checks now cover the screen with its cables and the stack with its plugs (69 checks). `run_checks.sh` counts a zero-volume result (parts that only touch) as a pass, as it always meant to; newer OpenSCAD reports those touches as facets.
+- **Checks:** the head and base checks now cover the screen with its cables and the stack with its plugs (69 checks, 70 with the charging cable below). `run_checks.sh` counts a zero-volume result (parts that only touch) as a pass, as it always meant to; newer OpenSCAD reports those touches as facets.
+- **Charging cable** (later the same day; no printed part changed): the USB-C extension is now in the model, from its plug in the UPS's USB-C to its socket behind the rear plate's slot. It is checked against every part (`charge_cable_clear`), drawn in `images/charging.png` with the UPS's and the Pi's USB-C labelled, and has its own step in the video.
 
 ## What changed (2026-10-23)
 
@@ -251,6 +258,7 @@ These values come from drawings, listings or estimates. Check each with calipers
 | **`ups_ports`** | 12.5 / 28 / 42 | the UPS's switch, USB-A and USB-C: centre, measured from the Pi's microSD-card end. They must sit inside the cable hole (`stk_x0` moves the whole stack) |
 | `cooler_h` | 12.0 | Cooler fitted: height from the Pi PCB to the top of the fan housing / fins |
 | `usbc_sock` | 13 × 7 × 18 | the female end of your USB-C extension (width, height, length) |
+| `charge_plug` | 12.2 × 6.8 × 18 | your USB-C extension's plug moulding (width, thickness, length). It sits 14 mm from the screen-power cable's USB-A plug, so keep both slim |
 | `pi_pcb_t` | 1.4 | Pi PCB thickness at an edge (the drawing shows 1.4; some boards are 1.6) |
 | `cam_hole_sp` | 26…28.5 | Centre-to-centre of the camera board's M2 holes (measure edge-to-edge of two holes + one hole diameter). The bracket slots cover 26–28.5 |
 | `cam_board_y` | 26 | lens length: board front to the front of the lens, after focusing (the lens screws in and out) |
@@ -290,13 +298,13 @@ Then commit to the long prints: head, torso and base.
    1. Pi + Active Cooler onto the UPS as Waveshare shows; cells in, in the V1–V2–V3–V4 order.
    2. Swap the UPS's four bottom screws for M3 × 12 and screw the stack to the mounting wall through the wall and the clear plate (port edge up, the Pi's USB end to the left as seen from the front).
    3. PCA9685 onto its standoffs (4 × M2.5 × 6); jumpers from Pi pins 1, 3, 5, 6 to the PCA9685 and to the UPS's battery-data header.
-   4. USB-C extension: plug into the UPS's USB-C, zip-tie the socket end into the holder.
+   4. **Charging cable:** plug the USB-C extension into the **UPS's** USB-C (on the blue UPS board, beside the Pi's second micro-HDMI port), **not** the Pi's own USB-C (on the Pi, in the corner by the SD card). Zip-tie its socket into the holder, opening to the back. Leave the cable standing up in a loop above the plug: it goes up through the cable hole with the other cables.
    5. Plug the micro-HDMI cable, the screen's power cable (UPS USB-A) and the 6 touch wires (Pi header) in; they'll go up through the cable hole.
 6. **Torso onto the base:**
    1. Feed the HDMI cable, the screen's power cable and the touch wires up through the base's cable hole, the torso and the neck bore; the speaker, mic and (from the head) camera cables come down the same way.
    2. Fix the torso with 4 × M3 × 10 from inside the base, up into the torso's corner wedges.
    3. Fit the **floor** (4 × M3 × 12 from below) and plug the camera, speaker and mic into the Pi's USB ports.
-   4. Push in the **well covers** from outside (4 screws each) and fit the **front and rear plates** (2 screws each; the rear plate's slot lines up with the charging socket).
+   4. Push in the **well covers** from outside (4 screws each) and fit the **front and rear plates** (2 screws each; the rear plate's slot lines up with the charging socket). Plug the charger into the slot once to check that it goes all the way in and the UPS charges.
    5. Check the UPS switch is on, then close the torso back cover (4 × M3 × 12 countersunk).
 7. **Head:**
    1. Stick 1 mm foam tape around the window on the back of the visor and screw the visor into the face seat (4 × M2.5 × 6 from inside).

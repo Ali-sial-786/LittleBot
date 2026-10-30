@@ -15,7 +15,7 @@ Two complete designs. Both are parametric OpenSCAD models with ready-to-slice ST
 | Neck | geared turntable, head = 0.67 × servo | same |
 | Body | camera in the chest, speaker + PCA9685 on the floor plate | speaker + mic in the chest; Pi on its UPS battery, PCA9685, wheel wells, sensor/light-bar plate in the base |
 | Future phases | servo supply jack | wheels (TT motors), casters, HC-SR04, ESP32 + TB6612FNG, LED strips |
-| Checks | 48 | 69 (incl. 12 mm finger-pinch clearance for the arms) |
+| Checks | 48 | 70 (incl. 12 mm finger-pinch clearance for the arms, and the charging cable's path) |
 
 v1 is quicker to print and smaller. v2 is the more "toy-like" character and is ready for driving around later.
 

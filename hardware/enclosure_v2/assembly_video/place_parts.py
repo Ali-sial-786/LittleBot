@@ -2,7 +2,7 @@
 for the electronics, all in robot coordinates (mm, z up, front of the base at y = 0). Transforms are the
 inverse of print_part() followed by assembly() from littlebot_v2.scad.
 
-The derived positions below are copied from littlebot_v2.scad (2026-10-29): if you change a dimension
+The derived positions below are copied from littlebot_v2.scad (2026-10-30): if you change a dimension
 there, update them too (OpenSCAD's echo() prints most of them)."""
 import json, sys
 from pathlib import Path
@@ -120,6 +120,29 @@ add("cooler", cat(pi_box(6.5, 64, 9, 49, 0, 3), pi_box(7, 27.5, 9, 49, 0, 12), p
 zf = floor_low + 2.4
 add("pca9685", box(-31.115, 31.115, 10, 35.4, zf + 4, zf + 4 + 12), "#2a8a2a", "floor")
 add("usbc_socket", box(14 - 6.5, 14 + 6.5, 152 - 2.6 - 0.5 - 18, 152 - 2.6 - 0.5, 36 - 3.5, 36 + 3.5), "#333333", "floor")
+# the charging cable (charge_cable in littlebot_v2.scad): a USB-C extension from the UPS's USB-C, up through the
+# cable hole and back down behind the cooler to its socket
+def frame(d):
+    d = d / np.linalg.norm(d); a = np.array([1.0, 0, 0]) if abs(d[0]) < 0.9 else np.array([0, 1.0, 0])
+    u = np.cross(d, a); u /= np.linalg.norm(u); return u, np.cross(d, u)
+def rod(a, b, r, n=12):            # open cylinder from a to b
+    a, b = np.asarray(a, float), np.asarray(b, float); u, v = frame(b - a); t = []
+    ring = [r * (np.cos(k * 2 * np.pi / n) * u + np.sin(k * 2 * np.pi / n) * v) for k in range(n + 1)]
+    for k in range(n): t += [[a + ring[k], a + ring[k + 1], b + ring[k + 1]], [a + ring[k], b + ring[k + 1], b + ring[k]]]
+    return np.array(t)
+def ball(c, r, n=10, m=6):
+    c = np.asarray(c, float); pt = lambda i, j: c + r * np.array([np.sin(np.pi * j / m) * np.cos(2 * np.pi * i / n), np.sin(np.pi * j / m) * np.sin(2 * np.pi * i / n), np.cos(np.pi * j / m)])
+    return np.array([tri for i in range(n) for j in range(m) for tri in ([pt(i, j), pt(i, j + 1), pt(i + 1, j + 1)], [pt(i, j), pt(i + 1, j + 1), pt(i + 1, j)])])
+charge_port = np.array([stk_x0 + 42, stk_y0 + stk_ups_w0 + 1.6 + 1.7, stk_ztop + 0.8])   # mouth of the UPS's USB-C
+sock_back = np.array([14, 152 - 2.6 - 0.5 - 18, 36])
+p, q = charge_port, sock_back
+path = [p + [0, 0, 24], p + [0, 0, 30], p + [3, 8, 35], p + [6, 14, 30], p + [8, 16.5, 20], p + [8, 16.5, 1],
+        [q[0] - 2, q[1] - 6.4, p[2] - 2.2], [q[0] - 1, q[1] - 3.4, p[2] - 8.2], [q[0] - 0.5, q[1] - 3.4, q[2] + 6],
+        [q[0], q[1] - 3.5, q[2] + 1.5], [q[0], q[1] - 2.3, q[2]]]
+add("charge_cable", cat(box(p[0] - 6.1, p[0] + 6.1, p[1] - 3.4, p[1] + 3.4, p[2], p[2] + 18),                 # male end in the UPS's USB-C
+                        xf(cyl(5.5, 6, 16), I, p + [0, 0, 18]),                                                 # strain relief
+                        *[rod(path[k], path[k + 1], 2) for k in range(len(path) - 1)], *[ball(c, 2) for c in path]),
+    "#2b2b2b", "floor")
 
 manifest = []
 for name, tris, colour, group in parts:

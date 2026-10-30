@@ -12,11 +12,15 @@
   #title { color: #1d2430; font-size: 25px; font-weight: bold; margin-top: 3px; }
   #detail { color: #3b4452; font-size: 16px; line-height: 1.4; margin-top: 6px; }
   #bar { position: absolute; left: 0; bottom: 0; height: 5px; background: #c0632b; }
+  #labels, #lines { position: absolute; inset: 0; }
+  .lab { position: absolute; transform: translate(-50%, -100%); background: rgba(255,255,255,.95); border: 2.5px solid; border-radius: 10px;
+         padding: 5px 12px 6px; font-size: 17px; font-weight: bold; white-space: nowrap; box-shadow: 0 3px 12px rgba(30,40,60,.16); }
 </style></head>
 <body>
 <div id="bg"></div>
 <canvas id="c" width="1280" height="720"></canvas>
 <div id="brand"><b>LittleBot v2</b> &middot; how it goes together</div>
+<div id="labels"><svg id="lines" width="1280" height="720"></svg><div id="labs"></div></div>
 <div id="cap"><div id="num"></div><div id="title"></div><div id="detail"></div></div>
 <div id="bar"></div>
 <script>
@@ -70,7 +74,7 @@ async function loadAll() {
 
 // ---------- the story ----------
 const TORSO_G = ['torso','torso_back','coupler','ring_gear','pinion','servo_frame','head_servo','arm_servo_left','arm_servo_right','speaker','mic'];
-const FLOOR_G = ['base_floor','ups_plate','ups_cells','ups_board','ups_standoffs','pi','pi_ports','cooler','pca9685','usbc_socket'];
+const FLOOR_G = ['base_floor','ups_plate','ups_cells','ups_board','ups_standoffs','pi','pi_ports','cooler','pca9685','usbc_socket','charge_cable'];
 const HEAD_G = ['head','head_back','visor','ear_left','ear_right','camera_pod','camera_bracket','camera_board','screen_glass','screen_pcb','screen_clamp'];
 const ROBOT = { t: [0, 76, 190], az: -28, el: 16, d: 980 };
 // each step: parts it installs and where they come from (offset, mm); camera; see-through shells
@@ -91,13 +95,18 @@ const STEPS = [
   { title: 'Pi + UPS onto the mounting wall', detail: 'Pi and cooler onto the UPS as Waveshare shows, cells in V1\u2013V4 order. Swap the UPS\u2019s 4 bottom screws for M3 \u00d7 12 and screw it to the wall through the clear plate, ports up.',
     add: { ups_plate: [0, 90, 0], ups_cells: [0, 90, 0], ups_board: [0, 90, 0], ups_standoffs: [0, 90, 0], pi: [0, 90, 0], pi_ports: [0, 90, 0], cooler: [0, 90, 0] },
     view: { t: [0, 95, -85], az: 140, el: 28, d: 520 } },
-  { title: 'Servo board and charging socket', detail: 'PCA9685 onto its standoffs (4 \u00d7 M2.5 \u00d7 6). USB-C extension into the UPS, its socket zip-tied into the holder. Plug in the HDMI and screen-power cables and the jumpers.',
-    add: { pca9685: [0, 0, 60], usbc_socket: [0, 0, 60] }, view: { t: [0, 80, -90], az: -30, el: 38, d: 540 } },
+  { title: 'Servo board', detail: 'PCA9685 onto its standoffs (4 \u00d7 M2.5 \u00d7 6). Plug in the HDMI and screen-power cables and the jumper wires.',
+    add: { pca9685: [0, 0, 60] }, view: { t: [0, 80, -90], az: -30, el: 38, d: 540 } },
+  { title: 'Charging cable into the UPS', detail: 'USB-C extension: its plug goes into the UPS\u2019s USB-C (on the blue UPS board, beside the Pi\u2019s second HDMI port), not into the Pi\u2019s own USB-C. Zip-tie its socket into the holder at the back.',
+    add: { charge_cable: [0, 0, 70], usbc_socket: [0, 70, 0] }, dur: 6.0,
+    labels: [{ at: [2, 102.3, 72], text: 'UPS USB-C: charging \u2713', col: '#17803a', dx: -170, dy: -150 },
+             { at: [-28.8, 113.6, 64.9], text: 'Pi USB-C: leave empty \u2717', col: '#c0392b', dx: 150, dy: -110 }],
+    view: { t: [-8, 112, -64], az: 158, el: 34, d: 310 } },
   { title: 'Torso onto the base', detail: 'Feed the screen\u2019s cables up through the base\u2019s cable hole and the torso, then screw the torso on: 4 \u00d7 M3 \u00d7 10 from inside the base.',
     add: { base: [0, 0, -40] }, torsoDown: true, view: { t: [0, 76, 40], az: -30, el: 14, d: 940 } },
   { title: 'Floor into the base', detail: 'From below: 4 \u00d7 M3 \u00d7 12. Plug the camera, speaker and mic into the Pi\u2019s USB ports.',
     floorIn: true, see: { base: 0.22 }, view: { t: [0, 76, 25], az: -32, el: 6, d: 700 } },
-  { title: 'Side covers and plates', detail: 'Wheel-well covers (4 screws each), the light-bar plate at the front and the cable plate at the back (2 screws each): its slot lines up with the charging socket.',
+  { title: 'Side covers and plates', detail: 'Wheel-well covers (4 screws each), the light-bar plate at the front and the cable plate at the back (2 screws each). Its slot lines up with the charging socket: the charger plugs in there.',
     add: { well_cover_left: [-70, 0, 0], well_cover_right: [70, 0, 0], front_plate: [0, -70, 0], rear_plate: [0, 70, 0] }, view: { t: [0, 76, 40], az: -42, el: 18, d: 600 } },
   { title: 'Torso back cover', detail: 'Switch the UPS on first: it sits under the cable hole. Then 4 \u00d7 M3 \u00d7 12 countersunk.',
     add: { torso_back: [0, 80, 0] }, view: { t: [0, 100, 130], az: 145, el: 16, d: 640 } },
@@ -160,6 +169,8 @@ function render(t) {
   const capA = clamp(Math.min(u / 0.35, (s.dur - u) / 0.25));
   document.getElementById('cap').style.opacity = s.outro ? 1 : capA;
   document.getElementById('bar').style.width = (100 * t / TOTAL).toFixed(2) + '%';
+  const labA = s.labels ? clamp(Math.min((u - 2.0) / 0.4, (s.dur - 0.25 - u) / 0.25)) : 0;
+  document.getElementById('labels').style.opacity = labA;
   // camera
   const v = viewAt(i, u), az = v.az * Math.PI / 180, el = v.el * Math.PI / 180;
   const eye = V.add(v.t, V.mul([Math.sin(az) * Math.cos(el), -Math.cos(az) * Math.cos(el), Math.sin(el)], v.d));
@@ -170,6 +181,15 @@ function render(t) {
   gl.enable(gl.DEPTH_TEST); gl.disable(gl.CULL_FACE);
   gl.uniformMatrix4fv(uVP, false, VP); gl.uniform3fv(uEye, eye);
   const torsoOff = groupMove(i, u, TORSO_DOWN, TORSO_UP), headOff = groupMove(i, u, HEAD_DOWN, HEAD_UP), floorOff = groupMove(i, u, FLOOR_IN, FLOOR_OUT);
+  // labels pinned to points on the floor unit (they move with it), once the parts have arrived
+  let lines = '', labs = '';
+  if (labA > 0) for (const L of s.labels) {
+    const w = V.add(L.at, floorOff), c = [0, 1, 2, 3].map(r => VP[r] * w[0] + VP[4 + r] * w[1] + VP[8 + r] * w[2] + VP[12 + r]);
+    const x = (c[0] / c[3] + 1) * 640, y = (1 - c[1] / c[3]) * 360, lx = x + L.dx, ly = y + L.dy;
+    lines += `<line x1="${x}" y1="${y}" x2="${lx}" y2="${ly}" stroke="${L.col}" stroke-width="2.5"/><circle cx="${x}" cy="${y}" r="7" fill="none" stroke="${L.col}" stroke-width="3"/>`;
+    labs += `<div class="lab" style="left:${lx}px;top:${ly}px;border-color:${L.col};color:${L.col}">${L.text}</div>`;
+  }
+  document.getElementById('lines').innerHTML = lines; document.getElementById('labs').innerHTML = labs;
   const draws = [];
   for (const name in P) {
     let off = [0, 0, 0], alpha = 1, hi = 0;

@@ -18,7 +18,7 @@
 //    base_floor_mobile  floor for the wheel phase      shelf      electronics shelf
 //    well_cover  x2 wheel-well covers (stationary)
 //    front_blank / front_sonar   front plate (light bar; HC-SR04)   rear_blank / rear_usb  rear plate
-//    assembly, exploded, section_side, section_plan   (preview only)
+//    assembly, exploded, section_side, section_plan, charging   (preview only)
 //
 //  Coordinates: x = width (viewer's right +x), y = depth (FRONT of the base at
 //  y = 0, back is +y), z = up (floor/table z = 0).
@@ -343,18 +343,20 @@ module pi_box(x0, x1, z0, z1, h0, h1, s = 0) { sbox(x0, x1, z0, z1, stk_pi_w1 + 
 function stk_plate_v0() = -(ups_plate[1] - ups_w) / 2;
 module ups_stack(s = 0) {
     pv0 = stk_plate_v0();
-    sbox(-(ups_plate[0] - ups_l) / 2, ups_l - (ups_plate[0] - ups_l) / 2, pv0, ups_w - pv0, 0, ups_plate_t, s);   // clear plate
-    sbox(2, ups_l - 2, 4, ups_w - 4, ups_plate_t, stk_ups_w0, s);                                                    // cells + holders
-    for (p = pi_hole_pts) translate(stk(p[0], p[1], ups_plate_t)) rotate([-90, 0, 0]) cylinder(d = 5.8 - 2*s, h = stk_pi_w0 - ups_plate_t, $fn = 6);   // brass standoffs
-    sbox(0, ups_l, 0, ups_w, stk_ups_w0, stk_ups_w0 + ups_pcb_t, s);                                                 // UPS board
-    for (pt = ups_ports) sbox(pt[0] - pt[1]/2, pt[0] + pt[1]/2, -0.8, 9, stk_ups_w0 + ups_pcb_t, stk_ups_w0 + ups_pcb_t + pt[2], s);
-    sbox(0, pi_l, 0, pi_wd, stk_pi_w0, stk_pi_w1, s);                                                                // the Pi
-    pi_box(7.13, 57.93, 50.02, 55.0, 0, 8.57, s);                                                                    // GPIO header
-    pi_box(69.5, pi_l + 3, 2, 54, 0, 15.8, s);                                                                       // USB-A + Ethernet
-    for (x = [25.8, 39.2]) pi_box(x - 3.75, x + 3.75, -0.5, 7.5, 0, 3.4, s);                                         // micro-HDMI
-    pi_box(11.2 - 4.5, 11.2 + 4.5, -0.5, 7.5, 0, 3.2, s);                                                            // USB-C (unused: power comes from the pogo pins)
-    pi_box(-2.5, 12, 22.7, 33.7, -pi_pcb_t - 1.6, -pi_pcb_t, s);                                                     // microSD card
-    pi_box(6.5, 64, 9.0, 49, 0, 3, s); pi_box(7.0, 27.5, 9.0, 49, 0, cooler_h, s); pi_box(27.5, 64, 18, 49, 0, cooler_h, s);   // Active Cooler
+    color("#cfe3ea") sbox(-(ups_plate[0] - ups_l) / 2, ups_l - (ups_plate[0] - ups_l) / 2, pv0, ups_w - pv0, 0, ups_plate_t, s);   // clear plate
+    color("#e8742c") sbox(2, ups_l - 2, 4, ups_w - 4, ups_plate_t, stk_ups_w0, s);                                   // cells + holders
+    color("#c9a74a") for (p = pi_hole_pts) translate(stk(p[0], p[1], ups_plate_t)) rotate([-90, 0, 0]) cylinder(d = 5.8 - 2*s, h = stk_pi_w0 - ups_plate_t, $fn = 6);   // brass standoffs
+    color("#2a5caa") sbox(0, ups_l, 0, ups_w, stk_ups_w0, stk_ups_w0 + ups_pcb_t, s);                                // UPS board
+    color("#c0c0c8") for (pt = ups_ports) sbox(pt[0] - pt[1]/2, pt[0] + pt[1]/2, -0.8, 9, stk_ups_w0 + ups_pcb_t, stk_ups_w0 + ups_pcb_t + pt[2], s);
+    color("#1a9a55") sbox(0, pi_l, 0, pi_wd, stk_pi_w0, stk_pi_w1, s);                                               // the Pi
+    color("#222") pi_box(7.13, 57.93, 50.02, 55.0, 0, 8.57, s);                                                      // GPIO header
+    color("#c0c0c8") {
+        pi_box(69.5, pi_l + 3, 2, 54, 0, 15.8, s);                                                                   // USB-A + Ethernet
+        for (x = [25.8, 39.2]) pi_box(x - 3.75, x + 3.75, -0.5, 7.5, 0, 3.4, s);                                     // micro-HDMI
+        pi_box(11.2 - 4.5, 11.2 + 4.5, -0.5, 7.5, 0, 3.2, s);                                                        // USB-C (unused: power comes from the pogo pins)
+    }
+    color("#333") pi_box(-2.5, 12, 22.7, 33.7, -pi_pcb_t - 1.6, -pi_pcb_t, s);                                       // microSD card
+    color("#8a8f98") { pi_box(6.5, 64, 9.0, 49, 0, 3, s); pi_box(7.0, 27.5, 9.0, 49, 0, cooler_h, s); pi_box(27.5, 64, 18, 49, 0, cooler_h, s); }   // Active Cooler
 }
 // what plugs into the stack: up through the cable hole (HDMI to the screen, USB-A to the screen's power,
 // USB-C for charging, a finger on the switch), the Pi's USB-A plugs (camera, speaker, mic) and the jumper
@@ -370,9 +372,26 @@ module ups_plug(i, s = 0) {   // 0 micro-HDMI, 1 USB-A, 2 USB-C, 3 switch, 4 the
 }
 module ups_plugs(s = 0) { for (i = [0:5]) ups_plug(i, s); }
 module pca_floor(s = 0) { translate([pca_x0 + s, pca_y0_floor + s, floor_low + floor_low_t + pca_standoff + s]) cube([pca_l - 2*s, pca_w - 2*s, 12 - 2*s]); }
-// the female end of a USB-C extension, held behind the rear plate's charging slot (MEASURE: about 13 x 7 x 18 mm)
-usbc_sock = [13, 7, 18];
+// Charging: a USB-C extension (male -> female). Its male end goes into the UPS's USB-C (on the UPS board, beside
+// the Pi's second micro-HDMI port), never into the Pi's own USB-C (on the Pi, by the SD card: it stays
+// empty). The cable loops up through the cable hole and back down behind the cooler to its female end, held
+// behind the rear plate's slot: the charger plugs in there.
+usbc_sock = [13, 7, 18];               // MEASURE the female end: width, height, length
+charge_plug = [12.2, 6.8, 18];         // MEASURE the male end's moulding: along the port, across it, length
+charge_cable_d = 4;
 module usbc_socket(s = 0) { translate([rear_x - usbc_sock[0]/2 + s, base_d - base_wall - 0.5 - usbc_sock[2] + s, rear_z - usbc_sock[1]/2 + s]) cube(usbc_sock - [2*s, 2*s, 2*s]); }
+function charge_port() = stk(ups_ports[2][0], -0.8, stk_ups_w0 + ups_pcb_t + ups_ports[2][2] / 2);   // mouth of the UPS's USB-C
+function charge_path() = let (p = charge_port(), q = [rear_x, base_d - base_wall - 0.5 - usbc_sock[2], rear_z]) [
+    p + [0, 0, charge_plug[2] + 6], p + [0, 0, 30], p + [3, 8, 35], p + [6, 14, 30], p + [8, 16.5, 20], p + [8, 16.5, 1],
+    [q[0] - 2, q[1] - 6.4, p[2] - 2.2], [q[0] - 1, q[1] - 3.4, p[2] - 8.2], [q[0] - 0.5, q[1] - 3.4, q[2] + 6],
+    [q[0], q[1] - 3.5, q[2] + 1.5], [q[0], q[1] - charge_cable_d/2 - 0.3, q[2]]];
+module charge_cable(s = 0) {
+    p = charge_port();
+    translate(p + [-charge_plug[0]/2 + s, -charge_plug[1]/2 + s, s]) cube(charge_plug - [2*s, 2*s, 2*s]);   // male end
+    translate(p + [0, 0, charge_plug[2] - eps]) cylinder(d = 5.5 - 2*s, h = 6, $fn = 16);                   // strain relief
+    pts = charge_path();
+    for (i = [0 : len(pts) - 2]) hull() for (q = [pts[i], pts[i + 1]]) translate(q) sphere(d = charge_cable_d - 2*s, $fn = 12);
+}
 
 // Stationary floor for the Pi + UPS stack. It sits lower than before (3 mm above the table, inside
 // the skirt) to give the stack, on its side, room under the base's top. Columns carry it up to the
@@ -1015,9 +1034,10 @@ module electronics() {
         color("#0a0a0a") screen_dummy();
         color("#844") translate([-cam_board/2, cam_board_y, cam_z - cam_board/2]) cube([cam_board, 1.6, cam_board]);
     }
-    color("#1a5") ups_stack();                                  // Pi 5 on the UPS HAT (E), on its side in the base
+    ups_stack();                                                // Pi 5 on the UPS HAT (E), on its side in the base
     color("#2a2") pca_floor();                                  // PCA9685 at the front of the floor
     color("#333") usbc_socket();                                // charging socket behind the rear plate
+    color("#333") charge_cable();                               // ... and its cable, into the UPS's USB-C
 }
 
 module place_arm(s, a = arm_neutral) {
@@ -1085,8 +1105,33 @@ module print_part(p) {
     else if (p == "arm_right")   arm_right();
 }
 
+// Preview: where the charger goes. The floor with the Pi + UPS (as it sits in the base), the USB-C extension
+// from the UPS's USB-C to its socket, the rear wall with the plate whose slot the charger plugs into.
+charging_cam = [45, 0, 180];           // the view's rotation (build.sh renders it from there): labels face it
+module label(t, at, to = undef, size = 4.5) {
+    translate(at) rotate(charging_cam) linear_extrude(0.6) text(t, size = size, halign = "center", valign = "bottom", font = "DejaVu Sans:style=Bold");
+    if (!is_undef(to)) hull() { translate(at - [0, 0, 1]) sphere(d = 1, $fn = 8); translate(to) sphere(d = 1, $fn = 8); }
+}
+module charging_view() {
+    color("#d9d4c8") base_floor();
+    ups_stack();
+    color("#2a2") pca_floor();
+    color("#333") { usbc_socket(); charge_cable(); }
+    %intersection() { base_shell(); translate([-100, base_d - 12, -1]) cube([200, 20, 64]); }               // the base's rear wall (see-through)
+    color("#e8e4da") place_rear_plate() port_plate(rear_w, rear_h, "rear_usb");
+    color("#777") translate([rear_x, base_d - base_wall - 0.5, rear_z]) {                                     // the charger's plug
+        translate([-charge_plug[0]/2, 0, -charge_plug[1]/2]) cube([charge_plug[0], charge_plug[2] + 4, charge_plug[1]]);
+        hull() { translate([0, charge_plug[2] + 4, 0]) rotate([-90, 0, 0]) cylinder(d = 4, h = 6, $fn = 12); translate([12, charge_plug[2] + 24, -24]) sphere(d = 4, $fn = 12); }
+    }
+    p = charge_port(); pi_c = stk(11.2, -0.5, stk_pi_w1 + 1.6);
+    color("#17803a") { label("UPS USB-C: charging", p + [36, -10, 58]); label("the extension plugs in here", p + [36, -10, 52], p + [0, 0, 24], size = 3.6); }
+    color("#c0392b") label("Pi USB-C: leave empty", pi_c + [-22, -10, 44], pi_c + [0, 0, 1]);
+    color("#17803a") { label("your charger", [-58, base_d + 10, rear_z + 4]); label("plugs in here", [-58, base_d + 15, rear_z - 1], [rear_x - charge_plug[0]/2 - 1, base_d + 14, rear_z]); }
+}
+
 section_cut = 0;
 if (part == "assembly") assembly(0);
+else if (part == "charging") charging_view();
 else if (part == "exploded") assembly(70);
 else if (part == "section_side") difference() { assembly(0); translate([section_cut, -50, -10]) cube([300, 400, 500]); }
 else if (part == "section_plan") difference() { assembly(0); translate([-200, -50, section_cut]) cube([400, 400, 500]); }

@@ -98,6 +98,10 @@ if (check == "base_parts_overlap")    union() {
 if (check == "electronics_vs_base")   intersection() { union() { base_parts(); place_torso() torso_shell(); place_rear_plate() port_plate(rear_w, rear_h, "rear_usb");
     place_front_plate() port_plate(front_w, front_h, "blank"); for (k = [-1, 1]) place_well_cover(k) well_cover(); }
     base_electronics_s(); }
+// the charging cable (a USB-C extension) from the UPS's USB-C to its socket behind the rear plate: clear of the
+// printed parts (base, floor, torso and its back cover, rear plate) and of everything else in the base
+if (check == "charge_cable_clear")    intersection() { charge_cable(s); union() { base_parts(); place_torso() { torso_shell(); translate([-46 + clr, torso_d - torso_wall, 0]) torso_back(); }
+    place_rear_plate() port_plate(rear_w, rear_h, "rear_usb"); ups_stack(s); for (i = [0, 1, 3, 4, 5]) ups_plug(i, s); pca_floor(s); usbc_socket(s); } }
 if (check == "sonar_vs_base")         intersection() { union() { base_parts(); place_front_plate() port_plate(front_w, front_h, "sonar"); } sonar_s(); }
 if (check == "wheels_vs_mobile_base") intersection() { union() { base_shell(); base_floor(true); place_torso() torso_shell(); } wheels_s(); }
 if (check == "arms_vs_torso")         intersection() { place_torso() torso_shell(); arms_at(arm_angle); }
