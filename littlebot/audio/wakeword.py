@@ -217,6 +217,23 @@ def match_wake_phrase(result: dict[str, Any], phrases: Sequence[tuple[str, tuple
     return None
 
 
+NEAR_WORDS = ("little", "lil")  # a sentence with one of these and no wake phrase: logged as a near miss
+
+
+def _note_near_miss(result: dict[str, Any]) -> None:
+    """"hey little bot" heard as something else ("a little but", "hey little boat"): the word before "little" to
+    the one after, with the recogniser's confidences, for the log. They are words of its grammar (the wake
+    phrases, DISTRACTOR_WORDS, [unk]), never dictation (a parent said it misses some, 2026-10-29)."""
+    items = [w for w in result.get("result") or [] if isinstance(w, dict)]
+    toks = [str(w.get("word", "")).lower() for w in items]
+    i = next((n for n, t in enumerate(toks) if t in NEAR_WORDS), None)
+    if i is None:
+        return
+    lo, hi = max(0, i - 1), min(len(toks), i + 2)
+    confs = "/".join(f"{float(items[n].get('conf', 1.0)):.2f}" for n in range(lo, hi))
+    log.info("wake word: no wake phrase in '%s' (word confidence %s)", " ".join(toks[lo:hi]), confs)
+
+
 def wake_phrase_end(result: dict[str, Any], words: Sequence[str],
                     min_confidence: float = 0.0) -> tuple[float | None, int]:
     """(Where the wake phrase ``words`` ends in a recogniser result, in the recogniser's seconds; how many
@@ -780,6 +797,7 @@ class WakeWordService(Service):
         """A wake phrase heard, but a word of it below ``wake.min_confidence``: say so in the log (else silent)."""
         heard = match_wake_phrase(result, self._phrases, 0.0)
         if heard is None:
+            _note_near_miss(result)
             return
         words = [w for w in result.get("result") or [] if isinstance(w, dict)]
         confs = [float(w.get("conf", 1.0)) for w in words if str(w.get("word", "")).lower() in heard.split()]

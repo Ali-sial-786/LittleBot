@@ -291,6 +291,18 @@ async def test_a_wake_phrase_heard_but_not_sure_enough_is_logged(rig, caplog):
     assert r.live.calls == []
 
 
+async def test_hey_little_bot_heard_as_something_else_is_logged(rig, caplog):
+    caplog.set_level(logging.INFO, logger="littlebot.wake")
+    r = await rig()
+    await _listening(r)
+    r.rec.say("so a little but here")
+    await until(lambda: "no wake phrase" in caplog.text, what="the near-miss line")
+    assert "wake word: no wake phrase in 'a little but' (word confidence 1.00/1.00/1.00)" in caplog.text
+    r.rec.say("what time is it")  # nothing like it: not logged
+    await asyncio.sleep(0.3)
+    assert caplog.text.count("no wake phrase") == 1 and r.live.calls == []
+
+
 async def test_a_microphone_giving_only_silence_is_logged(rig, caplog, monkeypatch):
     from littlebot.audio import wakeword
 
