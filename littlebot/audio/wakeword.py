@@ -448,13 +448,9 @@ class WakeWordService(Service):
         return str(p)
 
     def _live_active(self) -> bool:
-        live = self.ctx.live
-        if live is None:
-            return False
-        try:
-            return bool(live.status().get("active"))
-        except Exception:  # noqa: BLE001
-            return False
+        from littlebot.assistant import voice_active  # noqa: PLC0415
+
+        return voice_active(self.ctx)  # GPT-Live or the assistant (littlebot/assistant)
 
     def _pause_reason(self) -> str | None:
         """Why the listener must not listen right now (a PAUSE_TEXT code), or None."""
@@ -975,12 +971,15 @@ class WakeWordService(Service):
                 if video is not None:
                     await self._speaker_free()
                 await self._play(self.cfg.sound)
-            live = ctx.live
+            from littlebot.assistant import voice_front  # noqa: PLC0415
+
+            live = voice_front(ctx)  # the assistant (assistant.pipeline) or GPT-Live
             if live is None:
                 res: dict[str, Any] = {"ok": False, "error": "unavailable",
                                        "detail": "Live voice isn't available on this robot."}
             else:
-                log.info("wake word: starting live voice")
+                log.info("wake word: starting %s", "the assistant" if live is getattr(ctx, "assistant", None)
+                         else "live voice")
                 res = await live.start_session(parent_present=True, carry=carry)
             if res.get("ok"):
                 started = True  # the call has the carry now (it drops it when it ends)

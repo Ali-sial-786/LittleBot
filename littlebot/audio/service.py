@@ -896,6 +896,25 @@ class AudioService(Service):
             return False  # stop_output() was pressed while the voice was being prepared
         return await self._enqueue(_Item("speech", clean, samples, sr), wait=True)
 
+    async def play_speech(self, samples: np.ndarray, sample_rate: int, text: str = "", *, wait: bool = True) -> bool:
+        """Speak audio that is already made (the assistant's cloud voice, littlebot/assistant): as ``say``, with the
+        same events, mouth, volume and stop, but no text-to-speech here."""
+        x = dsp.as_mono_float(np.asarray(samples, dtype=np.float32))
+        if not len(x):
+            return True
+        self._ensure_ready()
+        if isinstance(self._out, NullOutput):
+            return False
+        return await self._enqueue(_Item("speech", clean_text(text) or "speech", x, int(sample_rate)), wait=wait)
+
+    def sound_samples(self, name: str) -> tuple[np.ndarray, int] | None:
+        """A sound effect's samples (``SOUND_NAMES``), for a stream that isn't this service's (the assistant's call
+        audio plays its game sounds itself). None: unknown."""
+        try:
+            return self._bank.cached(name) or self._bank.get(name)
+        except Exception:  # noqa: BLE001
+            return None
+
     def _recorded_line(self, text: str) -> tuple[np.ndarray, int, str] | None:
         """The recording of ``text`` in the ChatGPT voice (data/voice_lines), padded like spoken text."""
         hit = self._voice_lines.get(text) if self._voice_lines is not None else None

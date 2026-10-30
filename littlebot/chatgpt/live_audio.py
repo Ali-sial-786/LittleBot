@@ -377,6 +377,7 @@ class LiveAudio:
         self._in_resampler: Any = None
         self._pcm = np.zeros(0, dtype=np.int16)  # microphone audio at 48 kHz not yet sent
         self._out_resampler: Any = None
+        self._pcm_resampler: tuple[int, Any] | None = None  # play_pcm's (source rate, dsp.StreamResampler)
         self._muted = False
         self._vol, self._vol_at = 0.0, float("-inf")
         self._last_loud = float("-inf")
@@ -1011,6 +1012,38 @@ class LiveAudio:
                 while self._out_queued > self._queue_cap_s * self.out_rate and len(self._out) > 1:
                     self._out_queued -= len(self._out.popleft())
         self._frame_at = self._now()
+
+    def play_pcm(self, samples: np.ndarray, rate: int = RATE) -> None:
+        """Queue float32 mono speech (-1..1) at ``rate``: the assistant's text-to-speech (littlebot/assistant), the
+        same queue, gate, barge-in and lip-sync as the model's voice. The caller paces it (``queued_s``): more
+        than the queue's cap waiting drops the oldest, as for the network's frames."""
+        if self._muted or not len(samples):
+            return
+        pcm = np.asarray(samples, dtype=np.float32).reshape(-1)
+        if rate != self.out_rate:
+            if self._pcm_resampler is None or self._pcm_resampler[0] != rate:
+                self._pcm_resampler = (rate, dsp.StreamResampler(rate, self.out_rate))
+            pcm = self._pcm_resampler[1].process(pcm)
+        if self._bstate == _DROPPING and self._dropping(pcm):
+            return
+        self.frames_out += 1
+        with self._lock:
+            self._out.append(pcm)
+            self._out_queued += len(pcm)
+            if not self._hold and self._out_queued <= MAX_QUEUED_S * self.out_rate:
+                self._queue_cap_s = MAX_QUEUED_S
+            while self._out_queued > self._queue_cap_s * self.out_rate and len(self._out) > 1:
+                self._out_queued -= len(self._out.popleft())
+        self._frame_at = self._now()
+
+    @property
+    def queued_s(self) -> float:
+        """Seconds of voice waiting for the speaker."""
+        return self._out_queued / float(self.out_rate or RATE)
+
+    def unmute(self) -> None:
+        """The speaker plays again after ``mute`` (the assistant mutes to cut an answer, then talks again)."""
+        self._muted = False
 
     def _take(self, n: int) -> np.ndarray:
         out = np.zeros(n, dtype=np.float32)

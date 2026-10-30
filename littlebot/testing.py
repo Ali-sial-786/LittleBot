@@ -101,6 +101,17 @@ class FakeAudio(_Recorder):
             self.bus.publish(Topics.AUDIO_SPEECH_FINISHED, {"text": text, "interrupted": False}, source="audio")
         return True
 
+    async def play_speech(self, samples: Any, sample_rate: int, text: str = "", *, wait: bool = True) -> bool:
+        self._rec("play_speech", text, sample_rate=sample_rate)
+        self.spoken.append(text)
+        await asyncio.sleep(0)
+        return True
+
+    def sound_samples(self, name: str) -> Any:
+        import numpy as np  # noqa: PLC0415
+
+        return (np.zeros(480, dtype=np.float32), 48000)
+
     async def play_sound(self, name: str, *, wait: bool = True, volume: float | None = None) -> bool:
         self._rec("play_sound", name, wait=wait, volume=volume)
         self.sounds.append(name)
@@ -437,3 +448,150 @@ def make_test_context(*, fakes: bool = True, **config_overrides: Any) -> RobotCo
         ctx.audio = FakeAudio(ctx.bus)
         ctx.motion = FakeMotion()
     return ctx
+
+
+# ---------------------------------------------------------------------------
+# The assistant (littlebot/assistant): call audio, speech-to-text and text-to-speech fakes
+# ---------------------------------------------------------------------------
+
+class FakeCallAudio:
+    """Stands in for ``chatgpt.live_audio.LiveAudio`` in assistant sessions: silence from the "microphone",
+    whatever is played kept in ``played`` (and heard at once: nothing stays queued)."""
+
+    barge_in_on = False
+
+    def __init__(self) -> None:
+        import numpy as np  # noqa: PLC0415
+
+        self._np = np
+        self.opened = self.closed = False
+        self.played: list[tuple[int, int]] = []  # (samples, rate) per play_pcm call
+        self.heard_words: list[tuple[str, bool]] = []
+        self.thinking = 0
+        self.muted = False
+        self.dropped = 0
+        self.interrupted = False
+        self.speaking = False
+        self.queued_s = 0.0
+        self.mouth = (0.0, "closed")
+        self.level = 0.0
+        self.on_change: Any = None
+
+    def open(self, loop: Any) -> None:
+        self.opened = True
+
+    def close(self) -> None:
+        self.closed = True
+
+    def reopen(self) -> None:
+        pass
+
+    def stalled(self) -> str | None:
+        return None
+
+    async def read_frame(self) -> Any:
+        await asyncio.sleep(0.01)
+        return self._np.zeros(960, dtype=self._np.int16)
+
+    def play_pcm(self, samples: Any, rate: int = 48000) -> None:
+        self.played.append((len(samples), int(rate)))
+
+    def play_thinking(self) -> bool:
+        self.thinking += 1
+        return True
+
+    def setup_barge_in(self, **hooks: Any) -> None:
+        self.on_change = hooks.get("on_change")
+
+    def barge_in_heard(self, text: str, final: bool) -> str | None:
+        self.heard_words.append((text, final))
+        return None
+
+    def mute(self) -> None:
+        self.muted = True
+
+    def unmute(self) -> None:
+        self.muted = False
+
+    def drop_voice(self) -> None:
+        self.dropped += 1
+
+
+class FakeSTTStream:
+    def __init__(self, provider: "FakeSTT", on_event: Any) -> None:
+        self.provider = provider
+        self.on_event = on_event
+        self.fed = 0
+        self.closed = False
+        self.resets = 0
+
+    async def feed(self, samples: Any) -> None:
+        self.fed += len(samples)
+
+    async def finish(self) -> None:
+        pass
+
+    async def reset(self) -> None:
+        self.resets += 1
+
+    async def aclose(self) -> None:
+        self.closed = True
+
+
+class FakeSTT:
+    """A speech-to-text provider driven by the test: ``say("text")`` is a whole turn (start, words, end)."""
+
+    streaming = True
+
+    def __init__(self, name: str = "fake-stt", *, fail_open: bool = False) -> None:
+        self.name = name
+        self.fail_open = fail_open
+        self.stream: FakeSTTStream | None = None
+
+    def missing(self) -> str | None:
+        return None
+
+    async def open(self, on_event: Any) -> FakeSTTStream:
+        if self.fail_open:
+            from littlebot.assistant.speech import SpeechError  # noqa: PLC0415
+
+            raise SpeechError("network")
+        self.stream = FakeSTTStream(self, on_event)
+        return self.stream
+
+    def say(self, text: str) -> None:
+        from littlebot.assistant.speech import STTEvent  # noqa: PLC0415
+
+        assert self.stream is not None, "no stream open"
+        self.stream.on_event(STTEvent("start_of_turn"))
+        self.stream.on_event(STTEvent("partial", text))
+        self.stream.on_event(STTEvent("end_of_turn", text))
+
+
+class FakeTTS:
+    """Text-to-speech that makes 10 ms of silence per character (48 kHz) and remembers what it was asked."""
+
+    name = "fake-tts"
+    sample_rate = 48000
+    last_provider = "fake-tts"
+
+    def __init__(self) -> None:
+        self.said: list[str] = []
+
+    def missing(self) -> str | None:
+        return None
+
+    async def stream(self, text: str) -> Any:
+        import numpy as np  # noqa: PLC0415
+
+        self.said.append(text)
+        yield np.zeros(max(1, len(text)) * 480, dtype=np.float32)
+
+    async def warm(self) -> None:
+        pass
+
+    async def aclose(self) -> None:
+        pass
+
+    def describe(self) -> dict[str, Any]:
+        return {"providers": [self.name]}
