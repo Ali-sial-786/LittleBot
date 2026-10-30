@@ -1,7 +1,7 @@
 # Overnight rethink: progress
 
-Heartbeat: 2026-10-30T14:05:23-04:00
-Status: IN PROGRESS (follow-up asked 2026-10-30 afternoon: Spotify as default music; voice + face recognition in the assistant).
+Heartbeat: 2026-10-30T14:28:59-04:00
+Status: DONE (2026-10-30; afternoon follow-up done too). Read MORNING.md.
 
 Started from main 01d9259 (tag `checkpoint-2026-10-30-before-rethink`). Read BRIEF.md first.
 
@@ -31,8 +31,10 @@ Started from main 01d9259 (tag `checkpoint-2026-10-30-before-rethink`). Read BRI
 - Independent review of the voice session: 12 findings fixed (cancellation, barge-in, announcements, long answers).
 - Full suite: 5,680 pass; 2 fail only in the cloud container (also on main there).
 
+- Afternoon follow-up: Spotify as the default music (librespot receiver + Web API, ducking, now-playing card,
+  dashboard connect); voice and face recognition in the assistant (WhoTracker over the conversation, voice + face
+  together, learning by "I'm Ali", face quality gate, who_is_here tool, Who's talking? check).
+
 ## Next
-- Follow-up: Spotify integration (builder in a worktree), voice + face recognition in the assistant's context;
-  then MORNING.md update and Status: DONE again.
-- Nothing else for tonight. On the robot: try it (MORNING.md), add the Deepgram and Cartesia keys, measure.
+- On the robot: MORNING.md (try it, keys, Spotify set-up, measure). On the robot: try it (MORNING.md), add the Deepgram and Cartesia keys, measure.
 - Later: retire GPT-Live's hand-off layers (chatgpt/live.py, screens/director.py) once the assistant is trusted.

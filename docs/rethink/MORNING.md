@@ -1,7 +1,7 @@
 # Good morning: what changed overnight
 
 Everything is on the **`rethink`** branch. `main` (what the robot runs now) is untouched, and so is the robot.
-The full test suite passes on the branch (about 5,700 tests, 750 of them new; the only failures are 2-3 that
+The full test suite passes on the branch (about 5,760 tests, 830 of them new; the only failures are 2-3 that
 also fail on `main` in the cloud build machine: no sound card there, running as root). The new voice session was
 also read by an independent reviewer and its 12 findings fixed.
 
@@ -78,6 +78,36 @@ Each line works as it is in PowerShell and in a shell on the Pi.
    `ssh alisial3@littlebot.local "cd ~/LittleBot && .venv/bin/python scripts/set_config.py assistant.pipeline live && systemctl --user restart littlebot"`;
    or the old code entirely:
    `ssh alisial3@littlebot.local "cd ~/LittleBot && git checkout main && systemctl --user restart littlebot"`.
+
+## Added in the afternoon (your follow-up)
+
+**Spotify is the default for music** (docs/SPOTIFY.md). Needs **Spotify Premium**. The robot becomes a Spotify Connect
+speaker called "LittleBot" (also castable from your phone); "play some jazz", "play my liked songs", "next", "pause",
+"what's playing" go to Spotify, "play X on YouTube" still uses YouTube, and without Spotify set up it's YouTube as
+before. Music turns down while you talk to LittleBot and comes back after; it's audio only, so the face stays on
+screen with a small now-playing card. Set-up, once:
+
+1. Make the robot a Spotify speaker (asks for your password once):
+   `ssh -t alisial3@littlebot.local "cd ~/LittleBot && bash scripts/setup_spotify.sh"`
+2. On your phone (same Wi-Fi), open Spotify, tap the speaker icon, pick **LittleBot** once.
+3. At developer.spotify.com/dashboard: create an app (tick Web API), add the Redirect URI
+   `http://127.0.0.1:8888/callback` exactly, copy the Client ID.
+4. Dashboard → Assistant → Spotify: paste the Client ID, press **Connect Spotify**, approve; the tab then lands on a
+   127.0.0.1 page that doesn't load (expected): copy that whole address, paste it in the box, press
+   **Finish connecting**.
+5. `ssh alisial3@littlebot.local "systemctl --user restart littlebot"`, then check:
+   `ssh alisial3@littlebot.local "cd ~/LittleBot && bash scripts/setup_spotify.sh --check"`
+
+Spotify no longer lets new apps open its personalised playlists (Discover Weekly, Daily Mix): LittleBot says so;
+your own playlists and liked songs work.
+
+**Better voice and face recognition** (docs/ASSISTANT.md, "Who is talking"): who is talking is tracked over the
+whole conversation (a short "yes" no longer loses you), voice and face are put together, "I'm Ali" teaches it your
+voice, sure turns sharpen your voiceprint, blurred or turned-away faces are no longer compared, "do you know who I
+am?" takes a fresh look, and Profile → Who's who → **Who's talking?** shows who it thinks is talking and how close.
+Voice recognition needs `sherpa-onnx` and its model on the robot (once):
+`ssh alisial3@littlebot.local "cd ~/LittleBot && .venv/bin/pip install -q sherpa-onnx && .venv/bin/python scripts/download_models.py voices && systemctl --user restart littlebot"`,
+then Privacy → "Recognise family voices", and record each grown-up's voice under Who's who.
 
 ## Keys to add
 

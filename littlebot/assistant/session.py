@@ -50,7 +50,9 @@ THINKING_REPEAT_S = 2.2
 QUESTION_FOLLOW_UP_S = 12.0  # LittleBot asked them something: wait at least this long for the answer
 HEARD_KEEP_S = 12.0  # the microphone kept (in memory only) to recognise whose voice a turn was
 IDENTIFY_TIMEOUT_S = 3.0
-SPECULATION_MAX_S = 8.0  # an early answer whose turn is neither confirmed nor resumed by then is dropped
+SPECULATION_MAX_S = 8.0
+# Instant intents that steer Spotify when it is what's playing on LittleBot (skills/spotify.py command()).
+SPOTIFY_ACTIONS = {"pause": "pause", "resume": "resume", "skip": "next", "stop_media": "stop"}  # an early answer whose turn is neither confirmed nor resumed by then is dropped
 STT_REOPENS = 3  # speech-to-text that fails this often in one session ends it
 HEARING_GRACE_S = 2.0  # a turn that never ends (noise): finished after max_turn_seconds + this
 EXPRESSION_HOLD_S = 6.0
@@ -361,11 +363,20 @@ class VoiceSession:
         self._answer_text = text
         self._answer = self._spawn(self._respond(text, gate=self._gate))
 
-    def _speculable(self, text: str) -> bool:
-        """Only the brain's answers start early (an instant intent or a game's move is quicker than that anyway)."""
+    def _media_on(self) -> tuple[bool, Any]:
+        """(a video or YouTube music is on, the Spotify skill when Spotify plays or is paused on LittleBot)."""
         media = getattr(self.ctx, "media", None)
         st = _safe(media.status) if media is not None else None
-        if intents.match(text, media_on=bool(st and st.get("state") in ("playing", "paused", "loading"))):
+        video_on = bool(st and st.get("state") in ("playing", "paused", "loading"))
+        hub = getattr(self.ctx, "skills", None)
+        sp = hub.get("spotify") if hub is not None and hasattr(hub, "get") else None
+        spotify_on = sp is not None and bool(_safe(sp.playing) or _safe(sp.paused))
+        return video_on, (sp if spotify_on else None)
+
+    def _speculable(self, text: str) -> bool:
+        """Only the brain's answers start early (an instant intent or a game's move is quicker than that anyway)."""
+        video_on, spotify = self._media_on()
+        if intents.match(text, media_on=video_on or spotify is not None):
             return False
         hub = getattr(self.ctx, "skills", None)
         games = hub.get("voice_games") if hub is not None and hasattr(hub, "get") else None
@@ -490,11 +501,15 @@ class VoiceSession:
         alarm = self._alarm_answer(text)
         if alarm is not None:
             return "alarm", alarm, False
-        media = getattr(self.ctx, "media", None)
-        st = _safe(media.status) if media is not None else None
-        media_on = bool(st and st.get("state") in ("playing", "paused", "loading"))
-        hit = intents.match(text, media_on=media_on)
+        video_on, spotify = self._media_on()
+        hit = intents.match(text, media_on=video_on or spotify is not None)
         if hit is not None:
+            if spotify is not None and not video_on and hit.name in SPOTIFY_ACTIONS:
+                try:  # "pause", "next", "carry on" while Spotify plays on LittleBot: no model, no video tools
+                    done, sentence = await spotify.command(SPOTIFY_ACTIONS[hit.name])
+                except Exception:  # noqa: BLE001
+                    done, sentence = False, "I couldn't reach Spotify just now."
+                return f"intent:{hit.name}", "" if done else str(sentence or ""), hit.end
             words = await intents.run(hit, box, self.ctx)
             if hit.name == "stop":
                 return "stop", "", True

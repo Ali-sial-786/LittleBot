@@ -488,3 +488,45 @@ async def test_who_is_here_tool_says_what_it_knows() -> None:
     await _wait(lambda: "I can't tell yet." in tts.said)
     assert "voice recognition is off" in results[0] and "Camera:" in results[0]
     await svc.stop_session("test")
+
+
+async def test_pause_and_next_go_to_spotify_when_it_plays() -> None:
+    class Spotify:
+        name = "spotify"
+        actions: list[str] = []
+
+        def playing(self) -> bool:
+            return True
+
+        def paused(self) -> bool:
+            return False
+
+        async def command(self, action: str, percent: Any = None) -> tuple[bool, str]:
+            self.actions.append(action)
+            return True, "Done."
+
+    class Hub:
+        sp = Spotify()
+
+        def get(self, name: str) -> Any:
+            return self.sp if name == "spotify" else None
+
+        def specs(self) -> list:
+            return []
+
+        def prompt_notes(self) -> str:
+            return ""
+
+        def context_notes(self) -> str:
+            return ""
+
+    brain = Scripted()
+    svc, stt, tts, _ = _service(brain, follow_up_seconds=3)
+    svc.ctx.skills = Hub()
+    await svc.start()
+    await svc.start_session()
+    await _wait(lambda: stt.stream is not None)
+    stt.say("next song")
+    await _wait(lambda: Hub.sp.actions == ["next"])
+    assert brain.questions == [] and tts.said == []  # the music changing is the answer
+    await _wait(lambda: not svc.status()["active"])
