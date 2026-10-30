@@ -83,6 +83,16 @@ tomorrow?" works across follow-ups and the next wake word. Nothing is recorded o
 * the same safety check on every sentence before it is said (`safety/content.validate_reply`, the medicine-dose
   rule); `ai.relaxed_rules` applies as for GPT-Live.
 
+## Who is talking
+
+Both are opt-in and run on the robot only (only a name reaches the brain, never a voiceprint or a picture):
+
+* **Voice** (docs/VOICES.md): with **Recognise family voices** on (dashboard → Privacy) and each grown-up's voice
+  recorded (Profile → Who's who), the assistant recognises who said "Hey LittleBot" and who said each turn, in the
+  background, and the brain is told "the person talking sounds like Ali (dad)". It then uses your name now and then
+  and your own memories ("my sister" means *your* sister).
+* **Face**: with face recognition on and a camera plugged in, who is in front of the camera is added the same way.
+
 ## Skills (both pipelines)
 
 `littlebot/skills`: each skill adds tools and a note to the brain, and GPT-Live's hand-offs get the same tools.
