@@ -86,4 +86,4 @@ robot keeps working exactly as today until the new keys are added.
 - [x] Assistant page: type to LittleBot, intercom ("say this"), send to screen, lists / reminders / memories.
 
 ### 7. Wrap-up
-- [ ] docs/ASSISTANT.md (how it works, settings, keys); MORNING.md; Status: DONE.
+- [x] docs/ASSISTANT.md (how it works, settings, keys); MORNING.md; Status: DONE.

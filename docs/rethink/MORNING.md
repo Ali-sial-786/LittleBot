@@ -1,8 +1,9 @@
 # Good morning: what changed overnight
 
 Everything is on the **`rethink`** branch. `main` (what the robot runs now) is untouched, and so is the robot.
-The full test suite passes on the branch (about 5,400 tests; the only failures are 2-3 that fail in the cloud
-build machine for reasons unrelated to the code: no sound card there, running as root).
+The full test suite passes on the branch (about 5,700 tests, 750 of them new; the only failures are 2-3 that
+also fail on `main` in the cloud build machine: no sound card there, running as root). The new voice session was
+also read by an independent reviewer and its 12 findings fixed.
 
 ## In short
 
@@ -110,6 +111,23 @@ Claude Sonnet 5.5 with the same Anthropic key. Details and prices: docs/ASSISTAN
 | Games | "Let's play trivia" (answer "B" or the answer), "Let's play hangman", "Twenty questions", "Tell me a riddle", "Would you rather" |
 | Screen | double-tap the face (today at a glance); "Show me a recipe for pancakes" |
 | Phone | the dashboard's new **Assistant** tab |
+
+## Games
+
+The toddler touch games are all still there (long-press the face). New, for grown-ups and the family, played by
+voice with a card on the screen (tap an answer on the card, or say it): **trivia** (10 categories, three levels;
+fresh questions written by Claude each round, a built-in bank of 113 when offline), **hangman** ("is there an E?",
+"is it elephant?"), **20 questions** (LittleBot thinks of something; you ask yes/no questions), **riddles** and
+**would you rather** (it remembers what the family picks). Answers are judged on the robot instantly, with no model
+wait; "hint", "skip", "stop the game", "what's my high score in trivia?" all work. Details: docs/GAMES.md.
+
+## Movement
+
+docs/MOVEMENT.md. The head has pan and tilt, the arms have gestures that go with the conversation (a nod as an
+answer ends, a curious tilt, a shrug, a wave hello and goodbye, pointing at the screen when a card goes up), and the
+eyes lead while the head follows a face. All of it runs on the simulator (the dashboard's Motion page draws the
+tilt); the real servos stay off until you arm them as before. A drive base for the wheels is ready behind
+`motion.drive.enabled: false`.
 
 ## What changed, and why
 

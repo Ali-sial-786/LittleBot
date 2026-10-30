@@ -1,7 +1,7 @@
 # Overnight rethink: progress
 
-Heartbeat: 2026-10-30T05:29:12-04:00
-Status: IN PROGRESS (cloud session building PLAN.md; an hourly task resumes it in this session).
+Heartbeat: 2026-10-30T05:29:31-04:00
+Status: DONE (2026-10-30, cloud session). Read MORNING.md.
 
 Started from main 01d9259 (tag `checkpoint-2026-10-30-before-rethink`). Read BRIEF.md first.
 
@@ -26,5 +26,11 @@ Started from main 01d9259 (tag `checkpoint-2026-10-30-before-rethink`). Read BRI
   stopped or snoozed by voice; GPT-Live's remember goes to the memory skill; music starts after the turn.
 - Dashboard: lists, reminders and memories (tick off, cancel, forget). scripts/set_key.py, try_assistant.py.
 
+- Merged voice games (trivia, hangman, 20 questions, riddles, would you rather; played without a model in the
+  assistant) and movement (head tilt, look_at, conversation gestures, body language, drive base mock).
+- Independent review of the voice session: 12 findings fixed (cancellation, barge-in, announcements, long answers).
+- Full suite: 5,680 pass; 2 fail only in the cloud container (also on main there).
+
 ## Next
-- Merge voice games and movement when their builders finish; full suite; MORNING.md; Status: DONE.
+- Nothing for tonight. On the robot: try it (MORNING.md), add the Deepgram and Cartesia keys, measure.
+- Later: retire GPT-Live's hand-off layers (chatgpt/live.py, screens/director.py) once the assistant is trusted.
