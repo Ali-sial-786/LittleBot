@@ -325,8 +325,13 @@ class Lists(Skill):
         return err(f"lists has no tool called {str(name)[:40]}")
 
     async def _show(self, key: str, linger: float | None = None) -> None:
+        """The list on the screen; after a change (``linger``: a short look) not over a card that must stay (an
+        alarm ringing, a timer running)."""
         spec: dict[str, Any] = {"card": "lists", "list": key}
         if linger is not None:
+            current = getattr(getattr(self.ctx, "screens", None), "current", None)
+            if getattr(current, "sticky", False) and getattr(current, "kind", "") != "lists":
+                return
             spec["linger"] = linger
         await self.show(spec)
 

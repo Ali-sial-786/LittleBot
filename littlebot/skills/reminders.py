@@ -33,6 +33,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Coroutine
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from littlebot.core.events import Topics
 from littlebot.skills import when as W
 from littlebot.skills.base import INT, STR, Skill, ToolSpec, err, ok, tool
 
@@ -118,6 +119,15 @@ def clean_text(value: Any, limit: int = MAX_TEXT) -> str:
     return s
 
 
+def screen_busy(ctx: Any) -> bool:
+    """A card that must stay is on the screen (an alarm ringing, a timer running): a short look waits."""
+    current = getattr(getattr(ctx, "screens", None), "current", None)
+    try:
+        return bool(getattr(current, "sticky", False))
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def _words(text: str) -> set[str]:
     return {w for w in re.findall(r"[a-z0-9']+", text.lower()) if w not in _SMALL}
 
@@ -133,6 +143,7 @@ class Reminders(Skill):
         self._recent: _Recent | None = None
         self._next_check = 0.0
         self._task: asyncio.Task[None] | None = None
+        self._stop_all: Any = None  # the bus subscription to STOP ALL
         self._tasks: set[Any] = set()
         self._tz: _dt.tzinfo | None | bool = False  # False: not looked up yet
         self.version = 0  # bumped on every change (the card redraws)
@@ -408,8 +419,15 @@ class Reminders(Skill):
             return
         self.catch_up()
         self._task = asyncio.get_running_loop().create_task(self._loop(), name="reminders")
+        try:  # the parent's big stop button stops a ringing alarm too
+            self._stop_all = self.ctx.bus.subscribe(Topics.STOP_ALL, lambda _e: self.stop_ringing(reason="stop all"))
+        except Exception:  # noqa: BLE001
+            log.debug("reminders: no stop-all", exc_info=True)
 
     async def stop(self) -> None:
+        sub, self._stop_all = self._stop_all, None
+        if sub is not None:
+            sub.cancel()
         task, self._task = self._task, None
         if task is not None:
             task.cancel()
@@ -587,8 +605,8 @@ class Reminders(Skill):
         return ok(f"{self._describe(item, now)}, {W.until_words(item.fire_at - now)}")
 
     async def _show_list(self, highlight: int | None = None) -> None:
-        if self.ringing():
-            return  # the ringing card stays
+        if self.ringing() or screen_busy(self.ctx):
+            return  # the ringing card (or a running timer) stays: this is only a short look
         spec: dict[str, Any] = {"card": "reminders", "linger": SHOW_LINGER_S}
         if highlight is not None:
             spec["highlight"] = highlight
@@ -687,4 +705,4 @@ class Reminders(Skill):
         return ok(f"snoozed {' and '.join(self._name(i) for i in done)} for {mins} minutes, until {until}")
 
 
-__all__ = ["RINGING", "STOPPED", "Item", "Reminders", "clean_text"]
+__all__ = ["RINGING", "STOPPED", "Item", "Reminders", "clean_text", "screen_busy"]
