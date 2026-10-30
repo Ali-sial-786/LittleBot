@@ -541,9 +541,9 @@ async def test_a_long_answer_makes_its_card_while_it_is_being_said(make):
     s = make(FACT, wait_for_answer=True)
     s.director.heard("Can you tell me the difference between Kublai Khan and Genghis Khan?")
     await asyncio.sleep(0.05)
-    s.director.saying("Genghis Khan was the founder of")
+    s.director.saying("Genghis Khan was")
     await asyncio.sleep(director_mod.SAID_GRACE_S + 0.2)
-    assert s.provider.calls == []  # a few words aren't enough to go on
+    assert s.provider.calls == []  # too few to tell an answer from "hold on, let me check"
     s.director.saying(LONG_START)
     await s.settle()
     content = s.provider.calls[0]["messages"][-1]["content"]
@@ -557,13 +557,24 @@ async def test_a_long_answer_makes_its_card_while_it_is_being_said(make):
 async def test_an_answer_begun_before_the_question_arrived_still_makes_the_card(make):
     # on the robot GPT-Live starts answering ~1 s before the person's final caption reaches LittleBot
     s = make(FACT, wait_for_answer=True)
-    s.director.saying("Genghis Khan was the founder of")
+    s.director.saying("Genghis Khan was")
     await asyncio.sleep(0.05)
     s.director.heard("Tell me the difference between Genghis Khan and Kublai Khan")
     s.director.saying(LONG_START)
     await s.settle()
     assert LONG_START in s.provider.calls[0]["messages"][-1]["content"]
     assert s.screens.shown
+
+
+async def test_the_card_starts_from_the_first_few_words(make):
+    # "there shouldn't be any wait for the card" (the parent, 2026-10-29): not 25 words, ~8 s of speech
+    s = make(FACT, wait_for_answer=True)
+    s.director.heard("What's the biggest animal in the world?")
+    s.director.saying("The blue whale is the biggest")
+    await s.settle()
+    content = s.provider.calls[0]["messages"][-1]["content"]
+    assert "The blue whale is the biggest ..." in content and "only its first words so far" in content
+    assert "plain well-known facts" in s.provider.calls[0]["system"]
 
 
 async def test_filler_said_bit_by_bit_is_still_not_the_answer(make):

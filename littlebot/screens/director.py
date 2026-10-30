@@ -89,7 +89,10 @@ ANSWER_WAIT_S = 25.0  # wait_for_answer: at most this long for LittleBot's answe
 SAID_GRACE_S = 0.6  # a caption counts as the answer once this old with no hand-off opened after it
 # The voice's words as it says them (``saying``): this many are enough to go on, so the card comes while it
 # talks. GPT-Live's final caption only comes when its turn ends, 20 s later for a long answer (2026-10-29).
-PARTIAL_WORDS = 25  # 15 was too few for a comparison: only the first of the two had been said (2026-10-29)
+# Only enough to tell an answer from "hold on, let me check": the words come as fast as they are spoken, and
+# 25 kept the card waiting ~8 s ("there shouldn't be any wait for the card", the parent, 2026-10-29). The card
+# then shows what it is plainly answering (PROMPT).
+PARTIAL_WORDS = 6
 # GPT-Live starts its answer before the person's final caption reaches LittleBot (on the robot ~1 s earlier,
 # 2026-10-29): the words it is saying count for a turn heard up to this long after they began.
 SAYING_LEAD_S = 5.0
@@ -129,6 +132,7 @@ something else up.
 {{"do": "none"}} for everything else: chit-chat, songs, games, talking to the baby, or nothing worth showing.
 Never answer the question yourself: the voice does that. Your whole answer is the one JSON object.
 The card must agree with what {robot} says: take its numbers, names and facts from {robot}'s answer below, never from what you know yourself, and leave out anything it didn't say. When {robot} hasn't actually given the answer, answer {{"do": "none"}}.
+When only the first words of its answer are known (it is still saying the rest), it is answering: make the card for what was asked, from those words and plain well-known facts that fit the question, never against what it said. Leave out live information (weather, times, news, scores) it hasn't said.
 Use only the fields listed for the card, with short text (a few words per line, numbers as digits). Never put \
 personal details on the screen.
 
@@ -1166,8 +1170,7 @@ class ScreenDirector:
         robot = getattr(self.ctx.config, "robot_name", "LittleBot")
         if answer and partial:
             out.append(f"{robot}'s answer, being said now (only its first words so far, cut off where it has got "
-                       f"to: it is answering, and the rest follows; the card may also cover what it is plainly "
-                       f"about to say, such as the other thing they asked about, in well-known facts): {answer} ...")
+                       f"to: it is answering, and the rest follows): {answer} ...")
         elif answer and not any(who == "robot" and text in answer for who, text in lines[-2:]):
             out.append(f"{robot}'s answer, being said now: {answer}")
         elif answer is None and self.wait_for_answer:
