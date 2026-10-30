@@ -30,6 +30,7 @@ answer is dropped.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import dataclasses
 import inspect
 import logging
@@ -77,6 +78,7 @@ think_harder and then say its answer in your own short words.
 {skills}"""
 
 CONTEXT = "[Context for this turn, not said by them: {items}]"
+LAST_DAY_KEY = "assistant.last_day"  # the day of the last conversation (a greeting and a briefing offer once a day)
 
 
 @dataclasses.dataclass
@@ -212,6 +214,9 @@ class Brain:
             items.append(f"it is {info['date']}, {info['time_12h']} ({info['part_of_day']})")
         except Exception:  # noqa: BLE001
             pass
+        if self.first_today():
+            items.append("this is your first conversation today: if it fits what they asked, greet them for the time "
+                         "of day and offer the morning briefing in a few words (once)")
         home = getattr(ctx.config.info, "location", "") or ""
         if home:
             items.append(f"home is {home}")
@@ -244,6 +249,17 @@ class Brain:
             if more:
                 items.append(more)
         return items
+
+    def first_today(self) -> bool:
+        """No conversation yet today (before 4 am counts as the day before)."""
+        try:
+            return self.ctx.db.kv_get(LAST_DAY_KEY) != _day()
+        except Exception:  # noqa: BLE001
+            return False
+
+    def talked_today(self) -> None:
+        with contextlib.suppress(Exception):
+            self.ctx.db.kv_set(LAST_DAY_KEY, _day())
 
     def build_messages(self, text: str, history: list[dict[str, str]], toolbox: Any = None) -> list[dict[str, str]]:
         items = self.context_items(toolbox)
@@ -334,6 +350,8 @@ class Brain:
         result.text = " ".join(splitter.said)
         result.model = str(getattr(reply, "model", "") or result.model)
         result.total_ms = int((self._now() - t0) * 1000)
+        if result.sentences:
+            self.talked_today()
         if not result.sentences and not result.silent and not result.tools:
             result.error = getattr(reply, "stop_reason", None) or "empty"
         return result
@@ -364,6 +382,12 @@ class Brain:
             return "error: the stronger model didn't answer; answer as well as you can yourself"
         text = str(getattr(reply, "text", "") or "").strip()
         return f"ok: {text[:3000]}" if text else "error: no answer; answer as well as you can yourself"
+
+
+def _day() -> str:
+    import datetime as _dt  # noqa: PLC0415
+
+    return (_dt.datetime.now() - _dt.timedelta(hours=4)).strftime("%Y-%m-%d")
 
 
 def _deep_spec() -> dict[str, Any]:

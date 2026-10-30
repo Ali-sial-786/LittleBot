@@ -109,3 +109,15 @@ async def test_think_harder_uses_the_deep_model() -> None:
     assert DEEP_TOOL in p.calls[0]["tools"]
     assert p.calls[0]["results"][0].startswith("ok: The answer is 42")
     assert [s.text for s in said] == ["Let me think.", "It's 42."] and res.tools == [DEEP_TOOL]
+
+
+async def test_first_conversation_of_the_day_offers_a_greeting_once() -> None:
+    ctx = make_test_context()
+    p = ScriptedProvider(["Good morning!"])
+    brain = Brain(ctx, provider=p)
+    assert brain.first_today()
+    await brain.respond("hi", history=[], toolbox=RobotToolbox(ctx), on_sentence=lambda s: None)
+    assert "first conversation today" in p.calls[0]["messages"][-1]["content"]
+    assert not brain.first_today()
+    await brain.respond("hi again", history=[], toolbox=RobotToolbox(ctx), on_sentence=lambda s: None)
+    assert "first conversation today" not in p.calls[1]["messages"][-1]["content"]
