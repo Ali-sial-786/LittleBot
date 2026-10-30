@@ -41,6 +41,14 @@ keeps that voiceprint too, so it gets better over time (at most one every 2 minu
 at most 8 learned per person, the oldest go first; recordings are never pushed out by these).
 The little one's voice is never learned in a chat.
 
+**Check it works.** Profile → Who's who → **Who's talking?**: talk to LittleBot for 5 seconds and it says who it
+thinks you are and how close each person's voice is (it needs `voices.match_threshold`, 0.5, and to be clearly
+ahead of the next person). Nothing is recorded or learned by the check. If the right person is close but under the
+threshold, record their voice again from where they usually talk to the robot.
+
+**In the new assistant** (docs/ASSISTANT.md, "Who is talking"): the same recognition, put together over the whole
+conversation and with the faces in view, so a short "yes" doesn't lose track of who is talking.
+
 ## 2. What it does in a voice chat
 
 * **Who woke it.** With the switch on, the wake word keeps "Hey LittleBot" itself (and at most 5 s

@@ -168,6 +168,56 @@ async def record_voice(body: VoiceRecordBody | None = None, person_id: int = Pat
     return {**result, **_view(dash), "ok": result["ok"]}
 
 
+@router.post("/voice-check")
+async def voice_check(dash: DashState = Depends(get_dash)) -> dict[str, Any]:
+    """Who LittleBot thinks is talking: 5 s from its microphone (in memory, dropped), with how close each person's
+    voice is, to see that recognition works and how sure it is. Nothing is kept or learned."""
+    from littlebot.voices.engine import EngineUnavailable  # noqa: PLC0415
+
+    voices = _voices(dash)
+    reason = voices.blocked_reason()
+    if reason is not None:
+        raise _voice_refuse(reason)
+    record = getattr(dash.need("audio"), "record_clip", None)
+    if record is None:
+        raise HTTPException(status_code=503, detail="This robot's audio can't record a voice.")
+    got = await record(5.0)
+    if not got.get("ok"):
+        return {"ok": False, "detail": got.get("detail") or "The recording didn't work."}
+    samples, rate = got.pop("samples"), int(got.get("rate") or 0)
+    try:
+        heard = await voices.analyse(samples, rate)
+        scores = await _voice_scores(voices, samples, rate)
+    except EngineUnavailable as e:
+        raise _voice_refuse(e.reason) from None
+    finally:
+        del samples
+    match = heard.match
+    return {"ok": True, "reason": heard.reason, "speech_seconds": round(heard.speech_s, 1),
+            "who": match.label if match is not None else None, "threshold": round(float(voices.threshold), 2),
+            "scores": scores}
+
+
+async def _voice_scores(voices: Any, samples: Any, rate: int) -> list[dict[str, Any]]:
+    """How close the voice is to each person's voiceprints (names and numbers only), closest first."""
+    import asyncio  # noqa: PLC0415
+
+    import numpy as np  # noqa: PLC0415
+
+    from littlebot.voices.engine import speech_only, to_model_rate  # noqa: PLC0415
+
+    def run() -> list[dict[str, Any]]:
+        x = speech_only(to_model_rate(samples, rate))
+        if not len(x):
+            return []
+        vp = voices.engine().embed(x[-int(6 * 16000):])
+        out = [{"name": k.label, "score": round(float(np.dot(vp, k.centre)), 2), "samples": k.samples}
+               for k in voices.store.known() if k.centre.size == vp.size]
+        return sorted(out, key=lambda r: -r["score"])
+
+    return await asyncio.to_thread(run)
+
+
 @router.delete("/{person_id}/voice")
 async def forget_voice(person_id: int = Path(ge=1), dash: DashState = Depends(get_dash)) -> dict[str, Any]:
     voices = _voices(dash)

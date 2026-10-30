@@ -293,6 +293,18 @@ function whosWho(app) {
       showShot(res, names.length ? names.join('; ') : 'LittleBot can\'t see a clear face right now.');
     },
   });
+  const voiceCheck = button('Who\'s talking?', {
+    kind: 'soft', iconName: 'mic',
+    onClick: async () => {
+      toast('Talk to LittleBot for 5 seconds…', 'info');
+      const res = await app.act(() => post('/people/voice-check'));
+      if (!res) return;
+      if (!res.ok) { toast(res.detail || 'The recording didn\'t work.', 'error'); return; }
+      const who = res.who ? `LittleBot thinks it's ${res.who}.` : (res.reason === 'too_short' ? 'Too little talking to tell.' : 'Not sure who that is.');
+      const scores = (res.scores || []).map((r) => `${r.name} ${r.score.toFixed(2)}`).join(', ');
+      toast(`${who} ${scores ? `Closeness: ${scores} (needs ${res.threshold.toFixed(2)} and clearly ahead of the next).` : ''}`, res.who ? 'ok' : 'info', 15000);
+    },
+  });
   const forget = button('Forget all faces', {
     kind: 'danger-outline', iconName: 'trash',
     onClick: async () => {
@@ -309,7 +321,7 @@ function whosWho(app) {
     h('p', { class: 'muted mt-1', text: 'Kept on the robot only: the names and, for each sample, 128 numbers that describe the face. Never the photos. The voice chat is told only the names of the people in view.' }),
     h('p', { class: 'muted mt-1', text: 'Voices: press Record voice and read three short sentences to LittleBot (about 20 seconds), so the voice chat knows which grown-up is talking, from "Hey LittleBot" on. LittleBot also learns a voice when someone says who they are in a voice chat ("I\'m Ali"), and gets better each time it is sure. Only voiceprints (192 numbers per sample) are kept on the robot, never recordings.' }),
     status, addForm, h('div', { class: 'mt-2' }, list), voiceBox, shotBox,
-    h('div', { class: 'btn-row mt-2' }, check, forget));
+    h('div', { class: 'btn-row mt-2' }, check, voiceCheck, forget));
 
   return {
     el,
