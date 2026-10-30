@@ -98,6 +98,10 @@ PARTIAL_WORDS = 6
 SAYING_LEAD_S = 5.0
 ANSWER_CHARS = 600
 VERDICT_WAIT_S = 1.5  # the decider's "has it answered?" (feature answered, on): a caption waits this long for it
+# The decider's "no card" skips the text model only when it is this sure. On the robot an unsure "none" (0.46,
+# 0.47, 0.51) kept back the card for a new question (Alexander the Great after the Khans, 2026-10-29); asking
+# Haiku costs a call, a missing card is what the parent sees, and Haiku can still answer "none" itself.
+NONE_SURE_AT = 0.8
 FILLER = re.compile(
     r"^\W*(?:(?:ok(?:ay)?|sure|alright|all right|hmm+|um+|oh|great|good question|let'?s see)\W+)*"
     r"(?:(?:hold|hang) on|one (?:moment|sec(?:ond)?)|just a (?:moment|sec(?:ond)?)|give me a (?:moment|sec(?:ond)?)|"
@@ -1024,7 +1028,7 @@ class ScreenDirector:
                     return
                 if pick is not None and pick.confidence >= decider.min_confidence():
                     child = self._speaker(t0)
-                    if pick.value == uses.CARD_NONE:
+                    if pick.value == uses.CARD_NONE and pick.confidence >= NONE_SURE_AT:
                         decider.used("cards", pick.value, pick)
                         self._log("none", t0, "decider", f"{decider.provider()}, confidence {pick.confidence:.2f}")
                         return

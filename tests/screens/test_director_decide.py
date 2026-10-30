@@ -98,6 +98,18 @@ async def test_on_but_unsure_is_the_text_models_decision(make, ctx):
     assert get_decider(ctx).status()["features"]["cards"]["differed"] == 1
 
 
+async def test_on_a_none_it_isnt_sure_of_still_asks_the_text_model(make, ctx):
+    # on the robot (2026-10-29): "none" at 0.46 kept back the card for Alexander the Great after the Khans card
+    s = make(FACT, wait_for_answer=True)
+    s.screens.card = FakeCard("facts", "facts: Genghis Khan vs Kublai Khan")
+    use_decision_model(ctx, picks("none", confidence=0.6), modes={"cards": "on", "answered": "off"})
+    await asked(s, "How do I make pancakes for breakfast?", "Mix flour, eggs and milk, then fry.")
+    assert len(s.provider.calls) == 1 and s.screens.shown[0][0]["card"] == "recipe"
+    use_decision_model(ctx, picks("none", confidence=director_mod.NONE_SURE_AT), modes={"cards": "on", "answered": "off"})
+    await asked(s, "How do I make crepes for breakfast?", "Mix a runny batter and fry it thin.")
+    assert len(s.provider.calls) == 1  # sure: no text model request
+
+
 async def test_shadow_changes_nothing_and_logs_both(make, ctx, caplog):
     s = make(WEATHER, wait_for_answer=True)
     use_decision_model(ctx, picks("none"), modes={"cards": "shadow", "answered": "off"})
