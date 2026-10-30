@@ -1,8 +1,7 @@
 # Overnight rethink: progress
 
-Heartbeat: 2026-10-30T04:15:00-04:00
-Status: IN PROGRESS (analysis done; PLAN.md next). The PC session stopped here and handed over to a cloud
-session the user starts with the prompt in BRIEF.md's spirit; whoever picks this up next writes PLAN.md.
+Heartbeat: 2026-10-30T04:06:20-04:00
+Status: IN PROGRESS (cloud session building PLAN.md; an hourly task resumes it in this session).
 
 Started from main 01d9259 (tag `checkpoint-2026-10-30-before-rethink`). Read BRIEF.md first.
 
@@ -10,5 +9,8 @@ Started from main 01d9259 (tag `checkpoint-2026-10-30-before-rethink`). Read BRI
 - Checkpoint tag + backup branch; `rethink` branch.
 - ANALYSIS.md sections 1-4 (core, screens/face/games/media, research, conversation pipeline).
 
+- PLAN.md (cloud session, 04:20 EDT). Baseline: 4,930 tests pass; 3 fail only in the cloud container (no
+  PortAudio, running as root, an install-script dry run with the extras already installed).
+
 ## Next
-- Write PLAN.md, then build it.
+- PLAN.md section 1: the assistant pipeline (config + keys, TTS, STT, agent, session, service).
