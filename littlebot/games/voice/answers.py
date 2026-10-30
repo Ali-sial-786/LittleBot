@@ -233,6 +233,16 @@ def _token_in(t: str, tokens: Sequence[str]) -> bool:
     return any(close(t, u) for u in tokens)
 
 
+_QUESTIONY = re.compile(r"^(?:what|whats|why|how|hows|who|whos|where|wheres|when|which|does|do|did|can|could|"
+                        r"would|should|will|tell me|explain|are you sure|is that right|wait)\b")
+
+
+def _questiony(s: str) -> bool:
+    """A question about the options rather than a pick ("what does au mean", "why is it jupiter"). "is it ..."
+    and "what about ..." are picks: the filler strip has already taken them off."""
+    return bool(_QUESTIONY.match(s))
+
+
 def _negated(s: str) -> bool:
     return bool(re.match(r"^(?:not|no not|definitely not|its not|it isnt|isnt|never)\b", s))
 
@@ -344,7 +354,7 @@ def match_choice(text: Any, options: Sequence[Any]) -> int | None:
     scores = [_option_score(said, o) for o in opts]
     ranked = sorted(range(n), key=lambda k: -scores[k])
     best = ranked[0]
-    if scores[best] < 0.5:
+    if scores[best] < (0.95 if _questiony(norm) else 0.5):  # "what does Au mean?" asks, it doesn't answer
         return None
     if n > 1 and scores[ranked[1]] >= 0.5 and scores[ranked[1]] >= scores[best] - 0.05:
         return None  # names two of them ("paris or london")
@@ -359,6 +369,7 @@ def matches(text: Any, accepted: Sequence[Any]) -> bool:
     if not said or _negated(said) or _negated(strip_filler(normalize(text))):
         return False
     st = content_tokens(said)
+    questiony = _questiony(strip_filler(normalize(text)))
     for a in accepted:
         ans = core(a)
         if not ans:
@@ -366,7 +377,7 @@ def matches(text: Any, accepted: Sequence[Any]) -> bool:
         if close(said, ans):
             return True
         at = content_tokens(ans)
-        if not at or not st:
+        if not at or not st or questiony:
             continue
         if len(st) <= len(at) + 6 and _window(at, st):
             return True

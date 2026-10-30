@@ -106,3 +106,14 @@ def test_spoken_letters(said, want):
 @pytest.mark.parametrize("said", ["elephant", "hmm", "is it elephant", "", None, 42, ["e"], "letters"])
 def test_not_a_letter(said):
     assert A.spoken_letter(said) is None
+
+
+def test_a_question_about_an_option_is_not_a_pick():
+    symbols = ["Au", "Ag", "Gd", "Go"]
+    assert A.match_choice("what does Au mean?", symbols) is None
+    assert A.match_choice("why would it be Ag", symbols) is None
+    assert A.match_choice("Au", symbols) == 0 and A.match_choice("what about B", symbols) == 1
+    assert A.match_choice("how about jupiter", PLANETS) == 1 and A.match_choice("is it jupiter?", PLANETS) == 1
+    assert A.match_choice("which one is jupiter", PLANETS) is None
+    assert not A.matches("what is a towel made of", ["towel"])
+    assert A.matches("is it a towel", ["towel"])
