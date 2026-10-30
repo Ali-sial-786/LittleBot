@@ -649,6 +649,28 @@ def test_an_unknown_card_is_named_in_the_log_reason():
     assert clean_spec({"card": "Movie<b>"}, TYPES) == (None, "unknown card 'movieb'")
 
 
+@pytest.mark.parametrize("spec,layout", [
+    ({"card": "compare", "title": "Genghis Khan vs Kublai Khan", "columns": ["Genghis Khan", "Kublai Khan"],
+      "rows": ["Genghis built the empire", "Kublai ruled China"]}, "compare"),  # on the robot, 2026-10-29
+    ({"card": "comparison", "columns": [{"name": "A", "facts": ["1"]}, {"name": "B", "facts": ["2"]}]}, "compare"),
+    ({"card": "facts", "layout": "Comparison", "columns": [{"name": "A", "facts": ["1"]}]}, "compare"),
+    ({"card": "facts", "items": ["one", "two"]}, "list"),  # no layout
+    ({"card": "trivia", "text": "Octopuses have three hearts."}, "item"),  # any made-up kind with text
+])
+def test_a_made_up_card_kind_with_something_to_show_is_a_facts_card(spec, layout):
+    from littlebot.screens import base
+
+    out, why = clean_spec(spec, base.card_types())
+    assert out is not None, why
+    assert out["card"] == "facts" and out["layout"] == layout
+
+
+def test_a_made_up_card_kind_with_only_a_title_stays_unknown():
+    from littlebot.screens import base
+
+    assert clean_spec({"card": "spaceship", "title": "Zoom"}, base.card_types()) == (None, "unknown card 'spaceship'")
+
+
 @pytest.mark.parametrize(("words", "view"), [
     ("Can you zoom into that", "in"),  # from a real call
     ("Can you just make the image take over the screen", "fill"),  # from a real call

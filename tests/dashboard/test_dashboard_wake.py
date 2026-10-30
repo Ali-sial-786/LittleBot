@@ -57,4 +57,5 @@ async def test_real_wake_service_status_reaches_the_page(authed, dctx):
     for key in ("enabled", "available", "listening", "state", "paused", "detail", "model_missing", "phrases",
                 "last_heard"):
         assert key in d
-    assert d["phrases"] == ["hey little bot", "hey lil bot", "hey bot"] and d["listening"] is False
+    assert d["phrases"] == ["hey little bot", "hey lil bot", "hey bot", "lil bot", "little bot"]
+    assert d["listening"] is False

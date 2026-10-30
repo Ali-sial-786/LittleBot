@@ -286,7 +286,7 @@ async def test_a_wake_phrase_heard_but_not_sure_enough_is_logged(rig, caplog):
     await _listening(r)
     r.rec.say("hey bot", conf=0.3)
     await until(lambda: "not sure enough" in caplog.text, what="the unsure line")
-    assert ("wake word: heard 'hey bot' but not sure enough (word confidence 0.30, wake.min_confidence 0.50)"
+    assert ("wake word: heard 'hey bot' but not sure enough (word confidence 0.30, wake.min_confidence 0.35)"
             in caplog.text)
     assert r.live.calls == []
 
@@ -416,11 +416,20 @@ async def test_debounce_no_retrigger_within_cooldown(rig):
 async def test_other_words_and_low_confidence_do_not_trigger(rig):
     r = await rig(wake={"min_confidence": 0.7})
     await _listening(r)
-    for text, conf in (("hey look", 1.0), ("little bot", 1.0), ("hey [unk] bot", 1.0), ("hey bot", 0.5)):
+    for text, conf in (("hey look", 1.0), ("little boat", 1.0), ("hey [unk] bot", 1.0), ("hey bot", 0.5),
+                       ("lil bot", 0.6)):
         r.rec.say(text, conf)
     await until(lambda: not r.rec.results, what="results consumed")
     await asyncio.sleep(0.2)
     assert r.live.calls == [] and r.wake.triggers == 0 and r.wake.status()["listening"]
+
+
+async def test_lil_bot_without_its_hey_wakes_it_when_sure(rig):
+    # on the robot the "hey" of "hey lil bot" was sometimes not heard: "lil bot" at 0.83 / 1.00 (2026-10-29)
+    r = await rig()
+    await _listening(r)
+    r.rec.say("lil bot", 0.83)
+    await until(lambda: r.live.calls, what="the call")
 
 
 # ------------------------------------------------------------------ carrying what was said into the call
@@ -691,7 +700,9 @@ async def test_wake_enabled_defaults_on():
     ctx = make_test_context()
     try:
         assert ctx.settings.get("wake.enabled") is True
-        assert ctx.config.wake.phrases == ["hey little bot", "hey littlebot", "hey lil bot", "hey bot"]
+        assert ctx.config.wake.phrases == ["hey little bot", "hey littlebot", "hey lil bot", "hey bot", "lil bot",
+                                           "little bot"]
+        assert ctx.config.wake.min_confidence == 0.35
     finally:
         ctx.db.close()
 

@@ -389,10 +389,11 @@ as if you had pressed **Start live voice**.
 ```yaml
 wake:                                # config/local.yaml
   enabled: true                      # default of the dashboard switch
-  phrases: ["hey little bot", "hey littlebot", "hey lil bot", "hey bot"]   # "littlebot" is heard as "little bot"
+  phrases: ["hey little bot", "hey littlebot", "hey lil bot", "hey bot", "lil bot", "little bot"]
+                                     # "littlebot" is heard as "little bot"; "lil bot": the "hey" got lost
   model_path: models/vosk-model-small-en-us-0.15
-  min_confidence: 0.5                # per word, 0..1: higher = fewer false starts, more misses
-  short_min_confidence: 0.7          # "hey bot" (two words) needs this, or a face in front of the camera
+  min_confidence: 0.35               # per word, 0..1: higher = fewer false starts, more misses (0.5 missed some)
+  short_min_confidence: 0.7          # two-word phrases ("hey bot", "lil bot") need this, or a face at the camera
   short_face_seconds: 10             # ...seen this recently
   follow_up_seconds: 8               # after a chat ended by itself: talking while facing it starts a new one (0 = off)
   follow_up_words: 2                 # ...with at least this many words
@@ -990,7 +991,7 @@ choice on the dashboard (settings `info.location`, `info.units`) wins over `loca
 (`""` = automatic), `GET /api/info/weather`.
 
 Wake word (`wake:` section, `WakeConfig`): `enabled` (`true`, the switch's default), `phrases`,
-`model_path` (`models/vosk-model-small-en-us-0.15`), `min_confidence` (`0.5`), `distractors`
+`model_path` (`models/vosk-model-small-en-us-0.15`), `min_confidence` (`0.35`), `distractors`
 (`true`), `cooldown_seconds` (`4`), `sound` (`listen`); during a video: `during_videos` (`true`),
 `video_phrases` (`["hey little bot", "hey lil bot"]`), `video_min_confidence` (`0.7`), `video_duck` (`false`),
 `video_duck_volume` (`0.3`), `video_duck_seconds` (`2`), `video_pause_wait_seconds` (`1`),

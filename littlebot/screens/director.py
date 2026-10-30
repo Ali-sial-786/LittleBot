@@ -601,12 +601,37 @@ def unsafe(texts: list[str], relaxed: Any = ()) -> list[str]:
     return [r for r in result.reasons if r in BLOCK_RULES or r == "grownup_redirect"]
 
 
+# A card kind the model made up from a facts layout's name ({"card": "compare"} on the robot, 2026-10-29)
+FACTS_KINDS = {"comparison": "compare", "table": "compare", "versus": "compare", "vs": "compare",
+               "difference": "compare", "fact": "item", "info": "item", "text": "item", "answer": "item",
+               "summary": "list", "points": "list", "key_points": "list", "stat": "number"}
+
+
+def _as_facts(kind: str, spec: dict[str, Any], types: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    """A facts card for a spec of an unknown kind (named after a layout, or anything with text in it: however
+    the model sends it, it should still be shown, the parent's ask), and a layout for one that has none."""
+    fields = getattr(types.get("facts"), "fields", None) or {}
+    layouts = list((fields.get("layout") or {}).get("enum") or ())
+    layout = str(spec.get("layout") or "").strip().lower()
+    layout = FACTS_KINDS.get(layout.replace(" ", "_").replace("-", "_"), layout)
+    named = kind if kind in layouts else FACTS_KINDS.get(kind.replace(" ", "_").replace("-", "_"))
+    if kind != "facts" and named is None and not _texts({k: v for k, v in spec.items()
+                                                          if k not in ("card", "kind", "title")}):
+        return kind, spec  # nothing in it to show but a title: stays unknown
+    if layout not in layouts:
+        layout = named or ("compare" if spec.get("columns") else "list" if spec.get("items") else
+                           "number" if spec.get("value") else "score" if spec.get("teams") else "item")
+    return "facts", {**spec, "card": "facts", "layout": layout}
+
+
 def clean_spec(spec: Any, types: dict[str, Any], relaxed: Any = ()) -> tuple[dict[str, Any] | None, str]:
     """A card spec fit for ``ScreenService.show``: a known kind, only its fields (and a title), each of the
     right type and size, the required ones there, every word within the safety rules. Else (None, why)."""
     if not isinstance(spec, dict):
         return None, "not an object"
     kind = str(spec.get("card") or spec.get("kind") or "").strip().lower()[:40]
+    if kind == "facts" or (kind not in types and "facts" in types):
+        kind, spec = _as_facts(kind, spec, types)
     ct = types.get(kind)
     if ct is None:
         return None, f"unknown card {re.sub(r'[^a-z0-9_ -]', '', kind)[:40]!r}"

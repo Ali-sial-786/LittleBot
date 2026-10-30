@@ -228,7 +228,7 @@ starts, as it does when LittleBot is idle. Afterwards the video carries on where
    while a video plays (`wake.during_videos`). The video's sound reaches the microphone too, so
    stricter rules apply then: only `wake.video_phrases` count (default: just "hey little bot";
    "hey bot" alone is what videos say by mistake most) and each word needs
-   `wake.video_min_confidence` (0.7, instead of 0.5). Phrases heard that don't count are logged:
+   `wake.video_min_confidence` (0.7, instead of 0.35). Phrases heard that don't count are logged:
    `wake word: 'hey bot' ignored while a video plays (...)`; the dashboard's wake word line says
    "Listening for “hey little bot” (a video is playing)."
 2. **"Hey LittleBot" heard.** The video is paused first (`MediaController.hold`): the page is told
@@ -270,7 +270,7 @@ The parent's own **Pause** on the dashboard is unchanged (the paused player stay
 wake:                                # config/local.yaml
   during_videos: true                # false: not listening while a video plays (frees the ~130 MB model then)
   video_phrases: ["hey little bot"]  # only these count during a video; [] = all of wake.phrases
-  video_min_confidence: 0.7          # per word during a video (wake.min_confidence is 0.5)
+  video_min_confidence: 0.7          # per word during a video (wake.min_confidence is 0.35)
   video_duck: false                  # turn the video down after a "hey ..." (see below)
   video_duck_volume: 0.3             # ... to this share of its volume
   video_duck_seconds: 2.0            # ... for this long

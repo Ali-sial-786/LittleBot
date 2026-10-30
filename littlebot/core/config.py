@@ -196,9 +196,13 @@ class WakeConfig(_Section):
     enabled: bool = True  # default of the parent's dashboard switch (setting ``wake.enabled``)
     # Words the model knows; "littlebot" is heard as "little bot", "lilbot" as "lil bot". Two-word phrases
     # ("hey bot") trigger by mistake more often (e.g. on "hey but"): remove it here if that happens.
-    phrases: list[str] = Field(default_factory=lambda: ["hey little bot", "hey littlebot", "hey lil bot", "hey bot"])
+    # "lil bot" / "little bot": the "hey" is sometimes not heard (on the robot, 2026-10-29); like "hey bot" they
+    # need short_min_confidence.
+    phrases: list[str] = Field(default_factory=lambda: ["hey little bot", "hey littlebot", "hey lil bot", "hey bot",
+                                                         "lil bot", "little bot"])
     model_path: str = "models/vosk-model-small-en-us-0.15"  # scripts/download_models.py vosk-en
-    min_confidence: float = Field(default=0.5, ge=0.0, le=1.0)  # per word; higher = fewer false triggers
+    # per word; higher = fewer false triggers. 0.35: on the robot "hey lil bot" was missed at 0.49 (2026-10-29)
+    min_confidence: float = Field(default=0.35, ge=0.0, le=1.0)
     # Two-word phrases ("hey bot") are what triggers by mistake most: they need this word confidence, or
     # a face in front of the camera within short_face_seconds (someone is there, likely talking to it).
     short_min_confidence: float = Field(default=0.7, ge=0.0, le=1.0)
