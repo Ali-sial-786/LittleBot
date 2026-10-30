@@ -297,7 +297,13 @@ class RobotToolbox:
         hub = self._skills()
         if tool is None and hub is not None and _safe(lambda: hub.owns(name)):
             self.calls.append(str(name))
-            return await hub.run(name, arguments)
+            result = await hub.run(name, arguments)
+            if self.defer:  # music asked for: it starts after the turn, like a video (littlebot/skills/takeover.py)
+                from littlebot.skills import takeover  # noqa: PLC0415
+
+                for p in takeover.claim(self.ctx):
+                    self._queue(p.label, p.run, takeover=bool(getattr(p, "takeover", True)))
+            return result
         if tool is None:
             return _err(f"there is no tool called {str(name)[:40]}")
         if isinstance(arguments, dict):

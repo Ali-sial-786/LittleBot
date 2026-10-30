@@ -78,3 +78,30 @@ def test_default_hub_builds_without_missing_modules() -> None:
     ctx = make_test_context()
     hub = SkillHub(ctx)  # modules not written yet are skipped quietly
     assert isinstance(hub.skills, list)
+
+
+async def test_a_skills_takeover_is_queued_for_after_the_turn() -> None:
+    from littlebot.skills import takeover
+
+    started: list[str] = []
+
+    class Jukebox(Skill):
+        name = "jukebox"
+
+        def tools(self) -> list[dict[str, Any]]:
+            return [tool("play_music", "Play.", {"query": STR}, ("query",))]
+
+        async def run(self, name: str, args: dict[str, Any]) -> str:
+            async def go() -> bool:
+                started.append(args["query"])
+                return True
+
+            takeover.offer(self.ctx, "music jazz", go)
+            return ok("it starts after you speak")
+
+    ctx = make_test_context()
+    ctx.skills = SkillHub(ctx, [Jukebox(ctx)])
+    box = RobotToolbox(ctx, mode="chat", defer=True)
+    assert (await box.run("play_music", {"query": "jazz"})).startswith("ok")
+    assert [p.label for p in box.pending] == ["music jazz"] and started == []
+    assert await box.run_pending() == ["music jazz"] and started == ["jazz"]
