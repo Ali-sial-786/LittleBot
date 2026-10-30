@@ -273,6 +273,7 @@ class DisplayLoop:
         # The battery sign in the top-left corner (littlebot/power publishes power.show: plugged in, asked, low on waking).
         self.battery = BatteryBadge()
         self._power_sub: Any = None
+        self._battery_sub: Any = None
 
     # ------------------------------------------------------------------ setup
     def open(self) -> None:
@@ -313,9 +314,11 @@ class DisplayLoop:
         if self._levels_sub is not None:
             self._levels_sub.cancel()
             self._levels_sub = None
-        if self._power_sub is not None:
-            self._power_sub.cancel()
-            self._power_sub = None
+        for name in ("_power_sub", "_battery_sub"):
+            sub = getattr(self, name)
+            if sub is not None:
+                sub.cancel()
+                setattr(self, name, None)
         detach = getattr(self.face, "detach_display", None)
         if callable(detach):
             try:
@@ -357,7 +360,13 @@ class DisplayLoop:
     def _watch_power(self) -> None:
         from littlebot.core.events import Topics
 
-        self._power_sub = self.ctx.bus.subscribe(Topics.POWER_SHOW, self.battery.on_event)
+        bus = self.ctx.bus
+        self._power_sub = bus.subscribe(Topics.POWER_SHOW, self.battery.on_event)
+        if self.ctx.config.power.corner:  # the small always-on copy follows power.battery
+            recent = bus.recent(300, Topics.POWER_BATTERY)
+            if recent:
+                self.battery.on_state(recent[-1])
+            self._battery_sub = bus.subscribe(Topics.POWER_BATTERY, self.battery.on_state)
 
     def _on_live_view(self, event: Any) -> None:
         try:
@@ -501,7 +510,8 @@ class DisplayLoop:
         win = self.window
         if self.face_rect.size != win.get_size():
             win.fill((0, 0, 0))
-        if not self._draw_game(win, now) and not self._draw_card(win, now):
+        covered = self._draw_game(win, now) or self._draw_card(win, now)
+        if not covered:
             self.face.render(win, self.face_rect)
         if self.show_panel and self.panel is not None and self.panel_rect is not None:
             self._poll(now)
@@ -523,6 +533,8 @@ class DisplayLoop:
             shade = 1.0 if self.brightness.backlight is not None else 0.5 + 0.5 * self.brightness.level
             EC.draw_bar(win, self.face_rect, bar, shade)
         badge = self.battery.current(now)
+        if badge is None and not covered:  # the small corner copy: on the face only (cards put eyes there)
+            badge = self.battery.steady()
         if badge is not None and not self.face_hidden():
             draw_badge(win, self.face_rect, badge, 1.0 if self.brightness.backlight is not None
                        else 0.5 + 0.5 * self.brightness.level)

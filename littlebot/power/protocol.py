@@ -37,6 +37,9 @@ class Reading:
     charged: bool | None
     uptime_s: int | None
     fw: int | None = None
+    # A UPS board with its own fuel gauge (littlebot/power/ups_hat.py): every cell measured, and its percentage.
+    cell_volts: tuple[float, ...] = ()
+    percent: float | None = None
 
     @property
     def cell2(self) -> float | None:
@@ -46,7 +49,9 @@ class Reading:
 
     @property
     def cells(self) -> tuple[float, ...]:
-        """The cell voltages that are known (both, or none)."""
+        """The cell voltages that are known (both, or none; every cell from a UPS board)."""
+        if self.cell_volts:
+            return self.cell_volts
         c2 = self.cell2
         if self.cell1 is None or c2 is None:
             return ()

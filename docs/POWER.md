@@ -199,7 +199,8 @@ receives SIGTERM from systemd); holding it down forces power off - emergencies o
 The cordless build: a **2S1P 21700 pack** (7.2 V nominal, 8.4 V full, about 36 Wh) with its
 own BMS, a 2S USB-C charger board, and a **Pololu 5 V / 5 A step-down regulator** feeding
 the Pi's 5 V. The Pi cannot measure the battery, so a **Waveshare RP2040-Zero** on one of its
-USB ports does that and sends one JSON line per second. The robot's side is `littlebot/power/`
+USB ports does that and sends one JSON line per second (or a Waveshare UPS HAT (E) does it all:
+section 8.6). The robot's side is `littlebot/power/`
 (`ctx.power`). Without the monitor, LittleBot behaves exactly as on mains: no battery card
 values, no battery tool, no events, nothing said.
 
@@ -314,3 +315,32 @@ then runs `systemctl --no-ask-password poweroff`, logged at CRITICAL level. No s
   that is a system setting to add by hand.
 - After it has switched off, wait for the green LED to stop before unplugging anything
   (section 6). Switch it back on with the Pi's power button once the pack is charged.
+
+### 8.6 Waveshare UPS HAT (E) instead of the RP2040 monitor
+
+The **UPS HAT (E)** (four 21700 cells under a Pi 5, on pogo pins) has its own fuel gauge, so it
+needs no RP2040 and no wiring: LittleBot reads it over I2C (`littlebot/power/ups_hat.py`, the
+`smbus2` package from the installer's `pi` extra). With `power.monitor: auto` (the default)
+LittleBot looks for it at start-up (I2C bus 1, address `0x2D`, its ID register reads `0x0A`),
+and only when it isn't there does it look for the RP2040 on the serial ports.
+
+1. Switch I2C on once: `sudo raspi-config nonint do_i2c 0` (a system setting: do it by hand).
+2. Check it answers: `sudo i2cdetect -y 1` shows `2d`.
+3. Restart LittleBot. The log says `battery: UPS HAT (E) answering on i2c-1 0x2d`.
+
+If it doesn't find it by itself, set `power.monitor: ups_hat_e` in `config/local.yaml`
+(and `power.i2c_bus` / `power.i2c_address` if you changed them). Then LittleBot keeps trying
+the HAT and never looks at the serial ports.
+
+What it reads once a second: the pack voltage, each cell's voltage (empty slots are left out),
+the HAT's own percentage, and whether it is charging or full. The percentage on the face and the
+dashboard is the HAT's, smoothed like the RP2040's (only down on battery, only up while charging).
+The weakest cell still decides "empty" (below 3.30 V for 20 s). The HAT has no temperature
+sensor, so the hot / cold rules don't apply. LittleBot never writes to the HAT: its register
+`0x01` would cut the Pi's power.
+
+**The percentage in the corner.** With `power.corner: true` (the default), a small battery
+with its percentage stays in the face's top-left corner while a battery is fitted. It turns
+yellow below 50 % and red at 20 %, and shows a bolt while charging. It steps aside while an info
+card or a game is on the screen (cards put LittleBot's small eyes in that corner). The bigger sign
+(section 8.4) still pops up over anything. `power.corner: false` hides it.

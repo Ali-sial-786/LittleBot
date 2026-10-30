@@ -147,7 +147,8 @@ browser:
 power:
   # The battery (docs/POWER.md section 8): an RP2040-Zero battery monitor on a USB port. Without one
   # LittleBot behaves exactly as on mains power. Low / shutdown levels are dashboard settings.
-  monitor: auto            # auto (look on the USB serial ports) | simulated (desktop preview) | none
+  monitor: auto            # auto (a UPS HAT (E) on I2C, else the USB serial ports) | ups_hat_e | simulated (desktop preview) | none
+  corner: true             # the battery percentage always in the face's top-left corner (hidden under cards and games)
   port: null               # null = find it; or e.g. /dev/serial/by-id/usb-MicroPython_Board_...
   allow_poweroff: null     # switch the Pi off when empty / too hot. null = on the Pi only, never in the simulation
   hot_celsius: 50          # dashboard warning

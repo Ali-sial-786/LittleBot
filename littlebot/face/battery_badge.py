@@ -1,7 +1,9 @@
 """The face's little battery sign: a battery with its level (and a bolt while charging) in a corner, for a moment.
 
 Shown when the charger is plugged in, when someone asks about the battery, and on waking from a doze while
-the battery is low (``power.show`` from littlebot/power). ``BatteryBadge`` is pure (state and fading, no
+the battery is low (``power.show`` from littlebot/power). With ``power.corner`` a smaller copy stays in the
+same corner all the time, kept up to date from ``power.battery`` (``steady``); the big one covers it while it
+shows. ``BatteryBadge`` is pure (state and fading, no
 pygame), fed from the bus by the display loop; ``draw_badge`` draws it in the same candy style as the edge
 swipes' volume bar (littlebot/face/edge_controls.py): a cream pill, plum ink, cached sprites.
 """
@@ -20,6 +22,7 @@ FADE_SECONDS = 0.4
 MAX_SECONDS = 30.0
 MARGIN = 14  # px from the face's top-left corner, on the 720x480 canvas
 BADGE_W, BADGE_H = 168, 64
+SMALL = 0.6  # the always-on corner copy, this much of the full size
 CANVAS_H = 480
 LOW_PERCENT = 20
 _CACHE: OrderedDict[tuple[Any, ...], Any] = OrderedDict()
@@ -29,6 +32,7 @@ class Badge(NamedTuple):
     percent: int | None  # None: level unknown (the sign still shows charging)
     charging: bool
     alpha: float
+    small: bool = False
 
 
 class BatteryBadge:
@@ -38,6 +42,28 @@ class BatteryBadge:
         self.clock = clock
         self._lock = threading.Lock()
         self._shown: tuple[int | None, bool, float, float] | None = None  # (percent, charging, since, until)
+        self._steady: tuple[int, bool] | None = None  # the always-on corner copy: (percent, charging)
+
+    def on_state(self, event: Any) -> None:
+        """A ``power.battery`` event: the corner copy follows it (gone while the monitor is lost or not fitted)."""
+        get = getattr(event, "get", None)
+        if not callable(get):
+            return
+        try:
+            pct = int(round(float(get("percent"))))
+        except (TypeError, ValueError):
+            pct = None
+        with self._lock:
+            if pct is None or not get("fitted") or not get("connected"):
+                self._steady = None
+            else:
+                self._steady = (max(0, min(100, pct)), bool(get("charging") or get("charged")))
+
+    def steady(self) -> Badge | None:
+        """The always-on corner copy, or None (no battery reading)."""
+        with self._lock:
+            st = self._steady
+        return None if st is None else Badge(st[0], st[1], 1.0, small=True)
 
     def show(self, percent: Any, charging: Any, seconds: Any = 4.0) -> None:
         try:
@@ -85,11 +111,12 @@ class BatteryBadge:
         return self.current() is not None
 
 
-def badge_rect(rect: Any) -> tuple[int, int, int, int]:
+def badge_rect(rect: Any, small: bool = False) -> tuple[int, int, int, int]:
     """(x, y, w, h) the sign takes in the face ``rect`` (scaled with the face): its top-left corner."""
     s = rect.h / CANVAS_H
     m = round(MARGIN * s)
-    return rect.x + m, rect.y + m, round(BADGE_W * s), round(BADGE_H * s)
+    k = s * (SMALL if small else 1.0)
+    return rect.x + m, rect.y + m, round(BADGE_W * k), round(BADGE_H * k)
 
 
 def level_colour(percent: int | None) -> tuple[int, int, int]:
@@ -108,7 +135,7 @@ def draw_badge(surface: Any, rect: Any, badge: Badge, shade: float = 1.0) -> Any
     """Draw ``badge`` in the top-left corner of the face ``rect``; returns the rect drawn into."""
     import pygame  # noqa: PLC0415
 
-    x, y, w, h = badge_rect(rect)
+    x, y, w, h = badge_rect(rect, badge.small)
     sprite = _sprite(badge.percent, badge.charging, w, h, round(shade * 20))
     alpha = round(255 * badge.alpha)
     if alpha < 255:

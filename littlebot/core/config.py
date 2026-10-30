@@ -472,9 +472,12 @@ class PowerConfig(_Section):
     (``power.low_percent``, ``power.critical_percent``, ``power.announce_low``, ``power.shutdown_when_empty``) start
     from the values here."""
 
-    # auto = look for the monitor on the serial ports (and keep looking); simulated = a pretend pack (desktop
-    # preview, the dashboard's Simulator); none = no battery, never look.
-    monitor: Literal["auto", "simulated", "none"] = "auto"
+    # auto = a Waveshare UPS HAT (E) if one answers on I2C at start, else look for the monitor on the serial ports
+    # (and keep looking); ups_hat_e = only the HAT (littlebot/power/ups_hat.py); simulated = a pretend pack
+    # (desktop preview, the dashboard's Simulator); none = no battery, never look.
+    monitor: Literal["auto", "ups_hat_e", "simulated", "none"] = "auto"
+    i2c_bus: int = Field(default=1, ge=0, le=20)  # the UPS HAT's I2C bus and address
+    i2c_address: int = Field(default=0x2D, ge=0x08, le=0x77)
     port: str | None = None  # a fixed port (e.g. /dev/serial/by-id/usb-MicroPython...); None = search port_globs
     port_globs: list[str] = Field(default_factory=lambda: ["/dev/serial/by-id/*", "/dev/ttyACM*"])
     probe_any_port: bool = False  # also try serial ports that don't look like an RP2040 (another USB vendor id)
@@ -492,6 +495,7 @@ class PowerConfig(_Section):
     hot_sustain_seconds: float = Field(default=10.0, ge=0.0, le=300.0)
     cold_charge_celsius: float = Field(default=0.0, ge=-10.0, le=10.0)  # charging below this: alert
     # --- the face's battery sign
+    corner: bool = True  # a small battery percentage always in the face's top-left corner (not over cards/games)
     show_seconds: float = Field(default=4.0, ge=1.0, le=30.0)  # how long it shows (plugged in, asked)
     show_on_wake_below_percent: int = Field(default=30, ge=0, le=100)  # shown on waking from a doze below this
     publish_seconds: float = Field(default=5.0, ge=1.0, le=300.0)  # power.battery at most this often (+ changes)
