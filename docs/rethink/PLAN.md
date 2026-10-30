@@ -49,8 +49,8 @@ robot keeps working exactly as today until the new keys are added.
 ### 1. The fast voice pipeline (`littlebot/assistant`)
 - [x] Config `assistant:` section (pipeline, stt, tts, voice ids, follow-up seconds, persona, deep model) + key
       loading (DEEPGRAM_API_KEY, CARTESIA_API_KEY, ELEVENLABS_API_KEY; .env or data/<name>_api_key, chmod 600).
-- [ ] TTS providers (cartesia, elevenlabs, openai, local) behind one streaming protocol + auto chain + tests.
-- [ ] STT providers (deepgram flux streaming, openai batch, vosk local) behind one protocol + endpointing + tests.
+- [x] TTS providers (cartesia, elevenlabs, openai, local) behind one streaming protocol + auto chain + tests.
+- [x] STT providers (deepgram flux streaming, openai batch, vosk local) behind one protocol + endpointing + tests.
 - [x] Sentence streamer: model deltas → speakable sentences (tags stripped, expressions extracted).
 - [x] Agent: one brain call per turn (persona, memory, live context, tools incl. skills, final-tool cards,
       expression tags, filler on slow tools, think_harder) + instant local intents (stop, volume, pause …).

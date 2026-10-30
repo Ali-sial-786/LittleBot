@@ -34,6 +34,8 @@ Things that need no model at all are instant: "stop", "never mind", "louder", "v
   robot already has, or the robot's own Vosk and espeak).
 * `live`: always GPT-Live.
 
+The speech services (which ones, prices, measured latencies, privacy): [ASSISTANT_SPEECH.md](ASSISTANT_SPEECH.md).
+
 Keys (each one: a hidden prompt, saved in `data/<name>_api_key` with chmod 600, never printed):
 
 ```
