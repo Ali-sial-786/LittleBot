@@ -1,22 +1,35 @@
 """Music: "play some jazz", "play Bohemian Rhapsody", "put on Taylor Swift", "next song", "turn the music down".
 
-``play_music(query, kind)`` searches YouTube through the media controller (``ctx.media.search``, the same yt-dlp
-search and the same rules as videos: ``media.enabled``, offline mode, the age gate, the time limits), adds what
-makes a search find music rather than videos ("official audio" for a song, "mix" for a genre ...), prefers a
-result whose length fits (a song a few minutes, a mix an hour), and plays it with the other results as what comes
-next. It plays with ``presentation="music"``: the player page shows a now-playing screen (the title, the channel,
-LittleBot's eyes bobbing to it and equaliser bars) around a smaller player, so it feels like music rather than a
-video (littlebot/media/static/player.js).
+Two places music comes from, chosen per request (``skills.music_provider`` / the dashboard's ``music.provider``):
 
-Starting music takes the screen and the speaker like a video, so it never starts mid-answer: the start is handed
-to littlebot/skills/takeover.py, which a host with its own after-the-turn queue claims (``RobotToolbox``,
-the assistant's session), else it starts by itself once LittleBot has said its line.
+* **Spotify** (littlebot/skills/spotify.py, the default when it is set up): the owner's Spotify Premium, played on
+  the robot's own Spotify Connect receiver. ``auto`` uses it when it is connected and its receiver is visible
+  (and isn't playing on another of the owner's devices right now: auto never takes that over), ``spotify``
+  always, ``youtube`` only when asked. Their own library needs it: ``kind`` liked_songs ("play my liked songs"),
+  my_playlist ("play my road trip playlist") and my_favorites ("play something I like"). Audio only, so it takes
+  neither the screen nor LittleBot's speaker: it starts once LittleBot has said its line (a take-over with
+  ``takeover=False``: the voice chat carries on, the music quietly under it until the chat ends), and a
+  now-playing card (littlebot/screens/cards/music.py) shows it.
+* **YouTube** (as before): ``ctx.media.search`` (the same yt-dlp search and the same rules as videos:
+  ``media.enabled``, offline mode, the age gate, the time limits), with what makes a search find music rather than
+  videos ("official audio" for a song, "mix" for a genre ...), a result whose length fits (a song a few minutes,
+  a mix an hour), and the other results as what comes next. It plays with ``presentation="music"``: the player
+  page shows a now-playing screen (the title, the channel, LittleBot's eyes bobbing to it and equaliser bars)
+  around a smaller player (littlebot/media/static/player.js). It takes the screen and the speaker like a video,
+  so it never starts mid-answer: the start is handed to littlebot/skills/takeover.py, which a host with its own
+  after-the-turn queue claims (``RobotToolbox``, the assistant's session), else it starts by itself once
+  LittleBot has said its line.
 
-``music_control(action)``: pause, resume, next, stop, volume_up, volume_down (the media controller's).
+``play_music(query, kind, service)``: ``service`` "youtube" / "spotify" when they named one ("play it on
+YouTube"). Starting one stops the other (they would play over each other).
+``music_control(action, percent)``: pause, resume, next, previous, stop, volume_up, volume_down, set_volume,
+shuffle_on, shuffle_off, for whichever is playing (previous and shuffle: Spotify only).
+``whats_playing()``: the song, the artist and how far in, from either (Spotify's also goes on the screen).
 """
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import logging
 import re
@@ -24,19 +37,25 @@ import time
 from typing import Any, Callable
 
 from littlebot.skills import takeover
-from littlebot.skills.base import STR, Skill, ToolSpec, err, ok, tool
+from littlebot.skills.base import INT, STR, Skill, ToolSpec, as_json, err, ok, tool
 
 log = logging.getLogger("littlebot.skills.music")
 
-KINDS = ("song", "artist", "genre", "playlist", "radio")
-ACTIONS = ("pause", "resume", "next", "stop", "volume_up", "volume_down")
+KINDS = ("song", "artist", "album", "genre", "playlist", "radio")
+LIBRARY_KINDS = ("liked_songs", "my_playlist", "my_favorites")  # the user's own Spotify library
+SERVICES = ("spotify", "youtube")
+ACTIONS = ("pause", "resume", "next", "stop", "volume_up", "volume_down")  # YouTube's
+SPOTIFY_ACTIONS = ("previous", "shuffle_on", "shuffle_off")
+ALL_ACTIONS = ("pause", "resume", "next", "previous", "stop", "volume_up", "volume_down", "set_volume",
+               "shuffle_on", "shuffle_off")
+READY_WAIT_S = 3.0  # auto: how long to wait for Spotify to say whether its receiver is there
 SEARCH_RESULTS = 8
 ALTERNATIVES = 6
 VOLUME_STEP = 0.1
 LABEL = "music "  # take-over labels
 # What a search for each kind gets added, so YouTube finds music rather than videos about it.
-SUFFIX = {"song": "official audio", "artist": "best songs mix", "genre": "music mix", "playlist": "playlist mix",
-          "radio": "radio live"}
+SUFFIX = {"song": "official audio", "artist": "best songs mix", "album": "full album", "genre": "music mix",
+          "playlist": "playlist mix", "radio": "radio live"}
 _ALREADY = frozenset("official audio mix album playlist live radio lyrics lyric full songs hits".split())
 GENRES = frozenset((
     "jazz lofi lo-fi classical rock pop rap country blues reggae edm house techno trance ambient chill chillout "
@@ -133,15 +152,24 @@ class Music(Skill):
         self._played: list[str] = []  # video ids found for the last request (played or queued)
         self._mine: set[str] = set()  # media item ids this skill started ("search:<id>")
         self._starting: str | None = None  # the title waiting to start after the answer
+        self._last: str | None = None  # "spotify" | "youtube": what this skill started last
 
     # ------------------------------------------------------------ the skill
     def _media(self) -> Any:
         media = getattr(self.ctx, "media", None)
         return media if media is not None and hasattr(media, "play_video") and hasattr(media, "search") else None
 
-    def available(self) -> bool:
-        if not bool(getattr(self.ctx.config.skills, "music", True)):
-            return False
+    def _spotify(self) -> Any:
+        """The Spotify skill when it is connected and allowed now, else None."""
+        try:
+            from littlebot.skills.spotify import get_spotify  # noqa: PLC0415
+
+            sp = get_spotify(self.ctx)
+            return sp if sp is not None and sp.available() else None
+        except Exception:  # noqa: BLE001
+            return None
+
+    def _youtube_ok(self) -> bool:
         media = self._media()
         if media is None:
             return False
@@ -151,26 +179,62 @@ class Music(Skill):
         except Exception:  # noqa: BLE001
             return False
 
+    def available(self) -> bool:
+        if not bool(getattr(self.ctx.config.skills, "music", True)):
+            return False
+        return self._youtube_ok() or self._spotify() is not None
+
     def tools(self) -> list[ToolSpec]:
+        spotify = self._spotify() is not None
+        if spotify:
+            play = ("Play music on LittleBot: a song, an artist, an album, a genre or mood, a playlist or a "
+                    "radio-style mix, or the user's own Spotify music (kind liked_songs, my_playlist with its name, "
+                    "my_favorites for 'something I like'). It plays from Spotify by default (YouTube when Spotify can't); set "
+                    "service only when they name one ('play it on YouTube'). It starts as soon as you have finished "
+                    "speaking, so say one short line ('Here's some jazz!').")
+            kinds = list(KINDS + LIBRARY_KINDS)
+            kind_help = ("song (one track), artist (their best songs), album, genre (a style or mood), playlist, radio "
+                         "(a radio-style mix); their own Spotify: liked_songs, my_playlist (query: its name, e.g. "
+                         "'Discover Weekly'), my_favorites (their most played)")
+        else:
+            play = ("Play music on LittleBot (from YouTube, with a now-playing screen): a song, an artist, an album, a "
+                    "genre or mood, a playlist or a radio-style stream. It starts as soon as you have finished "
+                    "speaking, so say one short line ('Here's some jazz!').")
+            kinds = list(KINDS)
+            kind_help = ("song (one track), artist (their best songs), album, genre (a style or mood mix), playlist, "
+                         "radio (a live stream)")
+        props: dict[str, Any] = {
+            "query": {**STR, "description": "what to play, e.g. 'Bohemian Rhapsody by Queen', 'Taylor Swift', 'jazz', "
+                                            "'relaxing piano', 'lofi'"},
+            "kind": {"type": "string", "enum": kinds, "description": kind_help}}
+        if spotify:
+            props["service"] = {"type": "string", "enum": list(SERVICES),
+                                "description": "only when they said where: 'on YouTube' or 'on Spotify'"}
+        actions = list(ALL_ACTIONS) if spotify else [*ACTIONS, "set_volume"]
         return [
-            tool("play_music", "Play music on LittleBot (from YouTube, with a now-playing screen): a song, an "
-                 "artist, a genre or mood, a playlist or a radio-style stream. It starts as soon as you have "
-                 "finished speaking, so say one short line ('Here's some jazz!').",
-                 {"query": {**STR, "description": "what to play, e.g. 'Bohemian Rhapsody by Queen', 'Taylor Swift', "
-                                                  "'jazz', 'relaxing piano', 'lofi'"},
-                  "kind": {"type": "string", "enum": list(KINDS),
-                           "description": "song (one track), artist (their best songs), genre (a style or mood mix), "
-                                          "playlist, radio (a live stream)"}},
-                 ("query",)),
+            tool("play_music", play, props, ("query",)),
             tool("music_control", "Control the music that is playing: pause, resume, next (skip to another song), "
-                 "stop, volume_up or volume_down.",
-                 {"action": {"type": "string", "enum": list(ACTIONS)}}, ("action",)),
+                 "stop, volume_up, volume_down, set_volume (with percent)"
+                 + (", previous (the song before), shuffle_on or shuffle_off." if spotify else "."),
+                 {"action": {"type": "string", "enum": actions},
+                  "percent": {**INT, "minimum": 0, "maximum": 100, "description": "set_volume only: 0 to 100"}},
+                 ("action",)),
+            tool("whats_playing", "What music is playing on LittleBot right now: the song, the artist and how far in"
+                 + (" (it also shows it on the screen)." if spotify else "."), {}),
         ]
 
     def prompt_note(self) -> str:
+        if self._spotify() is not None:
+            return ("Music: for 'play some jazz', 'play Bohemian Rhapsody', 'put on Taylor Swift' or 'play something "
+                    "relaxing' call play_music (with kind); it plays from the user's Spotify unless they ask for "
+                    "YouTube. 'Play my liked songs' / 'play my Discover Weekly' / 'play something I like': kind "
+                    "liked_songs / my_playlist / my_favorites. music_control pauses, resumes, skips (next), goes back "
+                    "(previous), stops, shuffles or turns it up or down; whats_playing says what's on. Use "
+                    "play_youtube only when they want to watch a video.")
         return ("Music: for 'play some jazz', 'play Bohemian Rhapsody', 'put on Taylor Swift' or 'play something "
                 "relaxing' call play_music (with kind); music_control pauses, resumes, skips (next), stops it or "
-                "turns it up or down. Use play_youtube only when they want to watch a video.")
+                "turns it up or down; whats_playing says what's on. Use play_youtube only when they want to watch a "
+                "video.")
 
     def context_note(self) -> str:
         if self._starting and any(p.startswith(LABEL) for p in takeover.pending(self.ctx)):
@@ -191,17 +255,219 @@ class Music(Skill):
         return f"Music: playing '{title}'{by} (music_control: pause, next, stop, volume_up, volume_down)."
 
     def status(self) -> dict[str, Any]:
-        return {**super().status(), "query": self._query or None, "starting": self._starting}
+        from littlebot.skills.spotify import music_provider  # noqa: PLC0415
+
+        return {**super().status(), "query": self._query or None, "starting": self._starting,
+                "provider": music_provider(self.ctx), "last_service": self._last}
 
     async def run(self, name: str, args: dict[str, Any]) -> str:
+        if name not in ("play_music", "music_control", "whats_playing"):
+            return await super().run(name, args)
         media = self._media()
-        if media is None:
+        if media is None and self._spotify() is None:
             return err("music isn't available on this robot")
         if name == "play_music":
-            return await self._play_music(media, args)
+            return await self._play(media, args)
         if name == "music_control":
-            return await self._control(media, args)
-        return await super().run(name, args)
+            return await self._control_any(media, args)
+        return await self._whats_playing(media)
+
+    # ------------------------------------------------------------ which service
+    async def _provider(self, service: str | None, kind: str | None) -> tuple[str | None, str]:
+        """("spotify" | "youtube", "") or (None, why neither can play it)."""
+        from littlebot.skills.spotify import SpotifyError, get_spotify, music_provider  # noqa: PLC0415
+
+        sp = self._spotify()
+        if service == "youtube":
+            return "youtube", ""
+        if service == "spotify" or kind in LIBRARY_KINDS:
+            if sp is None:
+                skill = get_spotify(self.ctx)
+                why = skill.blocked_text() if skill is not None else ""
+                why = why or "Spotify isn't set up on LittleBot"
+                return None, why + ("; their own Spotify music needs it" if kind in LIBRARY_KINDS else "")
+            return "spotify", ""
+        pref = music_provider(self.ctx)
+        if sp is None or pref == "youtube":
+            return "youtube", ""
+        if pref == "spotify" or not self._youtube_ok():
+            return "spotify", ""
+        try:  # auto: Spotify when its receiver is there and it isn't playing on another device right now
+            dev, busy = await asyncio.wait_for(sp.ready_to_play(), READY_WAIT_S)
+        except (SpotifyError, asyncio.TimeoutError) as e:
+            log.info("music: Spotify not used (%s)", getattr(e, "kind", "timeout"))
+            return "youtube", ""
+        if dev is None:
+            log.info("music: Spotify's receiver isn't visible; YouTube instead")
+            return "youtube", ""
+        if busy:
+            log.info("music: Spotify is playing on another device; YouTube instead")
+            return "youtube", ""
+        return "spotify", ""
+
+    async def _play(self, media: Any, args: dict[str, Any]) -> str:
+        query = _clean(args.get("query"))
+        kind = str(args.get("kind") or "").strip().lower() or None
+        if kind is not None and kind not in KINDS + LIBRARY_KINDS:
+            kind = None
+        service = str(args.get("service") or "").strip().lower() or None
+        if service not in SERVICES:
+            service = None
+        if not query and kind not in LIBRARY_KINDS:
+            return err("say what music to play")
+        which, why = await self._provider(service, kind)
+        if which is None:
+            return err(why)
+        if which == "spotify":
+            return await self._play_spotify(query, kind)
+        if media is None:
+            return err("music isn't available on this robot")
+        if kind in LIBRARY_KINDS:  # (service youtube for "my liked songs": YouTube has no such thing)
+            return err("their own liked songs, playlists and favourites are on Spotify, not YouTube")
+        return await self._play_music(media, {"query": query, "kind": kind})
+
+    # ------------------------------------------------------------ Spotify
+    async def _play_spotify(self, query: str, kind: str | None) -> str:
+        from littlebot.skills.spotify import SpotifyError  # noqa: PLC0415
+
+        sp = self._spotify()
+        if sp is None:
+            return err("Spotify isn't set up on LittleBot")
+        try:
+            choice = await sp.find(query, kind)
+        except SpotifyError as e:
+            log.info("music: Spotify search failed (%s)", e.kind)
+            return err(str(e))
+        self._starting = choice.first_title or choice.title
+
+        async def play() -> bool:
+            self._starting = None
+            await self._quiet_youtube()
+            try:
+                await sp.play_choice(choice)
+            except SpotifyError as e:
+                log.info("music: Spotify didn't start (%s)", e.kind)
+                self._failed(str(e))
+                return False
+            self._last = "spotify"
+            return True
+
+        # audio only: after the answer, without ending the voice chat (takeover.py, takeover=False)
+        takeover.offer(self.ctx, f"{LABEL}spotify", play, takeover=False)
+        log.info("music: Spotify %s queued", choice.what)
+        return ok(f"{choice.said()} starts playing on Spotify as soon as you have finished speaking; say it in one "
+                  f"short line")
+
+    async def _quiet_youtube(self) -> None:
+        """Spotify is about to play: a video or YouTube music would play over it."""
+        media = self._media()
+        st = _safe_status(media)
+        if media is not None and st.get("state") not in (None, "idle", "error"):
+            try:
+                await media.stop("spotify")
+            except Exception:  # noqa: BLE001
+                log.debug("music: stopping YouTube failed", exc_info=True)
+
+    def _youtube_music_on(self, media: Any) -> bool:
+        st = _safe_status(media)
+        item = st.get("item") if isinstance(st.get("item"), dict) else None
+        if item is None or st.get("state") in (None, "idle", "error"):
+            return False
+        return item.get("presentation") == "music" or item.get("id") in self._mine
+
+    async def _which(self, media: Any) -> str:
+        """Which one music_control / whats_playing is about: "spotify" or "youtube"."""
+        sp = self._spotify()
+        if sp is None:
+            return "youtube"
+        yt = media is not None and self._youtube_music_on(media)
+        spotify_on = sp.playing()
+        if spotify_on and not yt:
+            return "spotify"
+        if yt and not spotify_on:
+            return "youtube"
+        if yt and spotify_on:
+            return self._last or "spotify"
+        if media is None or self._last == "spotify":
+            return "spotify"
+        snap = sp.snapshot()
+        if snap is None:  # nothing known: ask Spotify (one request)
+            from littlebot.skills.spotify import SpotifyError  # noqa: PLC0415
+
+            try:
+                snap = await sp.now_playing(fresh=True)
+            except SpotifyError:
+                snap = None
+        return "spotify" if snap and snap.get("on_littlebot") else "youtube"
+
+    async def _control_any(self, media: Any, args: dict[str, Any]) -> str:
+        action = str(args.get("action") or "").strip().lower()
+        if action not in ALL_ACTIONS:
+            return err(f"unknown action; use one of {', '.join(ALL_ACTIONS)}")
+        if action in ("stop", "pause") and self._starting and takeover.drop(self.ctx, f"{LABEL}spotify"):
+            self._starting = None
+            return ok("the music won't start")
+        if await self._which(media) == "spotify":
+            sp = self._spotify()
+            done, said = await sp.command(action, args.get("percent"))
+            return ok(said) if done else err(said)
+        if media is None:
+            return ok("no music is playing")
+        if action == "set_volume":
+            return self._set_volume(media, args.get("percent"))
+        if action in SPOTIFY_ACTIONS:
+            return err("YouTube music can't do that; say next for another song, or ask for a song by name")
+        return await self._control(media, args)
+
+    def _set_volume(self, media: Any, percent: Any) -> str:
+        from littlebot.skills.spotify import _percent  # noqa: PLC0415
+
+        pct = _percent(percent)
+        if pct is None:
+            return err("give a volume from 0 to 100")
+        try:
+            new = float(media.set_volume(round(pct / 100, 3)))
+        except ValueError as e:
+            return err(str(e))
+        return ok(f"music volume {round(new * 100)}%")
+
+    # ------------------------------------------------------------ whats_playing
+    async def _whats_playing(self, media: Any) -> str:
+        from littlebot.skills.spotify import SpotifyError, mmss  # noqa: PLC0415
+
+        if self._starting and any(p.startswith(LABEL) for p in takeover.pending(self.ctx)):
+            return ok(f"'{self._starting}' starts as soon as you have finished speaking")
+        if await self._which(media) == "spotify":
+            sp = self._spotify()
+            try:
+                st = await sp.now_playing(fresh=True)
+            except SpotifyError as e:
+                return err(str(e))
+            if st and st.get("on_littlebot") and st.get("title"):
+                out: dict[str, Any] = {"service": "spotify", "song": st["title"], "artist": st.get("artist") or None,
+                                       "album": st.get("album") or None,
+                                       "state": "playing" if st.get("playing") else "paused"}
+                if st.get("duration_ms"):
+                    out["position"] = f"{mmss(st.get('progress_ms'))} of {mmss(st['duration_ms'])}"
+                await self._show_music_card()
+                return as_json({k: v for k, v in out.items() if v is not None})
+        st = _safe_status(media)
+        item = st.get("item") if isinstance(st.get("item"), dict) else None
+        if media is not None and item is not None and self._youtube_music_on(media):
+            state = "paused" if st.get("held") or st.get("state") == "paused" else "playing"
+            return as_json({k: v for k, v in {"service": "youtube", "title": speakable(item.get("title")),
+                                              "channel": item.get("channel") or None, "state": state}.items()
+                            if v is not None})
+        return ok("no music is playing")
+
+    async def _show_music_card(self) -> None:
+        if getattr(self.ctx, "screens", None) is None:
+            return
+        task = asyncio.ensure_future(self.show({"card": "music"}))
+        try:
+            await asyncio.wait_for(asyncio.shield(task), 0.5)
+        except asyncio.TimeoutError:
+            pass
 
     # ------------------------------------------------------------ play_music
     async def _play_music(self, media: Any, args: dict[str, Any]) -> str:
@@ -254,6 +520,7 @@ class Music(Skill):
                                    duration_seconds=first.get("duration_seconds"), alternatives=others, **presentation)
             self._mine.add(f"search:{vid}")
             self._mine.update(f"search:{o.get('video_id')}" for o in others)
+            self._last = "youtube"
             return True
 
         takeover.offer(self.ctx, f"{LABEL}{vid}", play, on_fail=self._failed)

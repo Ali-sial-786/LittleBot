@@ -241,7 +241,7 @@ async def test_offered_only_with_media_and_search():
         assert not m.available()
         ctx.media.allow_search = True
         assert m.available()
-        assert [s["name"] for s in SkillHub(ctx, [m]).specs()] == ["play_music", "music_control"]
+        assert [s["name"] for s in SkillHub(ctx, [m]).specs()] == ["play_music", "music_control", "whats_playing"]
         assert "play_youtube only when they want to watch" in m.prompt_note()
     finally:
         ctx.db.close()

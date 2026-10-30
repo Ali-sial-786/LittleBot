@@ -13,6 +13,11 @@ would cut the answer off, or fail ("LittleBot is busy"). A skill hands the start
 
 Only the newest take-over is kept (like ``RobotToolbox``: "play jazz ... no, play rock" plays rock). Everything
 runs on the robot's asyncio loop; nothing here raises into the caller.
+
+``offer(..., takeover=False)``: something that only needs the answer to be said first and takes neither the
+screen nor LittleBot's speaker (Spotify plays on its own receiver, littlebot/skills/spotify.py). A host runs it
+right after the answer without ending the voice chat (the assistant's session carries on listening; GPT-Live
+still hands over), and by itself it never ends a voice chat either.
 """
 
 from __future__ import annotations
@@ -66,14 +71,15 @@ def _queue(ctx: Any) -> _Queue:
 
 
 def offer(ctx: Any, label: str, run: Callable[[], Awaitable[Any]], *, max_wait: float | None = None,
-          on_fail: Callable[[str], None] | None = None) -> Takeover:
+          on_fail: Callable[[str], None] | None = None, takeover: bool = True) -> Takeover:
     """Queue ``run`` to start after the answer: a host may :func:`claim` it, else it starts by itself.
 
-    ``on_fail(why)`` hears about a start that didn't happen by itself (a host that claimed it reports its own)."""
+    ``on_fail(why)`` hears about a start that didn't happen by itself (a host that claimed it reports its own).
+    ``takeover=False``: it needs neither the screen nor the speaker, so no voice chat is ended for it."""
     q = _queue(ctx)
     for old in q.items:  # the newest wins
         _cancel(old)
-    item = Takeover(str(label)[:80], run)
+    item = Takeover(str(label)[:80], run, takeover=bool(takeover))
     q.items = [item]
     try:
         loop = asyncio.get_running_loop()
@@ -136,7 +142,8 @@ async def _fallback(ctx: Any, item: Takeover, max_wait: float | None,
         if item not in q.items:  # claimed or replaced meanwhile
             return
         q.items = [t for t in q.items if t is not item]
-        await end_voice_chat(ctx)
+        if item.takeover:
+            await end_voice_chat(ctx)
         ok = await item.run()
     except asyncio.CancelledError:
         raise

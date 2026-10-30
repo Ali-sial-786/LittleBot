@@ -116,7 +116,7 @@ Both are opt-in and run on the robot only (only a name reaches the brain, never 
 | Briefing & news | "Good morning", "What's my day?", "What's the news?" | weather, reminders, lists, headlines (CBC, BBC) |
 | Smart home | "Turn off the kitchen lights", "Set the thermostat to 21" | Home Assistant: `skills.home_assistant_url` + `scripts/set_key.py home_assistant` |
 | Routines | "When I say good night, turn off the lights and set an alarm for 7" | then "Good night" runs it |
-| Music | "Play some jazz", "Next song", "Pause the music" | YouTube audio with a now-playing screen |
+| Music | "Play some jazz", "Play my liked songs", "Next song", "What's playing?", "Play it on YouTube" | Spotify by default once it is set up ([SPOTIFY.md](SPOTIFY.md): Premium, `scripts/setup_spotify.sh`, Connect on the dashboard), with a now-playing card; else YouTube audio with a now-playing screen |
 | Translator | "Translate to Urdu", "Be my interpreter for Spanish", "Stop translating" | |
 | Voice games | "Let's play trivia", "Hangman", "20 questions", "Tell me a riddle", "Would you rather" | answers judged instantly on the robot; scores kept |
 

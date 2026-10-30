@@ -1,12 +1,13 @@
 """The assistant (littlebot/assistant) from the phone: which voice is on and why, type to LittleBot, have it say
-something (intercom), send a note to its screen, and what its skills hold (lists, reminders, memories ...).
+something (intercom), send a note to its screen, what its skills hold (lists, reminders, memories ...), and
+Spotify (connect, disconnect, what plays; ``/api/assistant/spotify/...``) and where music plays from.
 
-Keys are never returned: only whether each one is set.
+Keys are never returned: only whether each one is set (Spotify: only whether it is connected).
 """
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import Field, field_validator
@@ -211,3 +212,119 @@ async def history_clear(dash: DashState = Depends(get_dash)) -> dict[str, Any]:
     svc = _assistant(dash)
     svc.history.clear()
     return {"ok": True}
+
+
+# ---------------------------------------------------------------- Spotify (littlebot/skills/spotify.py, docs/SPOTIFY.md)
+# Connecting: the Client ID of the owner's app on developer.spotify.com, then the authorize URL (opened in a new tab)
+# and the address the browser lands on afterwards (pasted back here). Tokens are never returned: only whether
+# Spotify is connected.
+
+class SpotifyClientIdBody(Body):
+    client_id: str = Field(..., min_length=1, max_length=80)
+
+
+class SpotifyConnectBody(Body):
+    client_id: str | None = Field(default=None, max_length=80)
+
+
+class SpotifyFinishBody(Body):
+    url: str = Field(..., min_length=1, max_length=4000)
+
+
+class SpotifyControlBody(Body):
+    action: Literal["pause", "resume", "next", "previous", "volume_up", "volume_down"]
+
+
+class MusicProviderBody(Body):
+    provider: Literal["auto", "spotify", "youtube"]
+
+
+def _spotify(dash: DashState) -> Any:
+    from littlebot.skills.spotify import get_spotify  # noqa: PLC0415
+
+    sp = get_spotify(dash.ctx)
+    if sp is None:
+        raise HTTPException(status_code=503, detail="The Spotify skill isn't running.")
+    return sp
+
+
+def _online(dash: DashState) -> None:
+    if dash.ctx.config.is_offline:
+        raise HTTPException(status_code=403, detail="LittleBot is in offline mode, so it can't reach Spotify.")
+    if not dash.ctx.privacy.cloud_enabled:
+        raise HTTPException(status_code=403, detail="Spotify needs cloud communication: switch it on in Privacy.")
+
+
+@router.get("/spotify")
+async def spotify_info(dash: DashState = Depends(get_dash)) -> dict[str, Any]:
+    """Connected or not, the Client ID, whether LittleBot's receiver is visible, and what it plays (no token)."""
+    sp = _spotify(dash)
+    return scrub(await sp.refresh())
+
+
+@router.post("/spotify/client_id")
+async def spotify_client_id(body: SpotifyClientIdBody, dash: DashState = Depends(get_dash)) -> dict[str, Any]:
+    from littlebot.skills.spotify import SpotifyError  # noqa: PLC0415
+
+    try:
+        cid = _spotify(dash).set_client_id(body.client_id)
+    except SpotifyError as e:
+        raise HTTPException(status_code=400, detail=_capital(str(e))) from None
+    return {"ok": True, "client_id": cid}
+
+
+@router.post("/spotify/connect")
+async def spotify_connect(body: SpotifyConnectBody, dash: DashState = Depends(get_dash)) -> dict[str, Any]:
+    """Start the sign-in: Spotify's authorize URL, for a new tab (long, and nothing secret in it: not scrubbed)."""
+    from littlebot.skills.spotify import REDIRECT_URI, SpotifyError  # noqa: PLC0415
+
+    sp = _spotify(dash)
+    _online(dash)
+    try:
+        url = sp.begin_connect(body.client_id)
+    except SpotifyError as e:
+        raise HTTPException(status_code=400, detail=_capital(str(e))) from None
+    log.info("dashboard: Spotify sign-in started")
+    return {"ok": True, "url": url, "redirect_uri": REDIRECT_URI}
+
+
+@router.post("/spotify/finish")
+async def spotify_finish(body: SpotifyFinishBody, dash: DashState = Depends(get_dash)) -> dict[str, Any]:
+    """Finish the sign-in with the address the browser landed on (http://127.0.0.1:8888/callback?code=...)."""
+    from littlebot.skills.spotify import SpotifyError  # noqa: PLC0415
+
+    sp = _spotify(dash)
+    _online(dash)
+    try:
+        await sp.finish_connect(body.url)
+    except SpotifyError as e:
+        raise HTTPException(status_code=400, detail=_capital(str(e))) from None
+    log.info("dashboard: Spotify connected")
+    return scrub({"ok": True, "status": await sp.refresh()})
+
+
+@router.post("/spotify/disconnect")
+async def spotify_disconnect(dash: DashState = Depends(get_dash)) -> dict[str, Any]:
+    was = _spotify(dash).disconnect()
+    log.info("dashboard: Spotify disconnected")
+    return {"ok": True, "was_connected": was}
+
+
+@router.post("/spotify/control")
+async def spotify_control(body: SpotifyControlBody, dash: DashState = Depends(get_dash)) -> dict[str, Any]:
+    done, said = await _spotify(dash).command(body.action)
+    if not done:
+        raise HTTPException(status_code=409, detail=said)
+    return {"ok": True, "said": said}
+
+
+@router.post("/music/provider")
+async def music_provider(body: MusicProviderBody, dash: DashState = Depends(get_dash)) -> dict[str, Any]:
+    """Where "play some jazz" plays from: auto (Spotify when it's ready, else YouTube), spotify or youtube."""
+    dash.ctx.settings.set("music.provider", body.provider, source="dashboard")
+    return {"ok": True, "provider": body.provider}
+
+
+def _capital(text: str) -> str:
+    t = text.strip()
+    return (t[:1].upper() + t[1:]).rstrip(".") + "." if t else t

@@ -131,6 +131,8 @@ assistant:  # the fast voice pipeline (docs/ASSISTANT.md): speech-to-text -> Cla
 skills:  # LittleBot's abilities for both voices (littlebot/skills); each one can be switched off
   persona: warm          # warm | witty | calm | concise | playful (or by voice: "be more concise")
   home_assistant_url: ""  # e.g. http://homeassistant.local:8123 (token: HOME_ASSISTANT_TOKEN in .env)
+  music_provider: auto   # auto (Spotify when it's set up and its speaker is ready, else YouTube) | spotify | youtube
+  spotify_client_id: ""  # your app's Client ID from developer.spotify.com (or on the dashboard); docs/SPOTIFY.md
 
 decide:  # fast decision models for small multiple-choice calls (littlebot/decide, docs/DECISIONS.md)
   provider: "off"        # off | jev (TYPESAFE_API_KEY in .env) | openai (OPENAI_API_KEY) | claude (ANTHROPIC_API_KEY)
