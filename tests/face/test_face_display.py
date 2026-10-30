@@ -528,8 +528,12 @@ def test_double_tap_shows_today_at_a_glance(runtime):
     loop.open()
     try:
         r = loop.face_rect
-        loop.handle_click((r.centerx, r.centery), 1, 0)
-        loop.handle_click((r.centerx, r.centery), 1, 0)
+        for _ in range(2):
+            loop.handle_click((r.centerx, r.centery), 1, 0)
+            pygame.event.post(pygame.event.Event(pygame.MOUSEBUTTONUP, pos=r.center, button=1))
+            loop._handle_events()
+            loop._flush_lift(force=True)
+            time.sleep(0.12)  # longer than a touch-screen bounce
         assert _wait_until(lambda: shown == [{"card": "glance"}])
     finally:
         loop.close()

@@ -1054,6 +1054,8 @@ class DisplayLoop:
         if lift is None or (not force and time.monotonic() - lift[1] < self.touch_bounce_s):
             return
         self._lift = None
+        if self._press is not None:  # a still tap on the face (not a swipe or a hold)
+            self._tap_lifted(lift[1])
         self._press = None
         self._edge_release(lift[0])
         self._card_pointer("release", lift[0])
@@ -1192,11 +1194,13 @@ class DisplayLoop:
             else:
                 self.face.look_at(nx, ny)
             return
-        now = time.monotonic()
-        last, self._last_press_at = getattr(self, "_last_press_at", 0.0), now
-        if now - last <= DOUBLE_TAP_SECONDS and self.show_glance():
-            return
         self.tap_reaction(nx, ny)
+
+    def _tap_lifted(self, at: float) -> None:
+        """A tap on the face ended (the finger lifted where it pressed). Two in a row: today at a glance."""
+        last, self._last_tap_up = getattr(self, "_last_tap_up", float("-inf")), at
+        if at - last <= DOUBLE_TAP_SECONDS and not self.sim_mode and self.show_glance():
+            self._last_tap_up = float("-inf")
 
     def show_glance(self) -> bool:
         """A double tap on the idle face: the day at a glance (littlebot/screens/cards/glance.py)."""
