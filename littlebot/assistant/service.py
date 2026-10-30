@@ -378,8 +378,19 @@ class AssistantService(Service):
         loop = self._loop
         if not text or loop is None or loop.is_closed():
             return
+        if event.get("kind") == "alarm":
+            self._wake_for_alarm()
         with contextlib.suppress(RuntimeError):
             loop.call_soon_threadsafe(lambda: asyncio.ensure_future(self._announce(text, card)))
+
+    def _wake_for_alarm(self) -> None:
+        """An alarm ("wake me at 7") wakes LittleBot up if it was asleep, so its face and card show."""
+        from littlebot.core.state import RobotState  # noqa: PLC0415
+
+        with contextlib.suppress(Exception):
+            if self.ctx.state.state == RobotState.SLEEPING:
+                self.ctx.state.transition(RobotState.IDLE, "alarm")
+                log.info("assistant: an alarm woke LittleBot up")
 
     def _on_game_news(self, event: Event) -> None:
         """An on-screen game's news ("you picked rock, I picked paper"): said in the session (GPT-Live says it in its

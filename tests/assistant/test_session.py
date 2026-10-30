@@ -300,3 +300,14 @@ async def test_stop_or_snooze_while_an_alarm_rings() -> None:
     await _wait(lambda: "Okay, it's off." in tts.said)
     assert rem.calls == ["snooze", "stop"] and brain.questions == []
     await svc.stop_session("test")
+
+
+async def test_an_alarm_wakes_littlebot_up() -> None:
+    svc, _, _, _ = _service(Scripted())
+    await svc.start()
+    svc.ctx.state.transition(RobotState.SLEEPING, "test")
+    from littlebot.skills.base import announce
+
+    announce(svc.ctx, "Good morning! It's 7.", kind="alarm", urgent=True)
+    assert svc.ctx.state.state == RobotState.IDLE
+    await _wait(lambda: "Good morning! It's 7." in svc.ctx.audio.spoken)
