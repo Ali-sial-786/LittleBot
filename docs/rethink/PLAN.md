@@ -47,20 +47,20 @@ robot keeps working exactly as today until the new keys are added.
 - [x] PLAN.md.
 
 ### 1. The fast voice pipeline (`littlebot/assistant`)
-- [ ] Config `assistant:` section (pipeline, stt, tts, voice ids, follow-up seconds, persona, deep model) + key
+- [x] Config `assistant:` section (pipeline, stt, tts, voice ids, follow-up seconds, persona, deep model) + key
       loading (DEEPGRAM_API_KEY, CARTESIA_API_KEY, ELEVENLABS_API_KEY; .env or data/<name>_api_key, chmod 600).
 - [ ] TTS providers (cartesia, elevenlabs, openai, local) behind one streaming protocol + auto chain + tests.
 - [ ] STT providers (deepgram flux streaming, openai batch, vosk local) behind one protocol + endpointing + tests.
-- [ ] Sentence streamer: model deltas → speakable sentences (tags stripped, expressions extracted).
-- [ ] Agent: one brain call per turn (persona, memory, live context, tools incl. skills, final-tool cards,
+- [x] Sentence streamer: model deltas → speakable sentences (tags stripped, expressions extracted).
+- [x] Agent: one brain call per turn (persona, memory, live context, tools incl. skills, final-tool cards,
       expression tags, filler on slow tools, think_harder) + instant local intents (stop, volume, pause …).
-- [ ] VoiceSession: LiveAudio, carry from the wake word, STT stream, turn end → agent → TTS, barge-in
+- [x] VoiceSession: LiveAudio, carry from the wake word, STT stream, turn end → agent → TTS, barge-in
       (BargeInDetector + STT words confirm), follow-up window, idle end, take-overs after speaking, cleanup.
-- [ ] AssistantService (`ctx.assistant`): start_session/stop_session/status like live; handle_text for typed chat;
+- [x] AssistantService (`ctx.assistant`): start_session/stop_session/status like live; handle_text for typed chat;
       wake word routes to it when the pipeline says so; timing log line per turn (stt/brain/tts first audio).
 
 ### 2. Skills (new abilities, in both pipelines)
-- [ ] Skill registry: tools + prompt notes + run; offered by RobotToolbox (GPT-Live hand-offs) and the agent.
+- [x] Skill registry: tools + prompt notes + run; offered by RobotToolbox (GPT-Live hand-offs) and the agent.
 - [ ] Memory (remember / recall / forget; facts in the prompt).
 - [ ] Reminders and alarms (natural times, repeat daily, announced proactively with a card, snooze).
 - [ ] Lists (shopping, to-do, any name): add / remove / read / clear; list card.
@@ -83,7 +83,7 @@ robot keeps working exactly as today until the new keys are added.
 - [ ] Drive base protocol + mock (wheels phase), off by default.
 
 ### 6. Dashboard companion
-- [ ] Assistant page: type to LittleBot, intercom ("say this"), send to screen, lists / reminders / memories.
+- [x] Assistant page: type to LittleBot, intercom ("say this"), send to screen, lists / reminders / memories.
 
 ### 7. Wrap-up
 - [ ] docs/ASSISTANT.md (how it works, settings, keys); MORNING.md; Status: DONE.
