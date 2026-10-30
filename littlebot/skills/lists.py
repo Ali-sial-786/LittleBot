@@ -18,7 +18,7 @@ import re
 import threading
 from typing import Any, Callable
 
-from littlebot.skills.base import STR, Skill, ToolSpec, err, ok, tool
+from littlebot.skills.base import Skill, ToolSpec, err, ok, tool
 
 log = logging.getLogger("littlebot.skills.lists")
 
@@ -33,7 +33,8 @@ SAY_ITEMS = 25  # read_list returns at most this many (the card shows them all, 
 CHANGED_LINGER_S = 12.0  # the card after adding / removing: a short look
 
 _SHOPPING_NAMES = {"shopping", "grocery", "groceries", "grocery shopping", "food", "food shopping", "supermarket",
-                   "store", "the store", "shop", "shops", "things to buy", "to buy", "buy", "market", "errands shopping"}
+                   "store", "the store", "shop", "shops", "things to buy", "to buy", "buy", "market",
+                   "errands shopping"}
 _TODO_NAMES = {"todo", "to do", "to-do", "todos", "to dos", "to-dos", "task", "tasks", "things to do", "jobs", "do",
                "action items", "reminders list"}
 _ARTICLE = re.compile(r"^(?:(?:a|an|the|some|more|any|a few|a couple of|another)\s+)+", re.I)

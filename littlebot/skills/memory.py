@@ -167,7 +167,9 @@ class Memory(Skill):
             n = 0
             for raw in notes or []:
                 fact = clean_fact(raw)
-                if fact and not _CAMERA.search(fact) and not _SECRET.search(fact) and self._insert(fact, "") is not None:
+                if not fact or _CAMERA.search(fact) or _SECRET.search(fact):
+                    continue
+                if self._insert(fact, "") is not None:
                     n += 1
             if n:
                 log.info("memory: copied %d notes from the profile", n)

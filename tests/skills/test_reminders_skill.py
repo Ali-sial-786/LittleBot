@@ -338,3 +338,26 @@ async def test_the_home_time_zone_is_used() -> None:
     rig.r._tz = False
     rig.r.zone()  # an unknown zone falls back quietly (the system's zone)
     assert (await rig.run("set_reminder", text="stretch", when="in 5 minutes")).startswith("ok: reminder 2")
+
+
+async def test_a_broken_database_never_stops_the_clock(caplog: pytest.LogCaptureFixture) -> None:
+    rig = Rig()
+    await rig.run("set_alarm", time="2:10pm")
+    db = rig.ctx.db
+
+    class Broken:
+        def __getattr__(self, name: str) -> Any:
+            raise RuntimeError("disk gone")
+
+    rig.ctx.db = Broken()
+    try:
+        with caplog.at_level(logging.ERROR, logger="littlebot.skills.reminders"):
+            for _ in range(5):
+                await rig.at(2026, 10, 30, 14, 10)
+        assert len([r for r in caplog.records if "tick failed" in r.getMessage()]) == 1  # once a minute at most
+        assert rig.r.context_note() == ""  # never raises into the conversation either
+    finally:
+        rig.ctx.db = db
+    await rig.at(2026, 10, 30, 14, 10, 30)
+    assert rig.r.ringing()  # carries on once the database is back
+    db.close()

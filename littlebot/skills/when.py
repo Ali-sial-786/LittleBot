@@ -341,8 +341,8 @@ def _day(s: str, p: _Parts) -> str:
     m, s = _take(r"\b(\d{4})-(\d{1,2})-(\d{1,2})\b", s)
     if m:
         p.date = (int(m.group(1)), int(m.group(2)), int(m.group(3)))
-    m, s = _take(rf"\b(?:on\s+)?(?:the\s+)?({_MONTH_RE})\.?\s+(?:the\s+)?(\d{{1,2}})(?:st|nd|rd|th)?\b(?:,?\s*(\d{{4}})\b)?",
-                 s)
+    m, s = _take(rf"\b(?:on\s+)?(?:the\s+)?({_MONTH_RE})\.?\s+(?:the\s+)?(\d{{1,2}})(?:st|nd|rd|th)?\b"
+                 rf"(?:,?\s*(\d{{4}})\b)?", s)
     if m:
         p.date = (int(m.group(3)) if m.group(3) else None, _MONTH_NAMES[m.group(1)], int(m.group(2)))
     else:

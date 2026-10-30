@@ -78,7 +78,8 @@ async def test_forgiving_removal(ls: Lists) -> None:
     assert out == "ok: took bananas and Bread off the Shopping list (3 left)"
     out = await run(ls, "remove_from_list", items=["milk"])
     assert out == "ok: 'milk' could be 2% milk or oat milk: ask which"
-    assert await run(ls, "remove_from_list", items=["the oat milk"]) == "ok: took oat milk off the Shopping list (2 left)"
+    out = await run(ls, "remove_from_list", items=["the oat milk"])
+    assert out == "ok: took oat milk off the Shopping list (2 left)"
     assert await run(ls, "remove_from_list", items=["milk"]) == "ok: took 2% milk off the Shopping list (1 left)"
     assert await run(ls, "remove_from_list", items=["egs"]) == "ok: took eggs off the Shopping list (0 left)"
     assert await run(ls, "remove_from_list", items=["called mom"]) == "ok: took call mom off the To-do list (0 left)"

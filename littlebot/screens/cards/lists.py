@@ -98,7 +98,7 @@ class ListCard(Card):
                 return
             self.rows = [{"id": int(r["id"]), "item": str(r["item"])} for r in got]
         else:
-            self.rows = [{"id": i, "item": s} for i, s in zip(self._local_ids, self._local)]
+            self.rows = [{"id": i, "item": s} for i, s in zip(self._local_ids, self._local, strict=True)]
         self.page = max(0, min(self.page, self.pages - 1))
 
     @property

@@ -38,8 +38,8 @@ STYLE_TEXT = {
             "simple and reassuring, with no exclamation marks or hype.",
     "concise": "Your style is concise: give the shortest useful answer, often one sentence or just the fact. Skip "
                "greetings, filler and offers to help more unless they matter.",
-    "playful": "Your style is playful: bubbly, silly and full of fun, with happy sounds and gentle jokes that work with "
-               "a baby around. Still answer properly, and keep it short.",
+    "playful": "Your style is playful: bubbly, silly and full of fun, with happy sounds and gentle jokes that work "
+               "with a baby around. Still answer properly, and keep it short.",
 }
 SHORT = {  # for the tool's answer
     "warm": "warm and friendly", "witty": "dry, quick humour", "calm": "gentle and unhurried",
@@ -52,7 +52,7 @@ ALIASES = {
     "warmer": "warm", "nicer": "warm", "kinder": "warm", "wittier": "witty", "gentler": "calm", "calmer": "calm",
     "witty": "witty", "funny": "witty", "funnier": "witty", "humorous": "witty", "humour": "witty", "humor": "witty",
     "sarcastic": "witty", "dry": "witty", "clever": "witty", "jokey": "witty", "cheeky": "witty", "sassy": "witty",
-    "calm": "calm", "calmer": "calm", "gentle": "calm", "relaxed": "calm", "chill": "calm", "soothing": "calm",
+    "calm": "calm", "gentle": "calm", "relaxed": "calm", "chill": "calm", "soothing": "calm",
     "quiet": "calm", "soft": "calm", "peaceful": "calm", "zen": "calm", "slow": "calm", "slower": "calm",
     "concise": "concise", "brief": "concise", "briefer": "concise", "short": "concise", "shorter": "concise",
     "terse": "concise", "succinct": "concise", "direct": "concise", "to the point": "concise",

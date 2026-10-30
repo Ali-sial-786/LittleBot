@@ -29,7 +29,7 @@ import difflib
 import logging
 import re
 import threading
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Callable, Coroutine
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -144,6 +144,7 @@ class Reminders(Skill):
         self._next_check = 0.0
         self._task: asyncio.Task[None] | None = None
         self._stop_all: Any = None  # the bus subscription to STOP ALL
+        self._error_t = -1e9
         self._tasks: set[Any] = set()
         self._tz: _dt.tzinfo | None | bool = False  # False: not looked up yet
         self.version = 0  # bumped on every change (the card redraws)
@@ -236,7 +237,8 @@ class Reminders(Skill):
             (kind, text, at.at.timestamp(), at.hour, at.minute, W.days_text(at.days), now))
         self._changed()
         found = self.item(int(cur.lastrowid or 0))
-        assert found is not None
+        if found is None:
+            raise RuntimeError("the reminder wasn't saved")
         return found
 
     def _next_after(self, item: Item, after: float) -> float:
@@ -262,8 +264,11 @@ class Reminders(Skill):
         """Ring what is due, keep alarms ringing, end the ones that rang long enough. Never raises."""
         try:
             self._tick()
-        except Exception:  # noqa: BLE001 - the loop carries on
-            log.exception("reminders: tick failed")
+        except Exception:  # noqa: BLE001 - the loop carries on (one log line a minute at most)
+            now = self.now()
+            if now - self._error_t >= 60:
+                self._error_t = now
+                log.exception("reminders: tick failed")
 
     def _tick(self) -> None:
         now = self.now()
@@ -519,6 +524,13 @@ class Reminders(Skill):
     def context_note(self) -> str:
         if not self.available():
             return ""
+        try:
+            return self._context()
+        except Exception:  # noqa: BLE001 - never a broken question
+            log.debug("reminders: no context", exc_info=True)
+            return ""
+
+    def _context(self) -> str:
         now = self.now()
         lines = []
         for it in self.ringing():
