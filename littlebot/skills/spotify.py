@@ -15,6 +15,7 @@ Public API (the music skill, the music card, the dashboard, the assistant's inst
 
     spotify.available() / blocked_reason()      connected, not offline, cloud communication on
     spotify.playing() -> bool                   Spotify is playing on LittleBot (what it last heard; no network)
+    spotify.paused() -> bool                    ... is paused on LittleBot ("carry on" is about it)
     await spotify.control(action) -> str        "pause" | "resume" | "next" | "previous" | "stop" | "volume_up" |
                                                 "volume_down" | "shuffle_on" | "shuffle_off": a short sentence to say
     await spotify.command(action, percent=None) -> (done, sentence)
@@ -455,6 +456,13 @@ class Spotify(Skill):
             return False
         st = self.snapshot()
         return bool(st and st.get("playing") and st.get("on_littlebot"))
+
+    def paused(self) -> bool:
+        """Spotify's music on LittleBot is paused ("carry on" is about it; what it last heard, no network)."""
+        if not self.available():
+            return False
+        st = self.snapshot()
+        return bool(st and not st.get("playing") and st.get("on_littlebot") and st.get("title"))
 
     def _set_state(self, **changes: Any) -> None:
         if self._state is None:

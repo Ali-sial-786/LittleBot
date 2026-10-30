@@ -468,12 +468,14 @@ async def test_context_note_and_playing(ctx, fake: FakeSpotify):
     await sp.now_playing(fresh=True)
     assert sp.playing()
     assert sp.context_note().startswith("Spotify: playing 'Bohemian Rhapsody' by Queen on LittleBot")
+    assert not sp.paused()
     fake.player["is_playing"] = False
     await sp.now_playing(fresh=True)
-    assert sp.context_note() == "Spotify: 'Bohemian Rhapsody' by Queen is paused on LittleBot (music_control " \
+    assert sp.paused() and not sp.playing()
+    assert sp.context_note() =="Spotify: 'Bohemian Rhapsody' by Queen is paused on LittleBot (music_control " \
                                 "resume carries on)."
     ctx.privacy.set(cloud_enabled=False)
-    assert not sp.playing()
+    assert not sp.playing() and not sp.paused()
     await sp.stop()
 
 

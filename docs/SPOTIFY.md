@@ -177,5 +177,5 @@ Settings (`skills:` in config/local.yaml): `music_provider` (auto), `spotify` (t
 must match), `spotify_duck_percent` (20), `spotify_explicit` (false), `spotify_timeout_seconds` (6).
 
 For the assistant's instant intents: `ctx.skills.get("spotify")` has `playing()` (Spotify plays on LittleBot;
-no network) and `await control("pause" | "resume" | "next" | "previous" | "stop" | "volume_up" | ...)`, which
+no network), `paused()` (it is paused on LittleBot) and `await control("pause" | "resume" | "next" | "previous" | "stop" | "volume_up" | ...)`, which
 returns a short sentence to say ("Paused.") and never raises.
