@@ -139,4 +139,6 @@ Claude Sonnet 5.5 with the same Anthropic key. Details and prices: docs/ASSISTAN
 * Barge-in uses GPT-Live's tuned settings (pitch 220 Hz on your robot); it may want tuning with the new voice.
 * The music screen keeps the YouTube video visible in a smaller box (YouTube's rules don't allow hiding it).
 * Deepgram Flux is English only (other languages would use the OpenAI speech-to-text).
-* Alarms don't move the motors (there are none yet); the wheels' drive base isn't connected to any tool.
+* Movement (docs/MOVEMENT.md): the head now has a tilt joint (`head_tilt`, channel 3) next to the pan (`head`). When
+  the servos arrive, calibrate all of them (`scripts/calibrate_servos.py`); a robot without a tilt servo lists only
+  its other joints under `motion.servos`. The wheels' drive base isn't connected to any tool yet.

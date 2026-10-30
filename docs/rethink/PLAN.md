@@ -75,12 +75,12 @@ robot keeps working exactly as today until the new keys are added.
 - [ ] Trivia (model-written questions, offline bank), Hangman, 20 Questions, Riddles, Would You Rather.
 
 ### 4. Face and screen
-- [ ] Expression tags → face per sentence; thinking/listening/speaking attention cues (body language module).
+- [x] Expression tags → face per sentence; thinking/listening/speaking attention cues (body language module).
 - [x] New cards: list, reminders, quiz, hangman, briefing, home (glanceable time/weather/next reminder).
 
 ### 5. Movement (ready for hardware)
-- [ ] Head pan + tilt joints, look_at(x, y), nod / tilt / shrug / think gestures; body language drives them.
-- [ ] Drive base protocol + mock (wheels phase), off by default.
+- [x] Head pan + tilt joints, look_at(x, y), nod / tilt / shrug / think gestures; body language drives them.
+- [x] Drive base protocol + mock (wheels phase), off by default.
 
 ### 6. Dashboard companion
 - [x] Assistant page: type to LittleBot, intercom ("say this"), send to screen, lists / reminders / memories.
