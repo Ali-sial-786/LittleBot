@@ -439,13 +439,15 @@ class SkillsConfig(_Section):
     lists: bool = True  # shopping, to-do and any named list
     persona: str = "warm"  # warm | witty | calm | concise | playful (or changed by voice: "be more concise")
     briefing: bool = True  # "good morning": weather, reminders, lists, headlines
-    news_feeds: list[str] = Field(default_factory=lambda: [
+    news_feeds: list[str] = Field(default_factory=lambda: [  # RSS or Atom; a briefing takes their top stories in turns
         "https://www.cbc.ca/webfeed/rss/rss-topstories",
+        "https://www.cbc.ca/webfeed/rss/rss-canada-hamiltonnews",  # home (Hamilton, Ontario)
         "https://feeds.bbci.co.uk/news/world/rss.xml",
     ])
     news_items: int = Field(default=5, ge=1, le=15)
     routines: bool = True  # "when I say good night, turn off the lights and set an alarm for 7"
     translator: bool = True
+    translator_idle_minutes: float = Field(default=15.0, ge=1.0, le=240.0)  # interpreter mode ends after this long quiet
     music: bool = True  # "play some jazz": YouTube audio with a now-playing screen
     # Home Assistant (smart home): its address, e.g. http://homeassistant.local:8123; the long-lived access token
     # goes in .env (HOME_ASSISTANT_TOKEN) or data/home_assistant_token (chmod 600). Empty: no smart-home tools.
