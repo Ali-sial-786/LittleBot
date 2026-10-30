@@ -92,6 +92,82 @@ The user's goal and answers are in PLAN.md (and the top of PROGRESS.md).
   v2.5); pypi livekit-plugins-turn-detector; Anki Vector character design guide (randym32.github.io);
   frontiersin.org frobt.2023.1127626; arxiv 2210.02866.
 
-## 4. Conversation pipeline
+## 4. Conversation pipeline (timings are code constants, not measurements)
 
-(Still being mapped when this was written: see PROGRESS.md.)
+### The path
+- Wake word: Vosk grammar spotting on 0.1 s blocks (`audio/wakeword.py` `_listen` 621-720, `_match` 730,
+  `_short_ok` 772, `_carry_from` 841 keeps the words said after the phrase) → `_detected` 937 / `_handle` 958
+  (pause video, earcon, then `live.start_session`, `chatgpt/live.py:728`).
+- `LiveCall.run` 899 → `_connect` 929: suspend audio, open the mic (`live_audio.LiveAudio`), aiortc offer, POST
+  the SDP to CALL_URL (`_post_offer` 1110), data channel "oai-events". `_watch` 2636 polls every 50 ms.
+- Wire (`chatgpt/wire.py`): input/output transcript deltas, `turn.done`, `delegation.created`, `error`,
+  `session.closed`; answers go back as `delegation.context.append`, notes as `session.context.append`
+  (frames ≤500 bytes, results ≤1800 chars).
+- Hand-off: `_on_message` 1181 → `_answer` 1667 re-classifies with regex lists → `_quick_answer`
+  (`chatgpt/quick.py`, no model: weather, time, volume, timer, picture) / `_route` 1731 (decider "routing") /
+  `_ask_robot` 1992 (tools) or `_look_up` 2547 (no tools) / `_look_for_voice` 2183 (camera) → `_deliver` 1789.
+- Text model: `brain/text_model.py` `text_provider` 54 = FallbackProvider: Claude `claude.model` →
+  `claude.fallback_models` → ChatGPT (`chatgpt/responses.py:171`); falls through only if no tool ran and no
+  words streamed.
+- Output safety: `_check_reply` 1634 (320-char window while speaking), `_speakable` 520 →
+  `safety/content.py` `validate_reply` 826 (1307 lines of regex rules); `classify_child_input` live.py:1239.
+- Decider: `decide/service.py` `Decider.ask` 122 (never raises); features in `decide/uses.py` (route 85,
+  addressed 166, concern 182, cards 50). Default provider off in default.yaml; on the robot it is OpenAI.
+- Voices: `voices/service.py` (MATCH_THRESHOLD 0.5), `voices/call.py`; opt-in privacy switch.
+- Barge-in: `live_audio.py` BargeInDetector 187, `_barge_frame` 714, `_stop_word` 743, `_interrupt` 859;
+  `chatgpt/stop_words.py` (a second Vosk spotter).
+
+### Waits between "they stop talking" and "they hear the answer"
+- Wake → connected: video pause wait 1.0 s, speaker free ≤2.0 s, earcon ≤8.0 s (skipped if they keep
+  talking), audio suspend 1.5 s, mic open retries 3.0 s, face check ≤1.0 s and voice check ≤1.5 s, SDP POST
+  timeout 20 s. On the robot the microphone came on ~2.4-2.8 s after the wake phrase; connect took 0.9-1.7 s.
+- In the call: mute 0.4 s after speech, echo tail 450 ms, barge-in speech 300 ms, false alarm 2.5 s, hold ≤4 s.
+- Each hand-off, in series: routing ≤1.5 s (mode on), quick answers ≤3.0 s, Claude first word ≤4.0 s per
+  model (two Claude models: ≤8 s before ChatGPT), reply timeout 15 s, ≤6 tool rounds, weather 3.0 s, "still
+  working" note at 3.5 s, thinking sound from 1.5 s, hard cap 25 s. The first sentence goes out as it streams.
+- Cards: the director waits ≤25 s for the voice's answer, decider 2.0 s, director model 4.0 s.
+- Push-to-talk path: end of speech after 1.2 s of silence, max 8 s, text model 12 s.
+
+### Patchwork: the worst 10
+1. The hand-off kind is re-decided by regex after the voice model already chose to delegate (live.py
+   1667-1729, word lists 82-340), and the routing decider can overrule both.
+2. One utterance is matched many times in `_on_message` (1217-1257): concern, video, game, face, look-if-asked
+   (early and final), director, each with its own regex.
+3. Stop/quiet logic in three overlapping places: STOP_CALL/END_CALL/HUSH_CALL (live.py 179-191),
+   `live_audio._stop_word`, and `stop_words.py`.
+4. Three "is it a child" signals that disagree: `live_barge_in_max_pitch_hz` (260 default, 220 on the robot),
+   STOP_MAX_PITCH_HZ 400 (hard-coded), voice recognition veto.
+5. "Said to me?" decided three ways: `_for_robot` word rules, the decider `addressed`, the voice's own
+   instructions.
+6. The screen director patched per incident: ~40 regexes (director.py 166-310), a decider call with its own
+   none/close/steer options, dated fixes.
+7. ~17 dated one-off patches in comments ("on the robot 2026-10-29").
+8. Safety runs repeatedly (validate_reply in two live.py places and conversation.py; classify_child_input twice).
+9. Duplicated text-model paths (`_ask_robot`, `_look_up`, conversation.py:664, director.py:1073 each build
+   prompt + history); the preamble regex copied three times; the tool-round limit 6 in three places.
+10. Two Anthropic config blocks (`ai.anthropic_*` and `claude.*`); seven unrelated RMS thresholds
+   (1e-4, 0.0105, 0.01, 0.012, 0.015, 0.004, 0.008). quick.py volume/timers duplicate the volume tools.
+- Also: pi.yaml says tts auto uses piper "if a model is configured", but the code only picks espeak or the
+  mock unless `tts.provider=piper`.
+
+### The non-GPT-Live path (complete and tested, but the wake word doesn't use it)
+- Triggers: space bar push-to-talk (`face/display.py:1136`), dashboard (`dashboard/routes/ai_routes.py:91`),
+  typed `handle_utterance` (`brain/conversation.py:271`).
+- `brain/conversation.py` ConversationEngine 104 (`converse_once` 278, `_converse_turn` 509): AudioService
+  listen with EnergyVAD → STT (`audio/stt/__init__.py:27`: Vosk if present, OpenAI Whisper if configured) →
+  text provider (`select_provider` 235; ai.provider default mock) → TTS (`audio/service.py:855` `_synthesize`:
+  recorded lines, espeak-ng, piper when configured, OpenAI TTS when cloud is allowed).
+
+### Config switches
+chatgpt.live_barge_in (auto|on|off), chatgpt.live_stop_words, chatgpt.live_thinking_sound,
+chatgpt.tools_enabled, chatgpt.web_search, text.provider / text.fallback, decide.provider and
+decide.default_mode / decide.modes, screens.enabled, browser.enabled. Runtime settings (SQLite, dashboard,
+`core/settings.py:29`) override YAML: wake.enabled, ai.enabled, privacy.cloud_enabled,
+privacy.voice_recognition_enabled, privacy.ai_camera_enabled.
+
+### Tools the models get (`chatgpt/tools.py` TOOLS 91-196)
+get_robot_status, battery, describe_yourself, read_debug_log; list/start/stop_activity; list/start/stop_game;
+get/set_volume, volume_up/down, set_face; go_to_sleep, wake_up, stop_everything; search_youtube,
+play_youtube, list_approved_videos, stop/pause/resume_video; look_through_camera (chat mode); get_weather,
+get_time; show_on_screen, change_card; search_in_browser, browser; OpenAI hosted web_search. Take-overs
+(video, activity, sleep) are deferred until the voice finishes (tools.py:29-36).

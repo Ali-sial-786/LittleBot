@@ -1,15 +1,14 @@
 # Overnight rethink: progress
 
-Heartbeat: 2026-10-30T04:05:00-04:00
-Status: IN PROGRESS (analysis done except the conversation pipeline map; PLAN.md next)
+Heartbeat: 2026-10-30T04:15:00-04:00
+Status: IN PROGRESS (analysis done; PLAN.md next). The PC session stopped here and handed over to a cloud
+session the user starts with the prompt in BRIEF.md's spirit; whoever picks this up next writes PLAN.md.
 
 Started from main 01d9259 (tag `checkpoint-2026-10-30-before-rethink`). Read BRIEF.md first.
 
 ## Done
 - Checkpoint tag + backup branch; `rethink` branch.
-- ANALYSIS.md sections 1-3 (core, screens/face/games/media, research).
+- ANALYSIS.md sections 1-4 (core, screens/face/games/media, research, conversation pipeline).
 
 ## Next
-- ANALYSIS.md section 4 (conversation pipeline): being added by the PC session; if it is still missing,
-  map it yourself (wake word → GPT-Live → delegations → text model; every wait; the patchwork).
 - Write PLAN.md, then build it.
