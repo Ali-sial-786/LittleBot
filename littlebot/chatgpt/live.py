@@ -1778,6 +1778,12 @@ class LiveCall:
             get_decider(self.ctx).compare("routing", mine=mine, theirs=str(answer.value), answer=answer)
 
     def _remember(self, what: str, fact: str) -> str:
+        hub = getattr(self.ctx, "skills", None)
+        memory = hub.get("memory") if hub is not None and hasattr(hub, "get") else None
+        if memory is not None and memory.available():  # the assistant's memory (littlebot/skills/memory.py)
+            self._spawn(self._remember_skill(memory, what, fact))
+            return ("Done: LittleBot forgets that now." if what == "forget"
+                    else f"Saved: LittleBot will remember this from now on: {fact[:200]}.")
         from littlebot.brain import remembered  # noqa: PLC0415
 
         try:
@@ -1793,6 +1799,15 @@ class LiveCall:
             return "LittleBot couldn't write that down. Say so briefly."
         log.info("live voice: remembering a note (%d kept)", len(remembered.notes(self.ctx.settings)))
         return f"Saved: LittleBot will remember this in every chat from now on: {note}."
+
+    async def _remember_skill(self, memory: Any, what: str, fact: str) -> None:
+        try:
+            res = await memory.run("forget" if what == "forget" else "remember",
+                                   {"query": fact} if what == "forget" else {"fact": fact})
+        except Exception:  # noqa: BLE001
+            log.warning("live voice: the memory skill failed", exc_info=True)
+            return
+        log.info("live voice: memory %s -> %s", what, str(res).split(":", 1)[0])
 
     async def _deliver(self, delegation_id: str, task: "asyncio.Task[str]", kind: str,
                        early: "_Early | None" = None) -> None:
