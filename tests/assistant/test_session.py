@@ -97,6 +97,7 @@ async def test_the_next_turn_knows_what_the_tools_really_did() -> None:
     # was at 60 percent, but I never actually checked it" (the robot, 2026-10-31).
     brain = Scripted([("set_volume", '{"percent": 60}'), "Done, it's at 60 percent."], ["Sure."])
     svc, stt, tts, _ = _service(brain, follow_up_seconds=0.5)
+    svc.brain.talked_today()  # (the first chat of the day would greet first)
     await svc.start()
     await svc.start_session()
     await _wait(lambda: stt.stream is not None)

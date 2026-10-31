@@ -107,14 +107,18 @@ async def test_words_before_a_web_search_are_said_as_it_starts() -> None:
     assert res.text == "Let me check that for you. Spain won."
 
 
-async def _voice_turn(script: list[Any], text: str = "hi", **kw: Any) -> tuple[Any, list[str], ScriptedProvider]:
+async def _voice_turn(script: list[Any], text: str = "hi", *, first_today: bool = False,
+                      **kw: Any) -> tuple[Any, list[str], ScriptedProvider]:
     order: list[str] = []
     p = ScriptedProvider(script)
     p.log = order
     ctx = make_test_context()
-    res = await Brain(ctx, provider=p).respond(text, history=[], toolbox=RobotToolbox(ctx, mode="chat"),
-                                               on_sentence=lambda s: order.append(f"say:{s.text}"),
-                                               on_tool=lambda n: order.append(f"tool:{n}"), **kw)
+    brain = Brain(ctx, provider=p)
+    if not first_today:
+        brain.talked_today()
+    res = await brain.respond(text, history=[], toolbox=RobotToolbox(ctx, mode="chat"),
+                              on_sentence=lambda s: order.append(f"say:{s.text}"),
+                              on_tool=lambda n: order.append(f"tool:{n}"), **kw)
     return res, order, p
 
 
@@ -131,6 +135,21 @@ async def test_a_tool_before_any_word_gets_a_word_of_its_own_first() -> None:
     assert order[:2] == ["say:Sure.", "tool:set_volume"]  # an action: "Sure."
     _, order, _ = await _voice_turn([("search",), "Spain won."], first_words=True)
     assert order[0] == "say:One sec."  # Anthropic's own web search too
+
+
+async def test_on_the_first_chat_of_the_day_that_word_is_the_greeting(monkeypatch) -> None:
+    # "One sec. Good morning! No, it looks dry tomorrow." (the robot's brain, 2026-10-31)
+    import littlebot.assistant.agent as agent
+
+    monkeypatch.setattr(agent, "_greeting", lambda ctx: "Good morning.")
+    _, order, p = await _voice_turn([("tool", "get_time", "{}"), "Dry tomorrow."], first_words=True,
+                                    first_today=True)
+    assert order[:2] == ["say:Good morning.", "tool:get_time"]
+    assert 'heard you say "Good morning."' in p.calls[0]["results"][0]
+    monkeypatch.setattr(agent, "_greeting", lambda ctx: "")  # at night: the usual word
+    _, order, _ = await _voice_turn([("tool", "get_time", "{}"), "Dry."], first_words=True, first_today=True)
+    assert order[0] == "say:One sec."
+    assert agent._greeting(make_test_context()) in ("Good morning.", "Good afternoon.", "Good evening.", "")
 
 
 async def test_no_word_of_its_own_after_its_words_for_stops_and_cards_or_typed_chats() -> None:

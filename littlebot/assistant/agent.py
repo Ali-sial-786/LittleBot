@@ -328,6 +328,7 @@ class Brain:
         result = TurnResult()
         if done is not None:
             result.done = done
+        greeting = _greeting(self.ctx) if first_words and self.first_today() else ""
         splitter = SentenceSplitter()
         stopped = False  # a sentence failed the safety check: nothing more is said
         t0 = self._now()
@@ -359,6 +360,7 @@ class Brain:
                 return ""
             words = (DEEP_WORDS if name == DEEP_TOOL else
                      LOOKUP_WORDS if name is None or name.startswith(_LOOKUP_PREFIXES) else ACTION_WORDS)
+            words = greeting or words  # the first chat of the day ("One sec. Good morning!" on the robot, 2026-10-31)
             emit([Sentence(words)])
             return words
 
@@ -477,6 +479,21 @@ def _day() -> str:
     import datetime as _dt  # noqa: PLC0415
 
     return (_dt.datetime.now() - _dt.timedelta(hours=4)).strftime("%Y-%m-%d")
+
+
+def _greeting(ctx: Any) -> str:
+    """"Good morning." (afternoon, evening), or "" at night or when the time can't be read."""
+    try:
+        from littlebot.info.clock import now_info  # noqa: PLC0415
+
+        tz = getattr(ctx.config.info, "timezone", "") or None
+        try:
+            part = now_info(tz)["part_of_day"]
+        except ValueError:
+            part = now_info(None)["part_of_day"]
+    except Exception:  # noqa: BLE001
+        return ""
+    return f"Good {part}." if part in ("morning", "afternoon", "evening") else ""
 
 
 def _args(arguments: Any) -> dict[str, Any]:
