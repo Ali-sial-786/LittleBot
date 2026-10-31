@@ -208,6 +208,10 @@ class WakeConfig(_Section):
     # heard "hey little bot" 0.51 s after it was said instead of 0.73 s, catching as many (85 of 87) with no more
     # false alarms; 0.15 s was quicker still (0.44 s) but missed one and heard "hey Bob" as "hey bot" once more.
     end_silence_seconds: float | None = Field(default=0.25, ge=0.05, le=2.0)
+    # Decide a wake phrase as soon as the words so far hold it, not after their sentence ("hey little bot, what's
+    # the weather" was heard 2 s after "bot"). On the robot (2026-10-31, the 77 phrases above): as many caught
+    # (55 of 55) and no false alarms (0 of 22), 0.25 s before the speech ended instead of 0.51 s after it.
+    early: bool = True
     # per word; higher = fewer false triggers. 0.35: on the robot "hey lil bot" was missed at 0.49 (2026-10-29)
     min_confidence: float = Field(default=0.35, ge=0.0, le=1.0)
     # Two-word phrases ("hey bot") are what triggers by mistake most: they need this word confidence, or

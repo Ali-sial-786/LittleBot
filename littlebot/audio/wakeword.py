@@ -108,10 +108,16 @@ EARCON_TIMEOUT = 8.0
 # A video was just closed for the chat: its browser lets go of the USB speaker a moment later. The earcon
 # waits (at most this long) until the speaker plays again, or it fails and the speaker counts as unplugged.
 VIDEO_SPEAKER_WAIT_SECONDS = 2.0
-# "Hey LittleBot, what's the weather?" in one breath: the recogniser only reports the wake phrase once the
-# sentence has ended, so the sentence being recognised is kept (in memory, at most this long) and what was
-# said after the wake phrase goes into the call (littlebot/audio/carry.py).
+# "Hey LittleBot, what's the weather?" in one breath: the recogniser's final result only comes once the sentence
+# has ended, so the sentence being recognised is kept (in memory, at most this long) and what was said after the
+# wake phrase goes into the call (littlebot/audio/carry.py).
 PREROLL_MAX_SECONDS = 8.0
+# ``wake.early``: a wake phrase in the words so far is decided at once (the result forced out, with its word
+# confidences), not after the sentence. Whether they go on talking (no earcon then) is known a moment later: at
+# TALK_SPEECH_SECONDS of more speech, or EARCON_QUIET_SECONDS of quiet (they wait for the sound).
+TALK_SPEECH_SECONDS = 0.15
+EARCON_QUIET_SECONDS = 0.35
+TALK_WAIT_SECONDS = 1.0  # never longer (a noisy room is neither): then as if they went on
 WAKE_CUT_MARGIN = 0.03  # start the carried words this much before the wake phrase's end (the recogniser's step)
 CARRY_WAIT_SECONDS = 5.0  # after the wake phrase: keep what they say this long at most until live voice takes over
 # Live voice opens its own stream once this one is closed; what is said in between (~0.1-0.3 s) is lost. So
@@ -169,7 +175,8 @@ class KeywordRecognizer(Protocol):
 
     def reset(self) -> None: ...
 
-    # Optional: ``partial() -> str``, the words of the utterance so far (for ``wake.video_duck``).
+    # Optional: ``partial() -> str``, the words of the utterance so far (for ``wake.video_duck`` and ``wake.early``),
+    # and ``finish() -> dict | None``, the result now as if the utterance ended here (``wake.early``).
 
 
 def normalise_phrase(text: str) -> str:
@@ -323,6 +330,14 @@ class VoskKeywordRecognizer:
 
     def reset(self) -> None:
         self._rec.Reset()
+
+    def finish(self) -> dict[str, Any] | None:
+        """The result now, as if the utterance ended here (what follows starts a new one)."""
+        try:
+            out = json.loads(self._rec.FinalResult() or "{}")
+        except ValueError:
+            return None
+        return out if isinstance(out, dict) else None
 
     def partial(self) -> str:
         try:
@@ -747,20 +762,24 @@ class WakeWordService(Service):
                 self._fed += len(block)
                 del block
                 video = self._video_on()
+                early = False
+                if not result and not video and self.cfg.early:
+                    result = self._early_result(rec)
+                    early = bool(result)
                 if not result:
                     if video and self.cfg.video_duck:
                         self._maybe_duck(rec)
                     continue
                 self._last_partial = ""
                 phrase = self._match(result, video)
-                if phrase is None and not video:
+                if phrase is None and not video and not early:
                     phrase = FOLLOW_UP if self._follow_up(result) else None
-                    if phrase is None:
-                        self._note_unsure(result)
+                if phrase is None and not video:
+                    self._note_unsure(result)
                 if phrase is not None and not self._audio_busy and not self._stop.is_set():
                     # Not during a video: its soundtrack reaches the microphone and would be sent as their words.
                     carry = None if video else self._carry_from(heard, result, phrase, rec.sample_rate)
-                    self._detected(phrase, carry)
+                    self._detected(phrase, carry, early=early)
                     if carry is not None:
                         self._carry_on(inp, rec.sample_rate, carry)
                     return True
@@ -775,6 +794,27 @@ class WakeWordService(Service):
                 inp.close()
             if time.monotonic() - t_close >= SLOW_RELEASE_S:
                 log.info("wake word: closing the microphone took %d ms", int((time.monotonic() - t_close) * 1000))
+
+    def _early_result(self, rec: KeywordRecognizer) -> dict[str, Any] | None:
+        """``wake.early``: the words so far hold a wake phrase: the recogniser's result now (its word confidences
+        decide, as in a final result), not after the rest of their sentence."""
+        partial, finish = getattr(rec, "partial", None), getattr(rec, "finish", None)
+        if partial is None or finish is None:
+            return None
+        try:
+            text = str(partial() or "")
+        except Exception:  # noqa: BLE001
+            return None
+        if text == self._last_partial:
+            return None
+        self._last_partial = text
+        words = text.split()
+        if not any(tuple(words[i:i + len(ph)]) == ph for _, ph in self._phrases for i in range(len(words))):
+            return None
+        try:
+            return finish()
+        except Exception:  # noqa: BLE001 - the final result still comes as before
+            return None
 
     def _match(self, result: dict[str, Any], video: bool) -> str | None:
         """The wake phrase in a final result; while a video plays only the video phrases, more confident."""
@@ -983,9 +1023,9 @@ class WakeWordService(Service):
             audio._publish_device("microphone")  # noqa: SLF001 - keep the dashboard's device status fresh
 
     # ------------------------------------------------------------ detection
-    def _detected(self, phrase: str, carry: SpeechCarry | None = None) -> None:
+    def _detected(self, phrase: str, carry: SpeechCarry | None = None, *, early: bool = False) -> None:
         """Runs in the listener thread (which then keeps ``carry`` filled until live voice takes the
-        microphone): hand over to the loop."""
+        microphone): hand over to the loop. ``early``: heard in the words so far (``wake.early``)."""
         loop = self._loop
         if loop is None or loop.is_closed():
             if carry is not None:
@@ -995,16 +1035,16 @@ class WakeWordService(Service):
             self._triggered = True
         self.triggers += 1
         self.last_heard = {"phrase": phrase, "at": time.time(), "result": "starting", "detail": None}
-        log.info("wake word heard (phrase=%s)", phrase)
+        log.info("wake word heard (phrase=%s%s)", phrase, ", before the sentence ended" if early else "")
         try:
-            asyncio.run_coroutine_threadsafe(self._handle(phrase, carry), loop)
+            asyncio.run_coroutine_threadsafe(self._handle(phrase, carry, early=early), loop)
         except RuntimeError:  # loop closed meanwhile
             if carry is not None:
                 carry.drop("no event loop")
             with self._cv:
                 self._triggered = False
 
-    async def _handle(self, phrase: str, carry: SpeechCarry | None = None) -> None:
+    async def _handle(self, phrase: str, carry: SpeechCarry | None = None, *, early: bool = False) -> None:
         ctx = self.ctx
         entered = False
         video: str | None = None
@@ -1016,10 +1056,12 @@ class WakeWordService(Service):
             with contextlib.suppress(Exception):
                 entered = ctx.state.state != RobotState.LISTENING and ctx.state.transition(RobotState.LISTENING,
                                                                                           "wake word")
+            if carry is not None and early and not carry.kept_talking:
+                carry.kept_talking = await self._talk_goes_on(carry)
             if carry is not None and carry.kept_talking:
                 # They asked in the same breath and wait for the answer, not for a sound; a sound now would also
                 # hide what they say next (half-duplex). The face shows it is listening.
-                log.info("wake word: no earcon, they kept talking (%.1f s said after the wake phrase)", carry.lead_s)
+                log.info("wake word: no earcon, they kept talking (%.1f s said after the wake phrase)", carry.seconds)
             else:
                 if video is not None:
                     await self._speaker_free()
@@ -1073,6 +1115,20 @@ class WakeWordService(Service):
                 self._relisten_note = True
                 self._cooldown_until = time.monotonic() + float(self.cfg.cooldown_seconds)
                 self._cv.notify_all()
+
+    @staticmethod
+    async def _talk_goes_on(carry: SpeechCarry) -> bool:
+        """Heard early: do they go on talking after the wake phrase (more speech in the carry), or wait for the
+        sound (quiet)?"""
+        start = carry.speech_seconds
+        deadline = time.monotonic() + TALK_WAIT_SECONDS
+        while carry.is_open and time.monotonic() < deadline:
+            if carry.speech_seconds - start >= TALK_SPEECH_SECONDS:
+                return True
+            if carry.quiet_s >= EARCON_QUIET_SECONDS:
+                return False
+            await asyncio.sleep(0.02)
+        return carry.speech_seconds - start >= TALK_SPEECH_SECONDS or time.monotonic() >= deadline
 
     async def _watch_connect(self, live: Any) -> None:
         """Live voice connects in the background: an "uhoh" if that fails, so the child knows."""

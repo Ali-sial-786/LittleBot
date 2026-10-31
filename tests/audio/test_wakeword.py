@@ -516,6 +516,63 @@ async def test_only_the_wake_phrase_plays_the_earcon_and_still_carries(rig):
     assert carry.state == "sealed" and carry.lead_s <= 0.5 + wakeword.WAKE_CUT_MARGIN + 0.15
 
 
+def _finish_early(r: Any, conf: float = 1.0) -> list[str]:
+    """Give the fake recogniser ``finish`` (VoskKeywordRecognizer's result forced out): returns the words so far
+    it was asked for, as the result."""
+    asked: list[str] = []
+
+    def finish() -> dict[str, Any]:
+        text, r.rec.partial_text = r.rec.partial_text, ""
+        asked.append(text)
+        return {"text": text, "result": [{"word": w, "conf": conf} for w in text.split()]}
+
+    r.rec.finish = finish
+    return asked
+
+
+async def test_heard_before_the_sentence_ended_and_they_go_on_no_earcon(rig, caplog):
+    caplog.set_level(logging.INFO, logger="littlebot.wake")
+    r = await rig()
+    await _listening(r)
+    asked = _finish_early(r)
+    r.mic.set_level(0.1)  # they go on with their question
+    r.rec.partial_text = "hey little bot"  # no final result: the sentence goes on
+    await until(lambda: r.live.calls, what="live voice started")
+    assert asked == ["hey little bot"]
+    assert "wake word heard (phrase=hey little bot, before the sentence ended)" in caplog.text
+    assert "sound:listen" not in _sounds(r.out) and r.live.carries[0].kept_talking
+    assert "wake word: no earcon, they kept talking" in caplog.text
+
+
+async def test_heard_before_the_sentence_ended_then_quiet_plays_the_earcon(rig):
+    r = await rig()
+    await _listening(r)
+    _finish_early(r)
+    r.rec.partial_text = "hey little bot"  # then quiet: they wait for the sound
+    t0 = time.monotonic()
+    await until(lambda: r.live.calls, what="live voice started")
+    assert "sound:listen" in _sounds(r.out) and not r.live.carries[0].kept_talking
+    assert time.monotonic() - t0 >= wakeword.EARCON_QUIET_SECONDS - 0.1
+
+
+async def test_early_only_for_a_wake_phrase_and_still_word_confidence_decides(rig, caplog):
+    caplog.set_level(logging.INFO, logger="littlebot.wake")
+    r = await rig()
+    await _listening(r)
+    asked = _finish_early(r, conf=0.1)
+    r.rec.partial_text = "just a little bit"
+    await asyncio.sleep(0.3)
+    assert asked == []  # not a wake phrase: the sentence goes on
+    r.rec.partial_text = "hey little bot"
+    await until(lambda: asked, what="decided early")
+    await asyncio.sleep(0.3)
+    assert not r.live.calls and "heard 'hey little bot' but not sure enough" in caplog.text
+    r.ctx.config.wake.early = False
+    r.rec.partial_text = "hey little bot"
+    await asyncio.sleep(0.3)
+    assert asked == ["hey little bot"]  # switched off: only final results
+
+
 async def test_without_word_times_the_whole_sentence_is_carried(rig):
     r = await rig()
     await _listening(r)
@@ -705,7 +762,7 @@ async def test_wake_enabled_defaults_on():
     try:
         assert ctx.settings.get("wake.enabled") is True
         assert ctx.config.wake.phrases == ["hey little bot", "hey littlebot", "hey lil bot", "lil bot", "little bot"]
-        assert ctx.config.wake.end_silence_seconds == 0.25
+        assert ctx.config.wake.end_silence_seconds == 0.25 and ctx.config.wake.early is True
         assert ctx.config.wake.min_confidence == 0.35
     finally:
         ctx.db.close()
