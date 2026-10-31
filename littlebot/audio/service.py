@@ -104,6 +104,10 @@ def _voice_line_store(ctx: Any) -> VoiceLineStore:
         return VoiceLineStore(default_folder(ctx.config.data_path))
 
 
+def _ms(seconds: float) -> int:
+    return int(seconds * 1000)
+
+
 def _resolve(fut: "concurrent.futures.Future[bool]", value: bool) -> None:
     if not fut.done():
         with contextlib.suppress(concurrent.futures.InvalidStateError):
@@ -495,28 +499,36 @@ class AudioService(Service):
         (they return False) and listen() returns None. A background listener (wake word) gives
         the microphone back first.
         """
+        t0 = time.monotonic()
         was_lent = self._suspended is not None
         self._suspended = owner
         self.stop_output()
         self._cancel_listen(f"suspended for {owner}")
         if not was_lent:
             await self._claim_mic_async("lent")
-        await asyncio.to_thread(self._release_devices, wait)
-        log.info("audio: speaker and microphone lent to %s", owner)
+        claimed = time.monotonic()
+        steps = await asyncio.to_thread(self._release_devices, wait)
+        log.info("audio: speaker and microphone lent to %s (%d ms: wake word %d, playback %d, speaker %d, mic %d)",
+                 owner, _ms(time.monotonic() - t0), _ms(claimed - t0), *steps)
 
-    def _release_devices(self, wait: float) -> None:
-        deadline = time.monotonic() + max(0.0, wait)
+    def _release_devices(self, wait: float) -> tuple[int, int, int]:
+        """Close the devices once the sound playing has stopped: (ms waited for it, closing the speaker, the mic)."""
+        t0 = time.monotonic()
+        deadline = t0 + max(0.0, wait)
         while time.monotonic() < deadline:
             with self._cv:
                 if self._current is None:
                     break
             time.sleep(0.02)
+        t1 = time.monotonic()
         out = self._out
         if out is not None:
             with contextlib.suppress(Exception):
                 out.release()
             self._released = True
+        t2 = time.monotonic()
         self._close_input()
+        return _ms(t1 - t0), _ms(t2 - t1), _ms(time.monotonic() - t2)
 
     def resume(self, owner: str) -> None:
         if self._suspended == owner:
