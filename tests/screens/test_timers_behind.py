@@ -105,6 +105,28 @@ async def test_a_timer_that_already_rang_is_let_go(svc, sctx, clock):
     assert svc.behind == [] and isinstance(svc.current, DummyCard)
 
 
+class RingingCard(DummyCard):
+    """A reminder ringing on the screen: it carries on behind another card while it rings."""
+
+    ringing = True
+    runs_behind = True
+
+
+async def test_a_reminder_ringing_when_they_ask_something_else_waits_for_the_screen(svc, sctx, clock):
+    # A reminder rang; they asked "is it gonna rain tomorrow?" and the ringing reminder took the screen back from
+    # the weather card within a quarter of a second (the robot, 2026-10-31).
+    call = voice(sctx)
+    ring = RingingCard({"title": "Reminder", "sticky": True})
+    assert svc.show_card(ring)["ok"]
+    weather = DummyCard({"title": "Weather"})
+    assert svc.show_card(weather)["ok"] and svc.behind == [ring]
+    run(svc, clock, 10)
+    assert svc.current is weather  # the card they asked for stays
+    call.release()  # the chat is over: the weather card lingers and goes; the reminder, still ringing, comes back
+    run(svc, clock, 30.25 + S.BACK_AFTER + 0.5)
+    assert svc.current is ring and svc.behind == []
+
+
 async def test_a_video_covers_the_timer_which_still_rings(svc, sctx, clock):
     news = events(sctx, S.SCREEN_NEWS)
     assert (await svc.show({"card": "timer", "seconds": 60, "label": "tea"}))["ok"]

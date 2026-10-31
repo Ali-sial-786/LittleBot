@@ -60,7 +60,7 @@ carries on behind it (``behind``): the watchdog keeps its clock running, so a ti
 voice at zero, LittleBot is kept awake for it, and the card comes back by itself once the screen has been free
 for BACK_AFTER (the card on top went, the video ended). Put away by hand (a tap on the presenter's eyes, Esc, the
 voice's "close": HIDDEN) it comes back only when a timer rings. A timer that already rang is let go when its card
-leaves. STOP ALL, sleep, the parent's switch and shutdown (ENDS_BEHIND) end the timers behind the screen too. A
+leaves; a reminder or alarm still ringing when another card covers it comes back once the screen is free. STOP ALL, sleep, the parent's switch and shutdown (ENDS_BEHIND) end the timers behind the screen too. A
 new timer joins the card behind the screen (littlebot/screens/cards/timer.py build), and ``command(...,
 card=...)`` steers it ("cancel the egg timer").
 
@@ -177,6 +177,10 @@ class _Behind:
     ticked: float
     awake_t: float
     free_since: float | None = None  # since when nothing else has had the screen
+    # Ringing already when it was covered: they moved on to something else, so it comes back once the screen is
+    # free, not at once (a ringing reminder took the screen back from the weather card they had just asked for
+    # within a quarter of a second; the robot, 2026-10-31). Ringing that starts behind the screen still comes at once.
+    rang: bool = False
 
 
 class _Host:
@@ -457,7 +461,8 @@ class ScreenService(Service):
             return False
         now = self._clock()
         self._behind = [b for b in self._behind if b.card is not card][-(MAX_BEHIND - 1):]
-        self._behind.append(_Behind(card=card, hidden=hidden, ticked=now, awake_t=s.awake_t))
+        self._behind.append(_Behind(card=card, hidden=hidden, ticked=now, awake_t=s.awake_t,
+                                    rang=bool(getattr(card, "ringing", False))))
         log.info("card %s carries on behind the screen (%s)", card.kind, reason)
         return True
 
@@ -498,7 +503,8 @@ class ScreenService(Service):
                     awake.append(card.kind)
                 b.free_since = (b.free_since if b.free_since is not None else now) if free else None
                 back_now = not b.hidden and b.free_since is not None and now - b.free_since >= BACK_AFTER
-                if back is None and (ringing or back_now):
+                b.rang = b.rang and ringing  # (it stopped: the next ring is a new one)
+                if back is None and ((ringing and not b.rang) or back_now):
                     back = card
         for kind in awake:
             self._publish(KEEP_AWAKE, {"kind": kind})

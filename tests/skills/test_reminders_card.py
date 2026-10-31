@@ -12,6 +12,7 @@ import pytest
 from littlebot.screens import base, preview
 from littlebot.screens.cards import reminders as card_mod
 from littlebot.screens.cards.reminders import ENDED_S, SNOOZE_BUTTON, STOP_BUTTON, RemindersCard, time_label
+from littlebot.screens.service import BACK_AFTER
 from littlebot.skills.hub import SkillHub
 from littlebot.skills.lists import Lists
 from littlebot.skills.reminders import Reminders
@@ -202,7 +203,10 @@ async def test_lists_changes_show_the_lists_card_briefly(rig: Rig) -> None:
     assert (await rig.lists.run("read_list", {})).startswith("ok: Shopping list, 2 items")
     assert rig.svc.current.kind == "lists" and rig.svc.behind == [ringing]  # asked for: shown, the alarm behind
     rig.svc._tick_behind()
-    assert rig.svc.current is ringing  # ... and back straight away: it still rings
+    # ... and it stays up: straight back, the alarm hid the card they asked for (the robot, 2026-10-31)
+    assert rig.svc.current.kind == "lists"
+    rig.frames(rig.svc.status()["closes_in"] + BACK_AFTER + 0.5)  # the list card goes: the alarm, still ringing,
+    assert rig.svc.current is ringing  # is back
     assert "Alarm ringing" in rig.svc.timers_now()
     rig.ctx.bus.publish("system.stop_all", {"source": "test"})  # the big stop button (once the loop runs)
     assert rig.r.ringing()  # the loop isn't running in this test: start() subscribes
