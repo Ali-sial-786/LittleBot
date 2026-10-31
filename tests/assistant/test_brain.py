@@ -140,11 +140,17 @@ async def test_a_tool_before_any_word_gets_a_word_of_its_own_first() -> None:
 async def test_an_action_told_before_its_tool_is_not_told_again() -> None:
     # "Got it, I'll remember that your favorite color is green. Done, I've saved that green is your favorite
     # color." (the robot, 2026-10-31): the tool's result says what they already heard
-    _, _, p = await _voice_turn(["Got it, I'll turn it up.", ("tool", "set_volume", '{"percent": 60}'), ""],
-                                first_words=True)
+    res, order, p = await _voice_turn(["Got it, I'll turn it up.", ("tool", "set_volume", '{"percent": 60}'),
+                                       " Done, I've turned it up. It's at 60 now."], first_words=True)
     assert p.calls[0]["results"][0].endswith(
         '(they have already heard you say "Got it, I\'ll turn it up.": if it worked, say nothing more about it (no '
         '"Done, I\'ve ..."), only anything new; if it failed, say so)')
+    # and a "done" said anyway is not said ("I'll forget that for you. Done, I've forgotten that.")
+    assert [o for o in order if o.startswith("say:")] == ["say:Got it, I'll turn it up.", "say:It's at 60 now."]
+    assert res.text == "Got it, I'll turn it up. It's at 60 now."
+    _, order, _ = await _voice_turn([("tool", "set_volume", '{"percent": 60}'), "Done, I've turned it up."],
+                                    first_words=True)
+    assert order[-1] == "say:Done, I've turned it up."  # after only "Sure.", it is the confirmation
     # a look-up still gets its answer after "Let me check."; a second tool, with nothing said since, no note
     _, _, p = await _voice_turn(["Let me check.", ("tool", "get_volume", "{}"), ("tool", "set_volume",
                                                                                   '{"percent": 60}')])

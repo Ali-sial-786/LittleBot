@@ -68,11 +68,11 @@ games), and a warm, curious little character second. {creator}
 {persona}
 
 How you talk (you are heard, not read):
-- Lead with the answer and keep it short: one or two sentences, about 30 words in all (ten seconds aloud). A \
-how-to, a comparison or the weather for several days: just the key points, under 50 words; your card shows the \
-rest, so never say everything you know. Longer only when they ask for more, a story, a recipe or a briefing. No \
-filler, no "great question", no repeating the question, and never your reasoning or rules ("that's general \
-knowledge, so I can answer directly"): just the answer.
+- Lead with the answer, in at most two short sentences: about 30 words, ten seconds aloud. A how-to, a \
+comparison or a week's weather: the key points only, in at most three short sentences. Your card shows the \
+details, so leave them out: never say all you know. Longer only when they ask for more, a story, a recipe or a \
+briefing. No filler, no "great question", no repeating the question, and never your reasoning or rules ("that's \
+general knowledge, so I can answer directly"): just the answer.
 - Don't end with a question or an offer ("Want to know more?", "Anything else?") unless you truly need an answer \
 to go on: they will ask if they want more. When they say goodbye, thanks or that they're done, reply in a few words \
 at most. When they tell you to stop (stop talking, be quiet, that's enough, end the call), call \
@@ -144,6 +144,11 @@ _SELF_TALK = re.compile(
 # forget; the robot, 2026-10-31): logged, to find any more of them
 _CLAIMED = re.compile(r"\b(?:I've|I have) (?:forgotten|saved|cancell?ed|set|turned|deleted|removed|added|stopped|"
                       r"remembered)\b", re.I)
+# The same action told again after its tool ("I'll forget that for you. Done, I've forgotten that."; the robot's brain,
+# 2026-10-31): not said, even after the tool's note asking for nothing more
+_DONE_AGAIN = re.compile(r"^(?:(?:done|all done|all set|okay|ok)\b[,.!]?\s*)?(?:I've|I have|it's|that's) (?:been |now )?"
+                         r"(?:forgotten|saved|remembered|set|cancell?ed|deleted|removed|added|stopped|turned|done)\b"
+                         r"|^(?:done|all done|all set)[.!]?$", re.I)
 
 CONTEXT = "[Context for this turn, not said by them: {items}]"
 LAST_DAY_KEY = "assistant.last_day"  # the day of the last conversation (a greeting and a briefing offer once a day)
@@ -375,6 +380,10 @@ class Brain:
                 if _SELF_TALK.search(s.text):
                     log.info("assistant: a sentence of the brain's own reasoning was not said")
                     continue
+                if told and _DONE_AGAIN.search(s.text):
+                    log.info("assistant: a second \"done\" for an action it had told already was not said")
+                    unsaid.append(s.text)
+                    continue
                 safe, ok = _checked(self.ctx, s.text)
                 if not ok:
                     stopped = True
@@ -405,13 +414,16 @@ class Brain:
             say_first(None)
 
         heard = 0  # the sentences said up to the last tool (what came after it was said before the next one)
+        told = False  # an action was told before its tool ran: a "Done, I've ..." after it is not said
+        unsaid: list[str] = []  # those "done"s: not in result.text either
 
         async def run_tool(name: str, arguments: Any = None) -> str:
-            nonlocal heard
+            nonlocal heard, told
             emit(splitter.flush())  # "Let me check." is said now, not after the tool
             said = say_first(str(name))
             before = " ".join(t for t in splitter.said[heard:] if not _SELF_TALK.search(t))
             heard = len(splitter.said)
+            told = told or bool(before and _is_action(str(name)))
             result.tools.append(str(name))
             if on_tool is not None:
                 _call(on_tool, str(name))
@@ -486,7 +498,7 @@ class Brain:
             result.silent = True
         else:
             emit(splitter.flush())
-        result.text = " ".join(t for t in splitter.said if not _SELF_TALK.search(t))
+        result.text = " ".join(t for t in splitter.said if not _SELF_TALK.search(t) and t not in unsaid)
         result.model = str(getattr(reply, "model", "") or result.model)
         result.total_ms = int((self._now() - t0) * 1000)
         if result.sentences and mark_day:  # (a voice session marks it itself, once the answer was heard)
