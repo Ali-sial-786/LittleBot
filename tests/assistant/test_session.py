@@ -341,7 +341,7 @@ async def test_voice_front_falls_back_to_gpt_live_without_speech_to_text() -> No
 
 async def test_an_early_answer_is_said_only_once_the_turn_really_ends() -> None:
     brain = Scripted(["Lima is the capital of Peru."])
-    svc, stt, tts, _ = _service(brain, follow_up_seconds=0.3)
+    svc, stt, tts, audio = _service(brain, follow_up_seconds=0.3)
     await svc.start()
     await svc.start_session()
     await _wait(lambda: stt.stream is not None)
@@ -349,10 +349,11 @@ async def test_an_early_answer_is_said_only_once_the_turn_really_ends() -> None:
     stt.event("eager_end_of_turn", "what's the capital of Peru")
     await _wait(lambda: brain.questions == ["what's the capital of Peru"])  # the brain started early
     await asyncio.sleep(0.1)
-    assert tts.said == []  # ...but nothing is said yet
+    # ...and its voice is made already (heard the moment the turn ends), but nothing reached the speaker
+    assert tts.said == ["Lima is the capital of Peru."] and audio.played == []
     stt.event("end_of_turn", "What's the capital of Peru?")
-    await _wait(lambda: tts.said == ["Lima is the capital of Peru."])
-    assert len(brain.questions) == 1  # no second request
+    await _wait(lambda: len(audio.played) > 0)
+    assert len(brain.questions) == 1 and tts.said == ["Lima is the capital of Peru."]  # no second request
     await _wait(lambda: not svc.status()["active"])
     assert svc.last_call["turns"] == 1
 
@@ -370,7 +371,9 @@ async def test_an_early_answer_is_dropped_when_they_go_on() -> None:
     stt.event("turn_resumed")
     stt.event("end_of_turn", "what's the weather tomorrow")
     await _wait(lambda: "Tomorrow it rains." in tts.said)
-    assert "The weather today is sunny." not in tts.said
+    await _wait(lambda: len(svc.history.messages()) >= 2)
+    said = [m["content"] for m in svc.history.messages() if m["role"] == "assistant"]
+    assert said == ["Tomorrow it rains."]  # the dropped answer was never heard (its voice may have been made)
     assert brain.questions[-1] == "what's the weather tomorrow"
     assert svc.ctx.settings.get("audio.volume") != 0.1  # the dropped answer's tool never ran
 

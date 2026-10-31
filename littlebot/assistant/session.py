@@ -541,8 +541,8 @@ class VoiceSession:
 
     # ------------------------------------------------------------ one answer
     async def _respond(self, text: str, *, gate: asyncio.Event | None = None) -> None:
-        """Answer ``text``. ``gate``: an early answer (``_speculate``): nothing is said and no tool runs until it
-        is set."""
+        """Answer ``text``. ``gate``: an early answer (``_speculate``): nothing is heard and no tool runs until it
+        is set (its first words are already being made into voice, so they are heard the moment it is)."""
         t0 = self._now()
         if gate is None:
             self.turns += 1
@@ -551,18 +551,12 @@ class VoiceSession:
         from littlebot.chatgpt.tools import RobotToolbox  # noqa: PLC0415
 
         box = self._toolbox = RobotToolbox(self.ctx, mode="chat", defer=True)
-        voice = self._voice = self._new_voice()
-        held: list[Sentence] = []
+        voice = self._voice = self._new_voice(gate)
 
         def say(s: Sentence) -> None:
             if self._quiet_end:
                 return  # told to stop: not a word more
-            if gate is None or gate.is_set():
-                while held:
-                    voice.say(held.pop(0))
-                voice.say(s)
-            else:
-                held.append(s)
+            voice.say(s)
 
         async def opened() -> None:
             if gate is not None:
@@ -570,8 +564,6 @@ class VoiceSession:
                 self.turns += 1
                 self.heard_user = True
                 t_heard[0] = self._confirmed_at or self._now()
-                while held:
-                    voice.say(held.pop(0))
 
         t_heard = [t0]
         waiter = self._spawn(opened()) if gate is not None else None
@@ -936,16 +928,16 @@ class VoiceSession:
                     self.audio.play_thinking()
             await asyncio.sleep(THINKING_REPEAT_S)
 
-    def _new_voice(self) -> VoiceOut:
+    def _new_voice(self, gate: asyncio.Event | None = None) -> VoiceOut:
         """A mouth for one answer or announcement. Only one ever talks: any other still playing (an announcement when
-        they start a new question) is stopped first, with what it had queued."""
+        they start a new question) is stopped first, with what it had queued. ``gate``: an early answer's (VoiceOut)."""
         old = [v for v in self._mouths if v.busy]
         for v in old:
             v.cancel()
         if old and self.audio is not None and not getattr(self.audio, "interrupted", False):
             with contextlib.suppress(Exception):
                 self.audio.drop_voice()
-        voice = VoiceOut(self.svc.tts(), self.audio, on_start=self._sentence_started, now=self._now)
+        voice = VoiceOut(self.svc.tts(), self.audio, on_start=self._sentence_started, now=self._now, gate=gate)
         self._mouths = [v for v in self._mouths if v.busy] + [voice]
         with contextlib.suppress(Exception):
             self.audio.unmute()

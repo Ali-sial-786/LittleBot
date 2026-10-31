@@ -5,6 +5,9 @@ is no gap between sentences) and hands the audio to the output (``chatgpt.live_a
 ahead of the speaker (``AHEAD_S``): never more, so a barge-in or "stop" cuts it within a fraction of a second. When
 a sentence is about to be heard, ``on_start(sentence)`` runs (the face's expression for it, the body language's
 nods). ``cancel()`` stops everything at once; ``done()`` waits until the last word has been heard.
+
+``gate`` (an early answer, started before their turn really ended): the voice is made at once, but nothing is handed
+to the speaker until the gate is set, so the first words are ready the moment the answer is confirmed.
 """
 
 from __future__ import annotations
@@ -45,11 +48,12 @@ def spoken(s: Sentence) -> str:
 
 class VoiceOut:
     def __init__(self, tts: Any, output: Any, *, on_start: Callable[[Sentence], Any] | None = None,
-                 now: Callable[[], float] = time.monotonic) -> None:
+                 now: Callable[[], float] = time.monotonic, gate: asyncio.Event | None = None) -> None:
         self.tts = tts
         self.output = output
         self.on_start = on_start
         self._now = now
+        self._gate = gate
         self._queue: collections.deque[Sentence] = collections.deque()
         self._wake = asyncio.Event()
         self._closed = False
@@ -193,7 +197,10 @@ class VoiceOut:
             started = True
 
     async def _out(self, s: Sentence, pcm: np.ndarray, rate: int, started: bool) -> bool:
-        """Hand ``pcm`` to the speaker once it has room (paced: never more than AHEAD_S waiting). False: cancelled."""
+        """Hand ``pcm`` to the speaker once it has room (paced: never more than AHEAD_S waiting) and the gate is open.
+        False: cancelled."""
+        if self._gate is not None and not self._gate.is_set():
+            await self._gate.wait()  # (cancel() cancels this wait with the worker)
         while float(getattr(self.output, "queued_s", 0.0) or 0.0) > AHEAD_S:
             await asyncio.sleep(PACE_STEP_S)
             if self._cancelled:
