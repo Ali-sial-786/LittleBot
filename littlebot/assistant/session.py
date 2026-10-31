@@ -60,6 +60,7 @@ ECHO_SHARE = 0.8  # a turn whose words are mostly LittleBot's own recent words i
 PAUSE_WORDS = frozenset({"wait", "wait a second", "wait a minute", "hold on", "hang on", "pause"})
 NO_WORDS_TURN_S = 4.0  # a turn with no words at all after this long was a noise: listening goes on as before
 CUT_IN_NOTE_S = 15.0  # a turn this soon after they talked over the voice is for LittleBot (_turn_notes)
+VOICE_RMS = 0.01  # a 16 kHz chunk this loud is someone talking (the log says how long after it a turn ended)
 EXPRESSION_HOLD_S = 6.0
 SORRY = {
     "no_key": "My brain isn't set up yet.",
@@ -107,6 +108,8 @@ class VoiceSession:
         self._toolbox: Any = None
         self._hearing_since: float | None = None
         self._words_at: float | None = None  # the latest partial with words in the turn being heard
+        self._voice_at: float | None = None  # the microphone last heard more than a quiet room (for the log)
+        self._eager_at: float | None = None  # speech-to-text last said they were probably done (for the log)
         self._said: collections.deque[tuple[float, str]] = collections.deque(maxlen=12)  # its own recent sentences
         self._deadline = self._started + self.cfg.first_words_seconds
         self._end_after: str | None = None  # end once the current answer was heard (said "bye")
@@ -282,6 +285,8 @@ class VoiceSession:
             if frame.dtype == np.int16:
                 x = x / 32768.0
             y = res.process(x)
+            if len(y) and float(np.sqrt(np.mean(np.square(y)))) >= VOICE_RMS:
+                self._voice_at = self._now()  # their voice (or a noise) was last heard now: the turn ends after it
             if len(y) and self._voices() is not None:
                 self._keep_heard(y)
             if len(y) and self.stt is not None:
@@ -366,6 +371,7 @@ class VoiceSession:
             if event.text.strip():
                 self._words_at = self._now()
         elif event.kind == "eager_end_of_turn":
+            self._eager_at = self._now()
             self._speculate(" ".join(event.text.split()))
         elif event.kind == "turn_resumed":
             if self._speculating():
@@ -382,7 +388,14 @@ class VoiceSession:
                     self._set_phase("listening")
                 return
             if text:
-                log.info("assistant: their turn ended (%d words, %d ms from its start)", len(text.split()), spoke_ms)
+                now = self._now()
+                after = f", {int((now - self._voice_at) * 1000)} ms after their voice stopped" \
+                    if self._voice_at is not None and now - self._voice_at < 10 else ""
+                eager = f", probably done {int((now - self._eager_at) * 1000)} ms before" \
+                    if self._eager_at is not None and now - self._eager_at < 10 else ""
+                log.info("assistant: their turn ended (%d words, %d ms from its start%s%s)", len(text.split()),
+                         spoke_ms, after, eager)
+            self._eager_at = None
             if getattr(audio, "interrupted", False) and text:
                 audio.barge_in_heard(text, True)
             if self._speculating():
