@@ -400,11 +400,14 @@ class AssistantConfig(_Section):
     # end-of-turn), vosk (on the robot, offline).
     stt: list[Literal["deepgram", "openai", "vosk"]] = Field(default_factory=lambda: ["deepgram", "openai", "vosk"])
     deepgram_model: str = "flux-general-en"
-    deepgram_eot_threshold: float = Field(default=0.7, ge=0.5, le=0.9)  # Flux: how sure the turn ended
+    # Flux: how sure the turn ended. On the robot (2026-10-31, 18 phrases in OpenAI voices streamed at real time):
+    # 0.6 ended turns 0.1-0.25 s sooner than 0.7 (up to 0.6 s on "and divide that by four."), every phrase whole;
+    # 0.55 cut "Hey little bot. Add milk and eggs to my shopping list." after "Hey little bot."
+    deepgram_eot_threshold: float = Field(default=0.6, ge=0.5, le=0.9)
     deepgram_eot_timeout_ms: int = Field(default=3000, ge=500, le=10000)  # Flux: a turn ends after this much quiet
     # Flux's "probably done" signal: the brain starts then (its words are said, and its tools run, only once the turn
     # really ended; if they go on talking it is dropped). ~0.2 s sooner answers for a few cancelled requests. None: off.
-    deepgram_eager_eot_threshold: float | None = Field(default=0.5, ge=0.3, le=0.9)
+    deepgram_eager_eot_threshold: float | None = Field(default=0.4, ge=0.3, le=0.9)
     openai_stt_model: str = "gpt-4o-mini-transcribe"
     language: str = "en"
     # Text-to-speech, first that works: cartesia (fastest first audio), elevenlabs, openai, local (piper / espeak).

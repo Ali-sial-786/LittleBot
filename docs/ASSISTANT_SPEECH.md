@@ -128,7 +128,8 @@ Change them in `config/local.yaml` (or with `scripts/set_config.py`):
 |---|---|---|
 | `stt` | `[deepgram, openai, vosk]` | the listening services, in order |
 | `tts` | `[cartesia, elevenlabs, openai, local]` | the voices, in order (local is always added last) |
-| `deepgram_eot_threshold` | 0.7 | how sure Flux must be that you finished (higher: fewer interruptions, a little slower) |
+| `deepgram_eot_threshold` | 0.6 | how sure Flux must be that you finished (higher: fewer interruptions, a little slower) |
+| `deepgram_eager_eot_threshold` | 0.4 | when the brain starts on "probably done" (null: off) |
 | `deepgram_eot_timeout_ms` | 3000 | Flux ends the turn after this much silence, however unsure it is |
 | `cartesia_voice`, `cartesia_speed` | Katie, normal | the Cartesia voice id and speed (slowest ... fastest) |
 | `elevenlabs_voice` | Jessica | the ElevenLabs voice id |
