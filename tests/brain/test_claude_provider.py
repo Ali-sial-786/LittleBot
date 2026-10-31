@@ -316,6 +316,25 @@ async def test_a_slow_first_word_goes_to_chatgpt():
     assert reply.text == "ChatGPT here." and asyncio.get_running_loop().time() - t0 < 1.5
 
 
+async def test_only_the_first_request_has_the_quick_first_word_limit():
+    # assistant.brain_first_word_seconds: on the robot (2026-10-31) one first request stalled for the whole 4 s
+    # first_token_timeout. After a tool's result the next request keeps first_token_timeout.
+    t0 = asyncio.get_running_loop().time()
+    reply = await FallbackProvider(claude(FakeAnthropic([{"text": "too late", "delay": 2.0}]), first_token_timeout=5.0,
+                                          first_round_timeout=0.2), FakeChatGPT()).reply(
+        [{"role": "user", "content": "x"}], system="s", max_tokens=50, timeout=10)
+    assert reply.text == "ChatGPT here." and asyncio.get_running_loop().time() - t0 < 1.5
+
+    async def run_tool(name: str, arguments: str) -> str:
+        return "ok: volume 5"
+
+    client = FakeAnthropic([{"tools": [("tu1", "set_volume", {"level": 5})]}, {"text": "Done.", "delay": 0.5}])
+    reply = await claude(client, first_token_timeout=5.0, first_round_timeout=0.2).reply(
+        [{"role": "user", "content": "volume five"}], system="s", max_tokens=200, timeout=10, tools=TOOLS,
+        run_tool=run_tool)
+    assert reply.text == "Done." and len(client.calls) == 2
+
+
 async def test_nothing_is_done_twice_after_claude_acted():
     class Broken(Exception):
         status_code = 500

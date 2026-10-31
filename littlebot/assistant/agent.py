@@ -142,17 +142,19 @@ class Brain:
             backup: Any = ChatGPTProvider(get_auth(self.ctx), models=models, effort=ccfg.reasoning_effort,
                                           purpose="assistant")
             first = self.ctx.config.claude.model
+            quick = self.ctx.config.assistant.brain_first_word_seconds
             if first:
                 if self.ctx.config.text.fallback:
                     backups = [m for m in dict.fromkeys(m.strip() for m in self.ctx.config.claude.fallback_models)
                                if m and m != first]
                     for model in reversed(backups):
-                        backup = FallbackProvider(make_claude(self.ctx, purpose="assistant", model=model), backup,
-                                                  purpose="assistant")
-                    self._provider = FallbackProvider(make_claude(self.ctx, purpose="assistant"), backup,
+                        backup = FallbackProvider(make_claude(self.ctx, purpose="assistant", model=model,
+                                                              first_round_timeout=quick), backup, purpose="assistant")
+                    self._provider = FallbackProvider(make_claude(self.ctx, purpose="assistant",
+                                                                  first_round_timeout=quick), backup,
                                                       purpose="assistant")
                 else:
-                    self._provider = make_claude(self.ctx, purpose="assistant")
+                    self._provider = make_claude(self.ctx, purpose="assistant", first_round_timeout=quick)
             else:
                 self._provider = backup
         return self._provider

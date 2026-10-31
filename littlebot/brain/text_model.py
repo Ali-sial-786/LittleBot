@@ -41,14 +41,15 @@ def cloud_block(ctx: Any) -> str | None:
     return None
 
 
-def make_claude(ctx: Any, *, purpose: str = "", model: str | None = None) -> ClaudeProvider:
+def make_claude(ctx: Any, *, purpose: str = "", model: str | None = None,
+                first_round_timeout: float | None = None) -> ClaudeProvider:
     c = ctx.config.claude
     return ClaudeProvider(api_key=ctx.config.anthropic_api_key, model=model or c.model, effort=c.effort,
                           thinking=c.thinking, max_tokens=c.max_tokens,
                           first_token_timeout=c.first_token_timeout_seconds, web_search=c.web_search,
                           web_search_max_uses=c.web_search_max_uses, base_url=c.base_url, purpose=purpose,
                           client=client_factory() if client_factory is not None else None,
-                          allowed=lambda: cloud_block(ctx))
+                          allowed=lambda: cloud_block(ctx), first_round_timeout=first_round_timeout)
 
 
 def text_provider(ctx: Any, chatgpt: BaseProvider, *, purpose: str = "") -> BaseProvider:

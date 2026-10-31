@@ -438,6 +438,10 @@ class AssistantConfig(_Section):
     tts_first_audio_timeout_seconds: float = Field(default=2.5, ge=0.3, le=10.0)  # then the next TTS is asked
     # The brain: claude.model (Haiku 5.5) with claude.fallback_models then ChatGPT (littlebot/brain/text_model.py).
     max_reply_tokens: int = Field(default=400, ge=64, le=4000)
+    # No first word (or tool) from the brain's first request by then: the next model is asked. On the robot
+    # (2026-10-31) 115 answers began within 1.26 s (median 0.63 s) and one stalled: claude.first_token_timeout_seconds
+    # (4 s, still for the rounds after a tool's result) left 5 s of silence.
+    brain_first_word_seconds: float = Field(default=2.0, ge=0.5, le=30.0)
     reply_timeout_seconds: float = Field(default=20.0, ge=3.0, le=120.0)
     # think_harder: hard questions go to this model (adaptive thinking) while a short line plays. None: off.
     deep_model: str | None = "claude-sonnet-5-5"

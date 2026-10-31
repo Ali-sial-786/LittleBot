@@ -84,13 +84,16 @@ class ClaudeProvider(BaseProvider):
     def __init__(self, *, api_key: SecretStr | str | None, model: str | None, effort: str = "low",
                  thinking: str = "adaptive", max_tokens: int = 2048, first_token_timeout: float = 4.0,
                  web_search: bool = True, web_search_max_uses: int = 2, base_url: str = "https://api.anthropic.com",
-                 purpose: str = "", client: Any = None, allowed: Callable[[], str | None] | None = None) -> None:
+                 purpose: str = "", client: Any = None, allowed: Callable[[], str | None] | None = None,
+                 first_round_timeout: float | None = None) -> None:
         self._key = api_key if isinstance(api_key, SecretStr) else SecretStr(str(api_key or ""))
         self.model = str(model or "")
         self.effort = effort
         self.thinking = thinking
         self.max_tokens = int(max_tokens)
         self.first_token_timeout = float(first_token_timeout)
+        # the first request's first word only (none of a tool's result yet): a caller that knows how quick it is
+        self.first_round_timeout = float(first_round_timeout) if first_round_timeout else None
         self.web_search = bool(web_search)
         self.web_search_max_uses = int(web_search_max_uses)
         self.base_url = base_url
@@ -277,7 +280,9 @@ class ClaudeProvider(BaseProvider):
         try:
             while True:
                 try:
-                    msg = await self._stream(kwargs, timer, on_delta, timeout, on_search)
+                    first_word = self.first_round_timeout if self.first_round_timeout and not rounds and not pauses \
+                        else self.first_token_timeout
+                    msg = await self._stream(kwargs, timer, on_delta, timeout, on_search, first_word=first_word)
                 except _WebSearchRefused:
                     self._no_web_search = True
                     log.warning("claude: the account refused web search; asking again without it")
@@ -335,8 +340,11 @@ class ClaudeProvider(BaseProvider):
                              stop_reason="max_tokens" if stop == "max_tokens" else "end_turn")
 
     async def _stream(self, kwargs: dict[str, Any], timer: CallTimer, on_delta: Callable[[str], Any] | None,
-                      timeout: float, on_search: Callable[[], Any] | None = None) -> Any:
-        """One streamed request: its final message. Words go to ``on_delta`` as they come."""
+                      timeout: float, on_search: Callable[[], Any] | None = None, *,
+                      first_word: float | None = None) -> Any:
+        """One streamed request: its final message. Words go to ``on_delta`` as they come. ``first_word``: its
+        first word's limit (``first_token_timeout`` by default)."""
+        first_word = self.first_token_timeout if first_word is None else float(first_word)
         first = asyncio.Event()
         start = time.monotonic()
 
@@ -365,10 +373,9 @@ class ClaudeProvider(BaseProvider):
         task = asyncio.ensure_future(run())
         waiter = asyncio.ensure_future(first.wait())
         try:
-            done, _ = await asyncio.wait({task, waiter}, timeout=self.first_token_timeout,
-                                         return_when=asyncio.FIRST_COMPLETED)
+            done, _ = await asyncio.wait({task, waiter}, timeout=first_word, return_when=asyncio.FIRST_COMPLETED)
             if task not in done and not first.is_set():
-                raise ProviderTimeoutError(f"claude: no first word within {self.first_token_timeout:g}s")
+                raise ProviderTimeoutError(f"claude: no first word within {first_word:g}s")
             left = max(0.1, timeout - (time.monotonic() - start))
             return await asyncio.wait_for(asyncio.shield(task), left)
         except asyncio.TimeoutError:
