@@ -117,9 +117,13 @@ PREROLL_MAX_SECONDS = 8.0
 # TALK_SPEECH_SECONDS of more speech, or EARCON_QUIET_SECONDS of quiet (they wait for the sound). People pause
 # longer after "hey little bot," than that too: with echo cancelling the earcon then plays while they talk and
 # nothing they say is lost; without it the microphone is deaf while it plays, so it waits longer.
-TALK_SPEECH_SECONDS = 0.15
-EARCON_QUIET_SECONDS = 0.35
+# On the robot (2026-10-31) 0.35 s of quiet (counted from the wake phrase's end) ran out in the usual 0.3-0.6 s
+# pause before the question: the earcon played over "seventeen" at full volume, the echo canceller couldn't take it
+# out (the microphone clips) and "what's seventeen times twenty three" was heard as "one thirteen times twenty three".
+TALK_SPEECH_SECONDS = 0.08
+EARCON_QUIET_SECONDS = 0.6
 EARCON_QUIET_NO_EC_SECONDS = 0.8
+EARCON_OVER_SPEECH_VOLUME = 0.6  # x the volume: the earcon when they may still go on (it is cancelled out better)
 TALK_WAIT_SECONDS = 1.5  # never longer (a noisy room is neither): then as if they went on
 WAKE_CUT_MARGIN = 0.03  # start the carried words this much before the wake phrase's end (the recogniser's step)
 CARRY_WAIT_SECONDS = 5.0  # after the wake phrase: keep what they say this long at most until live voice takes over
@@ -1072,9 +1076,12 @@ class WakeWordService(Service):
             with contextlib.suppress(Exception):
                 entered = ctx.state.state != RobotState.LISTENING and ctx.state.transition(RobotState.LISTENING,
                                                                                           "wake word")
+            earcon_volume: float | None = None
             if carry is not None and early and not carry.kept_talking:
-                quiet = EARCON_QUIET_SECONDS if self._echo_cancelled() else EARCON_QUIET_NO_EC_SECONDS
+                ec = self._echo_cancelled()
+                quiet = EARCON_QUIET_SECONDS if ec else EARCON_QUIET_NO_EC_SECONDS
                 carry.kept_talking = await self._talk_goes_on(carry, quiet)
+                earcon_volume = EARCON_OVER_SPEECH_VOLUME if ec else None  # they may start as it plays
             if carry is not None and carry.kept_talking:
                 # They asked in the same breath and wait for the answer, not for a sound; a sound now would also
                 # hide what they say next (half-duplex). The face shows it is listening.
@@ -1082,7 +1089,7 @@ class WakeWordService(Service):
             else:
                 if video is not None:
                     await self._speaker_free()
-                await self._play(self.cfg.sound)
+                await self._play(self.cfg.sound, volume=earcon_volume)
             from littlebot.assistant import voice_front  # noqa: PLC0415
 
             live = voice_front(ctx)  # the assistant (assistant.pipeline) or GPT-Live
@@ -1274,8 +1281,9 @@ class WakeWordService(Service):
         elif took >= 300:
             log.info("wake word: the speaker was free %d ms after the video closed", took)
 
-    async def _play(self, name: str, what: str = "earcon") -> bool:
-        """Play ``name`` and log whether it was heard (and if not, why). Never raises, never hangs."""
+    async def _play(self, name: str, what: str = "earcon", *, volume: float | None = None) -> bool:
+        """Play ``name`` (``volume``: x the volume) and log whether it was heard (and if not, why). Never raises,
+        never hangs."""
         audio = self.ctx.audio
         if not name:
             return False
@@ -1283,7 +1291,8 @@ class WakeWordService(Service):
             log.warning("wake word: %s '%s' not played (no audio system)", what, name)
             return False
         try:
-            ok = bool(await asyncio.wait_for(audio.play_sound(name), EARCON_TIMEOUT))
+            play = audio.play_sound(name) if volume is None else audio.play_sound(name, volume=volume)
+            ok = bool(await asyncio.wait_for(play, EARCON_TIMEOUT))
         except asyncio.CancelledError:
             raise
         except asyncio.TimeoutError:

@@ -653,6 +653,46 @@ async def test_with_echo_cancelling_what_they_say_over_the_earcon_is_carried(rig
     await play
 
 
+def _earcon_volumes(r: Any, monkeypatch: Any) -> list[Any]:
+    """Echo cancelling on; the volume each sound is asked for (None: the voice's)."""
+    from littlebot.audio.service import AudioService
+
+    monkeypatch.setattr(AudioService, "echo_cancelling", property(lambda self: True))
+    volumes: list[Any] = []
+    play = r.audio.play_sound
+
+    async def spy(name: str, **kw: Any) -> bool:
+        volumes.append(kw.get("volume"))
+        return await play(name, **kw)
+
+    monkeypatch.setattr(r.audio, "play_sound", spy)
+    return volumes
+
+
+async def test_with_echo_cancelling_their_pause_before_the_question_plays_no_earcon(rig, monkeypatch):
+    # On the robot (2026-10-31) 0.35 s of quiet ran out in the pause after "hey little bot,": the earcon played over
+    # "seventeen" at full volume and "what's seventeen times twenty three" was heard as "one thirteen times ...".
+    r = await rig()
+    volumes = _earcon_volumes(r, monkeypatch)
+    await _listening(r)
+    _finish_early(r)
+    r.rec.partial_text = "hey little bot"  # heard in their pause...
+    await asyncio.sleep(0.4)
+    r.mic.set_level(0.1)  # ...then the question
+    await until(lambda: r.live.calls, what="live voice started")
+    assert "sound:listen" not in _sounds(r.out) and r.live.carries[0].kept_talking and volumes == []
+
+
+async def test_with_echo_cancelling_the_earcon_they_may_talk_over_is_quieter(rig, monkeypatch):
+    r = await rig()
+    volumes = _earcon_volumes(r, monkeypatch)
+    await _listening(r)
+    _finish_early(r)
+    r.rec.partial_text = "hey little bot"  # and quiet: they wait for the sound
+    await until(lambda: r.live.calls, what="live voice started")
+    assert "sound:listen" in _sounds(r.out) and volumes == [wakeword.EARCON_OVER_SPEECH_VOLUME]
+
+
 def test_while_they_talk_the_microphone_is_handed_over_at_their_next_pause():
     from littlebot.audio.carry import SpeechCarry
 
