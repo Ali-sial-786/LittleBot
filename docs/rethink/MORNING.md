@@ -84,6 +84,36 @@ hour, or at once after `ssh alisial3@littlebot.local "systemctl --user restart l
   ("Hey, stop the video."). It woke 2 times out of 6 (`wake.video_duck`, turning the video down after "hey", was
   tried and put back off: 1 of 3 with it). The speaker on the ReSpeaker's jack, or a quieter video, should help.
 
+**Cards, and what the card tests turned up (early afternoon)** (each with a test; checked with the real brain and
+live on the robot):
+
+* Every kind of card was tried with the real brain: 12 card questions (a person, a place, a word, how-to, a
+  recipe, a comparison, a number, a sum, the time somewhere) and 6 chit-chat ones. All 12 got a card, and none of
+  the chit-chat did. This morning it was 2 or 3 of 8.
+* A comparison ("crocodile or alligator?") often came in a shape the screen couldn't read, so either no card came
+  or two cut-off lines did. It now shows side by side, each animal's facts as short points.
+* The brain still forgets the card now and then (resetting a breaker, cups in a liter, the time in Tokyo). A quick
+  second request now makes the card from what it said, while it is still talking (about 1.5 s; it says "none" for
+  chit-chat). `assistant.card_backup: false` turns it off.
+* "What's the square root of seventeen sixty four?": speech-to-text writes numbers as words, and the brain once
+  said "about forty-one point nine". LittleBot now works out a sum said in words itself and gives the brain the
+  exact result.
+* The time in Tokyo: it said "nine hours ahead" (13 is right). The time tool now says how far ahead or behind home
+  a place is.
+* It once said its own reasoning out loud ("... is general how-to knowledge, so I can answer directly."). The
+  prompt says never to, and a sentence like that is dropped before it is said.
+* It said "Done, I've forgotten your favorite color" without forgetting it (once; 12 tries after that were fine).
+  The prompt now says never to say something was done unless its tool did it, and the log warns if it happens. The
+  test's fact was taken out of its memory afterwards.
+* It stopped itself in the middle of an answer: its own voice, leaking through the echo canceller, was heard as
+  "no stop". OpenAI's voice (used while Cartesia has no credits) is about 200 Hz, inside a grown-up's range, so the
+  pitch rule let it through. A stop word heard at the pitch the voice itself was playing at that moment, and not
+  clearly said, no longer stops it. The log line for a stop now says how sure it was and the voice's own pitch.
+* Square roots work on the maths card, and a sum isn't titled "Converting" any more. A recipe card is only for
+  cooking (a flat tire got one, with "Ingredients").
+* Still weak: talking over the end of a long answer. "Set an alarm for 7", said while it was still finishing the
+  Tokyo answer, was never heard (the echo canceller again), so no alarm was set.
+
 **Still open:**
 
 * Cartesia credits (above).
