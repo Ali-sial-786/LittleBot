@@ -131,6 +131,21 @@ def _flux(connector: Connector, cloud: list[bool] | None = None, **kw: Any) -> D
 
 
 # ---------------------------------------------------------------- Deepgram Flux
+def test_flux_listens_harder_for_its_name_and_the_volume_words(monkeypatch):
+    # "A little louder, please." came as "A little leopard, please." (the robot, 2026-10-31)
+    import littlebot.assistant.stt as stt_mod
+    from littlebot.testing import make_test_context
+
+    url = _flux(Connector(), keyterms=["LittleBot", "louder", " louder ", "", "turn  it up"]).stream_url()
+    assert parse_qs(urlsplit(url).query)["keyterm"] == ["LittleBot", "louder", "turn it up"]  # repeated, not joined
+    assert "keyterm" not in parse_qs(urlsplit(_flux(Connector()).stream_url()).query)
+    monkeypatch.setattr(stt_mod, "key_reader", lambda ctx, name: lambda: DG_KEY)
+    ctx = make_test_context(assistant={"stt": ["deepgram"]})
+    chain = stt_mod.build_stt(ctx, ws_connect=Connector(), cloud_ok=lambda: True)
+    assert chain is not None
+    assert chain.providers[0].keyterms == [ctx.config.robot_name, "louder", "quieter", "volume"]
+
+
 async def test_flux_url_header_and_80ms_packets():
     conn = Connector()
     stream = await _flux(conn, eot_threshold=0.75, eot_timeout_ms=2500).open(Events())

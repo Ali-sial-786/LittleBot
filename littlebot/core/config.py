@@ -405,6 +405,9 @@ class AssistantConfig(_Section):
     # 0.55 cut "Hey little bot. Add milk and eggs to my shopping list." after "Hey little bot."
     deepgram_eot_threshold: float = Field(default=0.6, ge=0.5, le=0.9)
     deepgram_eot_timeout_ms: int = Field(default=3000, ge=500, le=10000)  # Flux: a turn ends after this much quiet
+    # Words Flux listens harder for (its keyterm prompting), with the robot's own name added: "A little louder,
+    # please." came as "A little leopard, please." and started a leopard video (the robot, 2026-10-31).
+    deepgram_keyterms: list[str] = Field(default_factory=lambda: ["louder", "quieter", "volume"])
     # Flux's "probably done" signal: the brain starts then, and its first sentence is made into voice (heard, and its
     # tools run, only once the turn really ended; if they go on talking it is dropped). On the robot's clips
     # (2026-10-31): 0.3 came a median 0.01 s after their speech ended (0.4: 0.16 s), the turn's end 0.29 s after it,

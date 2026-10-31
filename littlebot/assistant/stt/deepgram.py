@@ -4,7 +4,7 @@ API (https://developers.deepgram.com/reference/speech-to-text/listen-flux and
 https://developers.deepgram.com/docs/flux/quickstart, read 2026-10-30): a websocket to
 ``wss://api.deepgram.com/v2/listen`` with ``model=flux-general-en``, ``encoding=linear16``, ``sample_rate=16000``,
 ``eot_threshold`` (how sure Flux must be that the turn ended, 0.5-1.0) and ``eot_timeout_ms`` (a turn ends after this
-much quiet whatever), plus ``mip_opt_out=true`` (the audio isn't used to train Deepgram's models; no price change for
+much quiet whatever), ``keyterm`` (repeated: words it listens harder for), plus ``mip_opt_out=true`` (the audio isn't used to train Deepgram's models; no price change for
 pay-as-you-go accounts since 2026-03-05); header ``Authorization: Token <key>``. The audio goes up as binary
 messages of 80 ms (Deepgram's strong recommendation: 2,560 bytes of 16-bit samples). Flux answers with JSON:
 ``Connected``; ``TurnInfo`` with ``event`` StartOfTurn / Update / EagerEndOfTurn / TurnResumed / EndOfTurn, the
@@ -269,13 +269,15 @@ class DeepgramFlux:
 
     def __init__(self, *, key: Callable[[], str], cloud_ok: CloudOk, model: str = "flux-general-en",
                  eot_threshold: float = 0.7, eot_timeout_ms: int = 3000, eager_eot_threshold: float | None = None,
-                 url: str = URL, ws_connect: WsConnect | None = None, open_timeout: float = OPEN_TIMEOUT_S) -> None:
+                 keyterms: list[str] | tuple[str, ...] = (), url: str = URL, ws_connect: WsConnect | None = None,
+                 open_timeout: float = OPEN_TIMEOUT_S) -> None:
         self._key = key
         self._cloud_ok = cloud_ok
         self.model = model
         self.eot_threshold = eot_threshold
         self.eot_timeout_ms = eot_timeout_ms
         self.eager_eot_threshold = eager_eot_threshold
+        self.keyterms = [t for t in dict.fromkeys(" ".join(str(t).split()) for t in keyterms) if t]
         self.url = url
         self._ws_connect = ws_connect
         self.open_timeout = open_timeout
@@ -304,7 +306,9 @@ class DeepgramFlux:
                                   "mip_opt_out": "true"}
         if self.eager_eot_threshold is not None:
             params["eager_eot_threshold"] = self.eager_eot_threshold
-        return f"{self.url}?{urlencode(params)}"
+        if self.keyterms:
+            params["keyterm"] = self.keyterms  # one keyterm=... each (Flux wants them repeated, not joined)
+        return f"{self.url}?{urlencode(params, doseq=True)}"
 
     async def open(self, on_event: OnEvent) -> FluxStream:
         why = self.missing()

@@ -131,6 +131,7 @@ Change them in `config/local.yaml` (or with `scripts/set_config.py`):
 | `deepgram_eot_threshold` | 0.6 | how sure Flux must be that you finished (higher: fewer interruptions, a little slower) |
 | `deepgram_eager_eot_threshold` | 0.3 | when the brain (and the voice of its first sentence) starts on "probably done" (null: off) |
 | `deepgram_eot_timeout_ms` | 3000 | Flux ends the turn after this much silence, however unsure it is |
+| `deepgram_keyterms` | `[louder, quieter, volume]` | words Flux listens harder for; the robot's name is always added |
 | `cartesia_voice`, `cartesia_speed` | Katie, normal | the Cartesia voice id and speed (slowest ... fastest) |
 | `elevenlabs_voice` | Jessica | the ElevenLabs voice id |
 | `openai_tts_voice` | coral | alloy, ash, ballad, coral, echo, fable, onyx, nova, sage, shimmer, verse, marin, cedar |

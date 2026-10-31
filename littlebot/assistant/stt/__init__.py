@@ -155,7 +155,9 @@ def build_stt(ctx: Any, *, transport: Any = None, ws_connect: WsConnect | None =
             providers.append(DeepgramFlux(key=key_reader(ctx, "deepgram_api_key"), cloud_ok=ok, model=a.deepgram_model,
                                           eot_threshold=a.deepgram_eot_threshold,
                                           eot_timeout_ms=a.deepgram_eot_timeout_ms,
-                                          eager_eot_threshold=_eager(a), ws_connect=ws_connect))
+                                          eager_eot_threshold=_eager(a),
+                                          keyterms=[ctx.config.robot_name, *a.deepgram_keyterms],
+                                          ws_connect=ws_connect))
         elif name == "openai":
             providers.append(EndpointedSTT(OpenAITranscriber(key=key_reader(ctx, "openai_api_key"), cloud_ok=ok,
                                                              model=a.openai_stt_model, language=a.language,
