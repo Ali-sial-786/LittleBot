@@ -699,6 +699,31 @@ async def test_a_stop_word_in_a_babys_squeal_does_not(call, caplog):
         audio.close()
 
 
+@pytest.mark.parametrize("said,conf,stops", [("stop", 1.0, True), ("stop", 0.7, False), ("hang on", 1.0, False)])
+async def test_a_very_sure_stop_stops_it_however_high_it_reads(call, caplog, said, conf, stops):
+    # Over a long answer the echo canceller took the low half off a parent's 101 Hz "stop!": it read 571-608 Hz and
+    # the news was read on for 38 s (the robot, 2026-10-31). The voice's own "hang on" still can't stop it.
+    caplog.set_level(logging.INFO, logger="littlebot.chatgpt.live")
+    audio, c = call()
+    words = FakeStopWords()
+    audio.setup_barge_in(on_change=lambda what, info: c.events.append(what), stop_words=words)
+    try:
+        await c.warm_up()
+        for u in frames_of(voiced(600.0, 0.16, 0.08, seed=13)):
+            await c.tick(user=u)
+        said_at = c.clock.t
+        for i in range(10):
+            if i == 3:
+                words.hit = (said, said_at, conf)
+            await c.tick()
+        assert c.events == (["interrupted", "stop_word"] if stops else [])
+        if not stops:
+            assert f"heard '{said}', but it sounded like a child or its own voice (6" in caplog.text
+            assert f"{conf:.2f} sure" in caplog.text
+    finally:
+        audio.close()
+
+
 async def test_a_shouted_stop_higher_than_a_grown_ups_pitch_still_stops_it(call, caplog):
     # on the robot (2026-10-29) the parent's "stop!" had no frame at a grown-up's pitch: turned down three times
     caplog.set_level(logging.INFO, logger="littlebot.chatgpt.live")

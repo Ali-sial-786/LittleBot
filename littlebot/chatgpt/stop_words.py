@@ -67,7 +67,7 @@ class StopWords:
         self._now = now
         self._q: queue.Queue[Any] = queue.Queue(maxsize=QUEUE_FRAMES)
         self._lock = threading.Lock()
-        self._hit: tuple[str, float] | None = None
+        self._hit: tuple[str, float, float] | None = None
         self._pushing = False
         self._stop = threading.Event()
         self.ready = False
@@ -105,8 +105,9 @@ class StopWords:
             except queue.Full:
                 pass
 
-    def take(self) -> tuple[str, float] | None:
-        """(The stop phrase heard since the last call, when the audio it was found in ended), fresh ones only."""
+    def take(self) -> tuple[str, float, float] | None:
+        """(The stop phrase heard since the last call, when the audio it was found in ended, how sure the
+        recogniser was of its words: the lowest word confidence), fresh ones only."""
         with self._lock:
             hit, self._hit = self._hit, None
         if hit is None or self._now() - hit[1] > HIT_FRESH_S:
@@ -155,10 +156,11 @@ class StopWords:
                 result = rec.accept(dsp.to_int16(pcm).tobytes())
                 words = (str(result.get("text") or "") if result else str(rec.partial() or "")).split()
                 said = match(words, phrases)
+                conf = 1.0
                 finish = getattr(rec, "finish", None)
                 if said is not None and finish is not None:
                     found = result or finish() or {}
-                    said = sure(found, phrases)
+                    said, conf = sure_how(found, phrases) or (None, 0.0)
                     if said is None:
                         log.debug("stop words: not taken: '%s'", found.get("text", ""))
                         _reset(rec)
@@ -169,7 +171,7 @@ class StopWords:
                 log.debug("stop words: '%s' recognised %d ms after its audio", said,
                           int((self._now() - heard_at) * 1000))
                 with self._lock:
-                    self._hit = (said, heard_at)
+                    self._hit = (said, heard_at, conf)
                 self.heard += 1
                 _reset(rec)
 
@@ -186,16 +188,23 @@ def match(words: list[str], phrases: list[tuple[str, tuple[str, ...]]]) -> str |
 
 def sure(result: dict[str, Any], phrases: list[tuple[str, tuple[str, ...]]]) -> str | None:
     """The stop phrase in a recogniser result when it is what they said (see MIN_CONFIDENCE), else None."""
+    found = sure_how(result, phrases)
+    return found[0] if found is not None else None
+
+
+def sure_how(result: dict[str, Any], phrases: list[tuple[str, tuple[str, ...]]]) -> tuple[str, float] | None:
+    """:func:`sure`, with how sure: (the phrase, its lowest word confidence)."""
     words = [w for w in result.get("result") or [] if isinstance(w, dict)]
     toks = [str(w.get("word", "")).lower() for w in words]
     for phrase, ph in sorted(phrases, key=lambda p: -len(p[1])):
         n = len(ph)
         need = MIN_CONFIDENCE_ONE_WORD if n == 1 else MIN_CONFIDENCE
         for i in range(len(toks) - n + 1):
-            if tuple(toks[i:i + n]) != ph or min(float(w.get("conf", 1.0)) for w in words[i:i + n]) < need:
+            low = min(float(w.get("conf", 1.0)) for w in words[i:i + n]) if n else 1.0
+            if tuple(toks[i:i + n]) != ph or low < need:
                 continue
             if i <= MAX_LEAD_WORDS and all(t in LEAD_WORDS for t in toks[:i]):
-                return phrase
+                return phrase, low
     return None
 
 

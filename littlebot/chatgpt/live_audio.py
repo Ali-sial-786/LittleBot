@@ -104,6 +104,10 @@ STOP_RUN_S = 1.5
 # (the baby's squeals), nor a word the voice says itself as a filler ("hang on, the seven-day is up"), whose echo
 # leaking through is higher than a grown-up's voice too.
 STOP_MAX_PITCH_HZ = 400.0
+# ... unless the recogniser is this sure of the word (not a filler the voice says itself). Over a long answer the
+# echo canceller takes the low half off a parent's "stop!" and the pitch is read off a harmonic: on the robot
+# (2026-10-31) a 101 Hz "stop" measured 571-608 Hz, higher than a baby's squeal, and the news was read on.
+STOP_SURE_CONF = 0.9
 VOICE_FILLERS = frozenset({"wait", "wait a second", "wait a minute", "hold on", "hang on"})
 # Said with no voice at all, so their "pitch" is noise (the robot measured a parent's "shh" at 579 Hz and turned it
 # down, 2026-10-31): never judged by pitch. The voice saying one itself is still caught (_said_it_itself).
@@ -797,7 +801,8 @@ class LiveAudio:
         hit = words.take()
         if hit is None:
             return False
-        said, at = hit
+        said, at, *more = hit
+        conf = float(more[0]) if more else 0.0
         runs = [r for r in (det.run, *reversed(det.recent)) if r is not None]
         run = next((r for r in runs if r.loud >= STOP_LOUD_FRAMES and r.last_loud >= at - STOP_RUN_S
                     and r.onset <= at), None)
@@ -813,11 +818,12 @@ class LiveAudio:
             log.info("live voice: heard '%s', but the voice itself just said it: it carried on", said)
             return False
         pitch = BargeInDetector.pitch_of(run)
-        if said not in UNVOICED_STOPS and run.child > run.adult and (said in VOICE_FILLERS or pitch > STOP_MAX_PITCH_HZ):
+        if said not in UNVOICED_STOPS and run.child > run.adult and (said in VOICE_FILLERS or pitch > STOP_MAX_PITCH_HZ) \
+                and (said in VOICE_FILLERS or conf < STOP_SURE_CONF):
             # a child, or the voice's own echo leaking through (on the robot its false alarms were 240-259 Hz, the
             # parent 107-154 Hz, 2026-10-29): the voice saying "hang on" must not stop itself
-            log.info("live voice: heard '%s', but it sounded like a child or its own voice (%d Hz): it carried on",
-                     said, round(pitch))
+            log.info("live voice: heard '%s', but it sounded like a child or its own voice (%d Hz, %.2f sure): it "
+                     "carried on", said, round(pitch), conf)
             return False
         det.fired, det.run = run, None
         self._stop_said = (said, late)
