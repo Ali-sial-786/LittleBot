@@ -235,6 +235,34 @@ def _json(data: Any) -> str:
     return json.dumps(data, ensure_ascii=False, separators=(",", ":"), default=str)
 
 
+def _from_home(tz: str | None, home: str | None) -> str:
+    """How far time zone ``tz`` is from home (``home``, else the robot's own clock): "13 hours ahead of home",
+    "5½ hours behind home", "the same time as home"; "" when either zone is unknown."""
+    import datetime as dt  # noqa: PLC0415
+    from zoneinfo import ZoneInfo  # noqa: PLC0415
+
+    now = dt.datetime.now(dt.timezone.utc)
+    try:
+        there = now.astimezone(ZoneInfo(str(tz))).utcoffset()
+    except (ValueError, KeyError, OSError):
+        return ""
+    try:
+        here = now.astimezone(ZoneInfo(home)).utcoffset() if home else None
+    except (ValueError, KeyError, OSError):
+        here = None  # info.timezone isn't a real zone: the robot's own clock
+    if here is None:
+        here = now.astimezone().utcoffset()
+    if there is None or here is None:
+        return ""
+    minutes = int((there - here).total_seconds() // 60)
+    if minutes == 0:
+        return "the same time as home"
+    hours, rest = divmod(abs(minutes), 60)
+    frac = {0: "", 30: "½", 15: "¼", 45: "¾"}.get(rest)
+    amount = f"{hours}{frac}" if frac is not None else f"{hours}:{rest:02d}"
+    return f"{amount} {'hour' if amount == '1' else 'hours'} {'ahead of' if minutes > 0 else 'behind'} home"
+
+
 def _norm(text: Any) -> str:
     return re.sub(r"[^a-z0-9]+", " ", str(text or "").lower().replace("'", "")).strip()
 
@@ -1101,6 +1129,10 @@ class RobotToolbox:
             # info.timezone isn't a real zone: the robot's own clock
             log.warning("info.timezone %r is not a known time zone; using the robot's own", str(tz)[:60])
             out = now_info(None)
+        if where:  # worked out here: the brain guessed "nine hours ahead" for Tokyo, 13 from Hamilton (2026-10-31)
+            diff = _from_home(tz, getattr(info, "timezone", "") or None)
+            if diff:
+                out = {**out, "compared_with_home": diff}
         return _json({**({"place": where} if where else {}), **out})
 
     # ------------------------------------------------------------ the screen's info cards (littlebot/screens)
