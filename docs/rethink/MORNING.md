@@ -60,7 +60,8 @@ hour, or at once after `ssh alisial3@littlebot.local "systemctl --user restart l
   in `config/local.yaml`. (An earlier note here said "100%" was really 70%; that was wrong.) It is back at 100%,
   where you had it.
 
-**Fixed later in the morning** (each with a test, checked with the real brain and live):
+**Fixed later in the morning** (each with a test, checked with the real brain and live; full test suite after:
+5,759 passed, the same 19 Windows-only failures):
 
 * "Turn the volume down a bit", "a little louder, please", "it's too loud", "set the volume to one hundred percent"
   are instant now (about 0.8 s with OpenAI's voice). Before, they went to the brain, which checked the volume first
@@ -75,6 +76,13 @@ hour, or at once after `ssh alisial3@littlebot.local "systemctl --user restart l
   (`assistant.deepgram_keyterms`).
 * Saying the date before the weather didn't happen again in the 3 weather answers after these fixes; nothing was
   changed for it.
+* "Hey little bot, stop the video" in one breath: during a video the words after its name were thrown away, so it
+  woke, heard nothing and the video carried on. The video plays through the echo-cancelled speaker, and the
+  echo-cancelled microphone was near silent under its narration, so those words are kept now (checked live: it
+  heard "stop the video" and stopped it).
+* Still weak: waking it over a loud video (100%). The echo canceller erased "little bot" from what it heard
+  ("Hey, stop the video."). It woke 2 times out of 6 (`wake.video_duck`, turning the video down after "hey", was
+  tried and put back off: 1 of 3 with it). The speaker on the ReSpeaker's jack, or a quieter video, should help.
 
 **Still open:**
 
