@@ -268,7 +268,7 @@ class Match:  # what ctx.voices.identify returns (littlebot/voices)
     is_child: bool
 
 
-SPEECH_START = 50  # frames: the voice plays alone for 1 s first (the echo is measured)
+SPEECH_START = 80  # frames: the voice plays alone for 1.6 s first (past ONSET_GUARD_S; the echo is measured)
 
 
 class Call:
@@ -450,7 +450,7 @@ async def test_a_false_alarm_lets_the_held_voice_play_on(call, caplog):
     audio, c = call()
     try:
         await c.warm_up()
-        cut = await c.talk_over(0.8)  # someone talking on for a while after it stopped, but no words came
+        cut = await c.talk_over(1.2)  # someone talking on for a while after it stopped (past ECHO_GONE_S), no words
         assert cut is not None
         k = SPEECH_START + 1 + cut
         while "carried_on" not in c.events:
@@ -487,9 +487,27 @@ async def test_quiet_the_moment_the_voice_stopped_is_its_own_echo_and_it_carries
             await c.tick()
             assert len(c.sent) - k < 250, "never carried on"
         held = len(c.sent) - k
-        assert 0.5 / FRAME_S <= held <= 0.8 / FRAME_S  # ECHO_HOLD_S, not live_barge_in_false_alarm_ms
+        assert 0.7 / FRAME_S <= held <= 1.0 / FRAME_S  # ECHO_HOLD_S, not live_barge_in_false_alarm_ms
         assert "its own echo" in caplog.text and audio.false_alarms == 1
         assert not audio.interrupted and audio.speaking
+    finally:
+        audio.close()
+
+
+async def test_the_voice_leaking_through_as_it_starts_after_a_silence_never_interrupts(call):
+    """On the robot (2026-10-31) the echo canceller let the first words of an answer through for a moment, loud and
+    at a grown-up's pitch (the voice is ~190 Hz), 0.3-0.8 s after the speaker played them: held as a false alarm.
+    Someone who goes on talking past ONSET_GUARD_S still cuts in."""
+    audio, c = call()
+    try:
+        await c.warm_up()
+        for _ in range(80):  # that answer was said; 1.6 s of quiet before the next one
+            await c.tick(voice=False)
+        leak = frames_of(voiced(190, 0.5, 0.2, seed=3))  # much louder than the echo the detector measured
+        for i in range(50):  # the next answer's first second, its echo leaking through 0.3-0.8 s in
+            await c.tick(user=leak[i - 15] if 15 <= i < 15 + len(leak) else None)
+        assert not audio.interrupted and c.events == [] and audio.barge_ins == 0
+        assert await c.talk_over(0.8) is not None  # a person, after it: as usual
     finally:
         audio.close()
 

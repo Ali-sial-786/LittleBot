@@ -81,7 +81,15 @@ GAP_S = 0.12  # under the threshold this long: their speech (the run) ended; sho
 WARMUP_S = 0.3  # the voice's echo is measured this long in a call before anything can interrupt
 INITIAL_COUPLING = 1.0  # what is left of the voice at the microphone, relative to the speaker, before measuring
 FLOOR_OVER = 3.16  # louder than the room's own noise by this much (10 dB) too
-ECHO_REF_S = 0.3  # the echo of what the speaker played up to this long ago may still be at the microphone
+# the echo of what the speaker played up to this long ago may still be at the microphone: on the robot (2026-10-31)
+# the echo-cancelled microphone heard the voice 0.46 s after the speaker played it
+ECHO_REF_S = 0.5
+# The first words after a silence: the echo canceller lets the voice through for a moment (on the robot, 2026-10-31,
+# five answers after ~28 s of quiet left 0.03-0.7 RMS, landing 0.3-0.8 s in; mid-answer sentences 0.001-0.1), loud
+# and pitched like a grown-up (the voice is ~190 Hz): it held the answer as a false alarm. So for ONSET_GUARD_S
+# after the voice starts again after ONSET_QUIET_S of quiet, nothing counts as someone talking over it.
+ONSET_QUIET_S = 1.5
+ONSET_GUARD_S = 1.0
 ECHO_LEARN_MIN = 0.002  # the echo is measured only while the speaker plays at least this loud (RMS after volume)
 ID_AFTER_S = 0.2  # ask voice recognition (ctx.voices) about a run once this much was heard
 ID_TIMEOUT_S = 1.0
@@ -110,8 +118,9 @@ FALSE_ALARM_MAX_S = 4.0  # but no longer than this
 # Nothing loud once the voice was held (after its last sound and the room's echo of it had died away): it was the
 # voice's own echo leaking through, or a bump, not someone talking (they go on). It carries on after ECHO_HOLD_S, not
 # false_alarm_s: on the robot (2026-10-31, the speaker at full volume) such a false alarm held the answer 2.5 s.
-ECHO_GONE_S = 0.25
-ECHO_HOLD_S = 0.6
+# What was already on its way to the speaker still echoes for about ECHO_REF_S after the voice is held.
+ECHO_GONE_S = 0.55
+ECHO_HOLD_S = 0.8
 DROP_GAP_S = 0.25  # the turn they cut into has ended: the voice was quiet this long ...
 USER_DONE_S = 0.25  # ... and they stopped talking this long ago (or their words are final)
 DROP_MAX_S = 15.0  # never drop the voice longer than this
@@ -228,9 +237,10 @@ class BargeInDetector:
     def reset_run(self) -> None:
         self.run = None
 
-    def step(self, frame: np.ndarray, echo_ref: float, now: float, *, voice_on: bool) -> bool:
+    def step(self, frame: np.ndarray, echo_ref: float, now: float, *, voice_on: bool, guard: bool = False) -> bool:
         """One 20 ms frame (int16 or float, 48 kHz). ``echo_ref``: the loudest the speaker played lately (RMS after
-        the volume), ``voice_on``: the voice is audible. True once per run, when it decides they are talking."""
+        the volume), ``voice_on``: the voice is audible, ``guard``: its first words after a silence (ONSET_GUARD_S:
+        nothing is loud then, and its echo isn't measured). True once per run, when it decides they are talking."""
         x = frame.astype(np.float32)
         if frame.dtype == np.int16:
             x = x / 32768.0
@@ -240,8 +250,9 @@ class BargeInDetector:
         if voice_on:
             threshold = max(threshold, self._over * self.coupling * echo_ref)
         self.threshold = threshold
-        loud = level >= threshold
-        if not loud and self.run is None and now >= self._quiet_after:
+        guarded = voice_on and guard
+        loud = level >= threshold and not guarded
+        if not loud and self.run is None and now >= self._quiet_after and not guarded:
             self._learn(level, echo_ref, voice_on)
         if not voice_on:  # nothing to talk over: only how loud it is matters (are they still talking?)
             if self.run is not None:
@@ -390,6 +401,7 @@ class LiveAudio:
         self._muted = False
         self._vol, self._vol_at = 0.0, float("-inf")
         self._last_loud = float("-inf")
+        self._voice_onset = float("-inf")  # when the voice last started after ONSET_QUIET_S of quiet
         self.level = 0.0  # last speaker block RMS (0..1)
         self._visemes: dsp.VisemeEstimator | None = None
         self._mouths: collections.deque[tuple[float, float, str]] = collections.deque(maxlen=64)  # (heard at, level, shape)
@@ -752,7 +764,8 @@ class LiveAudio:
         self._ring.append(out)
         if self._bstate == _WATCH:
             if now - self._last_loud < self.echo_tail_s:  # the voice is audible: watch for someone cutting in
-                if det.step(out, self._echo_ref(now), now, voice_on=True) or self._stop_word(out, now):
+                guard = now - self._voice_onset < ONSET_GUARD_S
+                if det.step(out, self._echo_ref(now), now, voice_on=True, guard=guard) or self._stop_word(out, now):
                     self._interrupt(now)
                     return self._send(None)
                 self._maybe_identify(now)
@@ -1138,6 +1151,8 @@ class LiveAudio:
         self.level = rms
         now = self.speaker_at = self._now()
         if rms >= self.voice_level:
+            if now - self._last_loud > ONSET_QUIET_S:
+                self._voice_onset = now
             self._last_loud = now
         try:  # lip-sync for the face: must never break the voice (an exception here stops the stream)
             est = self._visemes
