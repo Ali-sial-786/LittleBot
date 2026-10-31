@@ -144,7 +144,19 @@ _SELF_TALK = re.compile(
     # through it briefly, with a card." (the robot's brain on the breaker question, 2026-10-31)
     r"|\banswer (?:it |this |that )?directly\b|\bno (?:tool|lookup|look-up) needed\b"
     r"|\bkeep (?:it|this|the answer) (?:brief|short)\b|\bwith a card\b"
-    r"|^(?:a )?(?:simple|quick|short|general|plain) (?:how-to|question|fact|answer)\s*[;:,.]", re.I)
+    r"|^(?:a )?(?:simple|quick|short|general|plain) (?:how-to|question|fact|answer)\s*[;:,.]"
+    # "Safety: mention checking for water or damage first" (the same question): a note to itself
+    r"|^(?:safety|note|safety note|tone|plan)\s*:\s*(?:mention|say|keep|add|include|remind|warn|be|lead|answer)\b",
+    re.I)
+# Words about answering, not about the question: three or more in one sentence is its plan, said aloud ("Lead with
+# the answer briefly, no tools needed."; the robot's brain, 2026-10-31), whatever the words around them
+_META = re.compile(r"\b(?:answer(?:s|ing)?|tools?|cards?|key points|briefly|brief|directly|mention|lead with|how-to|"
+                   r"needed|web search|look it up)\b", re.I)
+
+
+def _self_talk(text: str) -> bool:
+    """A sentence of the brain's own reasoning or plan, never to be said."""
+    return bool(_SELF_TALK.search(text)) or len({m.lower() for m in _META.findall(text)}) >= 3
 # An answer that says something was done although no tool ran ("Done, I've forgotten your favorite color." with no
 # forget; the robot, 2026-10-31): logged, to find any more of them
 _CLAIMED = re.compile(r"\b(?:I've|I have) (?:forgotten|saved|cancell?ed|set|turned|deleted|removed|added|stopped|"
@@ -376,14 +388,19 @@ class Brain:
         stopped = False  # a sentence failed the safety check: nothing more is said
         t0 = self._now()
         raw: list[str] = []
+        unsaid: list[str] = []  # its own reasoning and a second "done": not said, and not in result.text
+        dropping = False  # a sentence of its reasoning was cut at a comma: the rest of it isn't said either
 
         def emit(sentences: list[Sentence]) -> None:
-            nonlocal stopped
+            nonlocal stopped, dropping
             for s in sentences:
                 if stopped:
                     return
-                if _SELF_TALK.search(s.text):
-                    log.info("assistant: a sentence of the brain's own reasoning was not said")
+                if dropping or _self_talk(s.text):
+                    if not dropping:
+                        log.info("assistant: a sentence of the brain's own reasoning was not said")
+                    dropping = not s.text.rstrip().endswith((".", "!", "?"))
+                    unsaid.append(s.text)
                     continue
                 if told and _DONE_AGAIN.search(s.text):
                     log.info("assistant: a second \"done\" for an action it had told already was not said")
@@ -420,13 +437,12 @@ class Brain:
 
         heard = 0  # the sentences said up to the last tool (what came after it was said before the next one)
         told = False  # an action was told before its tool ran: a "Done, I've ..." after it is not said
-        unsaid: list[str] = []  # those "done"s: not in result.text either
 
         async def run_tool(name: str, arguments: Any = None) -> str:
             nonlocal heard, told
             emit(splitter.flush())  # "Let me check." is said now, not after the tool
             said = say_first(str(name))
-            before = " ".join(t for t in splitter.said[heard:] if not _SELF_TALK.search(t))
+            before = " ".join(t for t in splitter.said[heard:] if t not in unsaid)
             heard = len(splitter.said)
             told = told or bool(before and _is_action(str(name)))
             result.tools.append(str(name))
@@ -503,7 +519,7 @@ class Brain:
             result.silent = True
         else:
             emit(splitter.flush())
-        result.text = " ".join(t for t in splitter.said if not _SELF_TALK.search(t) and t not in unsaid)
+        result.text = " ".join(t for t in splitter.said if t not in unsaid)
         result.model = str(getattr(reply, "model", "") or result.model)
         result.total_ms = int((self._now() - t0) * 1000)
         if result.sentences and mark_day:  # (a voice session marks it itself, once the answer was heard)

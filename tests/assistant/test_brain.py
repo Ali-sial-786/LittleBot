@@ -226,7 +226,9 @@ async def test_its_own_reasoning_is_never_said() -> None:
         assert len(said) == 1, line
     for line in ("I know this one, so I can answer it directly.", "No web search needed, it's easy.",
                  "Simple how-to; answer directly with key points, no tool needed.", "Safety note: keep it brief.",
-                 "Walk through it briefly, with a card."):  # the breaker question, with the shorter answers rule
+                 "Walk through it briefly, with a card.",  # the breaker question, with the shorter answers rule
+                 "Lead with the answer briefly, no tools needed.",
+                 "Safety: mention checking for water or damage first, and not to touch if smell of burning."):
         _, said, _ = await _turn(ScriptedProvider([line]))
         assert said == [], line
 
