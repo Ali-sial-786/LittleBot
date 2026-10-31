@@ -107,6 +107,42 @@ async def test_words_before_a_web_search_are_said_as_it_starts() -> None:
     assert res.text == "Let me check that for you. Spain won."
 
 
+async def _voice_turn(script: list[Any], text: str = "hi", **kw: Any) -> tuple[Any, list[str], ScriptedProvider]:
+    order: list[str] = []
+    p = ScriptedProvider(script)
+    p.log = order
+    ctx = make_test_context()
+    res = await Brain(ctx, provider=p).respond(text, history=[], toolbox=RobotToolbox(ctx, mode="chat"),
+                                               on_sentence=lambda s: order.append(f"say:{s.text}"),
+                                               on_tool=lambda n: order.append(f"tool:{n}"), **kw)
+    return res, order, p
+
+
+async def test_a_tool_before_any_word_gets_a_word_of_its_own_first() -> None:
+    # "What's in the news today?": the brain fetched the briefing first and nothing was heard for 3.7 s (the robot,
+    # 2026-10-31). Now a word is said as the tool starts, and the model is told so (no "One sec." twice).
+    res, order, p = await _voice_turn([("tool", "get_time", "{}"), "Rain tomorrow."], "will it rain",
+                                      first_words=True)
+    assert order == ["say:One sec.", "tool:get_time", "words:Rain tomorrow.", "say:Rain tomorrow."]
+    assert p.calls[0]["results"][0].endswith('(they have already heard you say "One sec.": go straight on, never '
+                                             'say it again)')
+    assert res.text == "Rain tomorrow." and res.done[0].startswith("get_time: ") and "heard" not in res.done[0]
+    _, order, _ = await _voice_turn([("tool", "set_volume", '{"percent": 60}'), "Done, it's at 60."], first_words=True)
+    assert order[:2] == ["say:Sure.", "tool:set_volume"]  # an action: "Sure."
+    _, order, _ = await _voice_turn([("search",), "Spain won."], first_words=True)
+    assert order[0] == "say:One sec."  # Anthropic's own web search too
+
+
+async def test_no_word_of_its_own_after_its_words_for_stops_and_cards_or_typed_chats() -> None:
+    _, order, p = await _voice_turn(["Let me check.", ("tool", "get_time", "{}"), "Dry."], first_words=True)
+    assert order.count("say:One sec.") == 0 and "heard you say" not in p.calls[0]["results"][0]
+    for tool in ("stop_video", "show_on_screen"):
+        _, order, _ = await _voice_turn([("tool", tool, "{}"), "Okay."], first_words=True)
+        assert order[0] == f"tool:{tool}"
+    _, order, _ = await _voice_turn([("tool", "get_time", "{}"), "Dry."])  # not a voice: no first words
+    assert order[0] == "tool:get_time"
+
+
 async def test_silent_says_nothing() -> None:
     res, said, _ = await _turn(ScriptedProvider(["[sil", "ent]"]))
     assert res.silent and said == [] and res.error is None

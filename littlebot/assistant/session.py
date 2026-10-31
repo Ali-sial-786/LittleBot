@@ -638,7 +638,8 @@ class VoiceSession:
                                                       on_sentence=say, on_tool=self._tool_started, mark_day=False,
                                                       extra=[*self.who_notes(), *self._turn_notes(gate),
                                                              self.svc.history.done_note()],
-                                                      extra_tools=self._session_tools(), done=done)
+                                                      extra_tools=self._session_tools(), done=done,
+                                                      first_words=True)
                 if result.error and not result.sentences:
                     for s in _sentences(SORRY.get(result.error, SORRY_DEFAULT)):
                         say(s)

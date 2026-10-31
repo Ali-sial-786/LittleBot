@@ -44,6 +44,16 @@ log = logging.getLogger("littlebot.assistant.agent")
 FINAL_TOOLS = frozenset({"show_on_screen", "change_card", "set_face"})
 DEEP_TOOL = "think_harder"
 DONE_CHARS = 120  # a tool's result kept in the chat history this long (later turns trust what really happened)
+# A tool called before a word was said: LittleBot says one now, not after the tool and another model round ("What's
+# in the news today?" was silent for 3.7 s while it fetched the briefing; the robot, 2026-10-31). Not before a tool
+# that stops or pauses something, nor the final tools (they go with an answer already written).
+LOOKUP_WORDS = "One sec."
+ACTION_WORDS = "Sure."
+DEEP_WORDS = "Let me think."
+QUIET_TOOLS = frozenset({"stop_everything", "stop_video", "pause_video", "resume_video", "stop_activity", "stop_game",
+                         "stop_alarm", "snooze", "go_to_sleep", "wake_up", "music_control", "stop_translator"})
+_LOOKUP_PREFIXES = ("get_", "search", "read_", "list_", "look", "recall", "whats_", "describe", "who_", "home_devices",
+                    "battery", "browser")
 MAX_TOOL_ROUNDS = 6
 FACE_TAGS = ("[happy] [excited] [curious] [surprised] [thinking] [confused] [sad] [playful] [affectionate] "
              "[celebrating] [neutral]")
@@ -69,9 +79,11 @@ end_conversation and say nothing at all: never say that you are stopping.
 exclamation marks rarely, only for real excitement.
 - Face tags: start a sentence with one when your mood changes: {faces}. One-off face effects: {effects}. Tags are \
 silent and never read out; use them naturally, not on every sentence.
-- Before a tool that takes a moment (web search, the weather, the smart home, think_harder), first say a few words \
-("Let me check.", "One sec."), then call it. For an action (a reminder, a timer, the volume, a list), at most a \
-word before it ("Sure."), and the details once, after it ran ("Done, I'll remind you at 7:35."): never both.
+- Before a tool that takes a moment (web search, the weather, the news, a briefing, the smart home, think_harder), \
+first say a few words ("Let me check.", "One sec."), then call it. For an action (a reminder, a timer, the volume, \
+a list), call its tool straight away: it tells you what it did, so never look anything up first (no get_volume \
+before changing the volume). At most a word before it ("Sure."), and the details once, after it ran ("Done, I'll \
+remind you at 7:35."): never both.
 - Your screen: most answers with facts in them get a card. A person, place, animal, thing or moment in history \
 ("who was Kublai Khan?", "tell me about Japan"): the facts card, layout profile, with picture_query (its \
 Wikipedia name), a subtitle and 2-3 short facts. Also the weather, a definition, steps, a recipe, a list, numbers, \
@@ -89,7 +101,9 @@ Something you really don't know: search the web instead of saying you don't know
 Hard reasoning (multi-step maths, planning, coding, careful comparisons, advice with trade-offs): call \
 think_harder and then say its answer in your own short words.
 - Not sure what they meant: ask one short question. Misheard words are common: go with the most likely meaning \
-(a request heard as if done already, "turned the volume down a bit", is still the request: do it).
+(a request heard as if done already, "turned the volume down a bit", is still the request: do it). A request that \
+makes no sense as heard ("a little leopard, please") was misheard: if it sounds like one that fits (a little \
+louder), do that; if not, ask. Start a video, music, an activity or a game only when they clearly asked for one.
 - [silent] is only for talk clearly not meant for you (two other people talking to each other, the TV, a phone \
 call): then answer with exactly [silent]. A question, a request or anything that could be for you gets an answer; \
 when in doubt, answer.
@@ -305,10 +319,12 @@ class Brain:
                       images: list[bytes] | None = None, mark_day: bool = True,
                       extra: list[str] | None = None,
                       extra_tools: dict[str, tuple[dict[str, Any], Callable[[dict[str, Any]], Any]]] | None = None,
-                      done: list[str] | None = None) -> TurnResult:
+                      done: list[str] | None = None, first_words: bool = False) -> TurnResult:
         """Answer ``text``: sentences go to ``on_sentence`` as they are ready (checked for safety first). Never
         raises (except cancellation); a failure is ``result.error``. ``done``: ``result.done`` is this list, so the
-        caller still has what the tools did when the turn is cancelled (they cut in)."""
+        caller still has what the tools did when the turn is cancelled (they cut in). ``first_words`` (a voice): a
+        tool called before anything was said gets a few words of LittleBot's own first (LOOKUP_WORDS), which the
+        model is told it said; they are not in ``result.text``."""
         result = TurnResult()
         if done is not None:
             result.done = done
@@ -337,14 +353,30 @@ class Brain:
                 return  # [silent] (or its start): never said
             emit(splitter.feed(piece))
 
+        def say_first(name: str | None) -> str:
+            """Nothing said yet and a tool to wait for (None: a web search): a few words now. What was said, or ""."""
+            if not first_words or result.sentences or stopped or name in final or name in QUIET_TOOLS:
+                return ""
+            words = (DEEP_WORDS if name == DEEP_TOOL else
+                     LOOKUP_WORDS if name is None or name.startswith(_LOOKUP_PREFIXES) else ACTION_WORDS)
+            emit([Sentence(words)])
+            return words
+
+        def search_started() -> None:
+            emit(splitter.flush())
+            say_first(None)
+
         async def run_tool(name: str, arguments: Any = None) -> str:
             emit(splitter.flush())  # "Let me check." is said now, not after the tool
+            said = say_first(str(name))
             result.tools.append(str(name))
             if on_tool is not None:
                 _call(on_tool, str(name))
             out = await one_tool(name, arguments)
             if name != DEEP_TOOL and name not in FINAL_TOOLS:  # kept for later turns: it really happened
                 result.done.append(f"{name}: {' '.join(str(out).split())[:DONE_CHARS]}")
+            if said:
+                return f'{out}\n(they have already heard you say "{said}": go straight on, never say it again)'
             return out
 
         async def one_tool(name: str, arguments: Any) -> str:
@@ -375,7 +407,7 @@ class Brain:
                                   "effort": "minimal", "on_delta": on_delta, "final_tools": final,
                                   # a web search runs on Anthropic's side: "Let me check." is said as it starts,
                                   # not after it (it waited for the next words, 2-3 s; the robot, 2026-10-31)
-                                  "on_search": lambda: emit(splitter.flush())}
+                                  "on_search": search_started}
         if images:
             kwargs["images"] = images
         try:

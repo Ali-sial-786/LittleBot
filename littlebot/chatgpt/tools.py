@@ -115,14 +115,14 @@ TOOLS: tuple[_Tool, ...] = (
           _obj({"activity": {**_STR, "description": "activity id or name"}}, ("activity",))),
     _Tool("stop_activity", "Stop the activity that is running.", _obj()),
     _Tool("get_volume", "LittleBot's speaker and video volume, in percent.", _obj()),
-    _Tool("set_volume", "Set the volume in percent (it is capped at the safe maximum).",
+    _Tool("set_volume", "Set the volume in percent (it is capped at the safe maximum). Returns the new volume.",
           _obj({"percent": {**_PERCENT, "description": "0 to 100"},
                 "what": {"type": "string", "enum": ["all", "speaker", "video"], "description": "default all"}},
                ("percent",))),
-    _Tool("volume_up", "Make LittleBot louder (default one step of 10 percent).",
-          _obj({"step": {**_PERCENT, "description": "percent, default 10"}})),
-    _Tool("volume_down", "Make LittleBot quieter (default one step of 10 percent).",
-          _obj({"step": {**_PERCENT, "description": "percent, default 10"}})),
+    _Tool("volume_up", "Make LittleBot louder (default one step of 10 percent). Returns the new volume: no need "
+          "to check it first.", _obj({"step": {**_PERCENT, "description": "percent, default 10"}})),
+    _Tool("volume_down", "Make LittleBot quieter (default one step of 10 percent). Returns the new volume: no "
+          "need to check it first.", _obj({"step": {**_PERCENT, "description": "percent, default 10"}})),
     _Tool("set_face", "Show a face or face animation on LittleBot's screen, e.g. happy, surprised, sleepy, wink, "
           "spin_eyes, peekaboo, hearts, confetti.", _obj({"face": _STR}, ("face",))),
     _Tool("go_to_sleep", "Put LittleBot to sleep (sleepy face, quiet) once you have said good night.", _obj()),
