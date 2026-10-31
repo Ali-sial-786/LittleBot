@@ -632,6 +632,27 @@ async def test_what_littlebot_plays_while_carrying_is_never_carried(rig):
     await play
 
 
+async def test_with_echo_cancelling_what_they_say_over_the_earcon_is_carried(rig, monkeypatch):
+    # On the robot (2026-10-31) the earcon played in their pause after "hey little bot," and the start of
+    # "who was Kublai Khan?" was dropped with it; the echo canceller takes the earcon out of the microphone anyway.
+    from littlebot.audio.service import AudioService
+
+    r = await rig()
+    monkeypatch.setattr(AudioService, "echo_cancelling", property(lambda self: True))
+    r.live.take_mic_after = 0.6
+    r.out.time_scale = 1.0
+    await _listening(r)
+    r.rec.say("hey little bot what is that", wake_ended_ago=0.3)
+    await until(lambda: r.live.carries, what="live voice started")
+    carry = r.live.carries[0]
+    play = asyncio.ensure_future(r.audio.play_sound("chime"))
+    await until(lambda: r.audio.mic_muted(), what="the sound plays")
+    held = carry.seconds
+    await until(lambda: not carry.is_open, what="the microphone handed over")
+    assert carry.seconds - held >= 0.3  # what they said meanwhile was kept
+    await play
+
+
 def test_while_they_talk_the_microphone_is_handed_over_at_their_next_pause():
     from littlebot.audio.carry import SpeechCarry
 

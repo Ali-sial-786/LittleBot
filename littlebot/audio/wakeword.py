@@ -114,10 +114,13 @@ VIDEO_SPEAKER_WAIT_SECONDS = 2.0
 PREROLL_MAX_SECONDS = 8.0
 # ``wake.early``: a wake phrase in the words so far is decided at once (the result forced out, with its word
 # confidences), not after the sentence. Whether they go on talking (no earcon then) is known a moment later: at
-# TALK_SPEECH_SECONDS of more speech, or EARCON_QUIET_SECONDS of quiet (they wait for the sound).
+# TALK_SPEECH_SECONDS of more speech, or EARCON_QUIET_SECONDS of quiet (they wait for the sound). People pause
+# longer after "hey little bot," than that too: with echo cancelling the earcon then plays while they talk and
+# nothing they say is lost; without it the microphone is deaf while it plays, so it waits longer.
 TALK_SPEECH_SECONDS = 0.15
 EARCON_QUIET_SECONDS = 0.35
-TALK_WAIT_SECONDS = 1.0  # never longer (a noisy room is neither): then as if they went on
+EARCON_QUIET_NO_EC_SECONDS = 0.8
+TALK_WAIT_SECONDS = 1.5  # never longer (a noisy room is neither): then as if they went on
 WAKE_CUT_MARGIN = 0.03  # start the carried words this much before the wake phrase's end (the recogniser's step)
 CARRY_WAIT_SECONDS = 5.0  # after the wake phrase: keep what they say this long at most until live voice takes over
 # Live voice opens its own stream once this one is closed; what is said in between (~0.1-0.3 s) is lost. So
@@ -679,6 +682,14 @@ class WakeWordService(Service):
         except Exception:  # noqa: BLE001
             return False
 
+    def _echo_cancelled(self) -> bool:
+        """PipeWire's echo canceller takes LittleBot's own sound out of the microphone (AudioService)."""
+        try:
+            on = getattr(self.ctx.audio, "echo_cancelling", False)
+            return bool(on() if callable(on) else on)
+        except Exception:  # noqa: BLE001
+            return False
+
     def _listen(self, inp: Any, rec: KeywordRecognizer) -> bool:
         """Read and recognise until a wake phrase (True) or until something needs the mic (False)."""
         if isinstance(inp, SoundDeviceInput) and inp.status in (dev.STATUS_DISCONNECTED, dev.STATUS_UNAVAILABLE):
@@ -990,8 +1001,10 @@ class WakeWordService(Service):
                         why = "the microphone was closed"
                         break
                     continue
-                muted = self._muted()
-                if muted:  # LittleBot's own sound (the earcon) is never carried
+                # LittleBot's own sound (the earcon) is never carried; with echo cancelling it is taken out of the
+                # microphone already, and the earcon can play while they go on with their question
+                muted = self._muted() and not self._echo_cancelled()
+                if muted:
                     continue
                 if self._gain != 1.0:
                     chunk = np.clip(chunk * self._gain, -1.0, 1.0)
@@ -1060,7 +1073,8 @@ class WakeWordService(Service):
                 entered = ctx.state.state != RobotState.LISTENING and ctx.state.transition(RobotState.LISTENING,
                                                                                           "wake word")
             if carry is not None and early and not carry.kept_talking:
-                carry.kept_talking = await self._talk_goes_on(carry)
+                quiet = EARCON_QUIET_SECONDS if self._echo_cancelled() else EARCON_QUIET_NO_EC_SECONDS
+                carry.kept_talking = await self._talk_goes_on(carry, quiet)
             if carry is not None and carry.kept_talking:
                 # They asked in the same breath and wait for the answer, not for a sound; a sound now would also
                 # hide what they say next (half-duplex). The face shows it is listening.
@@ -1120,15 +1134,15 @@ class WakeWordService(Service):
                 self._cv.notify_all()
 
     @staticmethod
-    async def _talk_goes_on(carry: SpeechCarry) -> bool:
+    async def _talk_goes_on(carry: SpeechCarry, quiet: float = EARCON_QUIET_SECONDS) -> bool:
         """Heard early: do they go on talking after the wake phrase (more speech in the carry), or wait for the
-        sound (quiet)?"""
+        sound (``quiet`` seconds of quiet)?"""
         start = carry.speech_seconds
         deadline = time.monotonic() + TALK_WAIT_SECONDS
         while carry.is_open and time.monotonic() < deadline:
             if carry.speech_seconds - start >= TALK_SPEECH_SECONDS:
                 return True
-            if carry.quiet_s >= EARCON_QUIET_SECONDS:
+            if carry.quiet_s >= quiet:
                 return False
             await asyncio.sleep(0.02)
         return carry.speech_seconds - start >= TALK_SPEECH_SECONDS or time.monotonic() >= deadline
