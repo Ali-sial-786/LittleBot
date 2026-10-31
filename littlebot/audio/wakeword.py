@@ -26,8 +26,8 @@ Sharing the microphone
     LittleBot itself makes sound (half-duplex) the audio is discarded.
 
 While a video plays
-    It keeps listening (``wake.during_videos``), but the video's own sound reaches the microphone
-    too (there is no echo cancellation), so stricter rules apply: only ``wake.video_phrases``
+    It keeps listening (``wake.during_videos``), but some of the video's own sound may reach the
+    microphone (all of it without echo cancelling), so stricter rules apply: only ``wake.video_phrases``
     count ("hey little bot"), each word needs ``wake.video_min_confidence``, and with
     ``wake.video_duck`` the video is turned down for a moment after a "hey ...". What was heard
     but didn't count is logged ("ignored while a video plays"), to check on the robot.
@@ -52,8 +52,9 @@ Carrying what was said into the call ("Hey LittleBot, what's the weather today?"
     and catches up with real time by shortening the pauses (littlebot/chatgpt/live_audio.py,
     ``CarryFeed``). If the recogniser heard more words after the wake phrase, they are talking:
     no earcon, live voice starts at once. In memory only (littlebot/audio/carry.py); dropped if
-    live voice can't start, doesn't connect, or when the call ends. Not during a video: the
-    video's own sound reaches the microphone too, so nothing is carried then.
+    live voice can't start, doesn't connect, or when the call ends. During a video only with echo
+    cancelling (the video plays through the echo-cancelled speaker, so its sound is taken out of the
+    microphone); without it the soundtrack would be sent as their words, so nothing is carried then.
 """
 
 from __future__ import annotations
@@ -795,8 +796,12 @@ class WakeWordService(Service):
                 if phrase is None and not video:
                     self._note_unsure(result)
                 if phrase is not None and not self._audio_busy and not self._stop.is_set():
-                    # Not during a video: its soundtrack reaches the microphone and would be sent as their words.
-                    carry = None if video else self._carry_from(heard, result, phrase, rec.sample_rate)
+                    # During a video only with echo cancelling: without it the soundtrack reaches the microphone and
+                    # would be sent as their words. With it (the video plays through the echo-cancelled speaker) the
+                    # microphone was near silent under narration (0.0001 against 0.01; the robot, 2026-10-31), and
+                    # "Hey little bot, stop the video." in one breath had lost "stop the video".
+                    carry = None if video and not self._echo_cancelled() else \
+                        self._carry_from(heard, result, phrase, rec.sample_rate)
                     self._detected(phrase, carry, early=early)
                     if carry is not None:
                         self._carry_on(inp, rec.sample_rate, carry)
