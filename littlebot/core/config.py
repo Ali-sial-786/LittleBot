@@ -453,6 +453,8 @@ class AssistantConfig(_Section):
     earcon: bool = True  # a short sound when the wake word is heard (skipped when they keep talking)
     expressions: bool = True  # the brain's [happy] / [curious] tags drive the face sentence by sentence
     log_timings: bool = True  # one "assistant turn:" line per answer (stt, brain, first audio; never the words)
+    # For testing only (off: what is said is never written anywhere): the words heard and said go in the log too.
+    log_words: bool = False
 
 
 class SkillsConfig(_Section):

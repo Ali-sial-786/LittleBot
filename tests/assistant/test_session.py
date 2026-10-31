@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Any
+
+import pytest
 
 from littlebot.assistant import events as ev
 from littlebot.assistant.service import AssistantService
@@ -97,6 +100,20 @@ async def test_thanks_ends_the_session_without_the_brain() -> None:
     await _wait(lambda: not svc.status()["active"])
     assert brain.questions == [] and len(tts.said) == 1
     assert svc.last_call["ended_reason"].startswith("said intent:thanks")
+
+
+@pytest.mark.parametrize("log_words", [False, True])
+async def test_the_words_are_logged_only_when_asked_for_testing(log_words: bool, caplog: Any) -> None:
+    caplog.set_level(logging.INFO, logger="littlebot.assistant")
+    svc, stt, _tts, _ = _service(Scripted(["Paris."]), follow_up_seconds=5, log_words=log_words)
+    await svc.start()
+    await svc.start_session()
+    await _wait(lambda: stt.stream is not None)
+    stt.say("what is the capital of france")
+    await _wait(lambda: "assistant turn:" in caplog.text)
+    assert ("what is the capital of france" in caplog.text) is log_words
+    assert ("said 'Paris.'" in caplog.text) is log_words
+    await svc.stop_session("test")
 
 
 async def test_stop_ends_quietly() -> None:

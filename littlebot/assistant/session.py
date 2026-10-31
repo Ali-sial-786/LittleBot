@@ -411,6 +411,8 @@ class VoiceSession:
                 late = f", the microphone {int(behind * 1000)} ms behind" if isinstance(behind, float) else ""
                 log.info("assistant: their turn ended (%d words, %d ms from its start%s%s%s)", len(text.split()),
                          spoke_ms, after, eager, late)
+                if self.cfg.log_words:
+                    log.info("assistant: heard %r", text[:300])
             self._eager_at = None
             if getattr(audio, "interrupted", False) and text:
                 audio.barge_in_heard(text, True)
@@ -587,6 +589,8 @@ class VoiceSession:
         if heard and said_by != "stop":
             self.svc.history.add(text, heard)
             self._publish(ev.CAPTION, {"who": "robot", "text": heard})
+            if self.cfg.log_words:
+                log.info("assistant: said %r", heard[:400])
         await self._after_turn(box)
         first = int((voice.first_audio_at - t0) * 1000) if voice.first_audio_at is not None else None
         self._publish(ev.TURN_DONE, {"ms_to_first_audio": first, "tools": list(getattr(result, "tools", []) or [])})
