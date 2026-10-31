@@ -99,6 +99,8 @@ is a live fact: search the web for it, never answer it from memory and never off
 Something you really don't know: search the web instead of saying you don't know. \
 Hard reasoning (multi-step maths, planning, coding, careful comparisons, advice with trade-offs): call \
 think_harder and then say its answer in your own short words.
+- Never say you did something (saved, forgot, cancelled, set, turned on or off) unless you called its tool in \
+this turn and it said so: to do it, call the tool.
 - Not sure what they meant: ask one short question. Misheard words are common: go with the most likely meaning \
 (a request heard as if done already, "turned the volume down a bit", is still the request: do it). A request that \
 makes no sense as heard ("a little leopard, please") was misheard: if it sounds like one that fits (a little \
@@ -113,7 +115,8 @@ when in doubt, answer.
 
 CARDS = """Which card: a person, place, animal, thing or moment in history ("who was Kublai Khan?", "tell me about \
 Japan"): facts, layout profile, with picture_query (its Wikipedia name), a subtitle and 2-3 short facts; what a word \
-means: definition; how to do something: explain, its steps as points (food: recipe); a difference or a choice \
+means: definition; how to do something: explain, its steps as points (recipe only for cooking food: it lists \
+ingredients); a difference or a choice \
 ("crocodile or alligator?"): facts, layout compare; a number answer (how far, how big, how many, a conversion): \
 facts, layout number; a sum: maths; also the weather, a list, a timer, the time somewhere (clock). No card for \
 chit-chat, jokes, a plain yes or no, or when they're done."""
@@ -135,6 +138,10 @@ _SELF_TALK = re.compile(
     r"|\bI can answer (?:this|that|it) (?:directly|straight away|from (?:my own )?knowledge)\b"
     r"|\b(?:general|common|everyday)(?: how-to)? knowledge, so\b"
     r"|\bno (?:need for a |need to )?(?:web )?search(?: is)? needed\b", re.I)
+# An answer that says something was done although no tool ran ("Done, I've forgotten your favorite color." with no
+# forget; the robot, 2026-10-31): logged, to find any more of them
+_CLAIMED = re.compile(r"\b(?:I've|I have) (?:forgotten|saved|cancell?ed|set|turned|deleted|removed|added|stopped|"
+                      r"remembered)\b", re.I)
 
 CONTEXT = "[Context for this turn, not said by them: {items}]"
 LAST_DAY_KEY = "assistant.last_day"  # the day of the last conversation (a greeting and a briefing offer once a day)
@@ -431,6 +438,9 @@ class Brain:
         if toolbox is not None and hasattr(toolbox, "instructions"):
             system += "\n" + toolbox.instructions().strip()
         result.prefix = _fingerprint(tools, system)
+        worked = _worked_out(text)
+        if worked:  # a sum said in words: worked out here, not by a model with thinking off (spoken_sums.py)
+            extra = [*(extra or []), f"the sum they asked, worked out exactly: {worked} (say this result)"]
         messages = self.build_messages(text, history, toolbox, extra=extra)
         kwargs: dict[str, Any] = {"tools": tools, "run_tool": run_tool, "max_tool_rounds": MAX_TOOL_ROUNDS,
                                   "effort": "minimal", "on_delta": on_delta, "final_tools": final,
@@ -472,6 +482,8 @@ class Brain:
             self.talked_today()
         if not result.sentences and not result.silent and not result.tools:
             result.error = getattr(reply, "stop_reason", None) or "empty"
+        if not result.tools and _CLAIMED.search(result.text):
+            log.warning("assistant: the answer says something was done, but no tool ran")
         return result
 
     async def _think_harder(self, arguments: Any, history: list[dict[str, str]]) -> str:
@@ -563,6 +575,16 @@ def _greeting(ctx: Any) -> str:
     except Exception:  # noqa: BLE001
         return ""
     return f"Good {part}." if part in ("morning", "afternoon", "evening") else ""
+
+
+def _worked_out(text: str) -> str | None:
+    try:
+        from littlebot.assistant.spoken_sums import worked_out  # noqa: PLC0415
+
+        return worked_out(text)
+    except Exception:  # noqa: BLE001 - the brain answers it alone
+        log.debug("assistant: working the sum out failed", exc_info=True)
+        return None
 
 
 def _args(arguments: Any) -> dict[str, Any]:

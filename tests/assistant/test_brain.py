@@ -207,6 +207,19 @@ async def test_its_own_reasoning_is_never_said() -> None:
         assert said == [], line
 
 
+async def test_a_sum_said_in_words_comes_with_its_exact_result(caplog) -> None:
+    # "The square root of seventeen sixty four is about forty-one point nine." (the robot, 2026-10-31)
+    p = ScriptedProvider(["It's 42."])
+    await _turn(p, "What is the square root of seventeen sixty four?")
+    assert "the sum they asked, worked out exactly: square root of 1764 = 42" in p.calls[0]["messages"][-1]["content"]
+    p = ScriptedProvider(["Paris."])
+    await _turn(p, "What is the capital of France?")
+    assert "worked out exactly" not in p.calls[0]["messages"][-1]["content"]
+    caplog.set_level("WARNING", logger="littlebot.assistant.agent")
+    await _turn(ScriptedProvider(["Done, I've forgotten your favorite color."]), "forget my favorite color")
+    assert "says something was done, but no tool ran" in caplog.text
+
+
 class CardBox:
     """A toolbox with show_on_screen (and another tool) that records the cards put up."""
 
