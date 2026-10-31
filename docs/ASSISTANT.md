@@ -129,8 +129,9 @@ Both are opt-in and run on the robot only (only a name reaches the brain, never 
 ## Screen
 
 The brain shows a card when seeing helps (weather, a definition, steps, a recipe, a list, maths, a timer, a
-note, today at a glance). Double-tap the face for **today at a glance** (time, weather, what's coming up). The
-dashboard's Assistant page can send a note to the screen or have LittleBot say something (intercom).
+note, today at a glance). If it answers with facts but forgets the card, a short second request makes the card
+from what it said, while it is still talking (`card_backup`). Double-tap the face for **today at a glance**
+(time, weather, what's coming up). The dashboard's Assistant page can send a note to the screen or have LittleBot say something (intercom).
 
 ## Measuring
 
@@ -164,6 +165,7 @@ ssh alisial3@littlebot.local "grep -a assistant.turn ~/LittleBot/data/logs/littl
 | `end_of_turn_ms` | `650` | without Deepgram: quiet this long ends your turn (shorter after a full sentence, longer after "and", "um") |
 | `history_turns` / `history_minutes` | `12` / `15` | earlier exchanges sent with each question (RAM only) |
 | `expressions` | `true` | the face follows the brain's mood tags |
+| `card_backup` | `true` | an answer with facts said without a card gets one made from its words (a cheap Haiku call, no wait) |
 | `log_timings` | `true` | the "assistant turn:" line |
 
 Change one with `scripts/set_config.py`, e.g.

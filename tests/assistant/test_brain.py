@@ -190,6 +190,69 @@ async def test_think_harder_uses_the_deep_model() -> None:
     assert [s.text for s in said] == ["Let me think.", "It's 42."] and res.tools == [DEEP_TOOL]
 
 
+async def test_its_own_reasoning_is_never_said() -> None:
+    # "Resetting a tripped breaker is general how-to knowledge, so I can answer directly." (the robot, 2026-10-31)
+    p = ScriptedProvider(["Resetting a tripped breaker is general how-to knowledge, so I can answer directly. ",
+                          "Push the switch to off, then back on."])
+    res, said, _ = await _turn(p, "how do I reset a tripped breaker")
+    assert [s.text for s in said] == ["Push the switch to off, then back on."]
+    assert res.text == "Push the switch to off, then back on."
+    assert "never your reasoning" in p.calls[0]["system"] and "Which card:" in p.calls[0]["system"]
+    assert "{cards}" not in p.calls[0]["system"]
+    for line in ("So I can answer that, I'd need your town.", "Tell me more so I can answer better."):
+        _, said, _ = await _turn(ScriptedProvider([line]))  # not its reasoning
+        assert len(said) == 1, line
+    for line in ("I know this one, so I can answer it directly.", "No web search needed, it's easy."):
+        _, said, _ = await _turn(ScriptedProvider([line]))
+        assert said == [], line
+
+
+class CardBox:
+    """A toolbox with show_on_screen (and another tool) that records the cards put up."""
+
+    def __init__(self) -> None:
+        self.ran: list[tuple[str, Any]] = []
+
+    def specs(self, stable: bool = False) -> list[dict[str, Any]]:
+        return [{"type": "function", "name": "get_time", "parameters": {"type": "object"}},
+                {"type": "function", "name": "show_on_screen", "parameters": {"type": "object"}}]
+
+    async def run(self, name: str, arguments: Any = None) -> str:
+        self.ran.append((name, arguments))
+        return "ok: on the screen now: Resetting a breaker: about to show 3 points."
+
+
+BREAKER = ("First find the panel and the switch sitting between on and off. Push it firmly to off, then back on. "
+           "If it trips again, unplug what's on that circuit and call an electrician.")
+BREAKER_CARD = '{"card": "explain", "fields": {"title": "Resetting a breaker", "points": ["Find the panel"]}}'
+
+
+async def test_a_card_the_brain_skipped_is_made_from_the_answer() -> None:
+    # "How do I reset a tripped breaker?" never got its card (0 of 4 on the robot, 2026-10-31)
+    p = ScriptedProvider([("tool", "show_on_screen", BREAKER_CARD), "Done."])
+    box = CardBox()
+    out = await Brain(make_test_context(), provider=p).card_after("How do I reset a tripped breaker?", BREAKER, box)
+    assert out is not None and out.startswith("ok: on the screen now") and box.ran == [("show_on_screen",
+                                                                                         BREAKER_CARD)]
+    call = p.calls[0]
+    assert call["tools"] == ["show_on_screen"] and call["effort"] == "minimal" and "explain" in call["system"]
+    assert call["messages"] == [{"role": "user", "content": f"They asked: How do I reset a tripped breaker?\n"
+                                                            f"It said: {BREAKER}"}]
+
+
+async def test_no_backup_card_when_none_is_needed_or_it_is_too_late() -> None:
+    ctx = make_test_context()
+    box = CardBox()
+    assert await Brain(ctx, provider=ScriptedProvider(["none"])).card_after("hi", BREAKER, box) is None
+    late = ScriptedProvider([("tool", "show_on_screen", BREAKER_CARD)])
+    assert await Brain(ctx, provider=late).card_after("q", BREAKER, box, still=lambda: False) is None
+    short = ScriptedProvider([("tool", "show_on_screen", BREAKER_CARD)])
+    assert await Brain(ctx, provider=short).card_after("thanks", "You're welcome!", box) is None
+    assert short.calls == [] and box.ran == []
+    failed = ScriptedProvider([], error="timeout")
+    assert await Brain(ctx, provider=failed).card_after("q", BREAKER, box) is None
+
+
 async def test_first_conversation_of_the_day_offers_a_greeting_once() -> None:
     ctx = make_test_context()
     p = ScriptedProvider(["Good morning!"])

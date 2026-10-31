@@ -114,6 +114,32 @@ async def test_the_next_turn_knows_what_the_tools_really_did() -> None:
     await svc.stop()
 
 
+@pytest.mark.parametrize("backup", [True, False])
+async def test_an_answer_said_without_a_card_gets_one_made_while_it_is_said(backup: bool) -> None:
+    answer = "Push the switch firmly to off, then back on. If it trips again, call an electrician."
+    brain = Scripted([answer], [("set_volume", '{"percent": 60}'), "Done, it's at sixty percent now, nice and loud."])
+    svc, stt, tts, _ = _service(brain, follow_up_seconds=0.5, card_backup=backup)
+    svc.brain.talked_today()
+    # a screen (the card itself is the brain's: test_brain.py)
+    svc.ctx.screens = type("Screen", (), {"describe": lambda self: "", "timers_now": lambda self: ""})()
+    asked: list[tuple[str, str]] = []
+
+    async def card_after(question: str, said: str, box: Any, *, still: Any) -> str:
+        asked.append((question, said))
+        assert still()  # this turn's own toolbox
+        return "ok: on the screen now: Resetting a breaker"
+    svc.brain.card_after = card_after
+    await svc.start()
+    await svc.start_session()
+    await _wait(lambda: stt.stream is not None)
+    stt.say("how do I reset a tripped breaker")
+    await _wait(lambda: len(svc.history) == 1)
+    stt.say("could you make it sixty")  # a tool ran: no backup card
+    await _wait(lambda: len(svc.history) == 2)
+    assert asked == ([("how do I reset a tripped breaker", answer)] if backup else [])
+    await svc.stop()
+
+
 def test_the_tools_note_covers_the_recent_turns_and_goes_with_them() -> None:
     from littlebot.assistant.service import DONE_TURNS, History
 

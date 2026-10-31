@@ -34,6 +34,7 @@ import contextlib
 import dataclasses
 import inspect
 import logging
+import re
 import time
 from typing import Any, Callable
 
@@ -68,7 +69,8 @@ games), and a warm, curious little character second. {creator}
 
 How you talk (you are heard, not read):
 - Lead with the answer. One to three short spoken sentences unless they ask for more, or for a story, a list, a \
-recipe or a briefing. No filler, no "great question", no repeating the question.
+recipe or a briefing. No filler, no "great question", no repeating the question, and never your reasoning or rules \
+("that's general knowledge, so I can answer directly"): just the answer.
 - Don't end with a question or an offer ("Want to know more?", "Anything else?") unless you truly need an answer \
 to go on: they will ask if they want more. When they say goodbye, thanks or that they're done, reply in a few words \
 at most. When they tell you to stop (stop talking, be quiet, that's enough, end the call), call \
@@ -85,13 +87,7 @@ a list), call its tool straight away: it tells you what it did, so never look an
 before changing the volume). At most a word before it ("Sure."), and the details once, after it ran ("Done, I'll \
 remind you at 7:35."): never both.
 - Your screen: every answer with facts in it gets a card. Say your answer first, then call show_on_screen with the \
-gist (a new card replaces the one on the screen). Which card: a person, place, animal, thing or moment in history \
-("who was Kublai Khan?", "tell me about Japan"): facts, layout profile, with picture_query (its Wikipedia name), a \
-subtitle and 2-3 short facts; what a word means: definition; how to do something: explain, its steps as points \
-(food: recipe); a difference or a choice ("crocodile or alligator?"): facts, layout compare; a number answer (how \
-far, how big, how many, a conversion): facts, layout number; a sum: maths; also the weather, a list, a timer, the \
-time somewhere (clock). No card for chit-chat, jokes, a plain yes or no, or when they're done. Never describe the \
-card or say "on my screen" unless asked.
+gist (a new card replaces the one on the screen). {cards} Never describe the card or say "on my screen" unless asked.
 - What you know (history, people, places, science, nature, how things work, words, books, films): answer \
 straight away from your own knowledge with the key facts (who, when, why it matters), in your own words: no web \
 search and no "let me check" for that. A name you heard oddly (speech-to-text mishears names): go with the famous \
@@ -114,6 +110,30 @@ when in doubt, answer.
 - You are a robot, not a person; you have a face, a camera, a speaker{body}.
 
 {skills}"""
+
+CARDS = """Which card: a person, place, animal, thing or moment in history ("who was Kublai Khan?", "tell me about \
+Japan"): facts, layout profile, with picture_query (its Wikipedia name), a subtitle and 2-3 short facts; what a word \
+means: definition; how to do something: explain, its steps as points (food: recipe); a difference or a choice \
+("crocodile or alligator?"): facts, layout compare; a number answer (how far, how big, how many, a conversion): \
+facts, layout number; a sum: maths; also the weather, a list, a timer, the time somewhere (clock). No card for \
+chit-chat, jokes, a plain yes or no, or when they're done."""
+
+# The card for an answer said without one (card_after): the brain skipped it on some how-to and number questions
+# ("How do I reset a tripped breaker?" 0 of 4, "How many cups are in a liter?" 1 of 4; the robot, 2026-10-31)
+CARD_SYSTEM = """You put the card on a voice assistant's screen for an answer it has just said aloud. Call \
+show_on_screen once with the gist of that answer: a few words per point, never its whole sentences. """ + CARDS + """ \
+If this answer needs no card, reply with just: none."""
+CARD_BACKUP_CHARS = 60  # a shorter answer ("Sure, done.", "You're welcome!") never gets one
+
+# The brain's own reasoning said aloud ("Resetting a tripped breaker is general how-to knowledge, so I can answer
+# directly."; the robot, 2026-10-31): a sentence like that is never said.
+_SELF_TALK = re.compile(
+    r",? (?:so|which means|that means) I (?:can|could|will|'ll|should) (?:just )?(?:answer|respond|reply)"
+    r"(?: (?:it|this|that))?(?: directly| straight away| right away| from (?:my own )?(?:knowledge|memory)"
+    r"| without (?:a )?(?:web )?search(?:ing)?)?[.!]?\s*$"
+    r"|\bI can answer (?:this|that|it) (?:directly|straight away|from (?:my own )?knowledge)\b"
+    r"|\b(?:general|common|everyday)(?: how-to)? knowledge, so\b"
+    r"|\bno (?:need for a |need to )?(?:web )?search(?: is)? needed\b", re.I)
 
 CONTEXT = "[Context for this turn, not said by them: {items}]"
 LAST_DAY_KEY = "assistant.last_day"  # the day of the last conversation (a greeting and a briefing offer once a day)
@@ -242,7 +262,7 @@ class Brain:
         return SYSTEM.format(
             name=cfg.robot_name, owner=owner, family=_family(self.ctx, owner),
             creator=f"{owner} built and programmed you." if made_by else "", persona=persona.strip(),
-            faces=FACE_TAGS, effects=EFFECT_TAGS, body=body, skills=skills.strip()).strip()
+            faces=FACE_TAGS, effects=EFFECT_TAGS, body=body, cards=CARDS, skills=skills.strip()).strip()
 
     def context_items(self, toolbox: Any = None) -> list[str]:
         ctx = self.ctx
@@ -342,6 +362,9 @@ class Brain:
             for s in sentences:
                 if stopped:
                     return
+                if _SELF_TALK.search(s.text):
+                    log.info("assistant: a sentence of the brain's own reasoning was not said")
+                    continue
                 safe, ok = _checked(self.ctx, s.text)
                 if not ok:
                     stopped = True
@@ -441,7 +464,7 @@ class Brain:
             result.silent = True
         else:
             emit(splitter.flush())
-        result.text = " ".join(splitter.said)
+        result.text = " ".join(t for t in splitter.said if not _SELF_TALK.search(t))
         result.model = str(getattr(reply, "model", "") or result.model)
         result.total_ms = int((self._now() - t0) * 1000)
         if result.sentences and mark_day:  # (a voice session marks it itself, once the answer was heard)
@@ -476,6 +499,45 @@ class Brain:
             return "error: the stronger model didn't answer; answer as well as you can yourself"
         text = str(getattr(reply, "text", "") or "").strip()
         return f"ok: {text[:3000]}" if text else "error: no answer; answer as well as you can yourself"
+
+    async def card_after(self, question: str, answer: str, toolbox: Any, *,
+                         still: Callable[[], bool] = lambda: True) -> str | None:
+        """The card for an answer said without one (CARD_SYSTEM), made while it is still being said: what
+        show_on_screen said, or None (no card needed, too late by ``still()``, or it failed). Never raises (except
+        cancellation)."""
+        spec = next((s for s in _tool_specs(toolbox) if s.get("name") == "show_on_screen"), None)
+        if spec is None or len(answer) < CARD_BACKUP_CHARS:
+            return None
+        shown: list[str] = []
+
+        async def run_tool(name: str, arguments: Any = None) -> str:
+            if name != "show_on_screen" or shown or not still():
+                return "error: no card now"
+            shown.append(str(await toolbox.run(name, arguments)))
+            this = asyncio.current_task()
+            if this is not None:
+                this.cancel()  # the card is up: no second request just to read what the tool said
+            return shown[-1]
+
+        messages = [{"role": "user", "content": f"They asked: {question.strip()[:500]}\nIt said: {answer[:2000]}"}]
+        kwargs: dict[str, Any] = {"tools": [spec], "run_tool": run_tool, "max_tool_rounds": 1, "effort": "minimal"}
+        provider = self.provider()
+        try:
+            params = inspect.signature(provider.reply).parameters
+            kwargs = {k: v for k, v in kwargs.items() if k in params}
+        except (TypeError, ValueError):
+            pass
+        task = asyncio.ensure_future(provider.reply(messages, system=CARD_SYSTEM, max_tokens=600,
+                                                    timeout=self.cfg.reply_timeout_seconds, **kwargs))
+        try:
+            await task
+        except asyncio.CancelledError:
+            me = asyncio.current_task()
+            if not shown or (me is not None and me.cancelling()):
+                raise
+        except Exception as e:  # noqa: BLE001 - no card, the answer was said all the same
+            log.info("assistant: the backup card failed (%s)", getattr(e, "kind", "") or type(e).__name__)
+        return shown[0] if shown else None
 
 
 def _day() -> str:

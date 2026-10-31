@@ -645,6 +645,8 @@ class VoiceSession:
                         say(s)
             if waiter is not None:
                 await waiter  # an early answer waits here until their turn really ended
+            if self._card_missing(result):
+                self._spawn(self._card_after(text, result.text, box))
             voice.close()
             await voice.done()
             if voice.first_audio_at is None and getattr(self.audio, "interrupted", False):
@@ -691,6 +693,25 @@ class VoiceSession:
             return
         self._deadline = self._now() + follow
         self._set_phase("listening")
+
+    def _card_missing(self, result: Any) -> bool:
+        """An answer of the brain's own (no tool: none put a card up) said without a card: one is made from it
+        while it is being said (``Brain.card_after``)."""
+        return (bool(getattr(self.cfg, "card_backup", False)) and result is not None and not result.tools
+                and not result.silent and not result.error and not self._quiet_end
+                and getattr(self.ctx, "screens", None) is not None and hasattr(self.svc.brain, "card_after"))
+
+    async def _card_after(self, question: str, answer: str, box: Any) -> None:
+        try:
+            shown = await self.svc.brain.card_after(question, answer, box, still=lambda: self._toolbox is box)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - never the session's end: the answer was said all the same
+            log.warning("assistant: the backup card failed", exc_info=True)
+            return
+        if shown:  # (what it shows only with log_words: it is the answer's words)
+            log.info("assistant: a backup card for an answer said without one: %s",
+                     " ".join(shown.split())[:160] if self.cfg.log_words else shown.split(":")[0])
 
     async def _local_answer(self, text: str, box: Any) -> tuple[str, str, bool] | None:
         """(who answered, words, end the session) without the brain: an instant intent, a voice game's move or a
