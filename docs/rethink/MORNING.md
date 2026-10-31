@@ -1,9 +1,72 @@
 # Good morning: what changed overnight
 
-Everything is on the **`rethink`** branch. `main` (what the robot runs now) is untouched, and so is the robot.
+Everything is on the **`rethink`** branch. `main` is untouched; since the laptop session the robot runs `rethink`
+(going back: step 6 of "Try it on the robot").
 The full test suite passes on the branch (about 5,760 tests, 830 of them new; the only failures are 2-3 that
 also fail on `main` in the cloud build machine: no sound card there, running as root). The new voice session was
 also read by an independent reviewer and its 12 findings fixed.
+
+## Laptop session (the night of 30-31 October, newest)
+
+The robot now runs `rethink` with the fast voice (`assistant.pipeline: cascade`); `main` is still untouched. All night
+the laptop next to the robot played questions in recorded voices, recorded what came back, and read the robot's log.
+Each fix below has a test, and most were checked again live.
+
+**One thing for you first: Cartesia (the fast voice) is out of credits** since about 7 am (all the testing used
+the plan's allowance). The robot switched to OpenAI's voice by itself, which starts about half a second later. To get it
+back: play.cartesia.ai → your subscription → top up, or allow extra usage. The robot tries Cartesia again every
+hour, or at once after `ssh alisial3@littlebot.local "systemctl --user restart littlebot"`.
+
+**How fast it is now** (end of your question → its first sound, measured on the robot):
+
+* With Cartesia: about 1.0 s (half the answers faster, the slowest 1.3 s; before tonight up to 2.7 s).
+  With OpenAI's voice this morning: about 1.4 s (0.8-2.3 s). Instant answers ("louder", "what time is it"): 0.3 s.
+* The end of your question is noticed usually 0.1-0.5 s after your last word (now and then about 1 s, after an
+  unusual name). "Stop" while it talks: in 20-40 ms.
+* Where the time goes: the ReSpeaker and the echo canceller take about 0.35-0.4 s before your voice even reaches
+  the robot's software; deciding you've finished 0.1-0.5 s; the brain's first words 0.6 s (rarely 1.2 s); then the
+  voice's first sound (Cartesia's is the quickest). A lookup (weather, news) adds 0.5-1.5 s, covered by a short
+  "Let me check" or a soft sound.
+
+**Fixed tonight** (the main ones, in plain words):
+
+* It listens the moment it hears its name, so a question said in the same breath goes in live, and the "ding"
+  plays only if you pause. Leftovers of its name heard as part of the question ("little bug", "middle butt",
+  "little dots") are taken off.
+* "Stop!" over a long answer works now. The echo canceller damages a short word said over the voice, so it
+  scored under the bar and its pitch read like a child's; the news was read on for 38 s. Now it stops at once.
+  "Stop talking", "shh" and a lone "Talking." work too.
+* Its own voice heard back no longer cuts it off, and the start of its own sentences can't be taken for you
+  cutting in. But you repeating a request isn't mistaken for its echo any more.
+* It remembers what its tools really did. It had said "I should correct myself, I never actually checked the
+  volume"; after an answer was cut off, it had queued a video that never started, and said "Good morning" again.
+* Actions are confirmed once ("Sure. Done, I'll remind you at 7:38"), not before and after.
+* If the brain's first word hasn't come in 2 s, the backup model answers (a 4 s silence happened once).
+* The news comes in 1.7 s instead of 4.5 s when one news site is slow (the CBC kept timing out).
+* A service out of credits is logged as that, not as a bad key, and the next one takes over for an hour.
+* Spotify: every search had been refused (a wrong request setting); fixed.
+
+**Checked, not changed:**
+
+* The ReSpeaker firmware wasn't flashed. Both of its channels are the same processed sound, so other firmware or
+  I2S wouldn't change the 0.3 s round trip through the ReSpeaker and the USB speaker. The cheap test that could:
+  plug a speaker into the ReSpeaker's own headphone jack. That also lets its echo canceller hear exactly what is
+  played.
+* A whole question said over a long answer is sometimes erased by the echo canceller at the current loudness (70%,
+  its ceiling in your settings). At 60% one got through. "Stop" works either way. The speaker on the ReSpeaker's
+  jack would help most.
+
+**Still open:**
+
+* Cartesia credits (above).
+* Spotify can't play yet: the robot isn't a Spotify speaker. Run
+  `ssh -t alisial3@littlebot.local "cd ~/LittleBot && bash scripts/setup_spotify.sh"` (it asks for your password),
+  then pick **LittleBot** once in Spotify on your phone.
+* The brain sometimes looks something up before saying anything (the news once took 3.7 s to the first sound),
+  checks the volume before changing it, and says the date before the weather.
+* A badly misheard request can do the wrong thing: "a little louder" was heard once as "a little leopard", and it
+  queued a leopard video.
+* The test logging of words heard and said (`assistant.log_words`) was on all night and is off again.
 
 ## In short
 

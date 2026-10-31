@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 
+pytest.importorskip("fcntl", reason="the script is for the Pi (Linux)")
 spec = importlib.util.spec_from_file_location(
     "calibrate_touch", Path(__file__).resolve().parents[2] / "scripts" / "calibrate_touch.py")
 ct = importlib.util.module_from_spec(spec)
