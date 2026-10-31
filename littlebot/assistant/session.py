@@ -1277,6 +1277,10 @@ def _words(text: str) -> list[str]:
 _WAKE_LEAD = re.compile(r"^\s*(?:(?:hey|hi|hay|a|okay|ok)[\s,.!]+)?(?:(?:little|lil|li'l)[\s-]*)?bot\b[\s,.!?]*|"
                         r"^\s*(?:(?:hey|hi|hay|a|okay|ok)[\s,.!]+)?littlebot\b[\s,.!?]*|"
                         r"^\s*(?:hey|hi|hay|okay|ok)[\s,.!]+(?:little|lil|li'l)[\s-]*(?:bought|boat|bug|bud|robot)\b"
+                        r"[\s,.!?]*|"
+                        r"^\s*(?:(?:hey|hi|hay|a|okay|ok)[\s,.!]+)?(?:little|lil|li'l|middle|liddle)[\s-]*butt\b"
+                        r"[\s,.!?]*|"
+                        r"^\s*(?:(?:hey|hi|hay|a|okay|ok)[\s,.!]+)?(?:middle|liddle)[\s-]*(?:bot|bought|boat)\b"
                         r"[\s,.!?]*", re.IGNORECASE)
 
 

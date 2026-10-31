@@ -423,6 +423,9 @@ async def test_the_wake_phrase_goes_first_and_is_taken_off_the_words() -> None:
     # misheard after "hey" (the robot, 2026-10-31), but never in a sentence of theirs
     ("Hey, little bug.", ""), ("Hey little bought, what time is it", "What time is it"),
     ("A little bug is on the wall.", "A little bug is on the wall."), ("Hey, a little bug!", "Hey, a little bug!"),
+    ("middle butt, set the volume to one hundred percent.", "Set the volume to one hundred percent."),
+    ("Little butt, what's that", "What's that"), ("The middle button", "The middle button"),
+    ("Little but strong", "Little but strong"), ("Middle school starts at eight", "Middle school starts at eight"),
 ])
 def test_the_wake_phrase_is_no_part_of_the_question(said: str, question: str) -> None:
     from littlebot.assistant.session import _heard
