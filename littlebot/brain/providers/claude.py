@@ -261,8 +261,9 @@ class ClaudeProvider(BaseProvider):
                     run_tool: ToolRunner | None = None, max_tool_rounds: int = MAX_TOOL_ROUNDS,
                     detail: str | None = None, effort: str | None = None,
                     on_delta: Callable[[str], Any] | None = None,
-                    final_tools: Collection[str] = ()) -> ProviderReply:
-        """As ``ChatGPTProvider.reply``. ``timeout`` bounds each request; ``first_token_timeout`` its first word."""
+                    final_tools: Collection[str] = (), on_search: Callable[[], Any] | None = None) -> ProviderReply:
+        """As ``ChatGPTProvider.reply``. ``timeout`` bounds each request; ``first_token_timeout`` its first word.
+        ``on_search``: called when a server tool (web search) starts, which no ``run_tool`` announces."""
         del detail  # ChatGPT's image detail: Claude sizes images itself
         why = self.missing() or self._blocked()
         if why:
@@ -276,7 +277,7 @@ class ClaudeProvider(BaseProvider):
         try:
             while True:
                 try:
-                    msg = await self._stream(kwargs, timer, on_delta, timeout)
+                    msg = await self._stream(kwargs, timer, on_delta, timeout, on_search)
                 except _WebSearchRefused:
                     self._no_web_search = True
                     log.warning("claude: the account refused web search; asking again without it")
@@ -334,7 +335,7 @@ class ClaudeProvider(BaseProvider):
                              stop_reason="max_tokens" if stop == "max_tokens" else "end_turn")
 
     async def _stream(self, kwargs: dict[str, Any], timer: CallTimer, on_delta: Callable[[str], Any] | None,
-                      timeout: float) -> Any:
+                      timeout: float, on_search: Callable[[], Any] | None = None) -> Any:
         """One streamed request: its final message. Words go to ``on_delta`` as they come."""
         first = asyncio.Event()
         start = time.monotonic()
@@ -353,6 +354,12 @@ class ClaudeProvider(BaseProvider):
                     elif kind in ("content_block_start", "input_json") and _is_tool_start(event):
                         timer.first()
                         first.set()
+                        if on_search is not None and kind == "content_block_start" and \
+                                _get(getattr(event, "content_block", None), "type") == "server_tool_use":
+                            try:
+                                on_search()
+                            except Exception:  # noqa: BLE001 - a listener never breaks the answer
+                                log.debug("on_search listener failed", exc_info=True)
                 return await stream.get_final_message()
 
         task = asyncio.ensure_future(run())

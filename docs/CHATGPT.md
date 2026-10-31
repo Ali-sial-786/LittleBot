@@ -394,6 +394,7 @@ wake:                                # config/local.yaml
                                      # "hey bot" was dropped: "hey Bob" was heard as it (add it back if you like)
   model_path: models/vosk-model-small-en-us-0.15
   end_silence_seconds: 0.25          # silence that ends a phrase (the model's own: 0.5-1.0 s); heard ~0.2 s sooner
+  early: true                        # decide the phrase as soon as it is heard, not after the whole sentence
   min_confidence: 0.35               # per word, 0..1: higher = fewer false starts, more misses (0.5 missed some)
   short_min_confidence: 0.7          # two-word phrases ("hey bot", "lil bot") need this, or a face at the camera
   short_face_seconds: 10             # ...seen this recently

@@ -115,11 +115,12 @@ class FallbackProvider(BaseProvider):
                     run_tool: Callable[[str, str], Awaitable[str]] | None = None, max_tool_rounds: int = 6,
                     detail: str | None = None, effort: str | None = None,
                     on_delta: Callable[[str], Any] | None = None,
-                    final_tools: Collection[str] = ()) -> ProviderReply:
-        """As ``ChatGPTProvider.reply`` (the same parameters, so callers that look at them pass the same)."""
+                    final_tools: Collection[str] = (), on_search: Callable[[], Any] | None = None) -> ProviderReply:
+        """As ``ChatGPTProvider.reply`` (the same parameters, so callers that look at them pass the same), and
+        Claude's ``on_search``."""
         kw: dict[str, Any] = {"images": images, "tools": tools, "run_tool": run_tool,
                               "max_tool_rounds": max_tool_rounds, "detail": detail, "effort": effort,
-                              "on_delta": on_delta, "final_tools": final_tools}
+                              "on_delta": on_delta, "final_tools": final_tools, "on_search": on_search}
         missing = self.primary.missing()
         if missing:
             if self._told_missing != missing:

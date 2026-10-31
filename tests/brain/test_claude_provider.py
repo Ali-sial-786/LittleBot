@@ -158,6 +158,20 @@ async def test_the_request_is_streamed_cached_and_short(caplog):
     assert "first_token_ms=" in line and "first_token_ms=-" not in line and "total_ms=" in line
 
 
+async def test_the_start_of_a_web_search_is_announced():
+    client = FakeAnthropic([{"text": ["Let me check. ", "Spain won."], "search_after": 1}])
+    order: list[str] = []
+    await claude(client).reply([{"role": "user", "content": "who won"}], system="s", max_tokens=50, timeout=5,
+                               on_delta=lambda t: order.append(t), on_search=lambda: order.append("search"))
+    assert order == ["Let me check. ", "search", "Spain won."]
+    order.clear()
+    client.turns = [{"text": ["Let me check. ", "Spain won."], "search_after": 1}]
+    both = FallbackProvider(claude(client), FakeChatGPT())  # as the assistant has it: Claude with a backup
+    await both.reply([{"role": "user", "content": "who won"}], system="s", max_tokens=50, timeout=5,
+                     on_delta=lambda t: order.append(t), on_search=lambda: order.append("search"))
+    assert order == ["Let me check. ", "search", "Spain won."]
+
+
 async def test_a_simple_request_goes_without_thinking():
     client = FakeAnthropic([{"text": "Hi!"}, {"text": "Hi again!"}])
     p = claude(client)

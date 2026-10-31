@@ -11,7 +11,8 @@ from littlebot.testing import make_test_context
 
 
 class ScriptedProvider:
-    """Streams ``pieces``; between them, ``("tool", name, args)`` entries run a tool."""
+    """Streams ``pieces``; between them, ``("tool", name, args)`` entries run a tool and ``("search",)`` starts a web
+    search (Anthropic's own: no ``run_tool``)."""
 
     name = "claude"
     model = "claude-haiku-5-5"
@@ -20,23 +21,30 @@ class ScriptedProvider:
         self.script = script
         self.error = error
         self.calls: list[dict[str, Any]] = []
+        self.log: list[str] | None = None  # "words:<piece>" as each piece is streamed
 
     def configured(self) -> bool:
         return True
 
     async def reply(self, messages: list[dict[str, str]], *, system: str, max_tokens: int, timeout: float,
                     tools: Any = None, run_tool: Any = None, max_tool_rounds: int = 6, effort: Any = None,
-                    on_delta: Any = None, final_tools: Any = (), images: Any = None) -> ProviderReply:
+                    on_delta: Any = None, final_tools: Any = (), images: Any = None,
+                    on_search: Any = None) -> ProviderReply:
         self.calls.append({"messages": messages, "system": system, "tools": [t.get("name") for t in tools or []],
                            "effort": effort, "final_tools": set(final_tools)})
         if self.error:
             raise ProviderError("nope", kind=self.error)
         text = ""
         for step in self.script:
-            if isinstance(step, tuple):
+            if step == ("search",):
+                if on_search is not None:
+                    on_search()
+            elif isinstance(step, tuple):
                 self.calls[-1].setdefault("results", []).append(await run_tool(step[1], step[2]))
             else:
                 text += step
+                if self.log is not None:
+                    self.log.append(f"words:{step}")
                 if on_delta is not None:
                     on_delta(step)
         return ProviderReply(text=text, model=self.model)
@@ -82,6 +90,20 @@ async def test_words_before_a_tool_are_said_before_it_runs() -> None:
                               on_tool=lambda n: order.append(f"tool:{n}"))
     assert order == ["say:Let me check", "tool:get_volume", "say:It's at half."]
     assert res.tools == ["get_volume"] and p.calls[0]["results"][0].startswith("{")
+
+
+async def test_words_before_a_web_search_are_said_as_it_starts() -> None:
+    # Anthropic runs the search itself (no run_tool): "Let me check that for you." waited for the next words, 2.7 s
+    # after the question (the robot, 2026-10-31).
+    order: list[str] = []
+    p = ScriptedProvider(["Let me check that for you.", ("search",), " Spain won."])
+    p.log = order
+    ctx = make_test_context()
+    res = await Brain(ctx, provider=p).respond("who won", history=[], toolbox=RobotToolbox(ctx, mode="chat"),
+                                               on_sentence=lambda s: order.append(f"say:{s.text}"))
+    assert order == ["words:Let me check that for you.", "say:Let me check that for you.", "words: Spain won.",
+                     "say:Spain won."]
+    assert res.text == "Let me check that for you. Spain won."
 
 
 async def test_silent_says_nothing() -> None:

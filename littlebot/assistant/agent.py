@@ -357,7 +357,10 @@ class Brain:
         result.prefix = _fingerprint(tools, system)
         messages = self.build_messages(text, history, toolbox, extra=extra)
         kwargs: dict[str, Any] = {"tools": tools, "run_tool": run_tool, "max_tool_rounds": MAX_TOOL_ROUNDS,
-                                  "effort": "minimal", "on_delta": on_delta, "final_tools": final}
+                                  "effort": "minimal", "on_delta": on_delta, "final_tools": final,
+                                  # a web search runs on Anthropic's side: "Let me check." is said as it starts,
+                                  # not after it (it waited for the next words, 2-3 s; the robot, 2026-10-31)
+                                  "on_search": lambda: emit(splitter.flush())}
         if images:
             kwargs["images"] = images
         try:

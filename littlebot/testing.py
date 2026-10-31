@@ -390,8 +390,11 @@ class _FakeStream:
             await asyncio.sleep(self.turn["delay"])
         if self.turn.get("error") is not None:
             raise self.turn["error"]
-        for piece in self.pieces:
+        for i, piece in enumerate(self.pieces):
             yield SimpleNamespace(type="text", text=piece)
+            if self.turn.get("search_after") == i + 1:  # Anthropic's own web search starts here
+                yield SimpleNamespace(type="content_block_start", content_block={"type": "server_tool_use",
+                                                                                 "id": "srv1", "name": "web_search"})
         for call_id, name, _args in self.turn.get("tools", ()):
             yield SimpleNamespace(type="content_block_start", content_block={"type": "tool_use", "id": call_id,
                                                                              "name": name})
