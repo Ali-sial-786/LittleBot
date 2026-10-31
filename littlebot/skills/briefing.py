@@ -72,11 +72,13 @@ class Briefing(Skill):
         return [
             tool("get_briefing", "Everything for a spoken briefing in one call: the local time and a greeting, the "
                  "weather at home (today's for morning, tomorrow's for evening), today's reminders and alarms, the "
-                 "lists, and the top news headlines. Call it when the user says good morning, good night, 'what's "
-                 "my day (look like)', 'brief me', 'what did I miss' or 'what's the news'.",
+                 "lists, and the top news headlines. Call it only when they ask for a briefing: good morning, good "
+                 "night, 'what's my day (look like)', 'what's on tomorrow', 'brief me', 'what did I miss' or "
+                 "'what's the news'. Never for a question about the weather (today, tonight, tomorrow, the week): "
+                 "that is get_weather alone.",
                  {"kind": {"type": "string", "enum": list(KINDS),
-                           "description": "morning (good morning, what's my day), evening (good night, how does "
-                                          "tomorrow look) or news (just the headlines)"}}),
+                           "description": "morning (good morning, what's my day), evening (good night, what's on "
+                                          "tomorrow) or news (just the headlines)"}}),
             tool("get_headlines", "The latest news headlines (titles and their source) from LittleBot's news feeds, "
                  "optionally only those about a topic.",
                  {"topic": {**STR, "description": "optional: a few words, e.g. 'hamilton', 'election', 'hockey'"},
@@ -86,8 +88,9 @@ class Briefing(Skill):
     def prompt_note(self) -> str:
         return ("Briefings: when the user says good morning, good night, 'what's my day', 'brief me' or 'what's the "
                 "news', call get_briefing (kind morning, evening or news) and give a warm 20-40 second spoken "
-                "summary from it in your own words (a card with the gist goes on the screen by itself). For more "
-                "news or news about something, get_headlines.")
+                "summary from it in your own words (a card with the gist goes on the screen by itself). A weather "
+                "question (\"what's the weather tomorrow?\", \"will it rain tonight?\") is never a briefing: "
+                "get_weather, and answer just that. For more news or news about something, get_headlines.")
 
     def context_note(self) -> str:
         today = self._local().date().isoformat()

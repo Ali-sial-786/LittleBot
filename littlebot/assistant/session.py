@@ -50,15 +50,16 @@ THINKING_REPEAT_S = 2.2
 QUESTION_FOLLOW_UP_S = 10.0  # LittleBot asked them something: wait at least this long for the answer
 HEARD_KEEP_S = 12.0  # the microphone kept (in memory only) to recognise whose voice a turn was
 IDENTIFY_TIMEOUT_S = 3.0
-SPECULATION_MAX_S = 8.0
+SPECULATION_MAX_S = 8.0  # an early answer whose turn is neither confirmed nor resumed by then is dropped
 # Instant intents that steer Spotify when it is what's playing on LittleBot (skills/spotify.py command()).
-SPOTIFY_ACTIONS = {"pause": "pause", "resume": "resume", "skip": "next", "stop_media": "stop"}  # an early answer whose turn is neither confirmed nor resumed by then is dropped
+SPOTIFY_ACTIONS = {"pause": "pause", "resume": "resume", "skip": "next", "stop_media": "stop"}
 STT_REOPENS = 3  # speech-to-text that fails this often in one session ends it
-HEARING_GRACE_S = 2.0
+HEARING_GRACE_S = 2.0  # a turn that never ends (noise): finished after max_turn_seconds + this
 ECHO_MEMORY_S = 20.0  # what LittleBot said this recently may come back through the microphone
 ECHO_SHARE = 0.8  # a turn whose words are mostly LittleBot's own recent words is its echo, not them
 PAUSE_WORDS = frozenset({"wait", "wait a second", "wait a minute", "hold on", "hang on", "pause"})
-NO_WORDS_TURN_S = 4.0  # a turn with no words at all after this long was a noise: listening goes on as before  # a turn that never ends (noise): finished after max_turn_seconds + this
+NO_WORDS_TURN_S = 4.0  # a turn with no words at all after this long was a noise: listening goes on as before
+CUT_IN_NOTE_S = 15.0  # a turn this soon after they talked over the voice is for LittleBot (_turn_notes)
 EXPRESSION_HOLD_S = 6.0
 SORRY = {
     "no_key": "My brain isn't set up yet.",
@@ -94,6 +95,7 @@ class VoiceSession:
         self.connect_ms: int | None = None
         self.turns = 0
         self.barge_ins = 0
+        self._cut_in_at: float | None = None  # when they last talked over the voice (their next turn is for it)
         self._now = svc.now
         self._started = self._now()
         self._ended = asyncio.Event()
@@ -504,7 +506,8 @@ class VoiceSession:
                 tools = box if gate is None else _GatedToolbox(box, gate)
                 result = await self.svc.brain.respond(text, history=self.svc.history.messages(), toolbox=tools,
                                                       on_sentence=say, on_tool=self._tool_started, mark_day=False,
-                                                      extra=self.who_notes(), extra_tools=self._session_tools())
+                                                      extra=[*self.who_notes(), *self._turn_notes(gate)],
+                                                      extra_tools=self._session_tools())
                 if result.error and not result.sentences:
                     for s in _sentences(SORRY.get(result.error, SORRY_DEFAULT)):
                         say(s)
@@ -725,6 +728,17 @@ class VoiceSession:
                 notes.append(f"in front of your camera: {seen} (recognised by face)")
         return notes
 
+    def _turn_notes(self, gate: asyncio.Event | None) -> list[str]:
+        """For the brain: when what they said is certainly for LittleBot (so never [silent]). On the robot
+        (2026-10-31) words said right after cutting in were twice taken for people talking to each other."""
+        first = self.turns + (1 if gate is not None else 0) == 1
+        if self._cut_in_at is not None and self._now() - self._cut_in_at < CUT_IN_NOTE_S:
+            return ["they just talked over you to say this: it is for you; answer it (if it's a new question, "
+                    "answer that one)"]
+        if first:
+            return ["they woke you with your name to say this: it is for you; answer it"]
+        return []
+
     def _session_tools(self) -> dict[str, Any]:
         return {"who_is_here": ({"name": "who_is_here",
                                  "description": "Who is talking and who is in front of LittleBot's camera, from voice "
@@ -914,6 +928,7 @@ class VoiceSession:
             if voice is None or (voice.first_audio_at is None and not voice.heard):
                 return  # over the thinking sound, before any answer: their words join the question (_start_answer)
             self.barge_ins += 1
+            self._cut_in_at = self._now()
             self._record_cut()
             self._cut_answer()
             self._publish(ev.INTERRUPTED, {})
@@ -923,6 +938,7 @@ class VoiceSession:
         elif what == "stop_word":
             said = str(info.get("said") or "stop")
             self.barge_ins += 1
+            self._cut_in_at = self._now()
             self._record_cut()
             self._cut_answer()
             with contextlib.suppress(Exception):

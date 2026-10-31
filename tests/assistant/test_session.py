@@ -595,3 +595,34 @@ async def test_only_one_voice_ever_talks() -> None:
     talking = [v for v in session._mouths if v.busy]
     assert len(talking) <= 1  # the announcement was stopped for the answer
     await svc.stop_session("test")
+
+
+async def test_the_brain_is_told_the_first_turn_and_a_cut_in_are_for_it() -> None:
+    """On the robot words said right after cutting in were twice answered with [silent] (2026-10-31)."""
+    brain = Scripted(["Hi there."], ["One. ", "Two. ", "Three."], ["Okay."], ["Sure."])
+    svc, stt, _, audio = _service(brain, follow_up_seconds=5)
+    seen: list[str] = []
+    real = svc.brain.build_messages
+
+    def spy(text: str, history: Any, toolbox: Any = None, *, extra: Any = None) -> Any:
+        seen.append(" ".join(extra or []))
+        return real(text, history, toolbox, extra=extra)
+
+    svc.brain.build_messages = spy
+    await svc.start()
+    await svc.start_session()
+    await _wait(lambda: stt.stream is not None)
+    stt.say("hello")
+    await _wait(lambda: len(seen) == 1)
+    assert "it is for you" in seen[0] and "woke you" in seen[0]  # the first turn after the wake word
+    await _wait(lambda: svc._session is not None and not svc._session._answering())
+    svc._tts = SlowTTS()
+    stt.say("count to three")
+    await _wait(lambda: len(seen) == 2)
+    assert "it is for you" not in seen[1]  # an ordinary follow-up: the brain decides
+    await _wait(lambda: svc._session._voice is not None and bool(svc._session._voice.heard))
+    audio.on_change("heard", {})  # they talked over it
+    stt.say("what about tomorrow")
+    await _wait(lambda: len(seen) == 3)
+    assert "talked over you" in seen[2]
+    await svc.stop_session("test")
