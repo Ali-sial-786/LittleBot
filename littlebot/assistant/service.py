@@ -40,6 +40,25 @@ ERRORS = {
     "busy": "LittleBot is busy with something more important.",
     "no_stt": "No speech-to-text is set up.",
 }
+# Loaded in the background soon after start-up: importing them in the first session blocked the event loop for
+# about 1.2 s on the robot (anthropic alone ~1 s), so the question said right after "Hey LittleBot" was lost.
+PRELOAD_AFTER_S = 3.0
+PRELOAD_MODULES = ("anthropic", "littlebot.brain.text_model", "littlebot.brain.providers.claude",
+                   "littlebot.chatgpt.responses", "littlebot.assistant.session", "littlebot.chatgpt.live_audio",
+                   "littlebot.chatgpt.tools", "littlebot.assistant.tts", "littlebot.assistant.stt")
+
+
+def _import_all(names: tuple[str, ...]) -> list[str]:
+    """Import ``names`` (in a worker thread); the ones that failed."""
+    import importlib  # noqa: PLC0415
+
+    failed = []
+    for name in names:
+        try:
+            importlib.import_module(name)
+        except Exception:  # noqa: BLE001 - missing optional parts are reported where they are used
+            failed.append(name)
+    return failed
 
 
 class History:
@@ -88,6 +107,7 @@ class AssistantService(Service):
         self._tts: Any = None
         self._stt: Any = None
         self._bg: set[asyncio.Task[Any]] = set()
+        self._preloading: asyncio.Task[Any] | None = None
         if brain is None:
             from littlebot.assistant.agent import Brain  # noqa: PLC0415
 
@@ -117,11 +137,31 @@ class AssistantService(Service):
         why = self.pipeline_reason()
         log.info("assistant: voice pipeline %s (%s)", "assistant" if self.use_cascade() else "GPT-Live", why)
         self.set_status(ServiceStatus.RUNNING, why)
+        if self.use_cascade():
+            self._preloading = self._background(self.preload(PRELOAD_AFTER_S))
+
+    async def preload(self, after: float = 0.0) -> None:
+        """Get the first session ready before anyone talks: the libraries it imports load in a worker thread (the
+        event loop keeps running), then the brain, the voice and speech-to-text are made (quick once imported)."""
+        if after:
+            await asyncio.sleep(after)
+        t0 = self.now()
+        failed = await asyncio.to_thread(_import_all, PRELOAD_MODULES)
+        with contextlib.suppress(Exception):
+            self.brain.provider()
+        with contextlib.suppress(Exception):
+            self.tts()
+        with contextlib.suppress(Exception):
+            self.stt_provider()
+        log.info("assistant: ready for the first question (%d ms in the background%s)", int((self.now() - t0) * 1000),
+                 f"; not loaded: {', '.join(failed)}" if failed else "")
 
     async def stop(self) -> None:
         for s in self._subs:
             s.cancel()
         self._subs.clear()
+        if self._preloading is not None:
+            self._preloading.cancel()
         await self.stop_session("service stop")
         with contextlib.suppress(Exception):
             await self.brain.aclose()

@@ -194,6 +194,26 @@ async def test_pipeline_choice() -> None:
     assert "dg" not in str(svc.status()) and "ca\"" not in str(svc.status())
 
 
+async def test_the_first_session_is_made_ready_in_the_background() -> None:
+    # On the robot the first session after a restart imported anthropic on the event loop (~1.2 s): the question
+    # said right after "Hey LittleBot" was lost meanwhile. Start-up now loads it all in the background.
+    import sys
+
+    from littlebot.assistant import service as service_mod
+
+    svc, _stt, tts, _audio = _service(Scripted())
+    await svc.preload()
+    assert svc._tts is tts
+    assert all(m in sys.modules for m in ("littlebot.brain.text_model", "littlebot.assistant.session"))
+    await svc.start()
+    task = svc._preloading
+    assert task is not None and not task.done()
+    await svc.stop()
+    await asyncio.sleep(0)
+    assert task.cancelled()
+    assert service_mod._import_all(("littlebot.no_such_module",)) == ["littlebot.no_such_module"]
+
+
 async def test_typed_chat_uses_the_same_brain() -> None:
     svc, _, _, _ = _service(Scripted(["Paris is the capital of France."]))
     out = await svc.handle_text("capital of france?")
