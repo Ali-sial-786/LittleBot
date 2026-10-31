@@ -768,6 +768,49 @@ async def test_stop_words_finds_the_phrase_in_the_words_so_far():
     assert match("so hold on a second".split(), phrases) == "hold on" and match(["holding"], phrases) is None
 
 
+class SureRecognizer(FakeRecognizer):
+    """Also forces its result out (VoskKeywordRecognizer.finish), with word confidences."""
+
+    def __init__(self, partials: list[str], results: list[dict[str, Any]]) -> None:
+        super().__init__(partials)
+        self.results = list(results)
+
+    def finish(self) -> dict[str, Any] | None:
+        return self.results.pop(0) if self.results else None
+
+
+def _result(*words: tuple[str, float]) -> dict[str, Any]:
+    return {"text": " ".join(w for w, _ in words), "result": [{"word": w, "conf": c} for w, c in words]}
+
+
+async def test_a_stop_word_counts_only_when_sure_and_not_inside_a_sentence():
+    import time
+
+    from littlebot.chatgpt.stop_words import StopWords, sure
+
+    phrases = [("stop", ("stop",)), ("that's enough", ("that's", "enough"))]
+    # heard on the robot (2026-10-31) while it answered: "what's the capital of Australia" as "that's enough"
+    assert sure(_result(("what", 1.0), ("the", 0.6), ("that's", 0.3), ("enough", 0.4)), phrases) is None
+    assert sure(_result(("tell", 1.0), ("me", 1.0), ("a", 1.0), ("lot", 1.0), ("stop", 0.92)), phrases) is None
+    assert sure(_result(("what", 1.0), ("stop", 1.0)), phrases) is None
+    assert sure(_result(("okay", 1.0), ("stop", 1.0)), phrases) == "stop"
+    assert sure(_result(("hey", 1.0), ("little", 1.0), ("bot", 1.0), ("that's", 0.9), ("enough", 1.0)),
+                phrases) == "that's enough"
+    rec = SureRecognizer(["", "that's enough", "", "stop"],
+                         [_result(("what", 1.0), ("that's", 0.3), ("enough", 0.4)), _result(("stop", 1.0))])
+    words = StopWords(lambda: (rec, phrases), rate=RATE)
+    try:
+        for _ in range(25):  # five batches of 0.1 s
+            words.push(np.zeros(FRAME, dtype=np.int16))
+        deadline = time.monotonic() + 3
+        while words.heard == 0 and time.monotonic() < deadline:
+            await asyncio.sleep(0.01)
+        hit = words.take()
+        assert hit is not None and hit[0] == "stop" and words.heard == 1 and not rec.results
+    finally:
+        words.close()
+
+
 def test_no_stop_words_without_the_speech_model(tmp_path):
     from littlebot.chatgpt.stop_words import StopWords
 

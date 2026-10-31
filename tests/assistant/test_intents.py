@@ -19,6 +19,9 @@ from littlebot.testing import make_test_context
     ("Hey LittleBot, stop talking", "stop"), ("stop, stop", "stop"), ("no stop", "stop"), ("I said stop", "stop"),
     ("can you stop talking", "stop"), ("could you please be quiet", "stop"), ("stop stop stop", "stop"),
     ("alright that's enough", "stop"), ("good night", "bye"), ("see you later", "bye"),
+    # speech-to-text often ends a sentence after the first word (the robot, 2026-10-31)
+    ("Thanks. Bye.", "bye"), ("Thanks! Bye!", "bye"), ("Okay. Stop talking.", "stop"), ("Okay. Thanks.", "thanks"),
+    ("Hey. Little bot. Stop.", "stop"),
 ])
 def test_matches(text: str, name: str) -> None:
     hit = intents.match(text)

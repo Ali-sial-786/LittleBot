@@ -14,11 +14,11 @@ import re
 from typing import Any
 
 _FILLER = r"(?:hey|please|now|little ?bot|thanks|okay|ok)"
-_POLITE = rf"(?:(?:{_FILLER})[\s,]*)*"
+_POLITE = rf"(?:(?:{_FILLER})[\s,.!]*)*"  # speech-to-text writes "Thanks. Bye." as often as "Thanks, bye!"
 
 
 def _whole(pattern: str) -> re.Pattern[str]:
-    return re.compile(rf"^\s*{_POLITE}(?:{pattern})[\s,]*{_POLITE}[.!?]*\s*$", re.IGNORECASE)
+    return re.compile(rf"^\s*{_POLITE}(?:{pattern})[\s,.!]*{_POLITE}[.!?]*\s*$", re.IGNORECASE)
 
 
 _STOP_CORE = (r"stop(?: it| that| talking| now)?|cancel(?: that)?|never ?mind|forget it|be quiet|quiet|shush|shh+|"
