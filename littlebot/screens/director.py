@@ -636,20 +636,25 @@ def _as_facts(kind: str, spec: dict[str, Any], types: dict[str, Any]) -> tuple[s
                            "number" if spec.get("value") else "score" if spec.get("teams") else "item")
     spec = {**spec, "card": "facts", "layout": layout}
     items = spec.get("items")
-    if isinstance(items, list) and any(isinstance(i, dict) for i in items):
-        # items as labelled records ({"label": "Snout", "value": "Alligator: broad. Crocodile: narrow."}): the
-        # strings-only items dropped them all and no card came (a crocodile/alligator comparison, 2026-10-31)
-        table = _labelled_rows(items) if layout == "compare" and not spec.get("columns") else None
-        if table is not None:
-            spec["columns"], spec["rows"] = table
+    if layout == "compare" and isinstance(items, list) and items and not spec.get("columns") and not spec.get("rows"):
+        # a comparison sent as items, as the brain often does (the robot, 2026-10-31): labelled rows naming each
+        # of them ({"label": "Snout", "value": "Alligator: broad. Crocodile: narrow."}), or a line for each
+        # ("Tiger: largest cat, up to 300 kg"); shown as a profile of cut-off lines before
+        table = _labelled_rows(items) if any(isinstance(i, dict) for i in items) else None
+        columns = table[0] if table else _subject_columns(items, str(spec.get("title") or ""))
+        if columns:
+            spec["columns"], spec["rows"] = (table if table else (columns, []))
             spec.pop("items")
-        else:
-            spec["items"] = [t for t in (_record_text(i) for i in items) if t]
+            items = None
+    if isinstance(items, list) and any(isinstance(i, dict) for i in items):
+        # items as records: the strings-only items dropped them all and no card came (2026-10-31)
+        spec["items"] = [t for t in (_record_text(i) for i in items) if t]
     return "facts", spec
 
 
 _ROW_LABELS = ("label", "row", "aspect", "feature", "category", "name", "title", "key")
-_ROW_VALUES = ("value", "text", "detail", "details", "fact", "description", "difference")
+_ROW_VALUES = ("value", "text", "detail", "details", "fact", "facts", "note", "notes", "description", "difference",
+               "summary")
 # "Alligator: broad and U-shaped. Crocodile: narrow and V-shaped." -> the name and what follows it, each
 _NAMED = re.compile(r"([A-Z][\w'’ -]{0,28}?)\s*:\s*(.+?)(?=[.;,]?\s+[A-Z][\w'’ -]{0,28}?\s*:\s|[.;]?\s*$)", re.S)
 
@@ -663,6 +668,37 @@ def _record_text(record: Any) -> str:
     label = next((str(record[k]) for k in _ROW_LABELS if isinstance(record.get(k), str)), "")
     value = next((str(record[k]) for k in _ROW_VALUES if isinstance(record.get(k), (str, int, float))), "")
     return f"{label}: {value}" if label and value else label or value
+
+
+def _subject_columns(items: list[Any], title: str) -> list[dict[str, Any]] | None:
+    """Items that each describe one of the two or three things the title compares ("Tiger: largest cat, up to
+    300 kg", {"label": "Frog", "note": "smooth skin, long legs"}) as compare columns, their facts in short points;
+    None when they don't."""
+    low = title.lower()
+    columns: list[dict[str, Any]] = []
+    for item in items:
+        name, colon, rest = _record_text(item).partition(":")
+        name = " ".join(name.split())
+        if not colon or not rest.strip() or not name or len(name) > 24 or name.lower().rstrip("s") not in low:
+            return None
+        columns.append({"name": name, "facts": _points(rest)})
+    if not 2 <= len(columns) <= 3 or len({c["name"].lower() for c in columns}) < len(columns):
+        return None
+    return columns
+
+
+def _points(text: str, most: int = 4) -> list[str]:
+    """One line of facts as short points: split at sentences, semicolons and commas, a short piece kept with the
+    next ("Smooth, moist skin")."""
+    out: list[str] = []
+    for piece in (p.strip(" .") for p in re.split(r";\s*|,\s+|\.\s+", text.strip())):
+        if not piece:
+            continue
+        if out and len(out[-1]) < 8:
+            out[-1] = f"{out[-1]}, {piece}"
+        else:
+            out.append(piece)
+    return out[:most]
 
 
 def _labelled_rows(items: list[Any]) -> tuple[list[dict[str, Any]], list[str]] | None:

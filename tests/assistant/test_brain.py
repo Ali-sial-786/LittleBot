@@ -246,6 +246,9 @@ async def test_no_backup_card_when_none_is_needed_or_it_is_too_late() -> None:
     assert await Brain(ctx, provider=ScriptedProvider(["none"])).card_after("hi", BREAKER, box) is None
     late = ScriptedProvider([("tool", "show_on_screen", BREAKER_CARD)])
     assert await Brain(ctx, provider=late).card_after("q", BREAKER, box, still=lambda: False) is None
+    shows = ScriptedProvider(["none"])
+    await Brain(ctx, provider=shows).card_after("q", BREAKER, box, showing="a facts card: Japan")
+    assert shows.calls[0]["messages"][0]["content"].endswith("\nThe screen shows now: a facts card: Japan")
     short = ScriptedProvider([("tool", "show_on_screen", BREAKER_CARD)])
     assert await Brain(ctx, provider=short).card_after("thanks", "You're welcome!", box) is None
     assert short.calls == [] and box.ran == []

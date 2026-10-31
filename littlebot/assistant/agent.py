@@ -122,8 +122,9 @@ chit-chat, jokes, a plain yes or no, or when they're done."""
 # ("How do I reset a tripped breaker?" 0 of 4, "How many cups are in a liter?" 1 of 4; the robot, 2026-10-31)
 CARD_SYSTEM = """You put the card on a voice assistant's screen for an answer it has just said aloud. Call \
 show_on_screen once with the gist of that answer: a few words per point, never its whole sentences. """ + CARDS + """ \
-If this answer needs no card, reply with just: none."""
-CARD_BACKUP_CHARS = 60  # a shorter answer ("Sure, done.", "You're welcome!") never gets one
+No card either for an action it just did (the volume, a video, music, a game, the lights, a note it saved), or when \
+the screen already shows what fits. If this answer needs no card, reply with just: none."""
+CARD_BACKUP_CHARS = 30  # a shorter answer ("Sure, done.", "You're welcome!") never gets one
 
 # The brain's own reasoning said aloud ("Resetting a tripped breaker is general how-to knowledge, so I can answer
 # directly."; the robot, 2026-10-31): a sentence like that is never said.
@@ -500,11 +501,11 @@ class Brain:
         text = str(getattr(reply, "text", "") or "").strip()
         return f"ok: {text[:3000]}" if text else "error: no answer; answer as well as you can yourself"
 
-    async def card_after(self, question: str, answer: str, toolbox: Any, *,
+    async def card_after(self, question: str, answer: str, toolbox: Any, *, showing: str = "",
                          still: Callable[[], bool] = lambda: True) -> str | None:
         """The card for an answer said without one (CARD_SYSTEM), made while it is still being said: what
-        show_on_screen said, or None (no card needed, too late by ``still()``, or it failed). Never raises (except
-        cancellation)."""
+        show_on_screen said, or None (no card needed, too late by ``still()``, or it failed). ``showing``: what
+        the screen shows now. Never raises (except cancellation)."""
         spec = next((s for s in _tool_specs(toolbox) if s.get("name") == "show_on_screen"), None)
         if spec is None or len(answer) < CARD_BACKUP_CHARS:
             return None
@@ -519,7 +520,10 @@ class Brain:
                 this.cancel()  # the card is up: no second request just to read what the tool said
             return shown[-1]
 
-        messages = [{"role": "user", "content": f"They asked: {question.strip()[:500]}\nIt said: {answer[:2000]}"}]
+        content = f"They asked: {question.strip()[:500]}\nIt said: {answer[:2000]}"
+        if showing:
+            content += f"\nThe screen shows now: {showing[:300]}"
+        messages = [{"role": "user", "content": content}]
         kwargs: dict[str, Any] = {"tools": [spec], "run_tool": run_tool, "max_tool_rounds": 1, "effort": "minimal"}
         provider = self.provider()
         try:

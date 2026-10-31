@@ -132,6 +132,43 @@ async def test_a_comparison_sent_as_labelled_items_shows_as_columns() -> None:
     preview.surface(card, seconds=1.0)
 
 
+@pytest.mark.parametrize(("title", "items", "names", "first"), [  # what the brain sent on the robot (2026-10-31)
+    ("Lion or tiger: which is bigger?", ["Tiger: largest cat, male up to about 300 kilograms",
+                                         "Lion: male about 190 to 250 kilograms, with a mane"],
+     ["Tiger", "Lion"], ["largest cat", "male up to about 300 kilograms"]),
+    ("Frog or toad?", ["Frogs: smooth, moist skin, long legs, leap far, usually live near water",
+                       "Toads: dry, bumpy skin, short legs, walk or hop short distances, spend more time on land"],
+     ["Frogs", "Toads"], ["smooth, moist skin", "long legs", "leap far", "usually live near water"]),
+    ("Frog or toad?", [{"label": "Frog", "note": "Smooth, moist skin, long legs for leaping, lives near water"},
+                       {"label": "Toad", "note": "Dry, bumpy skin with warts, short legs for walking"}],
+     ["Frog", "Toad"], ["Smooth, moist skin", "long legs for leaping", "lives near water"]),
+    ("Crocodile or alligator?", ["Alligator: wide U-shaped snout, lower teeth hidden when mouth is closed, mostly "
+                                 "freshwater, southern US and China",
+                                 "Crocodile: narrow V-shaped snout, lower teeth visible when mouth is closed"],
+     ["Alligator", "Crocodile"], ["wide U-shaped snout", "lower teeth hidden when mouth is closed",
+                                  "mostly freshwater", "southern US and China"]),
+])
+async def test_a_comparison_sent_as_a_line_for_each_shows_as_columns(title: str, items: list[Any],
+                                                                     names: list[str], first: list[str]) -> None:
+    from littlebot.screens.director import clean_spec
+
+    cleaned, why = clean_spec({"card": "facts", "layout": "compare", "title": title, "items": items},
+                              base.card_types())
+    assert cleaned is not None, why
+    card = await make(cleaned)
+    assert card.layout == "compare" and [c["name"] for c in card.columns] == names
+    assert card.columns[0]["facts"] == first and card.rows == []
+    preview.surface(card, seconds=1.0)
+
+
+async def test_items_that_dont_name_what_is_compared_stay_items() -> None:
+    from littlebot.screens.director import clean_spec
+
+    cleaned, _ = clean_spec({"card": "facts", "layout": "compare", "title": "Which is bigger?",
+                             "items": ["Tiger: up to 300 kg", "Lion: up to 250 kg"]}, base.card_types())
+    assert cleaned is not None and cleaned["items"] == ["Tiger: up to 300 kg", "Lion: up to 250 kg"]
+
+
 async def test_labelled_items_that_are_not_a_comparison_show_as_lines() -> None:
     from littlebot.screens.director import clean_spec
 

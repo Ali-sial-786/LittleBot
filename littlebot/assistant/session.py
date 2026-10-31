@@ -35,6 +35,7 @@ import numpy as np
 
 from littlebot.assistant import events as ev
 from littlebot.assistant import intents
+from littlebot.assistant.agent import QUIET_TOOLS
 from littlebot.assistant.sentences import Sentence
 from littlebot.assistant.speech import STT_RATE, STTEvent
 from littlebot.assistant.voice_out import VoiceOut
@@ -604,6 +605,7 @@ class VoiceSession:
         from littlebot.chatgpt.tools import RobotToolbox  # noqa: PLC0415
 
         box = self._toolbox = RobotToolbox(self.ctx, mode="chat", defer=True)
+        card_before = getattr(getattr(self.ctx, "screens", None), "current", None)
         voice = self._voice = self._new_voice(gate)
         done = self._answer_done = []
 
@@ -645,8 +647,8 @@ class VoiceSession:
                         say(s)
             if waiter is not None:
                 await waiter  # an early answer waits here until their turn really ended
-            if self._card_missing(result):
-                self._spawn(self._card_after(text, result.text, box))
+            if self._card_missing(result, box, card_before):
+                self._spawn(self._card_after(text, result.text, box, card_before))
             voice.close()
             await voice.done()
             if voice.first_audio_at is None and getattr(self.audio, "interrupted", False):
@@ -694,16 +696,30 @@ class VoiceSession:
         self._deadline = self._now() + follow
         self._set_phase("listening")
 
-    def _card_missing(self, result: Any) -> bool:
-        """An answer of the brain's own (no tool: none put a card up) said without a card: one is made from it
-        while it is being said (``Brain.card_after``)."""
-        return (bool(getattr(self.cfg, "card_backup", False)) and result is not None and not result.tools
-                and not result.silent and not result.error and not self._quiet_end
-                and getattr(self.ctx, "screens", None) is not None and hasattr(self.svc.brain, "card_after"))
+    def _card_missing(self, result: Any, box: Any, card_before: Any) -> bool:
+        """An answer said while no card went up (the brain skipped it, or a tool's answer like the time in Tokyo
+        had none): one is made from it while it is being said (``Brain.card_after``). Not after stopping or
+        pausing something, a take-over (a video, a game) or a change to the card on the screen."""
+        screens = getattr(self.ctx, "screens", None)
+        if not (getattr(self.cfg, "card_backup", False) and result is not None and screens is not None
+                and hasattr(self.svc.brain, "card_after")):
+            return False
+        tools = set(result.tools)
+        return (not result.silent and not result.error and not self._quiet_end
+                and not tools & (QUIET_TOOLS | {"change_card", "end_conversation"})
+                and not getattr(box, "pending", None) and getattr(screens, "current", None) is card_before)
 
-    async def _card_after(self, question: str, answer: str, box: Any) -> None:
+    async def _card_after(self, question: str, answer: str, box: Any, card_before: Any) -> None:
+        screens = self.ctx.screens
+
+        def still() -> bool:  # this turn's, and no card came up meanwhile
+            return self._toolbox is box and getattr(screens, "current", None) is card_before
+        showing = ""
+        if card_before is not None:
+            with contextlib.suppress(Exception):
+                showing = str(screens.describe() or "")
         try:
-            shown = await self.svc.brain.card_after(question, answer, box, still=lambda: self._toolbox is box)
+            shown = await self.svc.brain.card_after(question, answer, box, showing=showing, still=still)
         except asyncio.CancelledError:
             raise
         except Exception:  # noqa: BLE001 - never the session's end: the answer was said all the same

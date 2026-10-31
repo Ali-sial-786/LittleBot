@@ -117,26 +117,47 @@ async def test_the_next_turn_knows_what_the_tools_really_did() -> None:
 @pytest.mark.parametrize("backup", [True, False])
 async def test_an_answer_said_without_a_card_gets_one_made_while_it_is_said(backup: bool) -> None:
     answer = "Push the switch firmly to off, then back on. If it trips again, call an electrician."
-    brain = Scripted([answer], [("set_volume", '{"percent": 60}'), "Done, it's at sixty percent now, nice and loud."])
+    brain = Scripted([answer], [("get_time", '{"place": "Tokyo"}'), "It's 2:52 in the morning in Tokyo."],
+                     [("pause_video", "{}"), "Okay, it's paused for you whenever you're ready."],
+                     ["Sure, here's another fact for you: the moon is drifting away."])
     svc, stt, tts, _ = _service(brain, follow_up_seconds=0.5, card_backup=backup)
     svc.brain.talked_today()
-    # a screen (the card itself is the brain's: test_brain.py)
-    svc.ctx.screens = type("Screen", (), {"describe": lambda self: "", "timers_now": lambda self: ""})()
-    asked: list[tuple[str, str]] = []
 
-    async def card_after(question: str, said: str, box: Any, *, still: Any) -> str:
-        asked.append((question, said))
-        assert still()  # this turn's own toolbox
-        return "ok: on the screen now: Resetting a breaker"
+    class Screen:  # (the card itself is the brain's: test_brain.py)
+        current: Any = None
+
+        def describe(self) -> str:
+            return "a facts card: Tokyo" if self.current else ""
+
+        def timers_now(self) -> str:
+            return ""
+    screen = svc.ctx.screens = Screen()
+    asked: list[tuple[str, str, str]] = []
+
+    async def card_after(question: str, said: str, box: Any, *, showing: str, still: Any) -> str:
+        asked.append((question, said, showing))
+        assert still()  # this turn's own toolbox, and no card came up meanwhile
+        screen.current = object()
+        assert not still()
+        return "ok: on the screen now: a card"
     svc.brain.card_after = card_after
     await svc.start()
     await svc.start_session()
     await _wait(lambda: stt.stream is not None)
     stt.say("how do I reset a tripped breaker")
     await _wait(lambda: len(svc.history) == 1)
-    stt.say("could you make it sixty")  # a tool ran: no backup card
+    stt.say("what time is it in tokyo")  # a tool that put no card up: one is made too
     await _wait(lambda: len(svc.history) == 2)
-    assert asked == ([("how do I reset a tripped breaker", answer)] if backup else [])
+    stt.say("could you hold it a moment")  # a pause: never a card
+    await _wait(lambda: len(svc.history) == 3)
+    stt.say("tell me another one")  # the screen shows a card: the backup is told which
+    await _wait(lambda: len(svc.history) == 4)
+    if backup:
+        assert [q for q, _, _ in asked] == ["how do I reset a tripped breaker", "what time is it in tokyo",
+                                            "tell me another one"]
+        assert asked[0][1] == answer and asked[0][2] == "" and asked[2][2] == "a facts card: Tokyo"
+    else:
+        assert asked == []
     await svc.stop()
 
 
