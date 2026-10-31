@@ -415,7 +415,7 @@ async def test_the_brain_is_told_who_is_talking_by_voice() -> None:
     await _wait(lambda: stt.stream is not None)
     await asyncio.sleep(0.2)  # some microphone audio to recognise
     stt.say("hello")
-    await _wait(lambda: "Hi!" in tts.said)
+    await _wait(lambda: "Hi." in tts.said)  # "!" is softened to "." for the voice
     await _wait(lambda: svc._session is not None and svc._session.speaker is not None)
     stt.say("what's up")
     await _wait(lambda: "Sure." in tts.said)

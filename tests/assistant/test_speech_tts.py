@@ -111,10 +111,28 @@ async def test_cartesia_request_and_48k_stream_without_resampling():
     assert body["voice"] == {"id": ctx.config.assistant.cartesia_voice}
     assert body["output_format"] == {"container": "raw", "encoding": "pcm_s16le", "sample_rate": 48000}
     assert body["language"] == "en"
-    assert body["generation_config"] == {"speed": 1.15}
+    assert body["generation_config"] == {"speed": 1.15, "emotion": "calm"}  # gentle by default
     assert len(out) == 24000  # 0.5 s at 48 kHz, every sample (pieces split samples in two)
     assert np.max(np.abs(out - _sine(48000, 0.5))) < 1e-3
     await chain.aclose()
+
+
+async def test_cartesia_mood_becomes_a_gentle_emotion_and_speed_may_be_a_number():
+    from littlebot.assistant.speech import MOOD
+
+    rec = Recorder()
+    p = CartesiaTTS(key=lambda: "k", cloud_ok=lambda: True, speed=0.92, emotion="calm",
+                    transport=httpx.MockTransport(rec))
+    MOOD.set("happy")
+    await _collect(p.stream("That's lovely."))
+    MOOD.set("excited")
+    await _collect(p.stream("You won."))
+    MOOD.set(None)
+    await _collect(p.stream("Okay."))
+    configs = [json.loads(r.content)["generation_config"] for r in rec.requests]
+    assert configs == [{"speed": 0.92, "emotion": "content"}, {"speed": 0.92, "emotion": "happy"},
+                       {"speed": 0.92, "emotion": "calm"}]
+    await p.aclose()
 
 
 async def test_cartesia_normal_speed_sends_no_generation_config():

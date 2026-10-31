@@ -147,7 +147,9 @@ ssh alisial3@littlebot.local "grep -a assistant.turn ~/LittleBot/data/logs/littl
 | `pipeline` | `auto` | see above |
 | `stt` | `[deepgram, openai, vosk]` | speech-to-text, first that works |
 | `tts` | `[cartesia, elevenlabs, openai, local]` | voice, first that works; a voice that fails before a sentence starts hands it to the next |
-| `cartesia_voice` / `elevenlabs_voice` / `openai_tts_voice` | Katie / Jessica / coral | the voice |
+| `cartesia_voice` / `elevenlabs_voice` / `openai_tts_voice` | Tessa / Jessica / coral | the voice |
+| `cartesia_speed` | `0.92` | 0.6-1.5 (1.0 normal): slightly slower than normal |
+| `cartesia_emotion` | `calm` | the voice's emotion when a sentence has no mood; tagged sentences get a gentle matching one ([happy] → content, [sad] → sympathetic, [excited] → happy) |
 | `follow_up_seconds` | `8` | listening after an answer without the wake word (0: one question per wake word) |
 | `deep_model` | `claude-sonnet-5-5` | think_harder's model (null: off) |
 | `barge_in` | `true` | talk over LittleBot to interrupt it |

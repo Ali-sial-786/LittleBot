@@ -19,14 +19,22 @@ from typing import Any, Callable
 import numpy as np
 
 from littlebot.assistant.sentences import Sentence
+from littlebot.assistant.speech import MOOD
 
 log = logging.getLogger("littlebot.assistant.voice")
 
 AHEAD_S = 0.5  # audio handed to the speaker ahead of what is being heard
+EXCITED = frozenset({"excited", "celebrating", "surprised"})  # the moods whose "!" are kept
 PACE_STEP_S = 0.02
 PREFETCH = 2  # sentences being synthesised at once (the one playing and the next)
 CHUNK_STALL_S = 15.0  # no audio for a sentence for this long: it is skipped (a voice that hangs never hangs LittleBot)
 DRAIN_MAX_S = 10.0  # done(): the last audio handed over is heard within this (it is at most AHEAD_S + the echo tail)
+
+
+def spoken(s: Sentence) -> str:
+    """The words as the voice gets them: an exclamation mark makes most voices louder and pushier, so it stays
+    only where the moment really is exciting."""
+    return s.text if s.expression in EXCITED else s.text.replace("!", ".")
 
 
 class VoiceOut:
@@ -124,8 +132,9 @@ class VoiceOut:
             self._fetching.clear()
 
     async def _fetch(self, s: Sentence, q: asyncio.Queue[Any]) -> None:
+        MOOD.set(s.expression)  # this task's own context: the voice sees this sentence's mood
         try:
-            async for chunk in self.tts.stream(s.text):
+            async for chunk in self.tts.stream(spoken(s)):
                 await q.put(chunk)
         except asyncio.CancelledError:
             raise

@@ -19,12 +19,16 @@ of the event loop (blocking work in a thread), errors as :class:`SpeechError` wi
 
 from __future__ import annotations
 
+import contextvars
 import dataclasses
 from typing import Any, AsyncIterator, Awaitable, Callable, Protocol, runtime_checkable
 
 import numpy as np
 
 STT_RATE = 16000  # what the session feeds every STT provider
+# The mood of the sentence being voiced (one of core.interfaces.EXPRESSIONS, or None): VoiceOut sets it around each
+# sentence's text-to-speech; a voice that can take an emotion (Cartesia) reads it, the others ignore it.
+MOOD: contextvars.ContextVar[str | None] = contextvars.ContextVar("littlebot_tts_mood", default=None)
 
 
 class SpeechError(Exception):
@@ -94,5 +98,5 @@ class STTProvider(Protocol):
 CloudOk = Callable[[], bool]
 Transcribe = Callable[[np.ndarray], Awaitable[str]]
 
-__all__ = ["CloudOk", "OnEvent", "STTEvent", "STTProvider", "STTStream", "STT_RATE", "SpeechError", "StreamingTTS",
+__all__ = ["MOOD", "CloudOk", "OnEvent", "STTEvent", "STTProvider", "STTStream", "STT_RATE", "SpeechError", "StreamingTTS",
            "Transcribe"]

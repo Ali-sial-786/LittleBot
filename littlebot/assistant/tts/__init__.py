@@ -209,7 +209,8 @@ def build_tts_chain(ctx: Any, *, transport: Any = None, cloud_ok: CloudOk | None
     for name in dict.fromkeys(a.tts):
         if name == "cartesia":
             providers.append(CartesiaTTS(key=key_reader(ctx, "cartesia_api_key"), cloud_ok=ok, model=a.cartesia_model,
-                                         voice=a.cartesia_voice, speed=a.cartesia_speed, language=a.language,
+                                         voice=a.cartesia_voice, speed=a.cartesia_speed,
+                                         emotion=getattr(a, "cartesia_emotion", None), language=a.language,
                                          transport=transport))
         elif name == "elevenlabs":
             providers.append(ElevenLabsTTS(key=key_reader(ctx, "elevenlabs_api_key"), cloud_ok=ok,
