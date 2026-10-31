@@ -12,7 +12,6 @@ import pytest
 
 from littlebot.core.state import RobotState
 from littlebot.skills import takeover
-from littlebot.skills.base import ANNOUNCE
 from littlebot.skills.hub import SkillHub
 from littlebot.skills.music import Music
 from littlebot.testing import make_test_context
@@ -115,14 +114,11 @@ async def test_youtube_when_asked_or_when_the_receiver_isnt_there(ctx, fake):
     out = await m.run("play_music", {"query": "Bohemian Rhapsody", "kind": "song"})
     assert "on Spotify" not in out and len(ctx.media.searches) == 2
     takeover.claim(ctx)
-    # explicitly on Spotify: it says why it can't
+    # explicitly on Spotify: it says why it can't at once, not "playing now" and a "sorry" after it (the robot,
+    # 2026-10-31)
     out = await m.run("play_music", {"query": "Bohemian Rhapsody", "kind": "song", "service": "spotify"})
-    assert out.startswith("ok:") and "on Spotify" in out
-    seen: list[str] = []
-    ctx.bus.subscribe(ANNOUNCE, lambda e: seen.append(e.get("text")))
-    for c in takeover.claim(ctx):
-        assert await c.run() is False
-    assert seen and "receiver isn't running" in seen[0]
+    assert out.startswith("error:") and "Spotify speaker isn't switched on" in out and "YouTube" in out
+    assert takeover.claim(ctx) == []
 
 
 async def test_auto_never_takes_spotify_from_another_device(ctx, fake):

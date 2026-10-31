@@ -286,6 +286,16 @@ class Music(Skill):
                 why = skill.blocked_text() if skill is not None else ""
                 why = why or "Spotify isn't set up on LittleBot"
                 return None, why + ("; their own Spotify music needs it" if kind in LIBRARY_KINDS else "")
+            try:  # its receiver must be there, or it says "playing now" and then "sorry" (the robot, 2026-10-31)
+                dev, _busy = await asyncio.wait_for(sp.ready_to_play(), READY_WAIT_S)
+            except (SpotifyError, asyncio.TimeoutError) as e:
+                log.info("music: Spotify not reachable (%s)", getattr(e, "kind", "timeout"))
+                return None, "Spotify isn't answering right now; offer YouTube instead"
+            if dev is None:
+                log.info("music: Spotify's receiver isn't visible")
+                return None, ("LittleBot's Spotify speaker isn't switched on (Spotify can't see it); offer YouTube "
+                              "instead" if self._youtube_ok() and kind not in LIBRARY_KINDS else
+                              "LittleBot's Spotify speaker isn't switched on (Spotify can't see it)")
             return "spotify", ""
         pref = music_provider(self.ctx)
         if sp is None or pref == "youtube":
