@@ -91,6 +91,14 @@ the screen, which (most likely) has no speaker.
 5. Very quiet: check `alsamixer` (F6 -> the USB card) and the app volume/ceiling
    (`audio.speaker.volume`, `max_volume`, dashboard volume).
 6. Crackling / dropouts at high volume: often power - see POWER.md (600 mA USB limit).
+7. **It talks (the face moves) but nothing is heard, with echo cancelling on**: the echo canceller may be playing
+   on another output, e.g. the ReSpeaker Lite microphone's own headphone socket (it happened on the robot after
+   the USB plugs were swapped: WirePlumber links it elsewhere when the speaker isn't there yet as PipeWire
+   starts). See where it plays: `pw-link -l | grep -A3 littlebot_ec_playback`, or
+   `.venv/bin/python -m littlebot.audio.ec_route`; move it to the speaker with `... ec_route --fix`.
+   LittleBot checks this itself when it starts and at every conversation, and moves it back (log:
+   `audio: the echo canceller plays on ..., not on the speaker ...: moved it back to the speaker`);
+   `scripts/setup_echo_cancel.sh --check` reports it as a FAIL.
 
 ## Sound comes out of the screen (HDMI) instead of the speaker
 

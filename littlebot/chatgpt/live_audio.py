@@ -46,6 +46,7 @@ import numpy as np
 
 from littlebot.audio import devices as dev
 from littlebot.audio import dsp
+from littlebot.audio import ec_route
 from littlebot.audio.errors import AudioDeviceError
 
 log = logging.getLogger("littlebot.chatgpt.live")
@@ -482,6 +483,8 @@ class LiveAudio:
 
     def _decide_barge_in(self, mic: dict[str, Any], spk: dict[str, Any]) -> None:
         self.echo_cancelled = dev.is_echo_cancel_device(mic, "input") and dev.is_echo_cancel_device(spk, "output")
+        if self.echo_cancelled:
+            ec_route.ensure_soon()  # the canceller really plays on the speaker (not a socket nobody hears)
         mode = (self.barge.mode or "auto").lower()
         self.barge_in_on = self.half_duplex and (mode == "on" or (mode == "auto" and self.echo_cancelled))
         if self.barge_in_on and self._detector is None:

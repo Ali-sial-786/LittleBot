@@ -61,6 +61,7 @@ import numpy as np
 
 from littlebot.audio import devices as dev
 from littlebot.audio import dsp
+from littlebot.audio import ec_route
 from littlebot.audio.devices import (
     InputBackend, MockOutput, NullInput, NullOutput, OutputBackend, PlaybackControl, SoundDeviceInput,
     SoundDeviceOutput,
@@ -305,6 +306,7 @@ class AudioService(Service):
         mic = getattr(self._inp, "device_name", None)
         if dev.is_echo_cancel_device(spk, "output") and dev.is_echo_cancel_device(mic, "input"):
             log.info("audio: echo cancelling on (PipeWire: %s / %s)", mic, spk)
+            ec_route.ensure_soon()  # and it plays on the USB speaker (WirePlumber can link it elsewhere at boot)
         elif isinstance(self._out, SoundDeviceOutput) or isinstance(self._inp, SoundDeviceInput):
             log.info("audio: echo cancelling off (%s)", dev.echo_cancel_note())
 

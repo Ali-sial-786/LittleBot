@@ -168,6 +168,7 @@ Change one with `scripts/set_config.py`, e.g.
 |---|---|
 | `assistant: voice pipeline GPT-Live (auto: GPT-Live until DEEPGRAM_API_KEY ... are set)` | add the keys, or set `assistant.pipeline cascade` |
 | `assistant: speech-to-text deepgram didn't open (auth)` | the Deepgram key was refused: the next speech-to-text took over |
+| `assistant: microphone littlebot_ec_mic, speaker littlebot_ec_speaker, volume 100%` but nothing is heard | the echo canceller plays on another output: LittleBot moves it back by itself (`audio: the echo canceller plays on ...: moved it back`); by hand: `.venv/bin/python -m littlebot.audio.ec_route --fix` (docs/TROUBLESHOOTING.md, "No sound") |
 | `assistant tts: cartesia is busy; asking again` | Cartesia refused a request (too many at once): it is asked again half a second later, so the voice stays the same |
 | `assistant tts: cartesia failed (rate_limit); trying the next voice` | still busy: the next voice (OpenAI's, a different one) says that sentence, and Cartesia rests 15 s |
 | `assistant: no voice for a sentence (...)` | every voice failed for one sentence (it was skipped) |
