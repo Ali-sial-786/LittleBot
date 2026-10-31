@@ -537,12 +537,13 @@ class FakeSTTStream:
         self.fed = 0
         self.closed = False
         self.resets = 0
+        self.finished = 0
 
     async def feed(self, samples: Any) -> None:
         self.fed += len(samples)
 
     async def finish(self) -> None:
-        pass
+        self.finished += 1
 
     async def reset(self) -> None:
         self.resets += 1

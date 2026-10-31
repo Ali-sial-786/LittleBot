@@ -74,6 +74,10 @@ CARRY_OVERLAP_S = 0.02  # the call keeps this much from before the wake word's c
 CARRY_PAUSE_S = 0.25
 CARRY_QUIET_RMS = 0.015  # a 20 ms frame quieter than this is a pause (the echo-cancelled microphone's floor: ~0.002)
 VOICE_RMS = 0.01  # a 16 kHz chunk this loud is someone talking (the log says how long after it a turn ended)
+# After Flux's "probably done" with an early answer ready: this long with no new words and nothing louder than
+# LOUD_RMS (the echo-cancelled microphone's noise after speech reaches ~0.035) and their turn is ended at once.
+FORCE_END_AFTER_S = 0.45
+LOUD_RMS = 0.05
 EXPRESSION_HOLD_S = 6.0
 SORRY = {
     "no_key": "My brain isn't set up yet.",
@@ -123,6 +127,7 @@ class VoiceSession:
         self._words_at: float | None = None  # the latest partial with words in the turn being heard
         self._voice_at: float | None = None  # the microphone last heard more than a quiet room (for the log)
         self._eager_at: float | None = None  # speech-to-text last said they were probably done (for the log)
+        self._loud_at: float | None = None  # the microphone last heard surely someone talking (LOUD_RMS)
         self._said: collections.deque[tuple[float, str]] = collections.deque(maxlen=12)  # its own recent sentences
         self._deadline = self._started + self.cfg.first_words_seconds
         self._end_after: str | None = None  # end once the current answer was heard (said "bye")
@@ -321,8 +326,11 @@ class VoiceSession:
             if frame.dtype == np.int16:
                 x = x / 32768.0
             y = res.process(x)
-            if len(y) and float(np.sqrt(np.mean(np.square(y)))) >= VOICE_RMS:
+            level = float(np.sqrt(np.mean(np.square(y)))) if len(y) else 0.0
+            if level >= VOICE_RMS:
                 self._voice_at = self._now()  # their voice (or a noise) was last heard now: the turn ends after it
+            if level >= LOUD_RMS:
+                self._loud_at = self._now()  # surely someone talking (louder than the room's noise ever is)
             if len(y) and self._voices() is not None:
                 self._keep_heard(y)
             if len(y) and self.stt is not None:
@@ -413,8 +421,10 @@ class VoiceSession:
             if event.text.strip():
                 self._words_at = self._now()
         elif event.kind == "eager_end_of_turn":
-            self._eager_at = self._now()
+            self._eager_at = at = self._now()
             self._speculate(" ".join(event.text.split()))
+            if self._speculating() and self._loop is not None:
+                self._loop.call_later(FORCE_END_AFTER_S, self._force_end, at)
         elif event.kind == "turn_resumed":
             if self._speculating():
                 log.debug("assistant: they went on talking; the early answer is dropped")
@@ -492,6 +502,17 @@ class VoiceSession:
 
     def _remember_said(self, s: Sentence) -> None:
         self._said.append((self._now(), s.text))
+    def _force_end(self, at: float) -> None:
+        """FORCE_END_AFTER_S after "probably done" (``at``), no new words and nothing loud: their turn ends now.
+        Flux alone waited 1.6 s after "who was Kublai Khan" (the robot, 2026-10-31) with the answer ready."""
+        if self._eager_at != at or not self._speculating() or self.stt is None or self._ended.is_set():
+            return
+        if (self._words_at is not None and self._words_at > at) or (self._loud_at is not None and self._loud_at > at):
+            return  # they went on (speech-to-text will say so, or end the turn itself)
+        log.info("assistant: quiet %d ms after 'probably done': their turn ends now",
+                 int((self._now() - at) * 1000))
+        self._spawn(self.stt.finish())
+
     def _speculating(self) -> bool:
         """An early answer (started on "probably done") is waiting for their turn to really end."""
         return self._answering() and self._gate is not None and not self._gate.is_set()

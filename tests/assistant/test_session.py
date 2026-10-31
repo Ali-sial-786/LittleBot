@@ -412,6 +412,30 @@ async def test_an_early_answer_is_said_only_once_the_turn_really_ends() -> None:
     assert svc.last_call["turns"] == 1
 
 
+async def test_quiet_after_probably_done_ends_their_turn_at_once() -> None:
+    # Flux alone waited 1.6 s after "who was Kublai Khan" with the answer ready (the robot, 2026-10-31).
+    brain = Scripted(["He was a Mongol emperor."], ["Lima."])
+    svc, stt, tts, audio = _service(brain, follow_up_seconds=5)
+    await svc.start()
+    await svc.start_session()
+    await _wait(lambda: stt.stream is not None)
+    stt.event("start_of_turn")
+    stt.event("partial", "who was Kublai Khan")
+    stt.event("eager_end_of_turn", "who was Kublai Khan")
+    await _wait(lambda: stt.stream.finished == 1, timeout=1.5)  # asked to end the turn now
+    stt.event("end_of_turn", "Who was Kublai Khan?")
+    await _wait(lambda: len(audio.played) > 0)
+    # more words after "probably done": no forcing (they went on)
+    stt.event("start_of_turn")
+    stt.event("partial", "what's the capital of")
+    stt.event("eager_end_of_turn", "what's the capital of")
+    await asyncio.sleep(0.1)
+    stt.event("partial", "what's the capital of Peru")
+    await asyncio.sleep(0.6)
+    assert stt.stream.finished == 1
+    await svc.stop_session("test")
+
+
 async def test_an_early_answer_is_dropped_when_they_go_on() -> None:
     brain = Scripted(["The weather today is sunny.", ("set_volume", '{"percent": 10}')],
                      ["Tomorrow it rains."], delay=0.05)
