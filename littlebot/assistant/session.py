@@ -58,6 +58,10 @@ STT_REOPENS = 3  # speech-to-text that fails this often in one session ends it
 HEARING_GRACE_S = 2.0  # a turn that never ends (noise): finished after max_turn_seconds + this
 ECHO_MEMORY_S = 20.0  # what LittleBot said this recently may come back through the microphone
 ECHO_SHARE = 0.8  # a turn whose words are mostly LittleBot's own recent words is its echo, not them
+# ... but only words of sentences still being said (or just over: the echo, then speech-to-text's lag) when their
+# turn began: "turn the volume down a bit", said 1.3 s after LittleBot's "Turning the volume down a bit." ended, was
+# ignored as its own voice (the robot, 2026-10-31)
+ECHO_LAG_S = 1.5
 # Heard as it was cut off, one or two words, every one of them in what LittleBot said this recently, are its echo too
 # ("One sec." heard back cut its own answer off; the robot, 2026-10-31) - unless one is a word people cut in with.
 SHORT_ECHO_S = 2.5
@@ -435,10 +439,11 @@ class VoiceSession:
                 self._cut_answer()
                 self._set_phase("hearing")
         elif event.kind == "end_of_turn":
-            spoke_ms = int((self._now() - self._hearing_since) * 1000) if self._hearing_since is not None else 0
+            began = self._hearing_since
+            spoke_ms = int((self._now() - began) * 1000) if began is not None else 0
             self._hearing_since = self._words_at = None
             text = " ".join(event.text.split())
-            if text and self._echo_of_me(text):
+            if text and self._echo_of_me(text, since=began):
                 log.info("assistant: that turn was its own voice heard back (%d words); ignored", len(text.split()))
                 if not self._answering():
                     self._set_phase("listening")
@@ -481,11 +486,12 @@ class VoiceSession:
     def _answering(self) -> bool:
         return self._answer is not None and not self._answer.done()
 
-    def _echo_of_me(self, text: str, *, short: bool = False) -> bool:
+    def _echo_of_me(self, text: str, *, short: bool = False, since: float | None = None) -> bool:
         """``text`` is mostly LittleBot's own recent words (its voice leaking back into the microphone), not theirs.
         Only for 3 words or more ("and tomorrow" may well be theirs); with ``short`` (words heard as it was cut off)
         also one or two, when all of them were said in the last SHORT_ECHO_S and none is in THEIR_WORDS ("stop",
-        "yes", "next one" are always theirs)."""
+        "yes", "next one" are always theirs). ``since``: when their turn began (a sentence over by ECHO_LAG_S before
+        then can't be what was heard)."""
         words = _words(text)
         if not words or (len(words) < 3 and not short):
             return False
@@ -498,8 +504,9 @@ class VoiceSession:
             return all(w in lately for w in words)
         said = set()
         for at, sentence in self._said:
-            if now - at <= ECHO_MEMORY_S:
-                said |= set(_words(sentence))
+            if now - at > ECHO_MEMORY_S or (since is not None and at + len(sentence) / SPOKEN_CPS + ECHO_LAG_S < since):
+                continue
+            said |= set(_words(sentence))
         if not said:
             return False
         return sum(1 for w in words if w in said) / len(words) >= ECHO_SHARE
@@ -1254,9 +1261,12 @@ def _words(text: str) -> list[str]:
 
 
 # The wake phrase at the start of what speech-to-text heard ("Hey, little bot. Who was Kublai Khan?"): the wake
-# word's carry sends it first so the sentence is heard whole; LittleBot's name is no part of the question.
+# word's carry sends it first so the sentence is heard whole; LittleBot's name is no part of the question. After
+# "hey", also as speech-to-text mishears it ("Hey, little bug." was answered "Hey there!", the robot, 2026-10-31).
 _WAKE_LEAD = re.compile(r"^\s*(?:(?:hey|hi|hay|a|okay|ok)[\s,.!]+)?(?:(?:little|lil|li'l)[\s-]*)?bot\b[\s,.!?]*|"
-                        r"^\s*(?:(?:hey|hi|hay|a|okay|ok)[\s,.!]+)?littlebot\b[\s,.!?]*", re.IGNORECASE)
+                        r"^\s*(?:(?:hey|hi|hay|a|okay|ok)[\s,.!]+)?littlebot\b[\s,.!?]*|"
+                        r"^\s*(?:hey|hi|hay|okay|ok)[\s,.!]+(?:little|lil|li'l)[\s-]*(?:bought|boat|bug|bud|robot)\b"
+                        r"[\s,.!?]*", re.IGNORECASE)
 
 
 def _squeeze_quiet(x: np.ndarray, rate: int, level: float, keep_s: float = CARRY_PAUSE_S) -> np.ndarray:

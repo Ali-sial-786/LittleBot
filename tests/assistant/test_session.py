@@ -381,6 +381,9 @@ async def test_the_wake_phrase_goes_first_and_is_taken_off_the_words() -> None:
     ("bot. Who was Kublai Khan?", "Who was Kublai Khan?"), ("Hey bot, what time is it", "What time is it"),
     ("Bottles of water", "Bottles of water"), ("a little bot who was Kublai Khan.", "Who was Kublai Khan."),
     ("a little bit more", "a little bit more"),
+    # misheard after "hey" (the robot, 2026-10-31), but never in a sentence of theirs
+    ("Hey, little bug.", ""), ("Hey little bought, what time is it", "What time is it"),
+    ("A little bug is on the wall.", "A little bug is on the wall."), ("Hey, a little bug!", "Hey, a little bug!"),
 ])
 def test_the_wake_phrase_is_no_part_of_the_question(said: str, question: str) -> None:
     from littlebot.assistant.session import _heard
@@ -801,6 +804,25 @@ async def test_its_own_voice_heard_back_is_not_a_turn() -> None:
     await _wait(lambda: not svc.status()["active"])
     assert svc.last_call["ended_reason"] == "said stop"  # without a word
     assert len(tts.said) == 1
+
+
+async def test_its_own_words_said_well_before_their_turn_began_are_theirs() -> None:
+    # "Turn the volume down a bit" said 1.3 s after LittleBot's "Turning the volume down a bit." had ended was
+    # ignored as its own voice heard back (the robot, 2026-10-31).
+    brain = Scripted(["Done."])
+    svc, stt, _tts, _ = _service(brain, follow_up_seconds=3)
+    await svc.start()
+    await svc.start_session()
+    await _wait(lambda: stt.stream is not None)
+    session = svc._session
+    now = session._now()
+    session._said.append((now - 5.0, "Turning the volume down a bit."))  # began 5 s ago, about 2 s long
+    assert session._echo_of_me("turn the volume down a bit")  # when their turn began isn't known: as before
+    assert session._echo_of_me("turning the volume down a bit", since=now - 4.0)  # began while it was said
+    assert not session._echo_of_me("turn the volume down a bit", since=now - 0.5)  # began well after it ended
+    stt.say("turn the volume down a bit")
+    await _wait(lambda: brain.questions == ["turn the volume down a bit"])
+    await svc.stop_session("test")
 
 
 async def test_stop_word_ends_wait_word_only_quiets() -> None:
