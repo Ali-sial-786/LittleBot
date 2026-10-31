@@ -634,7 +634,59 @@ def _as_facts(kind: str, spec: dict[str, Any], types: dict[str, Any]) -> tuple[s
     if layout not in layouts:
         layout = named or ("compare" if spec.get("columns") else "list" if spec.get("items") else
                            "number" if spec.get("value") else "score" if spec.get("teams") else "item")
-    return "facts", {**spec, "card": "facts", "layout": layout}
+    spec = {**spec, "card": "facts", "layout": layout}
+    items = spec.get("items")
+    if isinstance(items, list) and any(isinstance(i, dict) for i in items):
+        # items as labelled records ({"label": "Snout", "value": "Alligator: broad. Crocodile: narrow."}): the
+        # strings-only items dropped them all and no card came (a crocodile/alligator comparison, 2026-10-31)
+        table = _labelled_rows(items) if layout == "compare" and not spec.get("columns") else None
+        if table is not None:
+            spec["columns"], spec["rows"] = table
+            spec.pop("items")
+        else:
+            spec["items"] = [t for t in (_record_text(i) for i in items) if t]
+    return "facts", spec
+
+
+_ROW_LABELS = ("label", "row", "aspect", "feature", "category", "name", "title", "key")
+_ROW_VALUES = ("value", "text", "detail", "details", "fact", "description", "difference")
+# "Alligator: broad and U-shaped. Crocodile: narrow and V-shaped." -> the name and what follows it, each
+_NAMED = re.compile(r"([A-Z][\w'’ -]{0,28}?)\s*:\s*(.+?)(?=[.;,]?\s+[A-Z][\w'’ -]{0,28}?\s*:\s|[.;]?\s*$)", re.S)
+
+
+def _record_text(record: Any) -> str:
+    """One labelled record as a line: "Snout: Alligator: broad ...", a plain string as it is."""
+    if isinstance(record, str):
+        return record
+    if not isinstance(record, dict):
+        return ""
+    label = next((str(record[k]) for k in _ROW_LABELS if isinstance(record.get(k), str)), "")
+    value = next((str(record[k]) for k in _ROW_VALUES if isinstance(record.get(k), (str, int, float))), "")
+    return f"{label}: {value}" if label and value else label or value
+
+
+def _labelled_rows(items: list[Any]) -> tuple[list[dict[str, Any]], list[str]] | None:
+    """Labelled rows that each name the same two or three things ("Alligator: ... Crocodile: ...") as compare
+    columns [{"name", "facts"}] and row labels; None when they don't."""
+    names: list[str] = []
+    rows: list[tuple[str, dict[str, str]]] = []
+    for record in items:
+        if not isinstance(record, dict):
+            return None
+        label = next((str(record[k]) for k in _ROW_LABELS if isinstance(record.get(k), str)), "")
+        value = next((str(record[k]) for k in _ROW_VALUES if isinstance(record.get(k), str)), "")
+        pairs = {" ".join(n.split()).lower(): (" ".join(n.split()), v.strip(" .;")) for n, v in _NAMED.findall(value)}
+        if not label or not 2 <= len(pairs) <= 3:
+            return None
+        if not names:
+            names = [shown for shown, _ in pairs.values()]
+        if set(pairs) != {n.lower() for n in names}:
+            return None
+        rows.append((label, {k: v for k, (_, v) in pairs.items()}))
+    if len(rows) < 1:
+        return None
+    columns = [{"name": n, "facts": [facts[n.lower()] for _, facts in rows]} for n in names]
+    return columns, [label for label, _ in rows]
 
 
 def clean_spec(spec: Any, types: dict[str, Any], relaxed: Any = ()) -> tuple[dict[str, Any] | None, str]:

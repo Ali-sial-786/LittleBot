@@ -114,6 +114,34 @@ async def test_a_comparison_written_as_a_table_still_shows(spec: dict[str, Any],
     preview.surface(card, seconds=1.0)
 
 
+async def test_a_comparison_sent_as_labelled_items_shows_as_columns() -> None:
+    # what the brain sent on the robot (2026-10-31): the director used to drop every item, so no card came up
+    from littlebot.screens.director import clean_spec
+
+    items = [{"label": "Snout", "value": "Alligator: broad and U-shaped. Crocodile: narrow and V-shaped."},
+             {"label": "Teeth", "value": "Alligator: upper teeth hide the lower. Crocodile: both show."},
+             {"label": "Habitat", "value": "Alligator: fresh water. Crocodile: salt water too."}]
+    cleaned, why = clean_spec({"card": "facts", "layout": "compare", "title": "Crocodile or alligator?",
+                               "items": items}, base.card_types())
+    assert cleaned is not None, why
+    card = await make(cleaned)
+    assert card.layout == "compare" and card.rows == ["Snout", "Teeth", "Habitat"]
+    assert card.columns[0] == {"name": "Alligator", "facts": ["broad and U-shaped", "upper teeth hide the lower",
+                                                              "fresh water"]}
+    assert card.columns[1]["name"] == "Crocodile" and card.columns[1]["facts"][2] == "salt water too"
+    preview.surface(card, seconds=1.0)
+
+
+async def test_labelled_items_that_are_not_a_comparison_show_as_lines() -> None:
+    from littlebot.screens.director import clean_spec
+
+    cleaned, why = clean_spec({"card": "facts", "title": "Japan", "items": [
+        {"label": "Capital", "value": "Tokyo"}, {"name": "People", "detail": "125 million"}, "An island country"]},
+        base.card_types())
+    assert cleaned is not None, why
+    assert cleaned["items"] == ["Capital: Tokyo", "People: 125 million", "An island country"]
+
+
 async def test_a_comparison_with_names_only_in_the_title_and_values_by_row() -> None:
     card = await make({"layout": "compare", "title": "Genghis Khan vs Kublai Khan",
                        "rows": [{"label": "Known for", "values": ["Conquest", "Ruling China"]}]})

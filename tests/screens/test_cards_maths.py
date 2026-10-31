@@ -37,6 +37,7 @@ async def test_every_sample_builds_and_draws():
     ("12 x 7", 84), ("12 × 7", 84), ("12*7", 84), ("(3 + 4) * 2", 14), ("100 / 8", 12.5), ("2^10", 1024),
     ("15% of 80", 12), ("1,000 - 1", 999), ("-3 + 5", 2), ("7 times 6", 42), ("9 divided by 3", 3),
     ("5 squared", 25), ("2 + 3 * 4", 14), ("2 ^ 3 ^ 2", 512), ("12 x 7 =", 84), (".5 + .25", 0.75),
+    ("√1764", 42), ("square root of 1764", 42), ("sqrt(16) + 1", 5), ("2 x √9", 6),
 ])
 def test_evaluate(text, value):
     assert evaluate(text) == pytest.approx(value)
@@ -44,7 +45,7 @@ def test_evaluate(text, value):
 
 @pytest.mark.parametrize("text", [
     "__import__('os').system('ls')", "1 / 0", "2 ^ 1000", "3 cups", "", "1 +", "(1 + 2", "abc", "1e400",
-    "9" * 100, "2 ** 2 ** 2 ** 2 ** 2",
+    "9" * 100, "2 ** 2 ** 2 ** 2 ** 2", "√-4",
 ])
 def test_evaluate_refuses_anything_else(text):
     assert evaluate(text) is None
@@ -93,6 +94,9 @@ def test_maths_card():
     assert not c.command("show", {}) and not c.command("next", {})
     conv = MathsCard({"expression": "3 cups to ml", "result": "710 ml"}, host)
     assert conv.title == "Converting" and conv.describe() == "3 cups to ml = 710 ml"
+    root = MathsCard({"expression": "√1764", "result": "42"}, host)  # a sum, not a conversion (2026-10-31)
+    assert root.title == "Let's work it out" and root.describe() == "√1764 = 42"
+    assert MathsCard({"expression": "5 km in miles", "result": "3.1 miles"}, host).title == "Converting"
 
 
 async def test_maths_needs_an_expression_and_a_result():
