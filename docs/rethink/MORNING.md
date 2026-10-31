@@ -10,7 +10,9 @@ also read by an independent reviewer and its 12 findings fixed.
 
 The robot now runs `rethink` with the fast voice (`assistant.pipeline: cascade`); `main` is still untouched. All night
 the laptop next to the robot played questions in recorded voices, recorded what came back, and read the robot's log.
-Each fix below has a test, and most were checked again live.
+Each fix below has a test, and most were checked again live. The full test suite on this Windows PC: 5,722
+passed; the 19 failures are all Windows-only (file permissions, time zones, Linux paths and tools, no camera library
+installed here), none from tonight's changes.
 
 **One thing for you first: Cartesia (the fast voice) is out of credits** since about 7 am (all the testing used
 the plan's allowance). The robot switched to OpenAI's voice by itself, which starts about half a second later. To get it
