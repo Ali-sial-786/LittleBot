@@ -30,7 +30,7 @@ CACHE_S = 15 * 60.0
 TIMEOUT_S = 4.0  # one answer waits at most this long for the feeds
 # ... and once one feed has headlines, this long for the others: on the robot (2026-10-31) the BBC came in 67 ms
 # but every news answer waited the whole 4 s for the CBC, which timed out (a silence in the middle of the answer).
-OTHERS_S = 1.0
+OTHERS_S = 0.5
 RETRY_S = 120.0  # a feed that failed is asked again after this long (answers stay fast meanwhile)
 MAX_BYTES = 2_000_000
 MAX_ITEMS = 25  # per feed
@@ -236,7 +236,7 @@ class NewsFeeds:
         waiting = {t for t in tasks if isinstance(t, asyncio.Future)}
         # (asyncio.wait never cancels: a feed still loading carries on for next time)
         deadline = loop.time() + self.timeout
-        enough = loop.time() + self.others_s if any(isinstance(t, list) and t for t in tasks) else None
+        enough = loop.time() + self.others_s if any(isinstance(t, list) and t for t in tasks) else None  # cached
         while waiting:
             left = (deadline if enough is None else min(deadline, enough)) - loop.time()
             if left <= 0:
