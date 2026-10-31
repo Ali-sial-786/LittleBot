@@ -100,16 +100,16 @@ async def test_the_next_turn_knows_what_the_tools_really_did() -> None:
     await svc.start()
     await svc.start_session()
     await _wait(lambda: stt.stream is not None)
-    stt.say("turn the volume down a bit")
+    stt.say("could you make it sixty")  # (not an instant intent: the brain answers)
     await _wait(lambda: "Done, it's at 60 percent." in tts.said and len(svc.history) == 1)
     assert "really did" not in brain.asked[0]
     stt.say("and tell me a joke")
     await _wait(lambda: len(brain.asked) == 2)
     note = brain.asked[1].split("\n")[0]
     assert note.startswith("[Context for this turn") and "really did" in note
-    assert 'after "turn the volume down a bit": set_volume:' in note
-    assert [m["content"] for m in svc.history.messages()][:2] == ["turn the volume down a bit",
-                                                                  "Done, it's at 60 percent."]  # words only
+    assert 'after "could you make it sixty": set_volume:' in note
+    assert [m["content"] for m in svc.history.messages()][:2] == ["could you make it sixty",
+                                                                  "Sure. Done, it's at 60 percent."]  # words only
     await svc.stop()
 
 
@@ -890,7 +890,7 @@ async def test_its_own_words_said_well_before_their_turn_began_are_theirs() -> N
     # "Turn the volume down a bit" said 1.3 s after LittleBot's "Turning the volume down a bit." had ended was
     # ignored as its own voice heard back (the robot, 2026-10-31).
     brain = Scripted(["Done."])
-    svc, stt, _tts, _ = _service(brain, follow_up_seconds=3)
+    svc, stt, tts, _ = _service(brain, follow_up_seconds=3)
     await svc.start()
     await svc.start_session()
     await _wait(lambda: stt.stream is not None)
@@ -901,7 +901,7 @@ async def test_its_own_words_said_well_before_their_turn_began_are_theirs() -> N
     assert session._echo_of_me("turning the volume down a bit", since=now - 4.0)  # began while it was said
     assert not session._echo_of_me("turn the volume down a bit", since=now - 0.5)  # began well after it ended
     stt.say("turn the volume down a bit")
-    await _wait(lambda: brain.questions == ["turn the volume down a bit"])
+    await _wait(lambda: "Quieter." in tts.said)  # answered (an instant intent since 2026-10-31)
     await svc.stop_session("test")
 
 

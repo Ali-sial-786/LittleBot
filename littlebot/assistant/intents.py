@@ -36,11 +36,44 @@ THANKS = _whole(r"thanks?(?: you)?(?: so much| very much| a lot)?|cheers|perfect
                 r"got it|cool|nice|good job|well done|appreciate it")
 BYE = _whole(r"(?:good)?bye(?: bye)?|see you(?: later)?|talk (?:to you )?later|good ?night|go to sleep|"
              r"bye little ?bot")
-LOUDER = _whole(r"(?:turn (?:it |the volume |yourself )?up|louder|volume up|speak up|a bit louder|"
-                r"(?:make it |be )?louder)(?: please)?")
-QUIETER = _whole(r"(?:turn (?:it |the volume |yourself )?down|quieter|softer|volume down|(?:a bit )?quieter|"
-                 r"(?:make it |be )?quieter)(?: please)?")
-VOLUME_TO = re.compile(r"^\s*(?:set (?:the )?)?volume (?:to |at )?(\d{1,3})(?: ?(?:percent|%))?[.!]*\s*$", re.I)
+# "Turn the volume down a bit." and "A little louder, please." went to the brain, which looked the volume up
+# before changing it, 2-2.3 s to the first word (the robot, 2026-10-31): "a bit", "a little" ... are taken here too.
+_ASK = r"(?:(?:can|could|would|will) you (?:please )?|please )?"
+_BIT = r"(?:a (?:little )?bit |a little |a touch |a tad |slightly |much |even |bit )?"  # before "louder"
+_BIT_AFTER = r"(?: (?:a (?:little )?bit|a little|a touch|a tad|slightly|some|more))?"  # after "turn it up"
+_THE_VOLUME = r"(?:the volume|the sound|your volume)"
+LOUDER = _whole(rf"{_ASK}(?:turn (?:it |that |yourself |{_THE_VOLUME} )?up{_BIT_AFTER}|"
+                rf"turn up {_THE_VOLUME}{_BIT_AFTER}|(?:raise|increase) {_THE_VOLUME}{_BIT_AFTER}|volume up|"
+                rf"speak up|(?:make it |be |speak |talk |go )?{_BIT}louder)(?: please)?")
+QUIETER = _whole(rf"{_ASK}(?:turn (?:it |that |yourself |{_THE_VOLUME} )?down{_BIT_AFTER}|"
+                 rf"turn down {_THE_VOLUME}{_BIT_AFTER}|(?:lower|decrease|reduce) {_THE_VOLUME}{_BIT_AFTER}|"
+                 rf"volume down|(?:make it |be |speak |talk |go )?{_BIT}(?:quieter|softer)|not so loud|"
+                 rf"(?:(?:it'?s|that'?s|you'?re) )?(?:a (?:little )?bit |a little |way )?too loud)(?: please)?")
+# Speech-to-text writes "set the volume to one hundred percent" in words as often as in digits.
+_UNITS = ("zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen "
+          "seventeen eighteen nineteen").split()
+_TENS = "twenty thirty forty fifty sixty seventy eighty ninety".split()
+_NUMBER = (rf"\d{{1,3}}|(?:one |a )?hundred|(?:{'|'.join(_TENS)})(?:[- ](?:{'|'.join(_UNITS[1:10])}))?|"
+           rf"{'|'.join(reversed(_UNITS))}|max(?:imum)?|full|half")
+VOLUME_TO = re.compile(rf"^\s*{_POLITE}{_ASK}(?:(?:set|turn|put|change|make) (?:the |your )?)?volume "
+                       rf"(?:to |at |on )?(?P<n>{_NUMBER})(?: ?(?:percent|per cent|%))?[\s,.!]*{_POLITE}[.!?]*\s*$",
+                       re.I)
+
+
+def _percent(said: str) -> int | None:
+    """``said`` (a VOLUME_TO number: "40", "seventy-five", "one hundred", "max") as a percent, or None."""
+    w = said.lower().replace("-", " ").split()
+    if not w:
+        return None
+    if w[0].isdigit():
+        return min(100, int(w[0]))
+    if w[-1] in ("hundred", "max", "maximum", "full"):
+        return 100
+    if w == ["half"]:
+        return 50
+    if w[0] in _TENS:
+        return 20 + 10 * _TENS.index(w[0]) + (_UNITS.index(w[1]) if len(w) > 1 else 0)
+    return _UNITS.index(w[0]) if w[0] in _UNITS else None
 PAUSE = _whole(r"pause(?: (?:it|the video|the music|that))?|hold on|wait")
 RESUME = _whole(r"(?:resume|unpause|continue|carry on|keep (?:playing|going|watching)|play)(?: (?:it|the video|"
                 r"the music))?|go back to (?:the )?(?:video|music)")
@@ -90,8 +123,9 @@ def match(text: str, *, media_on: bool = False) -> Intent | None:
     if QUIETER.match(t):
         return Intent("volume", "Quieter.", args={"step": -1})
     m = VOLUME_TO.match(t)
-    if m:
-        return Intent("volume", f"Volume {min(100, int(m.group(1)))}.", args={"percent": min(100, int(m.group(1)))})
+    percent = _percent(m.group("n")) if m else None
+    if percent is not None:
+        return Intent("volume", f"Volume {percent}.", args={"percent": percent})
     if media_on:
         if PAUSE.match(t):
             return Intent("pause", "", end=True)
@@ -120,7 +154,16 @@ async def run(intent: Intent, box: Any, ctx: Any) -> str:
             res = await box.run("volume_up" if intent.args.get("step", 1) > 0 else "volume_down", {})
         if res.startswith("error"):
             return "I can't change the volume right now."
-        return "That's as loud as I go." if "maximum" in res.lower() and intent.args.get("step", 0) > 0 else intent.say
+        # the toolbox says "speaker volume is now 70% (the most allowed)" at the ceiling (audio.speaker.max_volume)
+        capped = "the most allowed" in res or "maximum" in res.lower()
+        level = re.search(r"speaker volume is now (\d+)%", res)
+        now = int(level.group(1)) if level else None
+        if capped and intent.args.get("step", 0) > 0:
+            was_top = current is not None and now is not None and round(current * 100) >= now
+            return "That's as loud as I go." if was_top else "Louder. That's as loud as I go."
+        if capped and now is not None and intent.args.get("percent", 0) > now:
+            return f"Volume {now}, as loud as I go."  # "volume 100": it never says a level it didn't set
+        return intent.say
     if name == "time":
         from littlebot.info.clock import now_info  # noqa: PLC0415
 

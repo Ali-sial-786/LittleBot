@@ -70,6 +70,49 @@ async def test_run_volume_and_time() -> None:
     assert said.startswith("It's ") and ("a.m." in said or "p.m." in said)
 
 
+@pytest.mark.parametrize("text,step", [
+    # these went to the brain, which looked the volume up first: 2-2.3 s to the first word (the robot, 2026-10-31)
+    ("Turn the volume down a bit.", -1), ("A little louder, please.", 1), ("turn it up a little", 1),
+    ("can you turn the volume down a little bit", -1), ("Make it a bit quieter.", -1), ("It's too loud.", -1),
+    ("lower the volume", -1), ("Turn up the volume please.", 1), ("a bit louder", 1), ("Louder, please.", 1),
+    ("could you speak up", 1), ("a little bit softer", -1), ("turn it down", -1),
+])
+def test_volume_in_everyday_words(text: str, step: int) -> None:
+    hit = intents.match(text)
+    assert hit is not None and hit.name == "volume" and hit.args == {"step": step}
+
+
+@pytest.mark.parametrize("text,percent", [
+    ("set the volume to one hundred percent", 100), ("Volume to fifty.", 50), ("Set the volume to seventy-five "
+     "percent.", 75), ("volume 40", 40), ("set the volume to max", 100), ("turn the volume to 30", 30),
+    ("volume to twenty five", 25), ("volume seven", 7), ("can you set the volume to sixty percent", 60),
+])
+def test_volume_to_a_number_in_words_or_digits(text: str, percent: int) -> None:
+    hit = intents.match(text)
+    assert hit is not None and hit.name == "volume" and hit.args == {"percent": percent}
+
+
+@pytest.mark.parametrize("text", ["a little leopard, please", "turn up the heat", "turn the lights down a bit",
+                                  "is it too loud?", "volume of a sphere", "a little later please",
+                                  "how loud is a jet engine", "turn it up to eleven, like in the film"])
+def test_not_the_volume(text: str) -> None:
+    hit = intents.match(text)
+    assert hit is None or hit.name != "volume"
+
+
+async def test_at_the_ceiling_it_says_so_and_never_a_level_it_did_not_set() -> None:
+    ctx = make_test_context()  # audio.speaker.max_volume 0.8
+    box = RobotToolbox(ctx, mode="chat")
+    assert await intents.run(intents.match("set the volume to one hundred percent"), box, ctx) == \
+        "Volume 80, as loud as I go."
+    assert await intents.run(intents.match("a little louder please"), box, ctx) == "That's as loud as I go."
+    await box.run("set_volume", {"percent": 75})
+    assert await intents.run(intents.match("louder"), box, ctx) == "Louder. That's as loud as I go."
+    assert ctx.audio.volume == pytest.approx(0.8)
+    assert await intents.run(intents.match("turn the volume down a bit"), box, ctx) == "Quieter."
+    assert ctx.audio.volume == pytest.approx(0.7)
+
+
 async def test_voice_can_never_make_it_silent() -> None:
     ctx = make_test_context()
     box = RobotToolbox(ctx, mode="chat")
