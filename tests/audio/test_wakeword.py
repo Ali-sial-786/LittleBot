@@ -933,3 +933,29 @@ async def test_real_input_backend_is_shared_never_opened_twice(fake_sd):
         await audio.stop()
         ctx.db.close()
     assert not any(s.active for s in fake_sd.in_streams)
+
+
+def test_a_quicker_model_folder_decides_after_a_short_silence(tmp_path) -> None:
+    # The model's own rules wait 0.5-1.0 s of silence before deciding a phrase: "hey little bot" was heard 0.73 s
+    # (1.4 s live) after it was said. A linked copy with its own conf decides after end_silence_seconds.
+    src = tmp_path / "vosk-model-small-en-us-0.15"
+    (src / "am").mkdir(parents=True)
+    (src / "am" / "final.mdl").write_bytes(b"model")
+    (src / "conf").mkdir()
+    (src / "conf" / "mfcc.conf").write_text("--sample-frequency=16000\n")
+    (src / "conf" / "model.conf").write_text("--beam=10.0\n--endpoint.rule2.min-trailing-silence=0.5\n"
+                                             "--endpoint.rule3.min-trailing-silence=0.75\n"
+                                             "--endpoint.rule4.min-trailing-silence=1.0\n")
+    try:
+        (tmp_path / "probe").symlink_to(src / "am")
+    except OSError:
+        pytest.skip("no symlinks here")
+    dst = wakeword.tuned_model_dir(src, 0.15, tmp_path / "data" / "models")
+    assert dst != src and (dst / "am" / "final.mdl").read_bytes() == b"model"
+    assert (dst / "conf" / "mfcc.conf").is_file()
+    conf = (dst / "conf" / "model.conf").read_text()
+    assert "--beam=10.0" in conf and "rule2.min-trailing-silence=0.15" in conf
+    assert "rule3.min-trailing-silence=0.25" in conf and "rule4.min-trailing-silence=0.40" in conf
+    assert (src / "conf" / "model.conf").read_text().count("=0.5\n") == 1  # the model itself is untouched
+    assert wakeword.tuned_model_dir(src, 0.15, tmp_path / "data" / "models") == dst  # made once
+    assert wakeword.tuned_model_dir(tmp_path / "missing", 0.15, tmp_path / "data" / "models") == tmp_path / "missing"

@@ -259,6 +259,37 @@ def wake_phrase_end(result: dict[str, Any], words: Sequence[str],
     return None, 0
 
 
+_ENDPOINT_RULE = re.compile(r"^--endpoint\.rule([234])\.min-trailing-silence=.*$", re.M)
+ENDPOINT_STEPS = {"2": 0.0, "3": 0.1, "4": 0.25}  # the model's three "this much silence ends it" rules
+
+
+def tuned_model_dir(src: Path, end_silence: float, root: Path) -> Path:
+    """``src`` (a Vosk model) whose recogniser decides a phrase after ``end_silence`` seconds of silence: a folder in
+    ``root`` with links to the model's files and its own ``conf/model.conf``. ``src`` itself if that can't be made."""
+    conf = src / "conf" / "model.conf"
+    dst = root / f"{src.name}-wake-{int(round(end_silence * 1000))}ms"
+    try:
+        text = conf.read_text(encoding="utf-8")
+        rules = {n: f"--endpoint.rule{n}.min-trailing-silence={end_silence + step:.2f}"
+                 for n, step in ENDPOINT_STEPS.items()}
+        tuned = _ENDPOINT_RULE.sub(lambda m: rules.pop(m.group(1), m.group(0)), text)
+        tuned = tuned.rstrip("\n") + "\n" + "".join(f"{line}\n" for line in rules.values())
+        if (dst / "conf" / "model.conf").is_file() and (dst / "conf" / "model.conf").read_text("utf-8") == tuned:
+            return dst
+        (dst / "conf").mkdir(parents=True, exist_ok=True)
+        for p in src.iterdir():
+            if p.name != "conf" and not (dst / p.name).exists():
+                (dst / p.name).symlink_to(p.resolve(), target_is_directory=p.is_dir())
+        for p in (src / "conf").iterdir():
+            if p.name != "model.conf" and not (dst / "conf" / p.name).exists():
+                (dst / "conf" / p.name).symlink_to(p.resolve())
+        (dst / "conf" / "model.conf").write_text(tuned, encoding="utf-8")
+        return dst
+    except OSError as e:
+        log.warning("wake word: couldn't make the quicker model folder (%s); using the model as it is", e)
+        return src
+
+
 class VoskKeywordRecognizer:
     """Vosk ``KaldiRecognizer`` restricted to a grammar (wake phrases + distractors + [unk])."""
 
@@ -552,7 +583,10 @@ class WakeWordService(Service):
     def _vosk_recognizer(self) -> KeywordRecognizer | None:
         assert self.model_path is not None
         t0 = time.monotonic()
-        model = load_model(self.model_path)
+        path = self.model_path
+        if self.cfg.end_silence_seconds:
+            path = tuned_model_dir(path, self.cfg.end_silence_seconds, Path(self.ctx.config.data_path) / "models")
+        model = load_model(path)
         known = None
         if hasattr(model, "vosk_model_find_word"):
             known = lambda w: model.vosk_model_find_word(w) >= 0  # noqa: E731
