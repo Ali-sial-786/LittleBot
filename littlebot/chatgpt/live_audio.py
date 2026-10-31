@@ -104,6 +104,11 @@ FADE_S = 0.05  # the voice fades out (and back in) over this long
 HOLD_MAX_S = 4.0  # the voice is held (not dropped) up to this long while deciding (FALSE_ALARM_MAX_S)
 STILL_TALKING_S = 0.3  # loud this recently: they are still talking (a false alarm waits for them)
 FALSE_ALARM_MAX_S = 4.0  # but no longer than this
+# Nothing loud once the voice was held (after its last sound and the room's echo of it had died away): it was the
+# voice's own echo leaking through, or a bump, not someone talking (they go on). It carries on after ECHO_HOLD_S, not
+# false_alarm_s: on the robot (2026-10-31, the speaker at full volume) such a false alarm held the answer 2.5 s.
+ECHO_GONE_S = 0.25
+ECHO_HOLD_S = 0.6
 DROP_GAP_S = 0.25  # the turn they cut into has ended: the voice was quiet this long ...
 USER_DONE_S = 0.25  # ... and they stopped talking this long ago (or their words are final)
 DROP_MAX_S = 15.0  # never drop the voice longer than this
@@ -891,9 +896,13 @@ class LiveAudio:
             self._notify("stop_word", {"said": stop[0]})
 
     def _check_held(self, now: float) -> None:
-        """Held, and no words from ChatGPT: a false alarm once they stop (at the latest FALSE_ALARM_MAX_S)."""
+        """Held, and no words from ChatGPT: a false alarm once they stop (at the latest FALSE_ALARM_MAX_S), or
+        sooner when it went quiet the moment the voice did (ECHO_HOLD_S: its own echo, not a person)."""
         held = now - self._barge_at
         still = now - self._user_loud_at < STILL_TALKING_S
+        if ECHO_HOLD_S <= held < self.barge.false_alarm_s and self._user_loud_at <= self._barge_at + ECHO_GONE_S:
+            self._carry_on(f"quiet as soon as the voice stopped: its own echo, {held:.1f} s")
+            return
         if held >= self.barge.false_alarm_s and (not still or held >= max(FALSE_ALARM_MAX_S, self.barge.false_alarm_s)):
             self._carry_on(f"no words within {held:.1f} s")
 

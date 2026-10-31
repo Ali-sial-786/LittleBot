@@ -428,7 +428,7 @@ async def test_a_false_alarm_lets_the_held_voice_play_on(call, caplog):
     audio, c = call()
     try:
         await c.warm_up()
-        cut = await c.talk_over(0.5)
+        cut = await c.talk_over(0.8)  # someone talking on for a while after it stopped, but no words came
         assert cut is not None
         k = SPEECH_START + 1 + cut
         while "carried_on" not in c.events:
@@ -447,6 +447,39 @@ async def test_a_false_alarm_lets_the_held_voice_play_on(call, caplog):
         j = next(i for i, v in enumerate(c.voice[:c.vi]) if np.allclose(now, v.astype(np.float32) / 32768 * 0.5, atol=1e-4))
         assert c.vi - j >= 50
         assert audio.barge_in_heard("go ahead", True) is None  # too late for that
+    finally:
+        audio.close()
+
+
+async def test_quiet_the_moment_the_voice_stopped_is_its_own_echo_and_it_carries_on_soon(call, caplog):
+    """On the robot (2026-10-31) its own voice leaking through held the answer 2.5 s: a person goes on talking once
+    the voice stops; an echo (or a bump) ends with it."""
+    caplog.set_level(logging.INFO, logger="littlebot.chatgpt.live")
+    audio, c = call()
+    try:
+        await c.warm_up()
+        cut = await c.talk_over(0.5, until_interrupted=True)  # the sound stops as the voice is held
+        assert cut is not None
+        k = len(c.sent)
+        while "carried_on" not in c.events:
+            await c.tick()
+            assert len(c.sent) - k < 250, "never carried on"
+        held = len(c.sent) - k
+        assert 0.5 / FRAME_S <= held <= 0.8 / FRAME_S  # ECHO_HOLD_S, not live_barge_in_false_alarm_ms
+        assert "its own echo" in caplog.text and audio.false_alarms == 1
+        assert not audio.interrupted and audio.speaking
+    finally:
+        audio.close()
+
+
+async def test_someone_who_goes_on_talking_is_still_waited_for(call):
+    audio, c = call()
+    try:
+        await c.warm_up()
+        cut = await c.talk_over(2.0, until_interrupted=True)
+        assert cut is not None
+        await c.talk_over(1.0)  # they go on talking, no words yet
+        assert audio.interrupted and "carried_on" not in c.events
     finally:
         audio.close()
 

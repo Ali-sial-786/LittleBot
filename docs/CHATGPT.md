@@ -910,6 +910,10 @@ and state go to listening (`LiveCall._barge_in_changed`). Then either:
 * **No words within `live_barge_in_false_alarm_ms`** (2.5 s; longer while they are still making
   sound, at most 4 s): a false alarm. The gate shuts and the held voice fades back in where it
   stopped (a little late for the rest of that turn).
+* **Quiet the moment the voice stopped** (nothing loud from 0.25 s after it was held): its own echo
+  leaking through, or a bump, not a person (they go on talking): it carries on after 0.6 s instead
+  ("false alarm (quiet as soon as the voice stopped: its own echo, 0.6 s)"). On the robot such an
+  echo held an answer 2.5 s (2026-10-31).
 
 One INFO line each time, never any sound: "live voice: interrupted by a grown-up after 0.3 s of
 speech (pitch 120 Hz, voice Ali)", "live voice: false alarm (no words within 2.5 s), the voice
