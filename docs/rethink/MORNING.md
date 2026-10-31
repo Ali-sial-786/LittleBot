@@ -54,9 +54,27 @@ hour, or at once after `ssh alisial3@littlebot.local "systemctl --user restart l
   I2S wouldn't change the 0.3 s round trip through the ReSpeaker and the USB speaker. The cheap test that could:
   plug a speaker into the ReSpeaker's own headphone jack. That also lets its echo canceller hear exactly what is
   played.
-* A whole question said over a long answer is sometimes erased by the echo canceller at the current loudness (70%,
-  its ceiling in your settings). At 60% one got through. "Stop" works either way. The speaker on the ReSpeaker's
-  jack would help most.
+* A whole question said over a long answer is sometimes erased by the echo canceller at 70% loudness. At 60% one
+  got through. "Stop" works either way. The speaker on the ReSpeaker's jack would help most.
+* The volume ceiling is 100%, not 70%: `LITTLEBOT__AUDIO__SPEAKER__MAX_VOLUME` in `~/LittleBot/.env` beats the 0.7
+  in `config/local.yaml`. (An earlier note here said "100%" was really 70%; that was wrong.) It is back at 100%,
+  where you had it.
+
+**Fixed later in the morning** (each with a test, checked with the real brain and live):
+
+* "Turn the volume down a bit", "a little louder, please", "it's too loud", "set the volume to one hundred percent"
+  are instant now (about 0.8 s with OpenAI's voice). Before, they went to the brain, which checked the volume first
+  (2-2.3 s). Speech-to-text writing "Turned the volume down a bit." counts too.
+* When the brain starts a lookup or an action before saying anything, LittleBot says "One sec." or "Sure." at once
+  (on the first chat of the day, "Good morning."), and the brain is told it was said. With the real brain the first
+  word came at about 0.8 s, where the news once took 3.7 s.
+* The brain is told the volume tools report the new level, so it no longer checks first. A request that makes no
+  sense as heard ("a little leopard, please") is treated as misheard: in 4 of 4 tries it asked "Did you mean a
+  little louder?" and started no video. "I want to watch a video about leopards" still plays one.
+* Speech-to-text (Deepgram) listens harder for "LittleBot", "louder", "quieter" and "volume"
+  (`assistant.deepgram_keyterms`).
+* Saying the date before the weather didn't happen again in the 3 weather answers after these fixes; nothing was
+  changed for it.
 
 **Still open:**
 
@@ -64,11 +82,7 @@ hour, or at once after `ssh alisial3@littlebot.local "systemctl --user restart l
 * Spotify can't play yet: the robot isn't a Spotify speaker. Run
   `ssh -t alisial3@littlebot.local "cd ~/LittleBot && bash scripts/setup_spotify.sh"` (it asks for your password),
   then pick **LittleBot** once in Spotify on your phone.
-* The brain sometimes looks something up before saying anything (the news once took 3.7 s to the first sound),
-  checks the volume before changing it, and says the date before the weather.
-* A badly misheard request can do the wrong thing: "a little louder" was heard once as "a little leopard", and it
-  queued a leopard video.
-* The test logging of words heard and said (`assistant.log_words`) was on all night and is off again.
+* The test logging of words heard and said (`assistant.log_words`) was on for the tests and is off again.
 
 ## In short
 
