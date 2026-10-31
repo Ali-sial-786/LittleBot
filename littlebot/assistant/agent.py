@@ -152,11 +152,16 @@ _SELF_TALK = re.compile(
 # the answer briefly, no tools needed."; the robot's brain, 2026-10-31), whatever the words around them
 _META = re.compile(r"\b(?:answer(?:s|ing)?|tools?|cards?|key points|briefly|brief|directly|mention|lead with|how-to|"
                    r"needed|web search|look it up)\b", re.I)
+# The card told aloud although the prompt says never to ("I'll put the comparison on the screen for you.", "Let me
+# show the working on the screen."; the robot, 2026-10-31): the card shows itself
+_CARD_TALK = re.compile(r"\b(?:I'll|I will|I'm|I am|I've|I have|let me|here's)\b[^.?!]{0,30}?\b(?:put|show|pop|bring|"
+                        r"display|draw|pull)\w*\b[^.?!]{0,40}?\b(?:on|onto|to) (?:the|my) screen\b", re.I)
 
 
 def _self_talk(text: str) -> bool:
-    """A sentence of the brain's own reasoning or plan, never to be said."""
-    return bool(_SELF_TALK.search(text)) or len({m.lower() for m in _META.findall(text)}) >= 3
+    """A sentence of the brain's own reasoning or plan, or about its card: never to be said."""
+    return bool(_SELF_TALK.search(text) or _CARD_TALK.search(text)) or \
+        len({m.lower() for m in _META.findall(text)}) >= 3
 # An answer that says something was done although no tool ran ("Done, I've forgotten your favorite color." with no
 # forget; the robot, 2026-10-31): logged, to find any more of them
 _CLAIMED = re.compile(r"\b(?:I've|I have) (?:forgotten|saved|cancell?ed|set|turned|deleted|removed|added|stopped|"
