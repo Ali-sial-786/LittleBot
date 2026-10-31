@@ -389,9 +389,11 @@ as if you had pressed **Start live voice**.
 ```yaml
 wake:                                # config/local.yaml
   enabled: true                      # default of the dashboard switch
-  phrases: ["hey little bot", "hey littlebot", "hey lil bot", "hey bot", "lil bot", "little bot"]
-                                     # "littlebot" is heard as "little bot"; "lil bot": the "hey" got lost
+  phrases: ["hey little bot", "hey littlebot", "hey lil bot", "lil bot", "little bot"]
+                                     # "littlebot" is heard as "little bot"; "lil bot": the "hey" got lost;
+                                     # "hey bot" was dropped: "hey Bob" was heard as it (add it back if you like)
   model_path: models/vosk-model-small-en-us-0.15
+  end_silence_seconds: 0.25          # silence that ends a phrase (the model's own: 0.5-1.0 s); heard ~0.2 s sooner
   min_confidence: 0.35               # per word, 0..1: higher = fewer false starts, more misses (0.5 missed some)
   short_min_confidence: 0.7          # two-word phrases ("hey bot", "lil bot") need this, or a face at the camera
   short_face_seconds: 10             # ...seen this recently

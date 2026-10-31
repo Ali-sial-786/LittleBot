@@ -152,6 +152,10 @@ async def until(pred, timeout: float = 4.0, what: str = "") -> None:
 
 
 # ------------------------------------------------------------------ fixtures
+# These tests use "hey bot" for a two-word phrase (no longer a default one, see WakeConfig.phrases).
+WITH_HEY_BOT = ["hey little bot", "hey littlebot", "hey lil bot", "hey bot", "lil bot", "little bot"]
+
+
 @pytest.fixture
 async def rig():
     """Real AudioService (mock speaker, exclusive mock mic) + WakeWordService with a fake recogniser."""
@@ -159,7 +163,7 @@ async def rig():
 
     async def _make(*, error: str | None = None, connect: bool = True, start_wake: bool = True, **cfg: Any):
         cfg.setdefault("wake", {})
-        cfg["wake"] = {"cooldown_seconds": 0.3, **cfg["wake"]}
+        cfg["wake"] = {"cooldown_seconds": 0.3, "phrases": WITH_HEY_BOT, **cfg["wake"]}
         ctx = make_test_context(fakes=False, **cfg)
         from littlebot.audio.service import AudioService
 
@@ -700,8 +704,8 @@ async def test_wake_enabled_defaults_on():
     ctx = make_test_context()
     try:
         assert ctx.settings.get("wake.enabled") is True
-        assert ctx.config.wake.phrases == ["hey little bot", "hey littlebot", "hey lil bot", "hey bot", "lil bot",
-                                           "little bot"]
+        assert ctx.config.wake.phrases == ["hey little bot", "hey littlebot", "hey lil bot", "lil bot", "little bot"]
+        assert ctx.config.wake.end_silence_seconds == 0.25
         assert ctx.config.wake.min_confidence == 0.35
     finally:
         ctx.db.close()

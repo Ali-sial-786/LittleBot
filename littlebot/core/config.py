@@ -198,13 +198,16 @@ class WakeConfig(_Section):
     # ("hey bot") trigger by mistake more often (e.g. on "hey but"): remove it here if that happens.
     # "lil bot" / "little bot": the "hey" is sometimes not heard (on the robot, 2026-10-29); like "hey bot" they
     # need short_min_confidence.
-    phrases: list[str] = Field(default_factory=lambda: ["hey little bot", "hey littlebot", "hey lil bot", "hey bot",
-                                                         "lil bot", "little bot"])
+    # "hey bot" is no longer a default: in 87 phrases played to the robot (2026-10-31) it caught nothing the others
+    # missed, and "Hey Bob, can you grab that?" was heard as "hey bot" (sure of it) by two of eleven voices.
+    phrases: list[str] = Field(default_factory=lambda: ["hey little bot", "hey littlebot", "hey lil bot", "lil bot",
+                                                         "little bot"])
     model_path: str = "models/vosk-model-small-en-us-0.15"  # scripts/download_models.py vosk-en
     # Silence after a phrase before the recogniser decides it (null: the model's own 0.5-1.0 s). Measured on the
-    # robot (2026-10-31, 48 phrases from the laptop): 0.15 s heard "hey little bot" 0.37 s after it was said instead
-    # of 0.73 s, with the same 30 of 32 caught and no false alarms.
-    end_silence_seconds: float | None = Field(default=0.15, ge=0.05, le=2.0)
+    # robot (2026-10-31: 48 phrases in the laptop's voices, 77 in eleven OpenAI voices and three styles): 0.25 s
+    # heard "hey little bot" 0.51 s after it was said instead of 0.73 s, catching as many (85 of 87) with no more
+    # false alarms; 0.15 s was quicker still (0.44 s) but missed one and heard "hey Bob" as "hey bot" once more.
+    end_silence_seconds: float | None = Field(default=0.25, ge=0.05, le=2.0)
     # per word; higher = fewer false triggers. 0.35: on the robot "hey lil bot" was missed at 0.49 (2026-10-29)
     min_confidence: float = Field(default=0.35, ge=0.0, le=1.0)
     # Two-word phrases ("hey bot") are what triggers by mistake most: they need this word confidence, or
