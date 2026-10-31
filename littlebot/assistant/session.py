@@ -956,11 +956,11 @@ class VoiceSession:
                                  "identify": getattr(getattr(self.ctx, "voices", None), "identify", None)}
         if getattr(self.audio, "barge_in_on", False) and getattr(self.ctx.config.chatgpt, "live_stop_words", False):
             try:
+                from littlebot.audio.wakeword import wake_model_dir  # noqa: PLC0415
                 from littlebot.chatgpt.live_audio import RATE  # noqa: PLC0415
                 from littlebot.chatgpt.stop_words import StopWords  # noqa: PLC0415
 
-                hooks["stop_words"] = StopWords.from_model(getattr(self.ctx.config.wake, "model_path", None),
-                                                           rate=RATE)
+                hooks["stop_words"] = StopWords.from_model(wake_model_dir(self.ctx.config), rate=RATE)
             except Exception:  # noqa: BLE001 - stop words are optional
                 log.debug("assistant: no stop words", exc_info=True)
         hooks["voice_said"] = lambda: " ".join((self._voice.heard if self._voice is not None else [])[-2:])

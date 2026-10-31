@@ -959,3 +959,20 @@ def test_a_quicker_model_folder_decides_after_a_short_silence(tmp_path) -> None:
     assert (src / "conf" / "model.conf").read_text().count("=0.5\n") == 1  # the model itself is untouched
     assert wakeword.tuned_model_dir(src, 0.15, tmp_path / "data" / "models") == dst  # made once
     assert wakeword.tuned_model_dir(tmp_path / "missing", 0.15, tmp_path / "data" / "models") == tmp_path / "missing"
+
+
+def test_the_stop_words_load_the_wake_words_model_folder(tmp_path) -> None:
+    # The stop words used to load the original folder: a second model in memory (~130 MB) at every conversation.
+    from types import SimpleNamespace
+
+    src = tmp_path / "model"
+    (src / "conf").mkdir(parents=True)
+    (src / "conf" / "model.conf").write_text("--endpoint.rule2.min-trailing-silence=0.5\n")
+    try:
+        (tmp_path / "probe").symlink_to(src / "conf")
+    except OSError:
+        pytest.skip("no symlinks here")
+    cfg = SimpleNamespace(wake=SimpleNamespace(model_path=str(src), end_silence_seconds=0.15), data_path=tmp_path)
+    assert wakeword.wake_model_dir(cfg) == wakeword.tuned_model_dir(src, 0.15, tmp_path / "models") != src
+    cfg.wake.end_silence_seconds = None
+    assert wakeword.wake_model_dir(cfg) == src

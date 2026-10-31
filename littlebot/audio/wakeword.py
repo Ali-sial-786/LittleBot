@@ -290,6 +290,17 @@ def tuned_model_dir(src: Path, end_silence: float, root: Path) -> Path:
         return src
 
 
+def wake_model_dir(config: Any) -> Path | None:
+    """The model folder the wake word loads (the quicker copy with ``wake.end_silence_seconds``): the stop words load
+    the same one, so the model in memory is shared."""
+    wake = getattr(config, "wake", None)
+    path = resolve_model_path(getattr(wake, "model_path", None))
+    silence = getattr(wake, "end_silence_seconds", None)
+    if path is None or not silence or not model_present(path):
+        return path
+    return tuned_model_dir(path, float(silence), Path(config.data_path) / "models")
+
+
 class VoskKeywordRecognizer:
     """Vosk ``KaldiRecognizer`` restricted to a grammar (wake phrases + distractors + [unk])."""
 
@@ -586,7 +597,7 @@ class WakeWordService(Service):
         path = self.model_path
         if self.cfg.end_silence_seconds:
             path = tuned_model_dir(path, self.cfg.end_silence_seconds, Path(self.ctx.config.data_path) / "models")
-        model = load_model(path)
+        model = load_model(path)  # the stop words load the same folder (wake_model_dir): one model in memory
         known = None
         if hasattr(model, "vosk_model_find_word"):
             known = lambda w: model.vosk_model_find_word(w) >= 0  # noqa: E731

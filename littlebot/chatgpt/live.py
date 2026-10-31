@@ -1296,11 +1296,11 @@ class LiveCall:
                 hooks["voice_said"] = self._voice_said_lately  # its own "hang on" heard back isn't them
             if "stop_words" in params and getattr(self.audio, "barge_in_on", False) and \
                     getattr(self.cfg, "live_stop_words", False):
+                from littlebot.audio.wakeword import wake_model_dir  # noqa: PLC0415
                 from littlebot.chatgpt.live_audio import RATE  # noqa: PLC0415
                 from littlebot.chatgpt.stop_words import StopWords  # noqa: PLC0415
 
-                wake = getattr(self.ctx.config, "wake", None)
-                hooks["stop_words"] = StopWords.from_model(getattr(wake, "model_path", None), rate=RATE)
+                hooks["stop_words"] = StopWords.from_model(wake_model_dir(self.ctx.config), rate=RATE)
             setup(**hooks)
 
     def _voice_said_lately(self) -> str:
