@@ -150,6 +150,7 @@ ssh alisial3@littlebot.local "grep -a assistant.turn ~/LittleBot/data/logs/littl
 | `cartesia_voice` / `elevenlabs_voice` / `openai_tts_voice` | Tessa / Jessica / coral | the voice |
 | `cartesia_speed` | `0.92` | 0.6-1.5 (1.0 normal): slightly slower than normal |
 | `cartesia_emotion` | `calm` | the voice's emotion when a sentence has no mood; tagged sentences get a gentle matching one ([happy] → content, [sad] → sympathetic, [excited] → happy) |
+| `cartesia_concurrency` | `1` | Cartesia requests open at once (the free plan allows 2: one is kept spare for a sentence just cut off). The next sentence is made while one plays, so there's no gap |
 | `follow_up_seconds` | `8` | listening after an answer without the wake word (0: one question per wake word) |
 | `deep_model` | `claude-sonnet-5-5` | think_harder's model (null: off) |
 | `barge_in` | `true` | talk over LittleBot to interrupt it |
@@ -167,6 +168,8 @@ Change one with `scripts/set_config.py`, e.g.
 |---|---|
 | `assistant: voice pipeline GPT-Live (auto: GPT-Live until DEEPGRAM_API_KEY ... are set)` | add the keys, or set `assistant.pipeline cascade` |
 | `assistant: speech-to-text deepgram didn't open (auth)` | the Deepgram key was refused: the next speech-to-text took over |
+| `assistant tts: cartesia is busy; asking again` | Cartesia refused a request (too many at once): it is asked again half a second later, so the voice stays the same |
+| `assistant tts: cartesia failed (rate_limit); trying the next voice` | still busy: the next voice (OpenAI's, a different one) says that sentence, and Cartesia rests 15 s |
 | `assistant: no voice for a sentence (...)` | every voice failed for one sentence (it was skipped) |
 | `assistant: the brain failed (timeout)` | no answer in time: LittleBot says sorry; check the internet |
 | `assistant: no speech-to-text is available; GPT-Live answers instead` | no key, no OpenAI key and no Vosk model |

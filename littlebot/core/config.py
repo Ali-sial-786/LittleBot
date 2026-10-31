@@ -408,6 +408,9 @@ class AssistantConfig(_Section):
     # The voice's emotion when a sentence has no mood of its own (calm, content, ... from Cartesia's list; null:
     # read from the words). Sentences the brain tags [happy], [sad] ... get a matching gentle one.
     cartesia_emotion: str | None = "calm"
+    # Cartesia requests open at once (the free plan allows 2; one is left for a sentence just cut off, which
+    # Cartesia still counts for a moment). Raise it on a paid plan only if sentences ever wait for each other.
+    cartesia_concurrency: int = Field(default=1, ge=1, le=20)
     elevenlabs_model: str = "eleven_flash_v2_5"
     elevenlabs_voice: str = "cgSgspJ2msm6clMCkdW9"  # "Jessica": warm, conversational
     openai_tts_model: str = "gpt-4o-mini-tts"

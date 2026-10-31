@@ -9,6 +9,11 @@ sample_rate: 48000}`` (the speaker's own rate: nothing to resample) and, for a s
 Cartesia's websocket API would save only the request's few milliseconds over this kept-open connection, so the
 simpler HTTP stream is used.
 
+Each request counts against the plan's limit on requests at once (the free plan: 2; more is refused with 429:
+https://docs.cartesia.ai/use-the-api/concurrency-limits-and-timeouts), and a request just cut off by a barge-in
+still counts for a moment. So by default LittleBot has one open at a time (``assistant.cartesia_concurrency``):
+a sentence is made several times faster than it is said, so the next one is ready before it is needed.
+
 The key: ``CARTESIA_API_KEY`` in .env, or data/cartesia_api_key (chmod 600).
 """
 
@@ -39,8 +44,10 @@ class CartesiaTTS(HttpPcmTTS):
 
     def __init__(self, *, key: Callable[[], str], cloud_ok: CloudOk, model: str = "sonic-3",
                  voice: str = "6ccbfb76-1fc6-48f7-b71d-91ac6298247b", speed: str | float = "normal",
-                 emotion: str | None = None, language: str = "en", url: str = URL, transport: Any = None) -> None:
+                 emotion: str | None = None, language: str = "en", max_concurrent: int = 1, url: str = URL,
+                 transport: Any = None) -> None:
         super().__init__(key=key, cloud_ok=cloud_ok, transport=transport)
+        self.max_concurrent = max_concurrent  # the chain never has more requests than this open at once
         self.model = model
         self.voice = voice
         self.speed = speed

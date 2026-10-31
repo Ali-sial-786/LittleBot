@@ -348,6 +348,82 @@ async def test_stopping_early_closes_the_voice_stream():
     assert voice.streams_done == 1
 
 
+class LimitedVoice(FakeVoice):
+    """A FakeVoice with a limit on requests at once, like Cartesia's plan: more than that is refused (429)."""
+
+    def __init__(self, name: str, *, limit: int = 1, busy: int = 0, **kw: Any) -> None:
+        super().__init__(name, **kw)
+        self.max_concurrent = limit
+        self.busy = busy  # this many requests are refused as busy first
+        self.open = self.most_open = 0
+
+    async def stream(self, text: str) -> AsyncIterator[np.ndarray]:
+        self.texts.append(text)
+        if self.busy:
+            self.busy -= 1
+            raise SpeechError("rate_limit", "HTTP 429")
+        self.open += 1
+        self.most_open = max(self.most_open, self.open)
+        try:
+            for _ in range(self.chunks):
+                await asyncio.sleep(0.01)  # made over a little while, as a real voice does
+                yield np.full(240, 0.1, dtype=np.float32)
+        finally:
+            self.open -= 1
+
+
+async def test_a_voice_is_never_asked_for_more_at_once_than_it_allows():
+    voice = LimitedVoice("cartesia", limit=1, chunks=5)
+    other = FakeVoice("openai")
+    chain = TTSChain([voice, other], cloud_ok=lambda: True, first_audio_timeout=0.03)
+    outs = await asyncio.gather(*(_collect(chain.stream(f"Sentence {i}.")) for i in range(3)))
+    assert all(len(o) for o in outs)
+    assert voice.most_open == 1
+    assert other.texts == []  # waiting for its turn is not "too slow": the same voice says every sentence
+    assert sorted(voice.texts) == ["Sentence 0.", "Sentence 1.", "Sentence 2."]
+
+
+async def test_busy_voice_is_asked_again_before_another_voice_speaks(caplog):
+    voice = LimitedVoice("cartesia", busy=1)
+    other = FakeVoice("openai")
+    chain = TTSChain([voice, other], cloud_ok=lambda: True)
+    with caplog.at_level(logging.INFO, logger="littlebot.assistant.tts"):
+        out = await _collect(chain.stream("Hello there."))
+    assert len(out) and chain.last_provider == "cartesia"
+    assert voice.texts == ["Hello there.", "Hello there."] and other.texts == []
+    assert "cartesia is busy; asking again" in caplog.text
+
+
+async def test_still_busy_hands_the_sentence_on_and_rests_briefly():
+    now = [1000.0]
+    voice = LimitedVoice("cartesia", busy=2)
+    other = FakeVoice("openai")
+    chain = TTSChain([voice, other], cloud_ok=lambda: True, clock=lambda: now[0])
+    await _collect(chain.stream("Hello there."))
+    assert chain.last_provider == "openai" and chain.last_error == "cartesia: rate_limit"
+    assert chain.describe()["providers"][0]["missing"] == "resting after rate_limit"
+    now[0] += 16  # a short rest: busy is over in moments, not minutes
+    await _collect(chain.stream("And again."))
+    assert chain.last_provider == "cartesia"
+
+
+async def test_stopping_early_frees_the_voice_for_the_next_sentence():
+    voice = LimitedVoice("cartesia", limit=1, chunks=50)
+    chain = TTSChain([voice], cloud_ok=lambda: True, first_audio_timeout=0.5)
+    gen = chain.stream("A long story.")
+    await gen.__anext__()
+    assert voice.open == 1
+    await gen.aclose()  # barge-in
+    assert voice.open == 0
+    assert len(await _collect(chain.stream("Okay.")))  # its turn at once, not after SLOT_WAIT_S
+
+
+def test_cartesia_keeps_to_one_request_at_a_time_by_default():
+    chain = build_tts_chain(_ctx())
+    cartesia = next(p for p in chain.providers if p.name == "cartesia")
+    assert cartesia.max_concurrent == 1
+
+
 async def test_cloud_off_uses_only_the_local_voice():
     calls = []
 

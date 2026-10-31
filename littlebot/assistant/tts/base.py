@@ -40,6 +40,7 @@ class HttpPcmTTS:
     is_cloud = True
     sample_rate = 24000
     warm_url = ""  # opened by warm()
+    max_concurrent = 0  # requests open at once the service allows (0: no limit the chain keeps to)
 
     def __init__(self, *, key: Callable[[], str], cloud_ok: CloudOk, transport: Any = None) -> None:
         self._key = key

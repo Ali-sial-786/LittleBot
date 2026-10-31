@@ -5,10 +5,15 @@ local). For each sentence the chain asks the first voice that can be used now:
 
 * a voice that isn't set up (no key) or not allowed now (cloud off: offline mode or the parent's switch) is
   skipped, with one log line when that changes;
+* a voice with a limit on requests at once (``max_concurrent``: Cartesia's free plan allows 2) is never asked
+  for more: a sentence waits for its turn (the one before is made far faster than it is heard, so this costs no
+  gap), and the wait doesn't count against its first-sound time;
+* one that refuses because it is busy (``rate_limit``) is asked again once, a moment later, before another voice
+  says the sentence: a different voice in the middle of an answer sounds like a second person in the room;
 * one that fails (``SpeechError``) or sends no sound within ``assistant.tts_first_audio_timeout_seconds`` hands
-  the same sentence to the next one, and rests for a while (a rejected key: 10 minutes; a slow or failed answer:
-  20 s) so the next sentences don't wait for it too. Once any sound of a sentence was handed on, a failure is not
-  retried elsewhere (it would repeat words): the ``SpeechError`` goes to the caller;
+  the same sentence to the next one, and rests for a while (a rejected key: 10 minutes; busy: 15 s; a slow or
+  failed answer: 20 s) so the next sentences don't wait for it too. Once any sound of a sentence was handed on, a
+  failure is not retried elsewhere (it would repeat words): the ``SpeechError`` goes to the caller;
 * "local" (piper / espeak-ng / mock on the robot) is always there, last, whatever ``assistant.tts`` says, and
   isn't given up on early (it has nothing after it).
 
@@ -19,6 +24,7 @@ path), chunk by chunk with the phase kept across chunks (``dsp.StreamResampler``
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import time
 from typing import Any, AsyncIterator, Callable
@@ -41,8 +47,10 @@ MAX_SENTENCE_CHARS = 1000
 LAST_VOICE_TIMEOUT_S = 20.0  # the last voice has nothing after it: it gets this long for its first sound
 WARM_TIMEOUT_S = 5.0
 # after a failure before any sound, a cloud voice is skipped this long (seconds, by SpeechError kind)
-REST_S = {"auth": 600.0, "bad_request": 600.0, "rate_limit": 60.0}
+REST_S = {"auth": 600.0, "bad_request": 600.0, "rate_limit": 15.0}
 REST_DEFAULT_S = 20.0
+BUSY_RETRY_S = 0.5  # a voice that said "too many requests at once" is asked again after this
+SLOT_WAIT_S = 10.0  # a sentence waits at most this long for its turn with a voice that has a limit
 
 
 class TTSChain:
@@ -62,6 +70,7 @@ class TTSChain:
         self.last_error: str | None = None  # "<voice>: <kind>" of the last failure
         self._resting: dict[str, tuple[str, float]] = {}  # voice -> (kind, until)
         self._said_why: dict[str, str] = {}  # voice -> why it was last skipped (logged once per change)
+        self._slots: dict[str, tuple[Any, asyncio.Semaphore]] = {}  # voice -> (event loop, its requests at once)
 
     # ------------------------------------------------------------ which voices can speak now
     def _why_not(self, p: StreamingTTS) -> str | None:
@@ -109,43 +118,79 @@ class TTSChain:
         for i, p in enumerate(usable):
             last = i == len(usable) - 1
             timeout = max(self.first_audio_timeout, LAST_VOICE_TIMEOUT_S) if last else self.first_audio_timeout
-            chunks: Any = None
-            started = False
-            try:
-                chunks = p.stream(text).__aiter__()
+            for attempt in (1, 2):
+                started = False
                 try:
-                    async with asyncio.timeout(timeout):
-                        first = await _first_sound(chunks)
-                except TimeoutError:
-                    raise SpeechError("timeout", f"no sound within {timeout:g}s") from None
-                if first is None:
-                    raise SpeechError("bad_audio", "no sound")
-                started = True
-                self.last_provider = p.name
-                resampler = StreamResampler(int(p.sample_rate), OUTPUT_RATE)
-                out = resampler.process(first)
-                if len(out):
-                    yield out
-                async for chunk in chunks:
-                    if len(chunk):
-                        out = resampler.process(np.asarray(chunk, dtype=np.float32))
-                        if len(out):
+                    async with self._slot(p), contextlib.aclosing(self._one(p, text, timeout)) as sound:
+                        async for out in sound:  # closed at once when the listener stops (a barge-in)
+                            started = True
                             yield out
-                self._resting.pop(p.name, None)
-                return
-            except SpeechError as e:
-                failure = self._failed(p, e, started=started, has_next=not last)
-                if started:
-                    raise failure from None
-            except Exception as e:  # noqa: BLE001 - a voice's bug: the next voice, as for any failure
-                log.debug("assistant tts: %s raised", p.name, exc_info=True)
-                failure = self._failed(p, SpeechError("server_error", type(e).__name__), started=started,
-                                       has_next=not last)
-                if started:
-                    raise failure from None
-            finally:
-                await _close(chunks)
+                    self._resting.pop(p.name, None)
+                    return
+                except SpeechError as e:
+                    if not started and e.kind == "rate_limit" and attempt == 1:
+                        log.info("assistant tts: %s is busy; asking again", p.name)
+                        await asyncio.sleep(BUSY_RETRY_S)
+                        continue
+                    failure = self._failed(p, e, started=started, has_next=not last)
+                    if started:
+                        raise failure from None
+                except Exception as e:  # noqa: BLE001 - a voice's bug: the next voice, as for any failure
+                    log.debug("assistant tts: %s raised", p.name, exc_info=True)
+                    failure = self._failed(p, SpeechError("server_error", type(e).__name__), started=started,
+                                           has_next=not last)
+                    if started:
+                        raise failure from None
+                break
         raise failure or SpeechError("not_installed", "no voice")
+
+    async def _one(self, p: StreamingTTS, text: str, timeout: float) -> AsyncIterator[np.ndarray]:
+        """One voice's sound for the sentence at 48 kHz; SpeechError if it fails, or has no sound within
+        ``timeout``."""
+        chunks: Any = None
+        try:
+            chunks = p.stream(text).__aiter__()
+            try:
+                async with asyncio.timeout(timeout):
+                    first = await _first_sound(chunks)
+            except TimeoutError:
+                raise SpeechError("timeout", f"no sound within {timeout:g}s") from None
+            if first is None:
+                raise SpeechError("bad_audio", "no sound")
+            self.last_provider = p.name
+            resampler = StreamResampler(int(p.sample_rate), OUTPUT_RATE)
+            out = resampler.process(first)
+            if len(out):
+                yield out
+            async for chunk in chunks:
+                if len(chunk):
+                    out = resampler.process(np.asarray(chunk, dtype=np.float32))
+                    if len(out):
+                        yield out
+        finally:
+            await _close(chunks)
+
+    @contextlib.asynccontextmanager
+    async def _slot(self, p: StreamingTTS) -> AsyncIterator[None]:
+        """One of the voice's requests at once, held while it speaks (no limit: nothing to wait for)."""
+        limit = int(getattr(p, "max_concurrent", 0) or 0)
+        if limit <= 0:
+            yield
+            return
+        loop = asyncio.get_running_loop()
+        held = self._slots.get(p.name)
+        if held is None or held[0] is not loop:
+            held = self._slots[p.name] = (loop, asyncio.Semaphore(limit))
+        sem = held[1]
+        try:
+            async with asyncio.timeout(SLOT_WAIT_S):
+                await sem.acquire()
+        except TimeoutError:
+            raise SpeechError("timeout", f"no turn within {SLOT_WAIT_S:g}s") from None
+        try:
+            yield
+        finally:
+            sem.release()
 
     def _failed(self, p: StreamingTTS, e: SpeechError, *, started: bool, has_next: bool) -> SpeechError:
         self.last_error = f"{p.name}: {e.kind}"
@@ -211,6 +256,7 @@ def build_tts_chain(ctx: Any, *, transport: Any = None, cloud_ok: CloudOk | None
             providers.append(CartesiaTTS(key=key_reader(ctx, "cartesia_api_key"), cloud_ok=ok, model=a.cartesia_model,
                                          voice=a.cartesia_voice, speed=a.cartesia_speed,
                                          emotion=getattr(a, "cartesia_emotion", None), language=a.language,
+                                         max_concurrent=getattr(a, "cartesia_concurrency", 1),
                                          transport=transport))
         elif name == "elevenlabs":
             providers.append(ElevenLabsTTS(key=key_reader(ctx, "elevenlabs_api_key"), cloud_ok=ok,
