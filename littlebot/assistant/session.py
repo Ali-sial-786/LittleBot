@@ -118,6 +118,7 @@ class VoiceSession:
         self._confirmed_at: float | None = None
         self._spec_at = 0.0
         self._mouths: list[VoiceOut] = []  # every VoiceOut made in this session (only the newest may talk)
+        self.mouth_frames = 0  # lip-sync frames sent to the face in the current turn (its log line says how many)
         self._unsaid: list[str] = []  # announcements not said yet (busy until they are)
         self._saying = False
         # Who is talking (voice recognition, opt-in) and who is in view (face recognition, opt-in): for the brain.
@@ -520,10 +521,11 @@ class VoiceSession:
         self._publish(ev.TURN_DONE, {"ms_to_first_audio": first, "tools": list(getattr(result, "tools", []) or [])})
         if self.cfg.log_timings:
             log.info("assistant turn: by=%s stt=%s first_text_ms=%s first_audio_ms=%s total_ms=%d tools=%s tts=%s "
-                     "model=%s%s", said_by, self.stt_name, getattr(result, "first_text_ms", None), first,
+                     "model=%s mouth_frames=%d%s", said_by, self.stt_name, getattr(result, "first_text_ms", None), first,
                      int((self._now() - t0) * 1000), ",".join(getattr(result, "tools", []) or []) or "-",
-                     ",".join(voice.providers) or "-", getattr(result, "model", "") or "-",
+                     ",".join(voice.providers) or "-", getattr(result, "model", "") or "-", self.mouth_frames,
                      f" error={result.error}" if result is not None and result.error else "")
+        self.mouth_frames = 0
         if self._end_after:
             self.end(f"said {self._end_after}")
             return
@@ -937,6 +939,8 @@ class VoiceSession:
             if mouth != last or (speaking and now - sent >= 0.15):
                 last, sent = mouth, now
                 self._publish(Topics.AUDIO_VISEME, {"level": mouth[0], **({"shape": mouth[1]} if mouth[1] else {})})
+                if speaking and mouth[0] >= 0.05:
+                    self.mouth_frames += 1  # for the turn's log line: the face's mouth really moved
             if not speaking and self.phase == "speaking" and not self._answering():
                 self._set_phase("listening")
             stalled = getattr(self.audio, "stalled", None)
