@@ -61,6 +61,12 @@ it signs in by itself at every start, so LittleBot can find it. You only do this
 Someone else in the family with their own account? Add their email under the app's **User Management**
 first. A new app is in "development mode", which only works for the people listed there.
 
+Spotify's rules for development-mode apps since February 2026
+([their post](https://developer.spotify.com/blog/2026-02-06-update-on-developer-access-and-platform-security)):
+the account that makes the app needs **Premium**, each account can have **one** such app, and at most **five**
+people can use it. Everything LittleBot uses is still allowed (search, playback on a device, your liked songs,
+playlists and top tracks); search answers at most 10 results, and LittleBot asks for 8.
+
 ### 4. Connect on the dashboard
 
 On the dashboard, open **Assistant** and find the **Spotify** section.
