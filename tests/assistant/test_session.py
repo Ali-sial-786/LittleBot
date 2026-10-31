@@ -226,9 +226,12 @@ async def test_the_call_audio_opens_before_the_wake_word_lets_go_of_the_micropho
     order: list[str] = []
     opened = audio.open
     audio.open = lambda loop: (order.append("call audio open"), opened(loop))[-1]
-    audio.flush_input = lambda: order.append("flush")
+    kept: list[float] = []
+    audio.flush_input = lambda keep_s=0.0: (order.append("flush"), kept.append(keep_s))
+    let_go_at_once: list[bool] = []
 
     async def suspend(owner: str) -> None:
+        let_go_at_once.append(carry.taker_listens)  # the call listens already: no waiting for a pause
         order.append("wake word lets go")
 
     svc.ctx.audio.suspend = suspend
@@ -239,7 +242,8 @@ async def test_the_call_audio_opens_before_the_wake_word_lets_go_of_the_micropho
     await svc.start()
     await svc.start_session(carry=carry)
     await _wait(lambda: stt.stream is not None and stt.stream.fed >= 1600)
-    assert order[:3] == ["call audio open", "wake word lets go", "flush"]
+    assert order[:3] == ["call audio open", "wake word lets go", "flush"] and let_go_at_once == [True]
+    assert 0.0 < kept[0] < 5.0  # what the call heard since the carry ended is kept
     await svc.stop_session("test")
 
 

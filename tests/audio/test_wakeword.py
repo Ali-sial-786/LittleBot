@@ -573,6 +573,23 @@ async def test_early_only_for_a_wake_phrase_and_still_word_confidence_decides(ri
     assert asked == ["hey little bot"]  # switched off: only final results
 
 
+async def test_a_call_already_listening_gets_the_microphone_at_once(rig, caplog):
+    caplog.set_level(logging.INFO, logger="littlebot.wake")
+    r = await rig()
+    await _listening(r)
+    r.mic.set_level(0.1)  # still talking: otherwise the hand-over waits for their next pause
+    start = r.live.start_session
+
+    async def listening_start(**kw: Any) -> dict[str, Any]:
+        kw["carry"].taker_listens = True  # the assistant's call audio opened beside the wake word
+        return await start(**kw)
+
+    r.live.start_session = listening_start
+    r.rec.say("hey little bot what is the weather", wake_ended_ago=0.6)
+    await until(lambda: r.live.carries and not r.live.carries[0].is_open, what="the microphone handed over")
+    assert "at once (the call's microphone was open already)" in caplog.text
+
+
 async def test_without_word_times_the_whole_sentence_is_carried(rig):
     r = await rig()
     await _listening(r)

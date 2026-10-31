@@ -963,6 +963,9 @@ class WakeWordService(Service):
                 now = time.monotonic()
                 if self._audio_busy:  # hand it over at a pause (or while LittleBot's own sound is left out anyway)
                     asked = now if asked is None else asked
+                    if carry.taker_listens:
+                        when = " at once (the call's microphone was open already)"
+                        break
                     if muted or carry.quiet_s >= HANDOVER_QUIET_SECONDS:
                         if now - asked >= 0.05:
                             when = f" at a pause ({int((now - asked) * 1000)} ms after it asked)"

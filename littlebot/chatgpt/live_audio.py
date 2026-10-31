@@ -667,11 +667,16 @@ class LiveAudio:
         self._mouth = (0.0, "closed")
 
     # ------------------------------------------------------------ microphone
-    def flush_input(self) -> None:
-        """Forget the microphone audio not read yet (the assistant opens the call audio while the wake word still
-        listens: what was heard until the wake word let go is in its carry already)."""
+    def flush_input(self, keep_s: float = 0.0) -> None:
+        """Forget the microphone audio not read yet but its last ``keep_s`` seconds (the assistant opens the call
+        audio while the wake word still listens: what was heard until the wake word let go is in its carry)."""
         with self._lock:
+            keep: list[np.ndarray] = []
+            if keep_s > 0 and self._in:
+                per = max(1, len(self._in[-1])) / float(self.mic_rate or RATE)
+                keep = list(self._in)[-max(1, math.ceil(keep_s / per)):]
             self._in.clear()
+            self._in.extend(keep)
         self._pcm = np.zeros(0, dtype=np.int16)
 
     def _record_cb(self, indata: Any, frames: int, time_info: Any, status: Any) -> None:  # PortAudio thread

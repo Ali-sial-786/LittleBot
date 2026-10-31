@@ -60,6 +60,7 @@ ECHO_SHARE = 0.8  # a turn whose words are mostly LittleBot's own recent words i
 PAUSE_WORDS = frozenset({"wait", "wait a second", "wait a minute", "hold on", "hang on", "pause"})
 NO_WORDS_TURN_S = 4.0  # a turn with no words at all after this long was a noise: listening goes on as before
 CUT_IN_NOTE_S = 15.0  # a turn this soon after they talked over the voice is for LittleBot (_turn_notes)
+CARRY_OVERLAP_S = 0.02  # the call keeps this much from before the wake word's carry ended (a few ms twice, not lost)
 VOICE_RMS = 0.01  # a 16 kHz chunk this loud is someone talking (the log says how long after it a turn ended)
 EXPRESSION_HOLD_S = 6.0
 SORRY = {
@@ -181,33 +182,42 @@ class VoiceSession:
         audio_svc = self.ctx.audio
         self._set_phase("listening")
         self.audio = self.svc.audio_factory()
-        early = False
-        if self.carry is not None and hasattr(audio_svc, "suspend"):
-            # The call audio opens while the wake word still listens (PipeWire shares the microphone), so nothing
-            # said between the wake word letting go and the call's microphone opening (~150 ms) is lost.
-            try:
-                await asyncio.to_thread(self.audio.open, self._loop)
-                early = True
-            except Exception as e:  # noqa: BLE001 - a device only one stream may open: the old order
-                log.info("assistant: the call audio didn't open beside the wake word (%s); opening it after",
-                         type(e).__name__)
-                with contextlib.suppress(Exception):
-                    self.audio.close()
-                self.audio = self.svc.audio_factory()
-        t_audio = self._now()
-        if hasattr(audio_svc, "suspend"):
-            await audio_svc.suspend("assistant")
-            self._suspended = True
-            flush = getattr(self.audio, "flush_input", None)
-            if early and flush is not None:
-                flush()  # the wake word's carry has what was said until now
-        t_lent = self._now()
-        if not early:
-            await asyncio.to_thread(self.audio.open, self._loop)
+        stt_ms: list[int] = []
+        stt_open = asyncio.ensure_future(self._open_stt(stt_ms))  # speech-to-text connects while the audio opens
+        try:
+            early = False
+            if self.carry is not None and hasattr(audio_svc, "suspend"):
+                # The call audio opens while the wake word still listens (PipeWire shares the microphone), so
+                # nothing said between the wake word letting go and the call's microphone opening (~150 ms) is lost.
+                try:
+                    await asyncio.to_thread(self.audio.open, self._loop)
+                    early = True
+                    self.carry.taker_listens = True  # the wake word lets go at once, not at their next pause
+                except Exception as e:  # noqa: BLE001 - a device only one stream may open: the old order
+                    log.info("assistant: the call audio didn't open beside the wake word (%s); opening it after",
+                             type(e).__name__)
+                    with contextlib.suppress(Exception):
+                        self.audio.close()
+                    self.audio = self.svc.audio_factory()
             t_audio = self._now()
-        self._log_devices()
-        self._setup_barge_in()
-        await self._open_stt()
+            if hasattr(audio_svc, "suspend"):
+                await audio_svc.suspend("assistant")
+                self._suspended = True
+                flush = getattr(self.audio, "flush_input", None)
+                if early and flush is not None:
+                    # the wake word's carry has what was said until it let go; the call keeps what came after
+                    sealed = getattr(self.carry, "sealed_at", None)
+                    flush(keep_s=time.monotonic() - sealed + CARRY_OVERLAP_S if sealed is not None else 0.0)
+            t_lent = self._now()
+            if not early:
+                await asyncio.to_thread(self.audio.open, self._loop)
+                t_audio = self._now()
+            self._log_devices()
+            self._setup_barge_in()
+            await stt_open
+        finally:
+            if not stt_open.done():
+                stt_open.cancel()
         t_stt = self._now()
         self._who_woke()
         self._watch_faces()
@@ -225,8 +235,9 @@ class VoiceSession:
         self.detail = "Listening."
         audio_ms, lent_ms = ((t_audio - t0, t_lent - t_audio) if early else (t_audio - t_lent, t_lent - t0))
         log.info("assistant: listening %d ms after the wake word (speech-to-text: %s; call audio %d ms%s, devices lent "
-                 "%d ms, speech-to-text %d ms)", self.connect_ms, self.stt_name, int(audio_ms * 1000),
-                 " first" if early else "", int(lent_ms * 1000), int((t_stt - max(t_audio, t_lent)) * 1000))
+                 "%d ms, speech-to-text %d ms beside them, waited for %d ms more)", self.connect_ms, self.stt_name,
+                 int(audio_ms * 1000), " first" if early else "", int(lent_ms * 1000), stt_ms[0] if stt_ms else -1,
+                 int((t_stt - max(t_audio, t_lent)) * 1000))
         self._publish(ev.SESSION, {"active": True, "source": self.source})
 
     def _log_devices(self) -> None:
@@ -247,8 +258,9 @@ class VoiceSession:
             jobs.append(warm_tts())
         await asyncio.gather(*jobs, return_exceptions=True)
 
-    async def _open_stt(self) -> None:
+    async def _open_stt(self, took_ms: list[int] | None = None) -> None:
         """Open speech-to-text (the chain tries its providers in order; one that failed lately is skipped)."""
+        t0 = self._now()
         if self._stt_chain is None:
             self._stt_chain = self.svc.stt_provider()
         chain = self._stt_chain
@@ -259,6 +271,8 @@ class VoiceSession:
         except Exception as e:  # noqa: BLE001 - SpeechError: none of them opened
             raise SessionFailed("stt_failed", str(getattr(e, "kind", "") or type(e).__name__)) from None
         self.stt_name = str(getattr(chain, "last_provider", None) or chain.name)
+        if took_ms is not None:
+            took_ms.append(int((self._now() - t0) * 1000))
 
     def _on_stt(self, event: STTEvent) -> None:
         """From the STT provider (any thread): into the session's queue."""

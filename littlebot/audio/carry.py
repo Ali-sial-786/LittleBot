@@ -96,6 +96,9 @@ class SpeechCarry:
         self.phrase = phrase
         self.quiet_level = float(quiet_level)  # RMS (full scale 1.0) below which a stretch is a pause
         self.kept_talking = kept_talking  # the recogniser heard more words after the wake phrase
+        # The call's own microphone already listens (it keeps what comes after ``sealed_at``): the wake word hands
+        # the microphone over at once, not at their next pause.
+        self.taker_listens = False
         self.heard_at = time.monotonic() if heard_at is None else heard_at  # when the wake phrase was recognised
         self.lead_s = 0.0  # seconds of it said before the wake phrase was recognised (the rest of that sentence)
         self.quiet_s = 0.0  # how long it has been quiet at its end (a pause: a good moment to hand over)
