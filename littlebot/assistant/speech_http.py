@@ -57,7 +57,9 @@ def is_allowed(cloud_ok: CloudOk) -> bool:
 
 def status_kind(status: int) -> str:
     """An HTTP error status as a SpeechError kind."""
-    if status in (401, 402, 403):  # 402: Cartesia / ElevenLabs say "out of credits" this way
+    if status == 402:  # Cartesia / ElevenLabs: out of credits ("quota_exceeded": Cartesia on the robot, 2026-10-31)
+        return "quota"
+    if status in (401, 403):
         return "auth"
     if status == 429:
         return "rate_limit"

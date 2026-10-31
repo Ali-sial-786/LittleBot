@@ -26,7 +26,7 @@ from littlebot.assistant.stt.vosk import VoskSTT, model_path_for
 log = logging.getLogger("littlebot.assistant.stt")
 
 # after a failure, a cloud provider is skipped this long (seconds, by SpeechError kind)
-REST_S = {"auth": 600.0, "bad_request": 600.0, "rate_limit": 60.0, "cloud_off": 0.0}
+REST_S = {"auth": 600.0, "quota": 3600.0, "bad_request": 600.0, "rate_limit": 60.0, "cloud_off": 0.0}
 REST_DEFAULT_S = 20.0
 
 

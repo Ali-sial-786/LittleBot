@@ -204,7 +204,8 @@ class FluxStream:
         elif kind == "Error":
             code = str(m.get("code") or "").upper()
             log.warning("deepgram: error %s", code[:60] or "?")
-            await self._fail("auth" if ("AUTH" in code or "PERMISSION" in code or "CREDIT" in code) else
+            await self._fail("quota" if ("CREDIT" in code or "QUOTA" in code or "BALANCE" in code) else
+                             "auth" if ("AUTH" in code or "PERMISSION" in code) else
                              "rate_limit" if ("RATE" in code or "LIMIT" in code) else "server_error")
         elif kind == "Warning":
             log.info("deepgram: warning %s", str(m.get("code") or "?")[:60])

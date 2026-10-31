@@ -48,7 +48,8 @@ MAX_SENTENCE_CHARS = 1000
 LAST_VOICE_TIMEOUT_S = 20.0  # the last voice has nothing after it: it gets this long for its first sound
 WARM_TIMEOUT_S = 5.0
 # after a failure before any sound, a cloud voice is skipped this long (seconds, by SpeechError kind)
-REST_S = {"auth": 600.0, "bad_request": 600.0, "rate_limit": 15.0}
+# quota: out of credits (HTTP 402): every request fails until the plan is topped up
+REST_S = {"auth": 600.0, "quota": 3600.0, "bad_request": 600.0, "rate_limit": 15.0}
 REST_DEFAULT_S = 20.0
 BUSY_RETRY_S = 0.5  # a voice that said "too many requests at once" is asked again after this
 SLOT_WAIT_S = 10.0  # a sentence waits at most this long for its turn with a voice that has a limit
@@ -201,6 +202,10 @@ class TTSChain:
             return e
         if getattr(p, "is_cloud", True):
             self._resting[p.name] = (e.kind, self._clock() + REST_S.get(e.kind, REST_DEFAULT_S))
+        if e.kind == "quota":
+            log.warning("assistant tts: %s is out of credits (its plan's limit: top it up on its website); %s",
+                        p.name, "the next voice speaks for an hour" if has_next else "no other voice")
+            return e
         log.warning("assistant tts: %s failed (%s)%s", p.name, e.kind, "; trying the next voice" if has_next else "")
         return e
 

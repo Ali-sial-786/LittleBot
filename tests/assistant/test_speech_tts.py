@@ -199,8 +199,9 @@ async def test_json_answer_is_never_played():
     assert e.value.kind == "bad_audio"
 
 
-@pytest.mark.parametrize(("status", "kind"), [(401, "auth"), (402, "auth"), (429, "rate_limit"), (500, "server_error"),
-                                              (422, "bad_request")])
+# 402: out of credits (Cartesia's "quota_exceeded" on the robot, 2026-10-31), rested an hour, not a bad key
+@pytest.mark.parametrize(("status", "kind"), [(401, "auth"), (402, "quota"), (403, "auth"), (429, "rate_limit"),
+                                              (500, "server_error"), (422, "bad_request")])
 async def test_http_errors_become_kinds(status, kind):
     rec = Recorder(status={"api.cartesia.ai": status})
     p = CartesiaTTS(key=lambda: "k", cloud_ok=lambda: True, transport=httpx.MockTransport(rec))
