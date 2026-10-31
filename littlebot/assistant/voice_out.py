@@ -24,6 +24,12 @@ from littlebot.assistant.speech import MOOD
 log = logging.getLogger("littlebot.assistant.voice")
 
 AHEAD_S = 0.5  # audio handed to the speaker ahead of what is being heard
+# The quiet start of each sentence is cut: Cartesia begins every sentence with 0.2-0.9 s of near-silence (measured on
+# the robot, 2026-10-31), heard as a pause before the first word and between sentences.
+VOICE_LEVEL = 0.02  # louder than this is the voice
+LEAD_FIRST_S = 0.03  # kept before the first word of an answer
+LEAD_NEXT_S = 0.12  # kept before the first word of each later sentence (a natural pause after the one before)
+MAX_CUT_S = 1.5  # never more than this is cut from a sentence
 EXCITED = frozenset({"excited", "celebrating", "surprised"})  # the moods whose "!" are kept
 PACE_STEP_S = 0.02
 PREFETCH = 2  # sentences being synthesised at once (the one playing and the next)
@@ -53,6 +59,7 @@ class VoiceOut:
         self._timers: list[asyncio.TimerHandle] = []
         self.heard: list[str] = []  # sentences that started playing (what they actually heard)
         self.first_audio_at: float | None = None
+        self.cut_s = 0.0  # quiet cut from the sentences' starts (the turn's log line says how much)
         self.failures = 0
         self.providers: list[str] = []
 
@@ -147,6 +154,9 @@ class VoiceOut:
     async def _play(self, s: Sentence, q: asyncio.Queue[Any]) -> None:
         rate = int(getattr(self.tts, "sample_rate", 48000) or 48000)
         started = False
+        lead = int(rate * (LEAD_FIRST_S if self.first_audio_at is None else LEAD_NEXT_S))
+        quiet: np.ndarray | None = np.zeros(0, dtype=np.float32)  # the end of its quiet start (None: it speaks)
+        cut = 0
         while True:
             self._top_up()  # the next sentence is being made while this one plays
             try:
@@ -156,19 +166,42 @@ class VoiceOut:
                 log.warning("assistant: the voice stalled for %.0f s in a sentence; skipping the rest of it",
                             CHUNK_STALL_S)
                 return
-            if chunk is None or self._cancelled:
+            if self._cancelled:
+                return
+            if chunk is None:
+                if quiet is not None and len(quiet):  # never louder than a whisper: what was kept of it
+                    self.cut_s += cut / rate
+                    await self._out(s, quiet, rate, started)
                 return
             pcm = np.asarray(chunk, dtype=np.float32).reshape(-1)
             if not len(pcm):
                 continue
-            while float(getattr(self.output, "queued_s", 0.0) or 0.0) > AHEAD_S:
-                await asyncio.sleep(PACE_STEP_S)
-                if self._cancelled:
-                    return
-            if not started:
-                started = True
-                self._started(s, float(getattr(self.output, "queued_s", 0.0) or 0.0))
-            self.output.play_pcm(pcm, rate)
+            if quiet is not None:
+                loud = np.flatnonzero(np.abs(pcm) > VOICE_LEVEL)
+                both = np.concatenate([quiet, pcm])
+                if not len(loud) and cut + len(pcm) <= MAX_CUT_S * rate:
+                    keep = min(len(both), lead)
+                    cut += len(both) - keep
+                    quiet = both[len(both) - keep:]
+                    continue
+                start = max(0, len(quiet) + (int(loud[0]) if len(loud) else 0) - lead)
+                cut += start
+                self.cut_s += cut / rate
+                pcm, quiet = both[start:], None
+            if not await self._out(s, pcm, rate, started):
+                return
+            started = True
+
+    async def _out(self, s: Sentence, pcm: np.ndarray, rate: int, started: bool) -> bool:
+        """Hand ``pcm`` to the speaker once it has room (paced: never more than AHEAD_S waiting). False: cancelled."""
+        while float(getattr(self.output, "queued_s", 0.0) or 0.0) > AHEAD_S:
+            await asyncio.sleep(PACE_STEP_S)
+            if self._cancelled:
+                return False
+        if not started:
+            self._started(s, float(getattr(self.output, "queued_s", 0.0) or 0.0))
+        self.output.play_pcm(pcm, rate)
+        return True
 
     def _started(self, s: Sentence, delay: float) -> None:
         if self.first_audio_at is None:
