@@ -98,6 +98,7 @@ MUTED_NOTE_SECONDS = 20.0  # ignoring the microphone (LittleBot making sound) th
 SILENT_NOTE_SECONDS = 30.0  # the microphone giving only silence this long: say so in the log
 SILENT_LEVEL = 1e-4  # RMS below this is silence (a real room is louder, even through noise suppression)
 RELEASE_TIMEOUT = 2.0  # release_mic() waits at most this long for the stream to close
+SLOW_RELEASE_S = 0.2  # a hand-over slower than this is logged (it delays listening after the wake word)
 RETRY_SECONDS = 5.0  # after a microphone error
 AVAILABILITY_RECHECK = 10.0  # look for a newly downloaded model this often
 MIN_LISTEN_SECONDS = 0.3  # a listen that ends sooner is followed by a short pause (no busy loop)
@@ -393,6 +394,7 @@ class WakeWordService(Service):
     # ------------------------------------------------- AudioService hand-over
     def release_mic(self, reason: str) -> None:
         """The AudioService needs the microphone: stop reading and close the stream (blocking)."""
+        t0 = time.monotonic()
         with self._cv:
             self._audio_busy, self._busy_reason = True, reason
             self._cv.notify_all()
@@ -403,6 +405,9 @@ class WakeWordService(Service):
                     log.warning("wake word: microphone not released within %.1fs (%s)", RELEASE_TIMEOUT, reason)
                     break
                 self._cv.wait(remaining)
+        waited = time.monotonic() - t0
+        if waited >= SLOW_RELEASE_S:
+            log.info("wake word: gave the microphone up after %d ms (%s)", int(waited * 1000), reason)
 
     def mic_free(self) -> None:
         with self._cv:
@@ -720,8 +725,11 @@ class WakeWordService(Service):
             self._listening = False
             pending.clear()
             heard.clear()
+            t_close = time.monotonic()
             with contextlib.suppress(Exception):
                 inp.close()
+            if time.monotonic() - t_close >= SLOW_RELEASE_S:
+                log.info("wake word: closing the microphone took %d ms", int((time.monotonic() - t_close) * 1000))
 
     def _match(self, result: dict[str, Any], video: bool) -> str | None:
         """The wake phrase in a final result; while a video plays only the video phrases, more confident."""
