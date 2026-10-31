@@ -45,3 +45,12 @@ async def test_run_volume_and_time() -> None:
     assert "set_volume" in box.calls
     said = await intents.run(intents.match("what time is it"), box, ctx)
     assert said.startswith("It's ") and ("a.m." in said or "p.m." in said)
+
+
+async def test_voice_can_never_make_it_silent() -> None:
+    ctx = make_test_context()
+    box = RobotToolbox(ctx, mode="chat")
+    assert await intents.run(intents.match("volume 0"), box, ctx) == "Volume 15, as quiet as I go."
+    assert ctx.audio.volume == 0.15  # the quietest it goes by voice
+    assert await intents.run(intents.match("softer"), box, ctx) == "That's as quiet as I go."
+    assert ctx.audio.volume == 0.15

@@ -179,6 +179,7 @@ class VoiceSession:
         self._set_phase("listening")
         self.audio = self.svc.audio_factory()
         await asyncio.to_thread(self.audio.open, self._loop)
+        self._log_devices()
         self._setup_barge_in()
         await self._open_stt()
         self._who_woke()
@@ -197,6 +198,17 @@ class VoiceSession:
         self.detail = "Listening."
         log.info("assistant: listening %d ms after the wake word (speech-to-text: %s)", self.connect_ms, self.stt_name)
         self._publish(ev.SESSION, {"active": True, "source": self.source})
+
+    def _log_devices(self) -> None:
+        """Which microphone and speaker the session opened, and at what volume: the first thing to check when it
+        talks (the face moves) but nothing is heard."""
+        names = getattr(self.audio, "device_names", ("", ""))
+        try:
+            volume = float(self.ctx.settings.get("audio.volume", self.ctx.config.audio.speaker.volume))
+        except (TypeError, ValueError):
+            volume = -1.0
+        log.info("assistant: microphone %s, speaker %s, volume %d%%%s", names[0] or "?", names[1] or "?",
+                 round(volume * 100), " (TOO LOW TO HEAR: say 'volume 60')" if 0 <= volume < 0.08 else "")
 
     async def _warm(self) -> None:
         jobs = [self.svc.brain.warm()]

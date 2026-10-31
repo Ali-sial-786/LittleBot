@@ -42,6 +42,16 @@ SKIP = _whole(r"(?:skip|next)(?: (?:song|track|video|one|it))?|play the next (?:
 STOP_MEDIA = _whole(r"stop (?:the )?(?:video|music|song|playing)|turn (?:the )?(?:video|music) off")
 TIME = _whole(r"what(?:'s| is) the time|what time is it(?: now)?|(?:tell me )?the time")
 
+MIN_VOICE_VOLUME = 0.15  # by voice the volume never goes below this (the dashboard can still go lower)
+
+
+def _speaker_volume(box: Any) -> float | None:
+    try:
+        return float(box._speaker_volume())  # noqa: SLF001 - the toolbox's own reading of the volume
+    except Exception:  # noqa: BLE001
+        return None
+
+
 ACK_THANKS = ("You're welcome!", "Anytime!", "Happy to help!", "My pleasure!")
 ACK_BYE = ("Bye for now!", "See you!", "Talk soon!")
 ACK_OK = ("Okay.", "Sure.", "Done.")
@@ -92,6 +102,12 @@ async def run(intent: Intent, box: Any, ctx: Any) -> str:
     """Do it with LittleBot's toolbox; returns what to say (``intent.say`` unless the action says otherwise)."""
     name = intent.name
     if name == "volume":
+        current = _speaker_volume(box)
+        if intent.args.get("step", 0) < 0 and current is not None and current <= MIN_VOICE_VOLUME + 1e-6:
+            return "That's as quiet as I go."  # "softer" said again and again must never make it silent
+        if "percent" in intent.args and intent.args["percent"] < MIN_VOICE_VOLUME * 100:
+            intent.args["percent"] = int(MIN_VOICE_VOLUME * 100)  # "volume 0" by voice: the quietest it still hears
+            intent.say = f"Volume {intent.args['percent']}, as quiet as I go."
         if "percent" in intent.args:
             res = await box.run("set_volume", {"percent": intent.args["percent"]})
         else:
