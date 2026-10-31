@@ -43,6 +43,7 @@ log = logging.getLogger("littlebot.assistant.agent")
 
 FINAL_TOOLS = frozenset({"show_on_screen", "change_card", "set_face"})
 DEEP_TOOL = "think_harder"
+DONE_CHARS = 120  # a tool's result kept in the chat history this long (later turns trust what really happened)
 MAX_TOOL_ROUNDS = 6
 FACE_TAGS = ("[happy] [excited] [curious] [surprised] [thinking] [confused] [sad] [playful] [affectionate] "
              "[celebrating] [neutral]")
@@ -105,6 +106,7 @@ class TurnResult:
     text: str = ""  # the whole answer (clean words)
     sentences: int = 0
     tools: list[str] = dataclasses.field(default_factory=list)
+    done: list[str] = dataclasses.field(default_factory=list)  # "volume_down: Volume 50%": what the tools did (short)
     silent: bool = False
     error: str | None = None  # a short kind: timeout, network, auth ... (the voice says a short sorry)
     provider: str = ""
@@ -290,7 +292,7 @@ class Brain:
 
     def build_messages(self, text: str, history: list[dict[str, str]], toolbox: Any = None, *,
                        extra: list[str] | None = None) -> list[dict[str, str]]:
-        items = [*(extra or []), *self.context_items(toolbox)]
+        items = [i for i in (*(extra or []), *self.context_items(toolbox)) if i and i.strip()]
         question = text.strip()
         if items:
             question = CONTEXT.format(items="; ".join(i.strip().rstrip(".") for i in items if i)) + "\n" + question
@@ -336,6 +338,12 @@ class Brain:
             result.tools.append(str(name))
             if on_tool is not None:
                 _call(on_tool, str(name))
+            out = await one_tool(name, arguments)
+            if name != DEEP_TOOL and name not in FINAL_TOOLS:  # kept for later turns: it really happened
+                result.done.append(f"{name}: {' '.join(str(out).split())[:DONE_CHARS]}")
+            return out
+
+        async def one_tool(name: str, arguments: Any) -> str:
             if name == DEEP_TOOL:
                 return await self._think_harder(arguments, history)
             if extra_tools and name in extra_tools:  # the session's own (who_is_here)

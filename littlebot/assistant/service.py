@@ -46,6 +46,7 @@ PRELOAD_AFTER_S = 3.0
 PRELOAD_MODULES = ("anthropic", "littlebot.brain.text_model", "littlebot.brain.providers.claude",
                    "littlebot.chatgpt.responses", "littlebot.assistant.session", "littlebot.chatgpt.live_audio",
                    "littlebot.chatgpt.tools", "littlebot.assistant.tts", "littlebot.assistant.stt")
+DONE_TURNS = 4  # the history's note of what the tools did covers this many recent turns
 
 
 def _import_all(names: tuple[str, ...]) -> list[str]:
@@ -68,21 +69,34 @@ class History:
         self.turns = int(turns)
         self.minutes = float(minutes)
         self._now = now
-        self._items: collections.deque[tuple[float, str, str]] = collections.deque(maxlen=max(1, self.turns))
+        self._items: collections.deque[tuple[float, str, str, tuple[str, ...]]] = collections.deque(
+            maxlen=max(1, self.turns))
 
-    def add(self, user: str, assistant: str) -> None:
+    def add(self, user: str, assistant: str, done: list[str] | None = None) -> None:
+        """``done``: what its tools did in that turn ("volume_down: Volume 50%"), see :meth:`done_note`."""
         if self.turns <= 0 or not (user.strip() or assistant.strip()):
             return
-        self._items.append((self._now(), user.strip()[:2000], assistant.strip()[:2000]))
+        self._items.append((self._now(), user.strip()[:2000], assistant.strip()[:2000], tuple(done or ())))
 
-    def messages(self) -> list[dict[str, str]]:
+    def _fresh(self) -> list[tuple[float, str, str, tuple[str, ...]]]:
         cutoff = self._now() - self.minutes * 60
         while self._items and self._items[0][0] < cutoff:
             self._items.popleft()
+        return list(self._items)
+
+    def messages(self) -> list[dict[str, str]]:
         out: list[dict[str, str]] = []
-        for _, user, assistant in self._items:
+        for _, user, assistant, _done in self._fresh():
             out += [{"role": "user", "content": user}, {"role": "assistant", "content": assistant}]
         return out
+
+    def done_note(self) -> str:
+        """A context note of what the tools really did in the earlier turns, or "". The history keeps only the
+        words, so without it the brain doubts its own actions ("I never actually checked the volume")."""
+        turns = [f'after "{user[:60]}": ' + "; ".join(done) for _, user, _a, done in self._fresh()[-DONE_TURNS:]
+                 if done]
+        return ("what your tools really did earlier in this chat (it happened, trust it): " + " | ".join(turns)
+                if turns else "")
 
     def clear(self) -> None:
         self._items.clear()
@@ -419,6 +433,7 @@ class AssistantService(Service):
         box = RobotToolbox(self.ctx, mode="chat", defer=False)
         t0 = self.now()
         hit = intents.match(text)
+        done: list[str] = []
         if hit is not None and hit.name in ("volume", "time"):
             reply = await intents.run(hit, box, self.ctx)
             out = {"reply": reply, "tools": list(box.calls), "error": None, "provider": "intent", "model": "",
@@ -426,8 +441,10 @@ class AssistantService(Service):
         else:
             said: list[str] = []
             res = await self.brain.respond(text, history=self.history.messages(), toolbox=box,
-                                           on_sentence=lambda s: said.append(s.text))
+                                           on_sentence=lambda s: said.append(s.text),
+                                           extra=[self.history.done_note()])
             reply = " ".join(said)
+            done = list(getattr(res, "done", None) or [])
             if res.error and not reply:
                 from littlebot.assistant.session import SORRY, SORRY_DEFAULT  # noqa: PLC0415
 
@@ -435,7 +452,7 @@ class AssistantService(Service):
             out = {"reply": reply, "tools": list(res.tools), "error": res.error, "provider": res.provider,
                    "model": res.model, "ms": int((self.now() - t0) * 1000), "silent": res.silent}
         if reply:
-            self.history.add(text, reply)
+            self.history.add(text, reply, done)
         if speak and reply and self._session is None:
             self._background(self.speak(reply))
         return out

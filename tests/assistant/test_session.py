@@ -25,11 +25,13 @@ class Scripted:
         self.scripts = list(scripts)
         self.delay = delay
         self.questions: list[str] = []
+        self.asked: list[str] = []  # the whole last message (with its context note)
 
     async def reply(self, messages: list[dict[str, str]], *, system: str, max_tokens: int, timeout: float,
                     tools: Any = None, run_tool: Any = None, max_tool_rounds: int = 6, effort: Any = None,
                     on_delta: Any = None, final_tools: Any = ()) -> ProviderReply:
         self.questions.append(messages[-1]["content"].split("\n")[-1])
+        self.asked.append(messages[-1]["content"])
         script = self.scripts.pop(0) if self.scripts else ["Okay."]
         if self.delay:
             await asyncio.sleep(self.delay)
@@ -88,6 +90,43 @@ async def test_a_question_answered_then_follow_up_then_end() -> None:
     msgs = svc.history.messages()
     assert msgs[0] == {"role": "user", "content": "what's the weather"}
     await svc.stop()
+
+
+async def test_the_next_turn_knows_what_the_tools_really_did() -> None:
+    # The history kept only the words, so a turn later the brain said "I should correct myself: I said the volume
+    # was at 60 percent, but I never actually checked it" (the robot, 2026-10-31).
+    brain = Scripted([("set_volume", '{"percent": 60}'), "Done, it's at 60 percent."], ["Sure."])
+    svc, stt, tts, _ = _service(brain, follow_up_seconds=0.5)
+    await svc.start()
+    await svc.start_session()
+    await _wait(lambda: stt.stream is not None)
+    stt.say("turn the volume down a bit")
+    await _wait(lambda: "Done, it's at 60 percent." in tts.said and len(svc.history) == 1)
+    assert "really did" not in brain.asked[0]
+    stt.say("and tell me a joke")
+    await _wait(lambda: len(brain.asked) == 2)
+    note = brain.asked[1].split("\n")[0]
+    assert note.startswith("[Context for this turn") and "really did" in note
+    assert 'after "turn the volume down a bit": set_volume:' in note
+    assert [m["content"] for m in svc.history.messages()][:2] == ["turn the volume down a bit",
+                                                                  "Done, it's at 60 percent."]  # words only
+    await svc.stop()
+
+
+def test_the_tools_note_covers_the_recent_turns_and_goes_with_them() -> None:
+    from littlebot.assistant.service import DONE_TURNS, History
+
+    clock = [0.0]
+    h = History(turns=10, minutes=5, now=lambda: clock[0])
+    assert h.done_note() == ""
+    h.add("hi", "Hello!")
+    assert h.done_note() == ""  # no tools: no note
+    for i in range(DONE_TURNS + 1):
+        h.add(f"q{i}", "Done.", [f"tool{i}: ok"])
+    note = h.done_note()
+    assert "tool0" not in note and f"tool{DONE_TURNS}: ok" in note
+    clock[0] = 6 * 60
+    assert h.done_note() == "" and h.messages() == []  # forgotten with the words
 
 
 async def test_thanks_ends_the_session_without_the_brain() -> None:

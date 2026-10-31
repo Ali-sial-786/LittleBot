@@ -90,6 +90,7 @@ async def test_words_before_a_tool_are_said_before_it_runs() -> None:
                               on_tool=lambda n: order.append(f"tool:{n}"))
     assert order == ["say:Let me check", "tool:get_volume", "say:It's at half."]
     assert res.tools == ["get_volume"] and p.calls[0]["results"][0].startswith("{")
+    assert res.done == ["get_volume: " + p.calls[0]["results"][0][:120]]  # kept for the next turns
 
 
 async def test_words_before_a_web_search_are_said_as_it_starts() -> None:

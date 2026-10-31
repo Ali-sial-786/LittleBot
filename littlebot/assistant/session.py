@@ -631,7 +631,8 @@ class VoiceSession:
                 tools = box if gate is None else _GatedToolbox(box, gate)
                 result = await self.svc.brain.respond(text, history=self.svc.history.messages(), toolbox=tools,
                                                       on_sentence=say, on_tool=self._tool_started, mark_day=False,
-                                                      extra=[*self.who_notes(), *self._turn_notes(gate)],
+                                                      extra=[*self.who_notes(), *self._turn_notes(gate),
+                                                             self.svc.history.done_note()],
                                                       extra_tools=self._session_tools())
                 if result.error and not result.sentences:
                     for s in _sentences(SORRY.get(result.error, SORRY_DEFAULT)):
@@ -654,7 +655,7 @@ class VoiceSession:
             with contextlib.suppress(Exception):
                 self.svc.brain.talked_today()
         if heard and said_by != "stop":
-            self.svc.history.add(text, heard)
+            self.svc.history.add(text, heard, list(getattr(result, "done", None) or []))
             self._publish(ev.CAPTION, {"who": "robot", "text": heard})
             if self.cfg.log_words:
                 log.info("assistant: said %r", heard[:400])
