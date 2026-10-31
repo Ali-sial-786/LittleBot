@@ -102,6 +102,38 @@ async def test_thanks_ends_the_session_without_the_brain() -> None:
     assert svc.last_call["ended_reason"].startswith("said intent:thanks")
 
 
+async def test_the_rest_of_thanks_bye_does_not_cut_the_goodbye_off() -> None:
+    # "Thanks, bye" came as "Thanks." and "bought.": the second cut the goodbye off and the brain answered it
+    # (the robot, 2026-10-31).
+    brain = Scripted()
+    svc, stt, tts, _ = _service(brain, follow_up_seconds=5)
+    svc._tts = SlowTTS()
+    await svc.start()
+    await svc.start_session()
+    await _wait(lambda: stt.stream is not None)
+    stt.say("Thanks.")
+    await asyncio.sleep(0.05)
+    stt.say("bought.")
+    await _wait(lambda: not svc.status()["active"])
+    assert brain.questions == [] and svc.last_call["ended_reason"].startswith("said intent:thanks")
+
+
+async def test_a_real_question_while_it_says_goodbye_is_answered() -> None:
+    brain = Scripted(["Rain tomorrow."])
+    svc, stt, tts, _ = _service(brain, follow_up_seconds=0.3)
+    svc._tts = SlowTTS()
+    await svc.start()
+    await svc.start_session()
+    await _wait(lambda: stt.stream is not None)
+    stt.say("Thanks.")
+    await asyncio.sleep(0.05)
+    stt.say("and what about tomorrow")
+    await _wait(lambda: bool(brain.questions))
+    assert brain.questions[0].endswith("and what about tomorrow")  # (with "Thanks." if the goodbye hadn't started)
+    await _wait(lambda: not svc.status()["active"])
+    assert not svc.last_call["ended_reason"].startswith("said intent")
+
+
 @pytest.mark.parametrize("log_words", [False, True])
 async def test_the_words_are_logged_only_when_asked_for_testing(log_words: bool, caplog: Any) -> None:
     caplog.set_level(logging.INFO, logger="littlebot.assistant")
@@ -157,6 +189,31 @@ async def test_barge_in_cuts_the_answer() -> None:
     audio.interrupted = False
     await _wait(lambda: "Okay, new topic." in tts.said)
     await _wait(lambda: not svc.status()["active"])
+
+
+async def test_a_word_or_two_of_its_own_voice_heard_back_do_not_cut_it_off() -> None:
+    # "One sec." came back through the microphone, the cut-in detector fired on it and its words confirmed the
+    # cut-in: the weather answer was never said (the robot, 2026-10-31).
+    brain = Scripted(["One sec. ", "Sunny all day."])
+    svc, stt, tts, audio = _service(brain, follow_up_seconds=0.4)
+    await svc.start()
+    await svc.start_session()
+    await _wait(lambda: stt.stream is not None)
+    stt.say("what's the weather")
+    await _wait(lambda: len(tts.said) >= 1)
+    audio.interrupted = True
+    audio.on_change("interrupted", {})
+    stt.event("partial", "One sec.")  # its own voice
+    await asyncio.sleep(0.1)
+    assert audio.heard_words == []
+    stt.event("partial", "Stop.")  # theirs, even if the answer had said "stop"
+    await _wait(lambda: audio.heard_words == [("Stop.", False)])
+    session = svc._session
+    assert session is not None and session._echo_of_me("sec", short=True)
+    assert not session._echo_of_me("sec")  # a turn of theirs: "and tomorrow" after "... and 12 degrees" is theirs
+    assert not session._echo_of_me("cloudy", short=True) and not session._echo_of_me("Yes.", short=True)
+    assert not session._echo_of_me("one cloud", short=True)
+    await svc.stop_session("test")
 
 
 async def test_a_takeover_ends_the_session_and_runs_after() -> None:

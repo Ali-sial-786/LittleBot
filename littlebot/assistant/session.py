@@ -57,6 +57,13 @@ STT_REOPENS = 3  # speech-to-text that fails this often in one session ends it
 HEARING_GRACE_S = 2.0  # a turn that never ends (noise): finished after max_turn_seconds + this
 ECHO_MEMORY_S = 20.0  # what LittleBot said this recently may come back through the microphone
 ECHO_SHARE = 0.8  # a turn whose words are mostly LittleBot's own recent words is its echo, not them
+# Heard as it was cut off, one or two words, every one of them in what LittleBot said this recently, are its echo too
+# ("One sec." heard back cut its own answer off; the robot, 2026-10-31) - unless one is a word people cut in with.
+SHORT_ECHO_S = 2.5
+SAYING_BYE_IGNORES = 2  # a turn of this many words or fewer while it says goodbye: the rest of "thanks, bye"
+SPOKEN_CPS = 14.0  # characters a second, about, as Cartesia speaks: when a sentence that started then ended
+THEIR_WORDS = frozenset("stop wait no nope yes yeah yep shh quiet pause cancel enough next skip okay ok hold hang "
+                        "hey bye thanks".split())
 PAUSE_WORDS = frozenset({"wait", "wait a second", "wait a minute", "hold on", "hang on", "pause"})
 NO_WORDS_TURN_S = 4.0  # a turn with no words at all after this long was a noise: listening goes on as before
 CUT_IN_NOTE_S = 15.0  # a turn this soon after they talked over the voice is for LittleBot (_turn_notes)
@@ -378,8 +385,12 @@ class VoiceSession:
             if not self._answering():
                 self._set_phase("hearing")
         elif event.kind == "partial":
-            if event.text.strip() and getattr(audio, "interrupted", False) and not self._echo_of_me(event.text):
-                audio.barge_in_heard(event.text, False)  # their words: the held voice is dropped
+            if event.text.strip() and getattr(audio, "interrupted", False):
+                echo = self._echo_of_me(event.text, short=True)
+                if self.cfg.log_words:
+                    log.info("assistant: heard over the voice %r%s", event.text[:120], " (its own echo)" if echo else "")
+                if not echo:
+                    audio.barge_in_heard(event.text, False)  # their words: the held voice is dropped
             if self._hearing_since is None:
                 self._hearing_since = self._now()
             if event.text.strip():
@@ -439,13 +450,21 @@ class VoiceSession:
     def _answering(self) -> bool:
         return self._answer is not None and not self._answer.done()
 
-    def _echo_of_me(self, text: str) -> bool:
+    def _echo_of_me(self, text: str, *, short: bool = False) -> bool:
         """``text`` is mostly LittleBot's own recent words (its voice leaking back into the microphone), not theirs.
-        Only for 3 words or more: "stop", "yes", "next one" are always theirs."""
+        Only for 3 words or more ("and tomorrow" may well be theirs); with ``short`` (words heard as it was cut off)
+        also one or two, when all of them were said in the last SHORT_ECHO_S and none is in THEIR_WORDS ("stop",
+        "yes", "next one" are always theirs)."""
         words = _words(text)
-        if len(words) < 3:
+        if not words or (len(words) < 3 and not short):
             return False
         now = self._now()
+        if len(words) < 3:
+            if any(w in THEIR_WORDS for w in words):
+                return False
+            lately = {w for at, sentence in self._said if now - at <= SHORT_ECHO_S + len(sentence) / SPOKEN_CPS
+                      for w in _words(sentence)}  # (from when each sentence ended, about)
+            return all(w in lately for w in words)
         said = set()
         for at, sentence in self._said:
             if now - at <= ECHO_MEMORY_S:
@@ -500,6 +519,13 @@ class VoiceSession:
         return not (rem is not None and _safe(rem.ringing))
 
     def _start_answer(self, text: str) -> None:
+        if self._end_after and self._answering():
+            if len(_words(text)) <= SAYING_BYE_IGNORES:
+                # "Thanks, bye" came as "Thanks." and "bought.": the second cut the goodbye off and went to the brain
+                # (the robot, 2026-10-31)
+                log.info("assistant: %d more words while saying goodbye; ignored", len(_words(text)))
+                return
+            self._end_after = None  # more to ask after all: the chat goes on
         if self._answering():
             voice = self._voice
             if voice is None or (voice.first_audio_at is None and not voice.heard):
