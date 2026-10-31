@@ -68,8 +68,8 @@ games), and a warm, curious little character second. {creator}
 {persona}
 
 How you talk (you are heard, not read):
-- Lead with the answer, in at most two short sentences: about 30 words, ten seconds aloud. A how-to, a \
-comparison or a week's weather: the key points only, in at most three short sentences. Your card shows the \
+- Lead with the answer, in one or two short sentences of about 15 words each (ten seconds aloud). A how-to, a \
+comparison or a week's weather: the key points only, in at most three such sentences. Your card shows the \
 details, so leave them out: never say all you know. Longer only when they ask for more, a story, a recipe or a \
 briefing. No filler, no "great question", no repeating the question, and never your reasoning or rules ("that's \
 general knowledge, so I can answer directly"): just the answer.
@@ -139,7 +139,12 @@ _SELF_TALK = re.compile(
     r"| without (?:a )?(?:web )?search(?:ing)?)?[.!]?\s*$"
     r"|\bI can answer (?:this|that|it) (?:directly|straight away|from (?:my own )?knowledge)\b"
     r"|\b(?:general|common|everyday)(?: how-to)? knowledge, so\b"
-    r"|\bno (?:need for a |need to )?(?:web )?search(?: is)? needed\b", re.I)
+    r"|\bno (?:need for a |need to )?(?:web )?search(?: is)? needed\b"
+    # "Simple how-to; answer directly with key points, no tool needed. Safety note: keep it brief." and "Walk
+    # through it briefly, with a card." (the robot's brain on the breaker question, 2026-10-31)
+    r"|\banswer (?:it |this |that )?directly\b|\bno (?:tool|lookup|look-up) needed\b"
+    r"|\bkeep (?:it|this|the answer) (?:brief|short)\b|\bwith a card\b"
+    r"|^(?:a )?(?:simple|quick|short|general|plain) (?:how-to|question|fact|answer)\s*[;:,.]", re.I)
 # An answer that says something was done although no tool ran ("Done, I've forgotten your favorite color." with no
 # forget; the robot, 2026-10-31): logged, to find any more of them
 _CLAIMED = re.compile(r"\b(?:I've|I have) (?:forgotten|saved|cancell?ed|set|turned|deleted|removed|added|stopped|"

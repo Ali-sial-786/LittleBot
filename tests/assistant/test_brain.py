@@ -219,10 +219,14 @@ async def test_its_own_reasoning_is_never_said() -> None:
     assert res.text == "Push the switch to off, then back on."
     assert "never your reasoning" in p.calls[0]["system"] and "Which card:" in p.calls[0]["system"]
     assert "{cards}" not in p.calls[0]["system"]
-    for line in ("So I can answer that, I'd need your town.", "Tell me more so I can answer better."):
+    for line in ("So I can answer that, I'd need your town.", "Tell me more so I can answer better.",
+                 "Keep the lid on so it boils sooner.", "A simple how-to video would help here.",
+                 "Short answers are best when you're busy.", "No tools are needed for this, just your hands."):
         _, said, _ = await _turn(ScriptedProvider([line]))  # not its reasoning
         assert len(said) == 1, line
-    for line in ("I know this one, so I can answer it directly.", "No web search needed, it's easy."):
+    for line in ("I know this one, so I can answer it directly.", "No web search needed, it's easy.",
+                 "Simple how-to; answer directly with key points, no tool needed.", "Safety note: keep it brief.",
+                 "Walk through it briefly, with a card."):  # the breaker question, with the shorter answers rule
         _, said, _ = await _turn(ScriptedProvider([line]))
         assert said == [], line
 
