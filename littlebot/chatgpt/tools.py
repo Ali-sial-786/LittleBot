@@ -161,7 +161,9 @@ TOOLS: tuple[_Tool, ...] = (
                          "description": "days of forecast: 1 today, 2 (default) today and tomorrow, up to 7"},
                 "hourly": {"type": "boolean",
                            "description": "true for hour by hour: 'the hourly forecast', 'will it rain at 3?', "
-                                          "'this afternoon', 'tonight', 'when will it stop raining?'"}})),
+                                          "'this afternoon', 'tonight', 'when will it stop raining?'"},
+                "day": {**_STR, "description": "the day they asked about, for the card on the screen: 'tomorrow', "
+                                               "'Saturday', 'the day after tomorrow'; leave out for today or now"}})),
     _Tool("get_time", "The current time, date and day of the week where LittleBot is (or in another place). Call it "
           "for 'what time is it?', 'what day is it?', 'what's the date?' or how long until something, instead of "
           "guessing.", _obj({"place": {**_STR, "description": "a city, for the time somewhere else; leave out for "
@@ -1051,9 +1053,17 @@ class RobotToolbox:
             days = max(1, min(7, int(args.get("days") or 2)))
         except (TypeError, ValueError):
             days = 2
-        card = self._soon(self._weather_card(place, days))  # goes up while the forecast is fetched
+        day = " ".join(str(args.get("day") or "").split())[:40] or None
+        if day and day.lower() in ("today", "now", "tonight"):
+            day = None
+        if day:
+            days = max(days, 2) if day.lower() == "tomorrow" else 7  # "Saturday": the week, to find it in
+        hourly = bool(args.get("hourly"))
+        # The card goes up while the forecast is fetched: the day asked about ("tomorrow" used to show today's).
+        card = self._soon(self._weather_card(place, days, view="hours" if hourly else ("day" if day else None),
+                                             day=day))
         try:
-            report = await get_weather(self.ctx).report(place, days=days, hourly=bool(args.get("hourly")))
+            report = await get_weather(self.ctx).report(place, days=days, hourly=hourly)
         except WeatherError as e:
             card.cancel()
             return _err(f"{e}. Say so briefly; don't guess the weather.")

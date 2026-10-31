@@ -110,6 +110,25 @@ async def test_get_weather_puts_a_weather_card_up(ctx, cards):
     assert "on_screen" not in json.loads(await run(box, "get_weather"))
 
 
+async def test_the_weather_card_shows_the_day_and_the_hours_asked_about(ctx, cards, monkeypatch):
+    # "What's the weather tomorrow?" put up "Now in Hamilton" on the robot (2026-10-31): the card is told the day.
+    ctx.privacy.set(cloud_enabled=True)
+    weather_service(ctx, FakeWeb())
+    monkeypatch.setitem(base._TYPES, "weather", CardType(
+        "weather", "The weather.", {"place": {"type": "string"}, "days": {"type": "integer"},
+                                    "view": {"type": "string"}, "day": {"type": "string"}}, _build))
+    box = RobotToolbox(ctx, mode="live")
+    await run(box, "get_weather", day="tomorrow")
+    await run(box, "get_weather", day="Saturday")
+    await run(box, "get_weather", hourly=True)
+    await run(box, "get_weather", day="today")
+    assert [spec for spec, _ in cards.shown] == [
+        {"card": "weather", "days": 2, "view": "day", "day": "tomorrow"},
+        {"card": "weather", "days": 7, "view": "day", "day": "Saturday"},
+        {"card": "weather", "days": 2, "view": "hours"},
+        {"card": "weather", "days": 2}]
+
+
 async def test_get_weather_without_cards_is_as_before(ctx):
     ctx.privacy.set(cloud_enabled=True)
     weather_service(ctx, FakeWeb())
