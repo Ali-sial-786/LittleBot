@@ -304,10 +304,13 @@ class Brain:
                       images: list[bytes] | None = None, mark_day: bool = True,
                       extra: list[str] | None = None,
                       extra_tools: dict[str, tuple[dict[str, Any], Callable[[dict[str, Any]], Any]]] | None = None,
-                      ) -> TurnResult:
+                      done: list[str] | None = None) -> TurnResult:
         """Answer ``text``: sentences go to ``on_sentence`` as they are ready (checked for safety first). Never
-        raises (except cancellation); a failure is ``result.error``."""
+        raises (except cancellation); a failure is ``result.error``. ``done``: ``result.done`` is this list, so the
+        caller still has what the tools did when the turn is cancelled (they cut in)."""
         result = TurnResult()
+        if done is not None:
+            result.done = done
         splitter = SentenceSplitter()
         stopped = False  # a sentence failed the safety check: nothing more is said
         t0 = self._now()

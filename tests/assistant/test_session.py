@@ -639,6 +639,9 @@ async def test_a_barge_in_mid_sentence_cancels_the_turns_take_over_and_records_i
     assert svc.ctx.state.state != RobotState.SLEEPING
     assert svc.history.messages()[-1]["content"].endswith("(interrupted)")
     assert len(svc.history) == 1
+    note = svc.history.done_note()  # the next answer knows the nap was asked for but never happened
+    assert 'after "could you have a little nap please": go_to_sleep:' in note and "did NOT start" in note
+    assert not svc.brain.first_today()  # an answer heard in part was talk today: no second "Good morning"
     await svc.stop_session("test")
 
 

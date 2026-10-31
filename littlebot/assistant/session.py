@@ -126,6 +126,7 @@ class VoiceSession:
         self._tasks: set[asyncio.Task[Any]] = set()
         self._answer: asyncio.Task[Any] | None = None
         self._answer_text = ""
+        self._answer_done: list[str] = []  # what the current answer's tools did (kept if they cut in)
         self._voice: VoiceOut | None = None
         self._toolbox: Any = None
         self._hearing_since: float | None = None
@@ -601,6 +602,7 @@ class VoiceSession:
 
         box = self._toolbox = RobotToolbox(self.ctx, mode="chat", defer=True)
         voice = self._voice = self._new_voice(gate)
+        done = self._answer_done = []
 
         def say(s: Sentence) -> None:
             if self._quiet_end:
@@ -633,7 +635,7 @@ class VoiceSession:
                                                       on_sentence=say, on_tool=self._tool_started, mark_day=False,
                                                       extra=[*self.who_notes(), *self._turn_notes(gate),
                                                              self.svc.history.done_note()],
-                                                      extra_tools=self._session_tools())
+                                                      extra_tools=self._session_tools(), done=done)
                 if result.error and not result.sentences:
                     for s in _sentences(SORRY.get(result.error, SORRY_DEFAULT)):
                         say(s)
@@ -1038,9 +1040,17 @@ class VoiceSession:
         self._deadline = max(self._deadline, self._now() + max(4.0, float(self.cfg.follow_up_seconds)))
 
     def _record_cut(self) -> None:
+        """They cut in: the answer's words heard so far, and what its tools did, go into the history (on the robot,
+        2026-10-31, a video queued by a cut answer never started and the next answers didn't know; and as no answer
+        had ended, each began with the day's first "Good morning")."""
         voice = self._voice
         if voice is not None and voice.heard:
-            self.svc.history.add(self._answer_text, " ".join(voice.heard) + " (interrupted)")
+            done = list(self._answer_done)
+            if any(getattr(p, "takeover", True) for p in getattr(self._toolbox, "pending", None) or []):
+                done.append("but they cut in, so what was to start after the answer did NOT start")
+            self.svc.history.add(self._answer_text, " ".join(voice.heard) + " (interrupted)", done)
+            with contextlib.suppress(Exception):
+                self.svc.brain.talked_today()
 
     def _cut_answer(self, *, silence: bool = False) -> None:
         """Stop the answer being thought of or said (they cut in, or added to the question). ``silence``: also drop
