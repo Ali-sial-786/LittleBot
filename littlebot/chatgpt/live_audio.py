@@ -97,6 +97,9 @@ STOP_RUN_S = 1.5
 # leaking through is higher than a grown-up's voice too.
 STOP_MAX_PITCH_HZ = 400.0
 VOICE_FILLERS = frozenset({"wait", "wait a second", "wait a minute", "hold on", "hang on"})
+# Said with no voice at all, so their "pitch" is noise (the robot measured a parent's "shh" at 579 Hz and turned it
+# down, 2026-10-31): never judged by pitch. The voice saying one itself is still caught (_said_it_itself).
+UNVOICED_STOPS = frozenset({"shh", "shush", "hush"})
 PREROLL_MAX_S = 0.8  # the microphone kept for the pre-roll (in memory, the last 0.8 s only)
 PREROLL_LEAD_S = 0.1  # the pre-roll starts this long before their speech did
 QUIET_LEVEL = 0.0105  # RMS below which a frame of the pre-roll is a pause (as in littlebot/audio/carry.py)
@@ -775,7 +778,7 @@ class LiveAudio:
             log.info("live voice: heard '%s', but the voice itself just said it: it carried on", said)
             return False
         pitch = BargeInDetector.pitch_of(run)
-        if run.child > run.adult and (said in VOICE_FILLERS or pitch > STOP_MAX_PITCH_HZ):
+        if said not in UNVOICED_STOPS and run.child > run.adult and (said in VOICE_FILLERS or pitch > STOP_MAX_PITCH_HZ):
             # a child, or the voice's own echo leaking through (on the robot its false alarms were 240-259 Hz, the
             # parent 107-154 Hz, 2026-10-29): the voice saying "hang on" must not stop itself
             log.info("live voice: heard '%s', but it sounded like a child or its own voice (%d Hz): it carried on",

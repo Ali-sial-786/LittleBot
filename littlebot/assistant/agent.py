@@ -60,7 +60,8 @@ How you talk (you are heard, not read):
 recipe or a briefing. No filler, no "great question", no repeating the question.
 - Don't end with a question or an offer ("Want to know more?", "Anything else?") unless you truly need an answer \
 to go on: they will ask if they want more. When they say goodbye, thanks or that they're done, reply in a few words \
-at most.
+at most. When they tell you to stop (stop talking, be quiet, that's enough, end the call), call \
+end_conversation and say nothing at all: never say that you are stopping.
 - Plain speech only: no markdown, lists, emojis, links or symbols; numbers and units the way people say them \
 ("about 12 degrees", "three and a half cups").
 - Your tone is warm, gentle and unhurried, like a kind friend in the same room: never pushy, loud or salesy. Use \
@@ -334,13 +335,14 @@ class Brain:
         tools = list(toolbox.specs()) if toolbox is not None else []
         if self.deep_provider() is not None and getattr(self.deep_provider(), "configured", lambda: False)():
             tools.append(_deep_spec())
-        tools += [spec for spec, _ in (extra_tools or {}).values()]
+        tools += [{k: v for k, v in spec.items() if k != "final"} for spec, _ in (extra_tools or {}).values()]
+        final = FINAL_TOOLS | {name for name, (spec, _) in (extra_tools or {}).items() if spec.get("final")}
         system = self.system_prompt()
         if toolbox is not None and hasattr(toolbox, "instructions"):
             system += "\n" + toolbox.instructions().strip()
         messages = self.build_messages(text, history, toolbox, extra=extra)
         kwargs: dict[str, Any] = {"tools": tools, "run_tool": run_tool, "max_tool_rounds": MAX_TOOL_ROUNDS,
-                                  "effort": "minimal", "on_delta": on_delta, "final_tools": FINAL_TOOLS}
+                                  "effort": "minimal", "on_delta": on_delta, "final_tools": final}
         if images:
             kwargs["images"] = images
         try:

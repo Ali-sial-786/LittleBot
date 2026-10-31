@@ -60,7 +60,9 @@ A key in `~/LittleBot/.env` (`DEEPGRAM_API_KEY=...`) works too and wins over the
 3. It keeps listening for **8 seconds** (`assistant.follow_up_seconds`; 12 s when it asked you something): ask the
    next question without the wake word. Then it goes back to waiting for "Hey LittleBot".
 4. Talk over it to interrupt (echo cancelling must be on, as for GPT-Live's barge-in). "Stop" quiets it at once.
-   Words said while it's still thinking are added to your question.
+   Telling it to stop in any words ("stop talking", "shh", "end the call", "that's all", "can you be quiet")
+   ends the conversation **without a word**; "wait" / "hold on" only pauses it and it listens. Words said while
+   it's still thinking are added to your question.
 5. "Play a video", "start peekaboo", "go to sleep": it says so, then hands over the screen and speaker.
 
 The last 12 exchanges (15 minutes, `history_turns` / `history_minutes`) are kept **in memory only**, so "and

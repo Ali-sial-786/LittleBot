@@ -11,10 +11,14 @@ from littlebot.testing import make_test_context
 
 @pytest.mark.parametrize("text,name", [
     ("Stop.", "stop"), ("never mind", "stop"), ("okay stop please", "stop"), ("Thanks!", "thanks"),
-    ("thank you so much", "thanks"), ("bye", "bye"), ("that's all for now", "bye"), ("louder", "volume"),
+    ("thank you so much", "thanks"), ("bye", "bye"), ("that's all for now", "stop"), ("louder", "volume"),
     ("turn it down please", "volume"), ("volume 40", "volume"), ("set the volume to 70 percent", "volume"),
-    ("what time is it?", "time"), ("What's the time", "time"), ("end the call", "bye"), ("hang up", "bye"),
-    ("stop listening", "bye"), ("okay end the conversation", "bye"), ("you can go now", "bye"),
+    ("what time is it?", "time"), ("What's the time", "time"), ("end the call", "stop"), ("hang up", "stop"),
+    ("stop listening", "stop"), ("okay end the conversation", "stop"), ("you can go now", "stop"),
+    # told to stop in whatever words: the call ends without a word (the robot, 2026-10-31)
+    ("Hey LittleBot, stop talking", "stop"), ("stop, stop", "stop"), ("no stop", "stop"), ("I said stop", "stop"),
+    ("can you stop talking", "stop"), ("could you please be quiet", "stop"), ("stop stop stop", "stop"),
+    ("alright that's enough", "stop"), ("good night", "bye"), ("see you later", "bye"),
 ])
 def test_matches(text: str, name: str) -> None:
     hit = intents.match(text)
@@ -27,6 +31,19 @@ def test_matches(text: str, name: str) -> None:
 ])
 def test_not_instant(text: str) -> None:
     assert intents.match(text) is None
+
+
+@pytest.mark.parametrize("text", ["stop talking", "end the call", "that's all", "you can stop now", "hang up"])
+def test_told_to_stop_ends_without_a_word(text: str) -> None:
+    hit = intents.match(text)
+    assert hit is not None and hit.end and hit.say == ""
+
+
+@pytest.mark.parametrize("text", ["no", "hey", "stop the music and play jazz", "no, I meant tomorrow",
+                                  "can you stop by the store", "what stops the rain"])
+def test_not_a_stop(text: str) -> None:
+    hit = intents.match(text)
+    assert hit is None or hit.name != "stop"
 
 
 def test_media_words_only_with_media() -> None:

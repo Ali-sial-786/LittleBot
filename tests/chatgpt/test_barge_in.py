@@ -659,6 +659,21 @@ async def test_a_shouted_stop_higher_than_a_grown_ups_pitch_still_stops_it(call,
         audio.close()
 
 
+async def test_a_shh_is_never_judged_by_its_pitch(call, caplog):
+    # on the robot (2026-10-31) a parent's "shh" measured 579 Hz (a hiss has no real pitch) and was turned down
+    caplog.set_level(logging.INFO, logger="littlebot.chatgpt.live")
+    audio, c = call()
+    words = FakeStopWords()
+    audio.setup_barge_in(on_change=lambda what, info: c.events.append(what), stop_words=words)
+    try:
+        await c.warm_up()
+        await short_word(c, words, "shh", f0=480.0)
+        assert c.events == ["interrupted", "stop_word"]
+        assert "they said 'shh'" in caplog.text
+    finally:
+        audio.close()
+
+
 async def test_its_own_hang_on_heard_back_higher_than_a_grown_up_does_not(call, caplog):
     caplog.set_level(logging.INFO, logger="littlebot.chatgpt.live")
     audio, c = call()

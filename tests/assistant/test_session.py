@@ -563,7 +563,8 @@ async def test_its_own_voice_heard_back_is_not_a_turn() -> None:
     assert brain.questions == ["tell me about rome"]
     stt.say("end the call")
     await _wait(lambda: not svc.status()["active"])
-    assert svc.last_call["ended_reason"].startswith("said intent:bye")
+    assert svc.last_call["ended_reason"] == "said stop"  # without a word
+    assert len(tts.said) == 1
 
 
 async def test_stop_word_ends_wait_word_only_quiets() -> None:
@@ -626,3 +627,17 @@ async def test_the_brain_is_told_the_first_turn_and_a_cut_in_are_for_it() -> Non
     await _wait(lambda: len(seen) == 3)
     assert "talked over you" in seen[2]
     await svc.stop_session("test")
+
+
+async def test_told_to_stop_in_its_own_words_the_brain_ends_the_call_without_a_word() -> None:
+    """"Please don't talk anymore" isn't an instant intent: the brain calls end_conversation, and whatever it
+    writes after that is never said (asked for on the robot, 2026-10-31)."""
+    brain = Scripted([("end_conversation", "{}"), "Okay, I'll stop talking now."])
+    svc, stt, tts, _ = _service(brain, follow_up_seconds=5)
+    await svc.start()
+    await svc.start_session()
+    await _wait(lambda: stt.stream is not None)
+    stt.say("please don't talk anymore")
+    await _wait(lambda: not svc.status()["active"])
+    assert svc.last_call["ended_reason"] == "asked to stop"
+    assert tts.said == []

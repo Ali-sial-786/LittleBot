@@ -110,6 +110,7 @@ class VoiceSession:
         self._said: collections.deque[tuple[float, str]] = collections.deque(maxlen=12)  # its own recent sentences
         self._deadline = self._started + self.cfg.first_words_seconds
         self._end_after: str | None = None  # end once the current answer was heard (said "bye")
+        self._quiet_end = False  # the brain called end_conversation: nothing more is said, and the session ends
         self._handover: list[Any] = []  # take-overs to run after the session (a video, an activity ...)
         self._suspended = False
         self._our_state: RobotState | None = None
@@ -473,6 +474,8 @@ class VoiceSession:
         held: list[Sentence] = []
 
         def say(s: Sentence) -> None:
+            if self._quiet_end:
+                return  # told to stop: not a word more
             if gate is None or gate.is_set():
                 while held:
                     voice.say(held.pop(0))
@@ -541,6 +544,9 @@ class VoiceSession:
                      ",".join(voice.providers) or "-", getattr(result, "model", "") or "-", self.mouth_frames,
                      f" error={result.error}" if result is not None and result.error else "")
         self.mouth_frames = 0
+        if self._quiet_end:
+            self.end("asked to stop")
+            return
         if self._end_after:
             self.end(f"said {self._end_after}")
             return
@@ -740,13 +746,31 @@ class VoiceSession:
         return []
 
     def _session_tools(self) -> dict[str, Any]:
-        return {"who_is_here": ({"name": "who_is_here",
+        return {"end_conversation": ({"name": "end_conversation", "final": True,
+                                      "description": "End the conversation now, without a word: when they tell you "
+                                                     "to stop (stop talking, be quiet, that's enough, end the call, "
+                                                     "go away). Say nothing before or after it.",
+                                      "parameters": {"type": "object", "properties": {},
+                                                     "additionalProperties": False}},
+                                     self._end_quietly),
+                "who_is_here": ({"name": "who_is_here",
                                  "description": "Who is talking and who is in front of LittleBot's camera, from voice "
                                                 "and face recognition on the robot (a fresh look). For 'do you know "
                                                 "who I am?', 'who's here?', 'can you see me?'. Never guess a name "
                                                 "it doesn't give.",
                                  "parameters": {"type": "object", "properties": {}, "additionalProperties": False}},
                                 self._who_is_here)}
+
+    async def _end_quietly(self, _args: dict[str, Any]) -> str:
+        """end_conversation: whatever was about to be said is dropped; the session ends once this turn is over."""
+        self._quiet_end = True
+        voice = self._voice
+        if voice is not None:
+            voice.cancel()
+        with contextlib.suppress(Exception):
+            self.audio.drop_voice()
+        log.info("assistant: asked to stop; ending without a word")
+        return "ok: the conversation is over; say nothing"
 
     async def _who_is_here(self, _args: dict[str, Any]) -> str:
         parts: list[str] = []

@@ -169,9 +169,9 @@ async def test_the_weather_card_goes_up_while_the_forecast_is_fetched(ctx, cards
 
     real_report = weather.WeatherService.report
 
-    async def report(self, place=None, *, days=2):
+    async def report(self, place=None, *, days=2, hourly=False):
         await asyncio.sleep(0.05)
-        out = await real_report(self, place, days=days)
+        out = await real_report(self, place, days=days, hourly=hourly)
         order.append("forecast came")
         return out
 
