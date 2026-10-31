@@ -117,6 +117,7 @@ class VoiceSession:
         self._gate: asyncio.Event | None = None  # an early answer's: set once their turn really ended
         self._confirmed_at: float | None = None
         self._spec_at = 0.0
+        self._mouths: list[VoiceOut] = []  # every VoiceOut made in this session (only the newest may talk)
         self._unsaid: list[str] = []  # announcements not said yet (busy until they are)
         self._saying = False
         # Who is talking (voice recognition, opt-in) and who is in view (face recognition, opt-in): for the brain.
@@ -453,9 +454,7 @@ class VoiceSession:
         from littlebot.chatgpt.tools import RobotToolbox  # noqa: PLC0415
 
         box = self._toolbox = RobotToolbox(self.ctx, mode="chat", defer=True)
-        voice = self._voice = VoiceOut(self.svc.tts(), self.audio, on_start=self._sentence_started, now=self._now)
-        with contextlib.suppress(Exception):
-            self.audio.unmute()
+        voice = self._voice = self._new_voice()
         held: list[Sentence] = []
 
         def say(s: Sentence) -> None:
@@ -800,6 +799,21 @@ class VoiceSession:
                     self.audio.play_thinking()
             await asyncio.sleep(THINKING_REPEAT_S)
 
+    def _new_voice(self) -> VoiceOut:
+        """A mouth for one answer or announcement. Only one ever talks: any other still playing (an announcement when
+        they start a new question) is stopped first, with what it had queued."""
+        old = [v for v in self._mouths if v.busy]
+        for v in old:
+            v.cancel()
+        if old and self.audio is not None and not getattr(self.audio, "interrupted", False):
+            with contextlib.suppress(Exception):
+                self.audio.drop_voice()
+        voice = VoiceOut(self.svc.tts(), self.audio, on_start=self._sentence_started, now=self._now)
+        self._mouths = [v for v in self._mouths if v.busy] + [voice]
+        with contextlib.suppress(Exception):
+            self.audio.unmute()
+        return voice
+
     def play_sound(self, name: str) -> None:
         """A sound effect ("tada", "uhoh" ...) through the call's own speaker stream."""
         hit = None
@@ -825,9 +839,7 @@ class VoiceSession:
             await asyncio.sleep(0.1)
         with contextlib.suppress(ValueError):
             self._unsaid.remove(text)
-        voice = self._voice = VoiceOut(self.svc.tts(), self.audio, on_start=self._sentence_started, now=self._now)
-        with contextlib.suppress(Exception):
-            self.audio.unmute()
+        voice = self._voice = self._new_voice()
         self._saying = True
         try:
             for s in _sentences(text):

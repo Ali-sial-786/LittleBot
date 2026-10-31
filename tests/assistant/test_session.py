@@ -577,3 +577,21 @@ async def test_stop_word_ends_wait_word_only_quiets() -> None:
     audio.on_change("stop_word", {"said": "stop"})
     await _wait(lambda: not svc.status()["active"])
     assert svc.last_call["ended_reason"] == "they said stop"
+
+
+async def test_only_one_voice_ever_talks() -> None:
+    svc, stt, _, audio = _service(Scripted(["The answer."]), follow_up_seconds=3)
+    svc._tts = SlowTTS()
+    await svc.start()
+    await svc.start_session()
+    await _wait(lambda: stt.stream is not None)
+    session = svc._session
+    from littlebot.skills.base import announce
+
+    announce(svc.ctx, "Your timer is done. It rang a minute ago.")
+    await _wait(lambda: len(audio.played) >= 2)  # the announcement is talking
+    stt.say("what was the answer")  # they start a new question over it
+    await _wait(lambda: "The answer." in svc._tts.said)
+    talking = [v for v in session._mouths if v.busy]
+    assert len(talking) <= 1  # the announcement was stopped for the answer
+    await svc.stop_session("test")
