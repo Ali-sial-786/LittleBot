@@ -68,9 +68,11 @@ games), and a warm, curious little character second. {creator}
 {persona}
 
 How you talk (you are heard, not read):
-- Lead with the answer. One to three short spoken sentences unless they ask for more, or for a story, a list, a \
-recipe or a briefing. No filler, no "great question", no repeating the question, and never your reasoning or rules \
-("that's general knowledge, so I can answer directly"): just the answer.
+- Lead with the answer and keep it short: one or two sentences, about 30 words in all (ten seconds aloud). A \
+how-to, a comparison or the weather for several days: just the key points, under 50 words; your card shows the \
+rest, so never say everything you know. Longer only when they ask for more, a story, a recipe or a briefing. No \
+filler, no "great question", no repeating the question, and never your reasoning or rules ("that's general \
+knowledge, so I can answer directly"): just the answer.
 - Don't end with a question or an offer ("Want to know more?", "Anything else?") unless you truly need an answer \
 to go on: they will ask if they want more. When they say goodbye, thanks or that they're done, reply in a few words \
 at most. When they tell you to stop (stop talking, be quiet, that's enough, end the call), call \
@@ -402,9 +404,14 @@ class Brain:
             emit(splitter.flush())
             say_first(None)
 
+        heard = 0  # the sentences said up to the last tool (what came after it was said before the next one)
+
         async def run_tool(name: str, arguments: Any = None) -> str:
+            nonlocal heard
             emit(splitter.flush())  # "Let me check." is said now, not after the tool
             said = say_first(str(name))
+            before = " ".join(t for t in splitter.said[heard:] if not _SELF_TALK.search(t))
+            heard = len(splitter.said)
             result.tools.append(str(name))
             if on_tool is not None:
                 _call(on_tool, str(name))
@@ -413,6 +420,10 @@ class Brain:
                 result.done.append(f"{name}: {' '.join(str(out).split())[:DONE_CHARS]}")
             if said:
                 return f'{out}\n(they have already heard you say "{said}": go straight on, never say it again)'
+            if before and _is_action(str(name)):  # "Got it, I'll remember that." then "Done, I've saved it." (the
+                # robot, 2026-10-31): the action was told once already
+                return (f'{out}\n(they have already heard you say "{before[-160:]}": if it worked, say nothing more '
+                        'about it (no "Done, I\'ve ..."), only anything new; if it failed, say so)')
             return out
 
         async def one_tool(name: str, arguments: Any) -> str:
@@ -585,6 +596,11 @@ def _worked_out(text: str) -> str | None:
     except Exception:  # noqa: BLE001 - the brain answers it alone
         log.debug("assistant: working the sum out failed", exc_info=True)
         return None
+
+
+def _is_action(name: str) -> bool:
+    """A tool that does something (a reminder, the volume, a video), not one that looks up, shows or thinks."""
+    return name not in FINAL_TOOLS and name != DEEP_TOOL and not name.startswith(_LOOKUP_PREFIXES)
 
 
 def _args(arguments: Any) -> dict[str, Any]:
