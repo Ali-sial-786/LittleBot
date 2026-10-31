@@ -352,7 +352,8 @@ async def test_the_wake_phrase_goes_first_and_is_taken_off_the_words() -> None:
     ("Little bot, stop.", "Stop."), ("Hey Littlebot!", ""), ("Hey lil bot.", ""), ("Okay, little bot, next song", "Next song"),
     ("What's a little bot?", "What's a little bot?"), ("a little bit louder", "a little bit louder"),
     ("bot. Who was Kublai Khan?", "Who was Kublai Khan?"), ("Hey bot, what time is it", "What time is it"),
-    ("Bottles of water", "Bottles of water"),
+    ("Bottles of water", "Bottles of water"), ("a little bot who was Kublai Khan.", "Who was Kublai Khan."),
+    ("a little bit more", "a little bit more"),
 ])
 def test_the_wake_phrase_is_no_part_of_the_question(said: str, question: str) -> None:
     from littlebot.assistant.session import _heard

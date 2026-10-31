@@ -225,6 +225,7 @@ class FluxStream:
             await emit(self._on_event, STTEvent("start_of_turn"))
         if event == "EndOfTurn":
             self._turn, self._old, self._partial = None, max(self._old, index), ""
+            self._log_lag(m)
             # no words (a cough): an empty end, so the session stops waiting for them
             await emit(self._on_event, STTEvent("end_of_turn", text=text, confidence=_confidence(m.get("words"))))
             return
@@ -235,6 +236,20 @@ class FluxStream:
             await emit(self._on_event, STTEvent("eager_end_of_turn", text=text))
         elif event == "TurnResumed":  # they went on talking: a started answer is dropped
             await emit(self._on_event, STTEvent("turn_resumed", text=text))
+
+    def _log_lag(self, m: dict[str, Any]) -> None:
+        """How long after their last word Flux ended the turn, and how far behind the audio sent it was then (it
+        works through what it is sent at about real time: a burst at the start delays every turn after it)."""
+        try:
+            window = float(m["audio_window_end"])
+            words = m.get("words") or []
+            last = float(words[-1]["end"]) if words else None
+        except (KeyError, TypeError, ValueError, IndexError):
+            return
+        sent = self.packets * PACKET_BYTES / 2 / STT_RATE
+        log.info("deepgram: end of turn %s, %.2f s behind the audio sent",
+                 f"{window - last:.2f} s after their last word" if last is not None else "(no words)",
+                 max(0.0, sent - window))
 
     async def _fail(self, kind: str) -> None:
         if self._failed or self._closed:

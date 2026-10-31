@@ -1223,8 +1223,8 @@ def _words(text: str) -> list[str]:
 
 # The wake phrase at the start of what speech-to-text heard ("Hey, little bot. Who was Kublai Khan?"): the wake
 # word's carry sends it first so the sentence is heard whole; LittleBot's name is no part of the question.
-_WAKE_LEAD = re.compile(r"^\s*(?:(?:hey|hi|hay|okay|ok)[\s,.!]+)?(?:(?:little|lil|li'l)[\s-]*)?bot\b[\s,.!?]*|"
-                        r"^\s*(?:(?:hey|hi|hay|okay|ok)[\s,.!]+)?littlebot\b[\s,.!?]*", re.IGNORECASE)
+_WAKE_LEAD = re.compile(r"^\s*(?:(?:hey|hi|hay|a|okay|ok)[\s,.!]+)?(?:(?:little|lil|li'l)[\s-]*)?bot\b[\s,.!?]*|"
+                        r"^\s*(?:(?:hey|hi|hay|a|okay|ok)[\s,.!]+)?littlebot\b[\s,.!?]*", re.IGNORECASE)
 
 
 def _squeeze_quiet(x: np.ndarray, rate: int, level: float, keep_s: float = CARRY_PAUSE_S) -> np.ndarray:

@@ -180,6 +180,21 @@ async def test_flux_turn_events():
     await stream.aclose()
 
 
+async def test_flux_says_how_far_behind_it_ended_a_turn(caplog):
+    # It works through what it is sent at about real time: the log says how long after their last word it ended the
+    # turn and how far behind the audio sent it was (the robot, 2026-10-31: the first turn ended ~2 s late).
+    caplog.set_level(logging.INFO, logger="littlebot.assistant")
+    conn, events = Connector(), Events()
+    stream = await _flux(conn).open(events)
+    await stream.feed(np.zeros(1280 * 37 + 500, dtype=np.float32))  # 37 packets (2.96 s) sent, the rest waits
+    conn.ws.push(type="TurnInfo", event="EndOfTurn", turn_index=0, transcript="hi there", audio_window_start=0.0,
+                 audio_window_end=1.9, words=[{"word": "hi", "start": 0.5, "end": 0.9},
+                                              {"word": "there", "start": 0.9, "end": 1.5}])
+    await settle()
+    assert "deepgram: end of turn 0.40 s after their last word, 1.06 s behind the audio sent" in caplog.text
+    await stream.aclose()
+
+
 async def test_flux_reset_forgets_the_turn_in_progress():
     conn, events = Connector(), Events()
     stream = await _flux(conn).open(events)
