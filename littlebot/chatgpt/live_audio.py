@@ -667,6 +667,13 @@ class LiveAudio:
         self._mouth = (0.0, "closed")
 
     # ------------------------------------------------------------ microphone
+    def flush_input(self) -> None:
+        """Forget the microphone audio not read yet (the assistant opens the call audio while the wake word still
+        listens: what was heard until the wake word let go is in its carry already)."""
+        with self._lock:
+            self._in.clear()
+        self._pcm = np.zeros(0, dtype=np.int16)
+
     def _record_cb(self, indata: Any, frames: int, time_info: Any, status: Any) -> None:  # PortAudio thread
         block = np.array(indata[:, 0], dtype=np.int16, copy=True)
         self.mic_at = self._now()

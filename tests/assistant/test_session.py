@@ -214,6 +214,35 @@ async def test_the_first_session_is_made_ready_in_the_background() -> None:
     assert service_mod._import_all(("littlebot.no_such_module",)) == ["littlebot.no_such_module"]
 
 
+async def test_the_call_audio_opens_before_the_wake_word_lets_go_of_the_microphone() -> None:
+    # The wake word's carry ends when it lets go of the microphone; the call's microphone used to open ~150 ms
+    # later on the robot, and words said in between were lost. Now it opens first, and what it heard before the
+    # wake word let go (already in the carry) is dropped.
+    import numpy as np
+
+    from littlebot.audio.carry import SpeechCarry
+
+    svc, stt, _tts, audio = _service(Scripted())
+    order: list[str] = []
+    opened = audio.open
+    audio.open = lambda loop: (order.append("call audio open"), opened(loop))[-1]
+    audio.flush_input = lambda: order.append("flush")
+
+    async def suspend(owner: str) -> None:
+        order.append("wake word lets go")
+
+    svc.ctx.audio.suspend = suspend
+    svc.ctx.audio.resume = lambda owner: order.append("back")
+    carry = SpeechCarry(16000, phrase="hey little bot")
+    carry.add(np.full(1600, 0.1, dtype=np.float32))
+    carry.seal("test")
+    await svc.start()
+    await svc.start_session(carry=carry)
+    await _wait(lambda: stt.stream is not None and stt.stream.fed >= 1600)
+    assert order[:3] == ["call audio open", "wake word lets go", "flush"]
+    await svc.stop_session("test")
+
+
 async def test_typed_chat_uses_the_same_brain() -> None:
     svc, _, _, _ = _service(Scripted(["Paris is the capital of France."]))
     out = await svc.handle_text("capital of france?")

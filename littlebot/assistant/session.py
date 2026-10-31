@@ -176,14 +176,32 @@ class VoiceSession:
         t0 = self._now()
         self._spawn(self._warm())  # the brain's and the voice's connections open while the microphone does
         audio_svc = self.ctx.audio
+        self._set_phase("listening")
+        self.audio = self.svc.audio_factory()
+        early = False
+        if self.carry is not None and hasattr(audio_svc, "suspend"):
+            # The call audio opens while the wake word still listens (PipeWire shares the microphone), so nothing
+            # said between the wake word letting go and the call's microphone opening (~150 ms) is lost.
+            try:
+                await asyncio.to_thread(self.audio.open, self._loop)
+                early = True
+            except Exception as e:  # noqa: BLE001 - a device only one stream may open: the old order
+                log.info("assistant: the call audio didn't open beside the wake word (%s); opening it after",
+                         type(e).__name__)
+                with contextlib.suppress(Exception):
+                    self.audio.close()
+                self.audio = self.svc.audio_factory()
+        t_audio = self._now()
         if hasattr(audio_svc, "suspend"):
             await audio_svc.suspend("assistant")
             self._suspended = True
+            flush = getattr(self.audio, "flush_input", None)
+            if early and flush is not None:
+                flush()  # the wake word's carry has what was said until now
         t_lent = self._now()
-        self._set_phase("listening")
-        self.audio = self.svc.audio_factory()
-        await asyncio.to_thread(self.audio.open, self._loop)
-        t_audio = self._now()
+        if not early:
+            await asyncio.to_thread(self.audio.open, self._loop)
+            t_audio = self._now()
         self._log_devices()
         self._setup_barge_in()
         await self._open_stt()
@@ -202,9 +220,10 @@ class VoiceSession:
         self._spawn(self._watch())
         self.connect_ms = int((self._now() - t0) * 1000)
         self.detail = "Listening."
-        log.info("assistant: listening %d ms after the wake word (speech-to-text: %s; devices lent %d ms, call audio "
-                 "%d ms, speech-to-text %d ms)", self.connect_ms, self.stt_name, int((t_lent - t0) * 1000),
-                 int((t_audio - t_lent) * 1000), int((t_stt - t_audio) * 1000))
+        audio_ms, lent_ms = ((t_audio - t0, t_lent - t_audio) if early else (t_audio - t_lent, t_lent - t0))
+        log.info("assistant: listening %d ms after the wake word (speech-to-text: %s; call audio %d ms%s, devices lent "
+                 "%d ms, speech-to-text %d ms)", self.connect_ms, self.stt_name, int(audio_ms * 1000),
+                 " first" if early else "", int(lent_ms * 1000), int((t_stt - max(t_audio, t_lent)) * 1000))
         self._publish(ev.SESSION, {"active": True, "source": self.source})
 
     def _log_devices(self) -> None:
