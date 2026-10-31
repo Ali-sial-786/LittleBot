@@ -468,6 +468,26 @@ def test_preroll_keeps_only_the_sentence_being_recognised():
     assert pre.since(None) == []
 
 
+def test_the_end_of_the_wake_phrase_in_the_carry_is_not_going_on_talking():
+    # On the robot (2026-10-31) the carry started inside "bot": ~0.3 s more of it, louder than a pause, took a bare
+    # "hey little bot" for going on talking, and no earcon played.
+    from littlebot.audio.carry import TAIL_SECONDS, SpeechCarry
+
+    c = SpeechCarry(16000, quiet_level=0.01)
+    c.add(np.full(int(TAIL_SECONDS * 16000), 0.1, dtype=np.float32))  # the rest of "bot"
+    c.add(np.zeros(3200, dtype=np.float32))
+    assert c.speech_seconds == pytest.approx(TAIL_SECONDS) and c.talk_seconds == 0.0
+    c.add(np.full(1600, 0.1, dtype=np.float32))  # then the question
+    assert c.talk_seconds == pytest.approx(0.1)
+    c.seal("the assistant took the microphone")
+    c.heard(0.1, 0.2)  # what the assistant's microphone heard after it (wakeword EARLY_START)
+    c.heard(0.001, 0.1)
+    assert c.talk_seconds == pytest.approx(0.3) and c.quiet_s == pytest.approx(0.1) and c.seconds < 0.7
+    c.drop("over")
+    c.heard(0.1, 1.0)
+    assert c.talk_seconds == pytest.approx(0.3)  # nothing once dropped
+
+
 def test_speech_carry_is_handed_over_once_and_dropping_forgets_it():
     from littlebot.audio.carry import SpeechCarry
 

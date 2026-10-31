@@ -1157,17 +1157,17 @@ class WakeWordService(Service):
     @staticmethod
     async def _talk_goes_on(carry: SpeechCarry, quiet: float = EARCON_QUIET_SECONDS) -> bool:
         """Heard early: do they go on talking after the wake phrase (more speech in the carry), or wait for the
-        sound (``quiet`` seconds of quiet)?"""
-        start = carry.speech_seconds
+        sound (``quiet`` seconds of quiet)? Not counting the wake phrase's own tail (carry.TAIL_SECONDS)."""
+        start = carry.talk_seconds
         deadline = time.monotonic() + TALK_WAIT_SECONDS
         while (carry.is_open or (getattr(carry, "levels_wanted", False) and not carry.dropped)) \
                 and time.monotonic() < deadline:
-            if carry.speech_seconds - start >= TALK_SPEECH_SECONDS:
+            if carry.talk_seconds - start >= TALK_SPEECH_SECONDS:
                 return True
             if carry.quiet_s >= quiet:
                 return False
             await asyncio.sleep(0.02)
-        return carry.speech_seconds - start >= TALK_SPEECH_SECONDS or time.monotonic() >= deadline
+        return carry.talk_seconds - start >= TALK_SPEECH_SECONDS or time.monotonic() >= deadline
 
     async def _earcon_in_call(self, live: Any, carry: SpeechCarry) -> None:
         """EARLY_START: the assistant listens already; the earcon through its own speaker stream once they wait for

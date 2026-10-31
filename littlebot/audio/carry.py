@@ -35,6 +35,10 @@ VOICE_KEEP_SECONDS = 5.0  # keep_voice: the wake phrase plus at most this much o
 # keep_phrase: the end of what was heard before the carry ("...bot"). Speech-to-text works through what it is sent
 # at about real time: 2.5 s of it delayed the end of their turn by ~2 s (the robot, 2026-10-31).
 PHRASE_KEEP_SECONDS = 0.6
+# The carry starts where the recogniser says the wake phrase ended, often inside "bot": on the robot (2026-10-31)
+# the echo-cancelled microphone stayed louder than a pause for ~0.3 s more (the rest of the word and its tail), and
+# a bare "hey little bot" was taken for going on talking (no earcon). Speech in that stretch isn't ``talk_seconds``.
+TAIL_SECONDS = 0.3
 
 
 class PreRoll:
@@ -120,6 +124,9 @@ class SpeechCarry:
         self._chunks: list[np.ndarray] = []
         self._samples = 0
         self._speech = 0
+        self._pos = 0  # samples since the wake phrase ended, added or ``heard``
+        self._talk = 0  # loud samples after TAIL_SECONDS
+        self._tail = int(TAIL_SECONDS * self.sample_rate)
         self.keep_voice = keep_voice  # also keep a copy to recognise who said it (see voice_audio)
         self._voice: list[np.ndarray] = []
         self._voice_n = 0
@@ -140,12 +147,19 @@ class SpeechCarry:
             if self.keep_voice and self._voice_n < self._voice_max:
                 self._voice.append(x[: self._voice_max - self._voice_n].copy())
                 self._voice_n += len(self._voice[-1])
-            if dsp.rms(x) >= self.quiet_level:
-                self._speech += len(x)
-                self.quiet_s = 0.0
-            else:
-                self.quiet_s += len(x) / float(self.sample_rate)
+            self._level(dsp.rms(x), len(x))
             return True
+
+    def _level(self, level: float, n: int) -> None:
+        """``n`` samples this loud were heard (under the lock)."""
+        if level >= self.quiet_level:
+            self._speech += n
+            if self._pos >= self._tail:
+                self._talk += n
+            self.quiet_s = 0.0
+        else:
+            self.quiet_s += n / float(self.sample_rate)
+        self._pos += n
 
     def heard(self, level: float, seconds: float) -> None:
         """How loud the call's microphone was for ``seconds`` once it took over (sealed): only that, no audio,
@@ -153,11 +167,7 @@ class SpeechCarry:
         with self._lock:
             if self.state != "sealed" or seconds <= 0:
                 return
-            if level >= self.quiet_level:
-                self._speech += int(seconds * self.sample_rate)
-                self.quiet_s = 0.0
-            else:
-                self.quiet_s += seconds
+            self._level(level, int(seconds * self.sample_rate))
 
     def seal(self, why: str = "") -> None:
         """Nothing more is added; the call may now take it."""
@@ -230,6 +240,11 @@ class SpeechCarry:
     def speech_seconds(self) -> float:
         """How much of it was louder than a pause (an estimate, for the log)."""
         return self._speech / float(self.sample_rate)
+
+    @property
+    def talk_seconds(self) -> float:
+        """Speech after the wake phrase's own tail (TAIL_SECONDS): are they going on talking?"""
+        return self._talk / float(self.sample_rate)
 
 
 __all__ = ["PreRoll", "SpeechCarry", "QUIET_RATIO"]
