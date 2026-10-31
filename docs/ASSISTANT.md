@@ -148,7 +148,7 @@ ssh alisial3@littlebot.local "grep -a assistant.turn ~/LittleBot/data/logs/littl
 | `stt` | `[deepgram, openai, vosk]` | speech-to-text, first that works |
 | `tts` | `[cartesia, elevenlabs, openai, local]` | voice, first that works; a voice that fails before a sentence starts hands it to the next |
 | `cartesia_voice` / `elevenlabs_voice` / `openai_tts_voice` | Tessa / Jessica / coral | the voice |
-| `cartesia_speed` | `0.92` | 0.6-1.5 (1.0 normal): slightly slower than normal |
+| `cartesia_speed` | `1.0` | 0.6-1.5 (1.0 normal; 0.9 is a little slower) |
 | `cartesia_emotion` | `calm` | the voice's emotion when a sentence has no mood; tagged sentences get a gentle matching one ([happy] → content, [sad] → sympathetic, [excited] → happy) |
 | `cartesia_concurrency` | `1` | Cartesia requests open at once (the free plan allows 2: one is kept spare for a sentence just cut off). The next sentence is made while one plays, so there's no gap |
 | `follow_up_seconds` | `8` | listening after an answer without the wake word (0: one question per wake word) |

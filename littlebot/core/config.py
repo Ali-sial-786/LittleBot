@@ -403,8 +403,9 @@ class AssistantConfig(_Section):
     # "Tessa": an emotive voice Cartesia recommends for companions (soft, warm; follows the emotion below). The
     # earlier default, "Katie" (f786b574-daa5-4673-aa0c-cbe3e8534c02), sounded too forceful on the robot.
     cartesia_voice: str = "6ccbfb76-1fc6-48f7-b71d-91ac6298247b"
-    # 0.6-1.5 (1.0 normal), or slowest | slow | normal | fast | fastest. Slightly slower than normal: unhurried.
-    cartesia_speed: float | Literal["slowest", "slow", "normal", "fast", "fastest"] = 0.92
+    # 0.6-1.5 (1.0 normal), or slowest | slow | normal | fast | fastest. Normal: Tessa is unhurried as she is
+    # (0.92 was tried on the robot, 2026-10-31, and put back).
+    cartesia_speed: float | Literal["slowest", "slow", "normal", "fast", "fastest"] = 1.0
     # The voice's emotion when a sentence has no mood of its own (calm, content, ... from Cartesia's list; null:
     # read from the words). Sentences the brain tags [happy], [sad] ... get a matching gentle one.
     cartesia_emotion: str | None = "calm"
