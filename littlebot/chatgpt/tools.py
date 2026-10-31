@@ -149,14 +149,19 @@ TOOLS: tuple[_Tool, ...] = (
     _Tool("look_through_camera", "Take one photo with LittleBot's camera (only if a grown-up allows it) and say "
           "what is in it, to answer a question like 'what am I holding?'.",
           _obj({"question": _STR}, ("question",)), modes=("chat",)),
-    _Tool("get_weather", "The real weather from a weather service: now (temperature, feels-like, conditions, wind) "
-          "and the forecast (high, low, conditions, chance of rain or snow, wind, sunrise and sunset) for today, "
-          "tomorrow or the next days. Call it for EVERY question about the weather, the temperature outside, rain, "
-          "snow, sun, wind, or what to wear outside, instead of guessing or saying you don't know. Without a place it "
-          "is the weather at home; for somewhere else give the place, e.g. 'Paris' or 'Springfield, Illinois'.",
+    _Tool("get_weather", "The real weather from a weather service: now (temperature, feels-like, conditions, wind), "
+          "the next 12 hours in three-hour blocks (next_hours), and the forecast (high, low, conditions, chance of "
+          "rain or snow, wind, sunrise and sunset) for today, tomorrow or the next days; with hourly, also the hour "
+          "by hour (the next 24 hours one by one, and a few hours across each day). Call it for EVERY question "
+          "about the weather, the temperature outside, rain, snow, sun, wind, or what to wear outside, instead of "
+          "guessing or saying you don't know. Without a place it is the weather at home; for somewhere else give "
+          "the place, e.g. 'Paris' or 'Springfield, Illinois'.",
           _obj({"place": {**_STR, "description": "a city or town; leave out for home"},
                 "days": {"type": "integer", "minimum": 1, "maximum": 7,
-                         "description": "days of forecast: 1 today, 2 (default) today and tomorrow, up to 7"}})),
+                         "description": "days of forecast: 1 today, 2 (default) today and tomorrow, up to 7"},
+                "hourly": {"type": "boolean",
+                           "description": "true for hour by hour: 'the hourly forecast', 'will it rain at 3?', "
+                                          "'this afternoon', 'tonight', 'when will it stop raining?'"}})),
     _Tool("get_time", "The current time, date and day of the week where LittleBot is (or in another place). Call it "
           "for 'what time is it?', 'what day is it?', 'what's the date?' or how long until something, instead of "
           "guessing.", _obj({"place": {**_STR, "description": "a city, for the time somewhere else; leave out for "
@@ -1047,7 +1052,7 @@ class RobotToolbox:
             days = 2
         card = self._soon(self._weather_card(place, days))  # goes up while the forecast is fetched
         try:
-            report = await get_weather(self.ctx).report(place, days=days)
+            report = await get_weather(self.ctx).report(place, days=days, hourly=bool(args.get("hourly")))
         except WeatherError as e:
             card.cancel()
             return _err(f"{e}. Say so briefly; don't guess the weather.")
