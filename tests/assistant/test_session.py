@@ -413,6 +413,28 @@ async def test_the_wake_phrase_goes_first_and_is_taken_off_the_words() -> None:
     await svc.stop_session("test")
 
 
+async def test_a_loose_likeness_of_the_wake_phrase_is_taken_off_only_their_first_words() -> None:
+    import numpy as np
+
+    from littlebot.audio.carry import SpeechCarry
+
+    brain = Scripted(["Okay."], ["Sitting."])
+    svc, stt, tts, _ = _service(brain, follow_up_seconds=5)
+    carry = SpeechCarry(16000, phrase="hey little bot")
+    carry.keep_phrase([np.full(8000, 0.2, dtype=np.float32)])
+    carry.add(np.full(1600, 0.1, dtype=np.float32))
+    carry.seal("test")
+    await svc.start()
+    await svc.start_session(carry=carry)
+    await _wait(lambda: stt.stream is not None and stt.stream.fed >= 9600)
+    stt.say("little dots. Remind me to check the oven.")
+    await _wait(lambda: "Okay." in tts.said)
+    stt.say("Little dog, sit.")  # a later turn: their own words
+    await _wait(lambda: len(brain.questions) == 2)
+    assert brain.questions == ["Remind me to check the oven.", "Little dog, sit."]
+    await svc.stop_session("test")
+
+
 @pytest.mark.parametrize("said,question", [
     ("Hey, little bot. What time is it?", "What time is it?"), ("hey little bot what's the weather", "What's the weather"),
     ("Little bot, stop.", "Stop."), ("Hey Littlebot!", ""), ("Hey lil bot.", ""), ("Okay, little bot, next song", "Next song"),
@@ -431,6 +453,19 @@ def test_the_wake_phrase_is_no_part_of_the_question(said: str, question: str) ->
     from littlebot.assistant.session import _heard
 
     assert _heard(said) == question
+    assert _heard(said, phrase_first=True) == question  # the looser first-turn rule takes no more off these
+
+
+@pytest.mark.parametrize("said,question", [
+    ("little dots. Remind me in three minutes to check the oven.", "Remind me in three minutes to check the oven."),
+    ("Hey, middle bod, what time is it?", "What time is it?"), ("Little dog, sit.", "Sit."),
+    ("A little bit. Louder", "A little bit. Louder"), ("little dots", "little dots"),
+    ("Middle school starts at eight", "Middle school starts at eight"), ("little bit louder", "little bit louder"),
+])
+def test_after_the_wake_phrases_own_sound_a_looser_likeness_of_it_is_taken_off(said: str, question: str) -> None:
+    from littlebot.assistant.session import _heard
+
+    assert _heard(said, phrase_first=True) == question
 
 
 def test_what_was_said_with_the_wake_word_goes_without_its_long_pauses() -> None:

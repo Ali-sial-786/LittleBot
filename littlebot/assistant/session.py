@@ -127,6 +127,7 @@ class VoiceSession:
         self._answer: asyncio.Task[Any] | None = None
         self._answer_text = ""
         self._answer_done: list[str] = []  # what the current answer's tools did (kept if they cut in)
+        self._phrase_sent = False  # the wake phrase's sound went before their first words (_heard, phrase_first)
         self._voice: VoiceOut | None = None
         self._toolbox: Any = None
         self._hearing_since: float | None = None
@@ -259,6 +260,7 @@ class VoiceSession:
                 short = _squeeze_quiet(both, rate, max(float(getattr(self.carry, "quiet_level", 0.0) or 0.0),
                                                        CARRY_QUIET_RMS))
                 await self.stt.feed(dsp.resample(short, rate, STT_RATE))
+                self._phrase_sent = len(phrase) > 0
                 log.info("assistant: %.1f s said with the wake word sent first (after %.1f s of the wake phrase; "
                          "%.1f s of pauses left out)", len(samples) / float(rate), len(phrase) / float(rate),
                          (len(both) - len(short)) / float(rate))
@@ -411,7 +413,7 @@ class VoiceSession:
     async def _on_event(self, event: STTEvent) -> None:
         audio = self.audio
         if event.text and event.kind in ("partial", "eager_end_of_turn", "turn_resumed", "end_of_turn"):
-            event = dataclasses.replace(event, text=_heard(event.text))
+            event = dataclasses.replace(event, text=_heard(event.text, phrase_first=self._phrase_sent))
         if event.kind == "start_of_turn":
             if self._hearing_since is None:
                 self._hearing_since = self._now()
@@ -450,6 +452,7 @@ class VoiceSession:
                     self._set_phase("listening")
                 return
             if text:
+                self._phrase_sent = False  # their first words are in: the wake phrase is behind them
                 now = self._now()
                 after = f", {int((now - self._voice_at) * 1000)} ms after their voice stopped" \
                     if self._voice_at is not None and now - self._voice_at < 10 else ""
@@ -1282,6 +1285,10 @@ _WAKE_LEAD = re.compile(r"^\s*(?:(?:hey|hi|hay|a|okay|ok)[\s,.!]+)?(?:(?:little|
                         r"[\s,.!?]*|"
                         r"^\s*(?:(?:hey|hi|hay|a|okay|ok)[\s,.!]+)?(?:middle|liddle)[\s-]*(?:bot|bought|boat)\b"
                         r"[\s,.!?]*", re.IGNORECASE)
+# The wake phrase's own sound went first (their first turn), so their words start with it however it was heard
+# ("little dots.", "middle butt,": the robot, 2026-10-31): a looser likeness, ending in a stop before more words.
+_WAKE_LEAD_SENT = re.compile(r"^\s*(?:(?:hey|hi|hay|a|okay|ok)[\s,.!]+)?(?:little|lil|li'l|middle|liddle|lidl)"
+                             r"[\s-]*[bdp][oua][a-z]{0,4}[,.!?]+\s*(?=\S)", re.IGNORECASE)
 
 
 def _squeeze_quiet(x: np.ndarray, rate: int, level: float, keep_s: float = CARRY_PAUSE_S) -> np.ndarray:
@@ -1303,9 +1310,12 @@ def _squeeze_quiet(x: np.ndarray, rate: int, level: float, keep_s: float = CARRY
     return np.concatenate(out) if out else x
 
 
-def _heard(text: str) -> str:
-    """What they said, without a wake phrase at its start ("" when that was all)."""
+def _heard(text: str, *, phrase_first: bool = False) -> str:
+    """What they said, without a wake phrase at its start ("" when that was all). ``phrase_first``: the wake
+    phrase's sound went before these words (_WAKE_LEAD_SENT)."""
     rest = _WAKE_LEAD.sub("", text, count=1)
+    if rest == text and phrase_first:
+        rest = _WAKE_LEAD_SENT.sub("", text, count=1)
     return rest[:1].upper() + rest[1:] if rest and rest != text else rest
 
 
