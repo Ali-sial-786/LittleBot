@@ -42,11 +42,12 @@ _ASK = r"(?:(?:can|could|would|will) you (?:please )?|please )?"
 _BIT = r"(?:a (?:little )?bit |a little |a touch |a tad |slightly |much |even |bit )?"  # before "louder"
 _BIT_AFTER = r"(?: (?:a (?:little )?bit|a little|a touch|a tad|slightly|some|more))?"  # after "turn it up"
 _THE_VOLUME = r"(?:the volume|the sound|your volume)"
-LOUDER = _whole(rf"{_ASK}(?:turn (?:it |that |yourself |{_THE_VOLUME} )?up{_BIT_AFTER}|"
-                rf"turn up {_THE_VOLUME}{_BIT_AFTER}|(?:raise|increase) {_THE_VOLUME}{_BIT_AFTER}|volume up|"
+_TURN = r"turn(?:ed)?"  # "turn the" is often written "Turned the volume down a bit." (the robot, 2026-10-31)
+LOUDER = _whole(rf"{_ASK}(?:{_TURN} (?:it |that |yourself |{_THE_VOLUME} )?up{_BIT_AFTER}|"
+                rf"{_TURN} up {_THE_VOLUME}{_BIT_AFTER}|(?:raise|increase) {_THE_VOLUME}{_BIT_AFTER}|volume up|"
                 rf"speak up|(?:make it |be |speak |talk |go )?{_BIT}louder)(?: please)?")
-QUIETER = _whole(rf"{_ASK}(?:turn (?:it |that |yourself |{_THE_VOLUME} )?down{_BIT_AFTER}|"
-                 rf"turn down {_THE_VOLUME}{_BIT_AFTER}|(?:lower|decrease|reduce) {_THE_VOLUME}{_BIT_AFTER}|"
+QUIETER = _whole(rf"{_ASK}(?:{_TURN} (?:it |that |yourself |{_THE_VOLUME} )?down{_BIT_AFTER}|"
+                 rf"{_TURN} down {_THE_VOLUME}{_BIT_AFTER}|(?:lower|decrease|reduce) {_THE_VOLUME}{_BIT_AFTER}|"
                  rf"volume down|(?:make it |be |speak |talk |go )?{_BIT}(?:quieter|softer)|not so loud|"
                  rf"(?:(?:it'?s|that'?s|you'?re) )?(?:a (?:little )?bit |a little |way )?too loud)(?: please)?")
 # Speech-to-text writes "set the volume to one hundred percent" in words as often as in digits.
@@ -161,7 +162,7 @@ async def run(intent: Intent, box: Any, ctx: Any) -> str:
         if capped and intent.args.get("step", 0) > 0:
             was_top = current is not None and now is not None and round(current * 100) >= now
             return "That's as loud as I go." if was_top else "Louder. That's as loud as I go."
-        if capped and now is not None and intent.args.get("percent", 0) > now:
+        if now is not None and intent.args.get("percent", 0) > now:
             return f"Volume {now}, as loud as I go."  # "volume 100": it never says a level it didn't set
         return intent.say
     if name == "time":

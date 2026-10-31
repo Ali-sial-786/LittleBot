@@ -76,6 +76,7 @@ async def test_run_volume_and_time() -> None:
     ("can you turn the volume down a little bit", -1), ("Make it a bit quieter.", -1), ("It's too loud.", -1),
     ("lower the volume", -1), ("Turn up the volume please.", 1), ("a bit louder", 1), ("Louder, please.", 1),
     ("could you speak up", 1), ("a little bit softer", -1), ("turn it down", -1),
+    ("Turned the volume down a bit.", -1),  # how speech-to-text wrote "turn the volume down a bit" (the robot)
 ])
 def test_volume_in_everyday_words(text: str, step: int) -> None:
     hit = intents.match(text)
@@ -111,6 +112,8 @@ async def test_at_the_ceiling_it_says_so_and_never_a_level_it_did_not_set() -> N
     assert ctx.audio.volume == pytest.approx(0.8)
     assert await intents.run(intents.match("turn the volume down a bit"), box, ctx) == "Quieter."
     assert ctx.audio.volume == pytest.approx(0.7)
+    ctx.audio.set_volume = lambda v: min(float(v), 0.6)  # the speaker itself stops lower than the config's ceiling
+    assert await intents.run(intents.match("volume 100"), box, ctx) == "Volume 60, as loud as I go."
 
 
 async def test_voice_can_never_make_it_silent() -> None:
