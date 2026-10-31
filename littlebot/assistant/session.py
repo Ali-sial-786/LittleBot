@@ -596,10 +596,11 @@ class VoiceSession:
         self._publish(ev.TURN_DONE, {"ms_to_first_audio": first, "tools": list(getattr(result, "tools", []) or [])})
         if self.cfg.log_timings:
             log.info("assistant turn: by=%s stt=%s first_text_ms=%s first_audio_ms=%s total_ms=%d tools=%s tts=%s "
-                     "model=%s mouth_frames=%d quiet_cut_ms=%d%s", said_by, self.stt_name,
+                     "model=%s mouth_frames=%d quiet_cut_ms=%d prefix=%s%s", said_by, self.stt_name,
                      getattr(result, "first_text_ms", None), first, int((self._now() - t0) * 1000),
                      ",".join(getattr(result, "tools", []) or []) or "-", ",".join(voice.providers) or "-",
                      getattr(result, "model", "") or "-", self.mouth_frames, int(getattr(voice, "cut_s", 0.0) * 1000),
+                     getattr(result, "prefix", "") or "-",
                      f" error={result.error}" if result is not None and result.error else "")
         self.mouth_frames = 0
         if self._quiet_end:

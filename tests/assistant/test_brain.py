@@ -67,7 +67,7 @@ async def test_sentences_stream_with_expressions_and_context() -> None:
     assert call["messages"][0] == {"role": "user", "content": "hello"}
     assert "LittleBot" in call["system"] and "[happy]" in call["system"]
     assert "never answer it from memory" in call["system"]  # recent facts are looked up
-    assert "get_weather" in call["tools"]
+    assert "get_weather" in call["tools"] and len(res.prefix) == 6
 
 
 async def test_words_before_a_tool_are_said_before_it_runs() -> None:

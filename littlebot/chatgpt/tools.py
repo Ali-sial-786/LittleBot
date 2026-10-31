@@ -204,7 +204,8 @@ TOOLS: tuple[_Tool, ...] = (
 )
 TOOL_NAMES = frozenset(t.name for t in TOOLS)
 SCREEN_TOOL = "show_on_screen"  # offered only while the screen can show cards (RobotToolbox.specs)
-CARD_TOOL = "change_card"  # offered only while a card is on the screen
+CARD_TOOL = "change_card"  # offered only while a card is on the screen (always with specs(stable=True))
+STABLE_CARD_NOTE = "see the turn's context (none there: there is no card to change)."
 BROWSER_TOOLS = frozenset({"search_in_browser", "browser"})  # offered only while ctx.browser can open
 BATTERY_TOOL = "battery"  # offered only while a battery monitor is fitted (littlebot/power)
 
@@ -257,9 +258,11 @@ class RobotToolbox:
         self._going_up: set[asyncio.Task[Any]] = set()  # cards still going up after their tool call answered
 
     # ------------------------------------------------------------ the model's side
-    def specs(self) -> list[dict[str, Any]]:
+    def specs(self, *, stable: bool = False) -> list[dict[str, Any]]:
         """Tool specs for ``ChatGPTProvider.reply(tools=...)``: LittleBot's functions, then OpenAI's web
-        search (``WEB_SEARCH``) when ``chatgpt.web_search`` is on."""
+        search (``WEB_SEARCH``) when ``chatgpt.web_search`` is on. ``stable``: the same list whatever is on the
+        screen (change_card always, the card itself in ``card_now()`` for the turn's context), so a model's prompt
+        cache, which starts with the tools, still holds after a card came up (the assistant's brain)."""
         out: list[dict[str, Any]] = []
         for t in TOOLS:
             if self.mode not in t.modes:
@@ -270,6 +273,10 @@ class RobotToolbox:
                     out.append({"name": t.name, "description": f"{t.description} {cards}.", "parameters": t.parameters})
                 continue
             if t.name == CARD_TOOL:  # with what the card on the screen (and a timer behind it) is and can do
+                if stable:
+                    out.append({"name": t.name, "description": f"{t.description} {STABLE_CARD_NOTE}",
+                                "parameters": t.parameters})
+                    continue
                 card = self._card_now()
                 if card:
                     out.append({"name": t.name, "description": f"{t.description} {card}.", "parameters": t.parameters})
@@ -1156,6 +1163,10 @@ class RobotToolbox:
             return str(card.describe() or card.title or "")[:80]
         except Exception:  # noqa: BLE001
             return str(getattr(card, "title", ""))[:80]
+
+    def card_now(self) -> str:
+        """What change_card can change now (see ``_card_now``), for the turn's context with ``specs(stable=True)``."""
+        return self._card_now()
 
     def _card_now(self) -> str:
         """For change_card's description: "explain (Alexander the Great), with a picture; actions: picture, next,

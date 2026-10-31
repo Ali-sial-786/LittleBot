@@ -111,6 +111,7 @@ class TurnResult:
     first_text_ms: int | None = None
     total_ms: int = 0
     cancelled: bool = False
+    prefix: str = ""  # a short fingerprint of the tools and system prompt (the cached part): another one = a miss
 
 
 OnSentence = Callable[[Sentence], Any]
@@ -248,6 +249,9 @@ class Brain:
             timers = _safe(screens.timers_now)
             if timers:
                 items.append(f"timers: {timers}")
+        card = _safe(toolbox.card_now) if toolbox is not None and hasattr(toolbox, "card_now") else None
+        if card:  # change_card's own description doesn't change with it (_tool_specs): the prompt cache holds
+            items.append(f"change_card can change: {card}")
         media = getattr(ctx, "media", None)
         if media is not None:
             st = _safe(media.status) or {}
@@ -342,7 +346,7 @@ class Brain:
             return await toolbox.run(name, arguments)
 
         provider = self.provider()
-        tools = list(toolbox.specs()) if toolbox is not None else []
+        tools = _tool_specs(toolbox)
         if self.deep_provider() is not None and getattr(self.deep_provider(), "configured", lambda: False)():
             tools.append(_deep_spec())
         tools += [{k: v for k, v in spec.items() if k != "final"} for spec, _ in (extra_tools or {}).values()]
@@ -350,6 +354,7 @@ class Brain:
         system = self.system_prompt()
         if toolbox is not None and hasattr(toolbox, "instructions"):
             system += "\n" + toolbox.instructions().strip()
+        result.prefix = _fingerprint(tools, system)
         messages = self.build_messages(text, history, toolbox, extra=extra)
         kwargs: dict[str, Any] = {"tools": tools, "run_tool": run_tool, "max_tool_rounds": MAX_TOOL_ROUNDS,
                                   "effort": "minimal", "on_delta": on_delta, "final_tools": final}
@@ -483,6 +488,25 @@ def _safe(fn: Callable[[], Any]) -> Any:
         return fn()
     except Exception:  # noqa: BLE001
         return None
+
+
+def _tool_specs(toolbox: Any) -> list[dict[str, Any]]:
+    """The toolbox's tools, the same list whatever is on the screen when it can (``RobotToolbox.specs(stable=)``):
+    the prompt cache starts with the tools, and a card coming up cost a whole miss (~0.2 s, 2026-10-31)."""
+    if toolbox is None:
+        return []
+    try:
+        return list(toolbox.specs(stable=True))
+    except TypeError:  # a toolbox without it
+        return list(toolbox.specs())
+
+
+def _fingerprint(tools: list[dict[str, Any]], system: str) -> str:
+    import hashlib  # noqa: PLC0415
+    import json  # noqa: PLC0415
+
+    blob = json.dumps(tools, sort_keys=True, default=str) + "\n" + system
+    return hashlib.sha1(blob.encode("utf-8")).hexdigest()[:6]
 
 
 _PENDING: set[asyncio.Future[Any]] = set()  # listeners' coroutines, kept alive until done

@@ -237,6 +237,16 @@ def test_change_card_is_offered_only_with_a_card_up(ctx, cards):
     assert not browser or "that is change_card" in browser[0]["description"]
 
 
+def test_the_stable_tool_list_is_the_same_with_a_card_up(ctx, cards):
+    # The assistant's prompt cache starts with the tools: a card coming up cost a whole miss (2026-10-31).
+    before = RobotToolbox(ctx, mode="chat").specs(stable=True)
+    assert RobotToolbox(ctx, mode="chat").card_now() == ""
+    ctx.screens = PictureScreens()
+    box = RobotToolbox(ctx, mode="chat")
+    assert box.specs(stable=True) == before and "change_card" in {s.get("name") for s in before}
+    assert "explain (Alexander the Great: point 1 of 3), with a picture; actions: picture, next" in box.card_now()
+
+
 async def test_change_card_shows_the_picture_full_screen(ctx, cards):
     ctx.screens = PictureScreens()
     out = await run(RobotToolbox(ctx, mode="live"), "change_card", action="picture", args={"view": "fill"})
