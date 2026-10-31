@@ -3,7 +3,8 @@
 Titles only, with their source ("CBC", "BBC"): never the articles, never anything about the family sent anywhere
 (a plain GET of each feed). Feeds are fetched together, each kept for ``CACHE_S`` (15 minutes); one answer waits
 at most ``TIMEOUT_S`` for all of them, and a feed still loading carries on in the background so the next question
-finds it cached. Nothing is fetched in offline mode or while cloud communication is off in Privacy.
+finds it cached; once one feed has headlines the others get only ``OTHERS_S`` more. Nothing is fetched in offline
+mode or while cloud communication is off in Privacy.
 
 Parsing is ``xml.etree`` on at most ``MAX_BYTES`` of a feed; a feed that declares entities is refused (no entity
 expansion tricks). RSS 2.0, RSS 1.0 (RDF) and Atom all work.
@@ -27,6 +28,9 @@ log = logging.getLogger("littlebot.skills.news")
 
 CACHE_S = 15 * 60.0
 TIMEOUT_S = 4.0  # one answer waits at most this long for the feeds
+# ... and once one feed has headlines, this long for the others: on the robot (2026-10-31) the BBC came in 67 ms
+# but every news answer waited the whole 4 s for the CBC, which timed out (a silence in the middle of the answer).
+OTHERS_S = 1.0
 RETRY_S = 120.0  # a feed that failed is asked again after this long (answers stay fast meanwhile)
 MAX_BYTES = 2_000_000
 MAX_ITEMS = 25  # per feed
@@ -190,11 +194,13 @@ class NewsFeeds:
     """``headlines(count, topic)``: the configured feeds, fetched together and cached."""
 
     def __init__(self, ctx: Any, *, transport: httpx.AsyncBaseTransport | None = None,
-                 now: Callable[[], float] = time.monotonic, timeout: float = TIMEOUT_S) -> None:
+                 now: Callable[[], float] = time.monotonic, timeout: float = TIMEOUT_S,
+                 others_s: float = OTHERS_S) -> None:
         self.ctx = ctx
         self._transport = transport
         self._now = now
         self.timeout = float(timeout)
+        self.others_s = float(others_s)
         self._cache: dict[str, tuple[float, list[Headline]]] = {}
         self._failed: dict[str, float] = {}
         self._pending: dict[str, asyncio.Task[list[Headline]]] = {}
@@ -227,9 +233,17 @@ class NewsFeeds:
         urls = self.feeds()
         loop = asyncio.get_running_loop()
         tasks = [self._get(u, loop) for u in urls]
-        waiting = [t for t in tasks if isinstance(t, asyncio.Future)]
-        if waiting:  # (asyncio.wait never cancels: a feed still loading carries on for next time)
-            await asyncio.wait(waiting, timeout=self.timeout)
+        waiting = {t for t in tasks if isinstance(t, asyncio.Future)}
+        # (asyncio.wait never cancels: a feed still loading carries on for next time)
+        deadline = loop.time() + self.timeout
+        enough = loop.time() + self.others_s if any(isinstance(t, list) and t for t in tasks) else None
+        while waiting:
+            left = (deadline if enough is None else min(deadline, enough)) - loop.time()
+            if left <= 0:
+                break
+            done, waiting = await asyncio.wait(waiting, timeout=left, return_when=asyncio.FIRST_COMPLETED)
+            if enough is None and any(not t.cancelled() and t.exception() is None and t.result() for t in done):
+                enough = loop.time() + self.others_s
         feeds: list[list[Headline]] = []
         for u, t in zip(urls, tasks):
             if isinstance(t, list):

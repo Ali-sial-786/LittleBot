@@ -130,6 +130,25 @@ async def test_a_slow_feed_doesnt_hold_the_answer_and_is_cached_for_next_time(ct
     await svc.aclose()
 
 
+async def test_once_one_feed_has_headlines_the_others_get_only_a_moment_more(ctx):
+    # the BBC came in 67 ms, but every news answer waited the whole 4 s for the CBC (the robot, 2026-10-31)
+    web = FakeFeeds(delay={CBC_TOP: 0.6, CBC_HAMILTON: 0.6})
+    svc = feeds(ctx, web, timeout=2.0, others_s=0.1)
+    loop = asyncio.get_running_loop()
+    t0 = loop.time()
+    got = await svc.headlines(5)
+    assert loop.time() - t0 < 0.4 and {h.source for h in got} == {"BBC World"}
+    await svc.aclose()
+
+
+async def test_with_nothing_yet_it_waits_for_the_first_feed(ctx):
+    web = FakeFeeds(delay={CBC_TOP: 0.3, CBC_HAMILTON: 0.3, BBC_WORLD: 0.3})
+    svc = feeds(ctx, web, timeout=2.0, others_s=0.1)
+    got = await svc.headlines(5)
+    assert len({h.source for h in got}) == 3  # all came in within a moment of the first
+    await svc.aclose()
+
+
 async def test_failures(ctx, monkeypatch):
     web = FakeFeeds(status={CBC_TOP: 500, CBC_HAMILTON: 503, BBC_WORLD: 403})
     clock = Clock()
