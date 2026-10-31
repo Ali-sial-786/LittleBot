@@ -69,6 +69,10 @@ PAUSE_WORDS = frozenset({"wait", "wait a second", "wait a minute", "hold on", "h
 NO_WORDS_TURN_S = 4.0  # a turn with no words at all after this long was a noise: listening goes on as before
 CUT_IN_NOTE_S = 15.0  # a turn this soon after they talked over the voice is for LittleBot (_turn_notes)
 CARRY_OVERLAP_S = 0.02  # the call keeps this much from before the wake word's carry ended (a few ms twice, not lost)
+# What was said with the wake word goes to speech-to-text at once, which works through it at about real time: its
+# pauses (after "hey little bot,") are shortened to CARRY_PAUSE_S so the end of their turn isn't later for them.
+CARRY_PAUSE_S = 0.25
+CARRY_QUIET_RMS = 0.015  # a 20 ms frame quieter than this is a pause (the echo-cancelled microphone's floor: ~0.002)
 VOICE_RMS = 0.01  # a 16 kHz chunk this loud is someone talking (the log says how long after it a turn ended)
 EXPRESSION_HOLD_S = 6.0
 SORRY = {
@@ -240,9 +244,13 @@ class VoiceSession:
                 from littlebot.audio import dsp  # noqa: PLC0415
 
                 both = np.concatenate([phrase, np.asarray(samples, dtype=np.float32)])
-                await self.stt.feed(dsp.resample(both, rate, STT_RATE))
-                log.info("assistant: %.1f s said with the wake word sent first (after %.1f s of the wake phrase)",
-                         len(samples) / float(rate), len(phrase) / float(rate))
+                # speech-to-text works through it at about real time: the pause after the wake phrase only delays it
+                short = _squeeze_quiet(both, rate, max(float(getattr(self.carry, "quiet_level", 0.0) or 0.0),
+                                                       CARRY_QUIET_RMS))
+                await self.stt.feed(dsp.resample(short, rate, STT_RATE))
+                log.info("assistant: %.1f s said with the wake word sent first (after %.1f s of the wake phrase; "
+                         "%.1f s of pauses left out)", len(samples) / float(rate), len(phrase) / float(rate),
+                         (len(both) - len(short)) / float(rate))
         self._spawn(self._pump())
         self._spawn(self._watch())
         self.connect_ms = int((self._now() - t0) * 1000)
@@ -1215,8 +1223,27 @@ def _words(text: str) -> list[str]:
 
 # The wake phrase at the start of what speech-to-text heard ("Hey, little bot. Who was Kublai Khan?"): the wake
 # word's carry sends it first so the sentence is heard whole; LittleBot's name is no part of the question.
-_WAKE_LEAD = re.compile(r"^\s*(?:(?:hey|hi|hay|okay|ok)[\s,.!]+)?(?:little|lil|li'l)[\s-]*bot\b[\s,.!?]*|"
+_WAKE_LEAD = re.compile(r"^\s*(?:(?:hey|hi|hay|okay|ok)[\s,.!]+)?(?:(?:little|lil|li'l)[\s-]*)?bot\b[\s,.!?]*|"
                         r"^\s*(?:(?:hey|hi|hay|okay|ok)[\s,.!]+)?littlebot\b[\s,.!?]*", re.IGNORECASE)
+
+
+def _squeeze_quiet(x: np.ndarray, rate: int, level: float, keep_s: float = CARRY_PAUSE_S) -> np.ndarray:
+    """``x`` with every pause (20 ms frames quieter than ``level``) longer than ``keep_s`` shortened to it; the
+    words are untouched."""
+    n = max(1, rate // 50)
+    frames = len(x) // n
+    if frames == 0:
+        return x
+    rms = np.sqrt(np.mean(np.square(x[: frames * n].reshape(frames, n)), axis=1))
+    keep = max(1, int(round(keep_s * 50)))
+    out: list[np.ndarray] = []
+    run = 0
+    for i in range(frames):
+        run = run + 1 if rms[i] < level else 0
+        if run <= keep:
+            out.append(x[i * n:(i + 1) * n])
+    out.append(x[frames * n:])
+    return np.concatenate(out) if out else x
 
 
 def _heard(text: str) -> str:

@@ -32,7 +32,9 @@ from littlebot.audio import dsp
 
 QUIET_RATIO = 0.7  # x audio.microphone.vad_threshold: below this a stretch counts as a pause (EnergyVAD's release)
 VOICE_KEEP_SECONDS = 5.0  # keep_voice: the wake phrase plus at most this much of what followed
-PHRASE_KEEP_SECONDS = 2.5  # keep_phrase: the end of what was heard before the carry (the wake phrase)
+# keep_phrase: the end of what was heard before the carry ("...bot"). Speech-to-text works through what it is sent
+# at about real time: 2.5 s of it delayed the end of their turn by ~2 s (the robot, 2026-10-31).
+PHRASE_KEEP_SECONDS = 0.6
 
 
 class PreRoll:

@@ -351,11 +351,27 @@ async def test_the_wake_phrase_goes_first_and_is_taken_off_the_words() -> None:
     ("Hey, little bot. What time is it?", "What time is it?"), ("hey little bot what's the weather", "What's the weather"),
     ("Little bot, stop.", "Stop."), ("Hey Littlebot!", ""), ("Hey lil bot.", ""), ("Okay, little bot, next song", "Next song"),
     ("What's a little bot?", "What's a little bot?"), ("a little bit louder", "a little bit louder"),
+    ("bot. Who was Kublai Khan?", "Who was Kublai Khan?"), ("Hey bot, what time is it", "What time is it"),
+    ("Bottles of water", "Bottles of water"),
 ])
 def test_the_wake_phrase_is_no_part_of_the_question(said: str, question: str) -> None:
     from littlebot.assistant.session import _heard
 
     assert _heard(said) == question
+
+
+def test_what_was_said_with_the_wake_word_goes_without_its_long_pauses() -> None:
+    # Speech-to-text works through it at about real time: 2.5 s of it delayed the end of their turn by ~2 s.
+    import numpy as np
+
+    from littlebot.assistant.session import _squeeze_quiet
+
+    rng = np.random.default_rng(3)
+    word = (0.2 * rng.standard_normal(4800)).astype(np.float32)  # 0.3 s
+    quiet = np.full(16000, 0.001, dtype=np.float32)  # 1 s
+    out = _squeeze_quiet(np.concatenate([word, quiet, word, quiet[:2400], word]), 16000, 0.015)
+    assert abs(len(out) - (3 * 4800 + 4000 + 2400)) <= 320  # the long pause down to 0.25 s (a 20 ms frame), the short one as it was
+    assert np.array_equal(out[:4800], word) and np.array_equal(out[-4800:], word)
 
 
 async def test_typed_chat_uses_the_same_brain() -> None:
