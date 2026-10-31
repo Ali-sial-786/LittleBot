@@ -370,6 +370,28 @@ async def test_cutting_in_stops_the_voice_and_sends_them_from_their_first_word(c
         audio.close()
 
 
+async def test_for_the_assistant_what_they_said_over_the_voice_comes_at_once(call):
+    # The assistant's speech-to-text takes audio faster than real time: the pre-roll at real time left it 400 ms
+    # behind the microphone after a cut-in (the robot, 2026-10-31).
+    audio, c = call()
+    audio.burst_preroll = True
+    try:
+        await c.warm_up()
+        cut = await c.talk_over(0.6)
+        assert cut is not None
+        k = SPEECH_START + cut  # the frame read when it decided (no tick before the voice here)
+        burst = c.sent[k]
+        assert len(burst) > FRAME and len(burst) % FRAME == 0  # the pre-roll and the frame just read, together
+        first = next(i for i, m in enumerate(c.mics) if np.array_equal(m, burst[:FRAME]))
+        n = len(burst) // FRAME
+        assert all(np.array_equal(burst[j * FRAME:(j + 1) * FRAME], c.mics[first + j]) for j in range(n))
+        assert first + n - 1 == k  # caught up: what follows is the microphone as it is read
+        assert all(np.array_equal(c.sent[j], c.mics[j]) for j in range(k + 1, len(c.sent)))
+        assert audio.input_behind_s() < FRAME_S
+    finally:
+        audio.close()
+
+
 async def test_their_words_drop_the_rest_of_that_turn_and_the_next_one_plays(call):
     audio, c = call()
     try:

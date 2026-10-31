@@ -412,6 +412,9 @@ class LiveAudio:
         self._ring: collections.deque[np.ndarray] = collections.deque(maxlen=int(PREROLL_MAX_S / FRAME_S))
         self._sendq: collections.deque[np.ndarray] = collections.deque()  # the pre-roll, then the microphone
         self._send_pause = 0
+        # The pre-roll at once instead of at real time (read_frame then returns more than a frame): for a reader that
+        # takes audio faster than real time (the assistant's speech-to-text), never for a WebRTC call (GPT-Live).
+        self.burst_preroll = False
         self._hold = False  # the voice fades out and waits in the queue (PortAudio's thread reads this)
         self._hold_gain = 1.0  # PortAudio's thread only
         self._queue_cap_s = MAX_QUEUED_S
@@ -819,13 +822,18 @@ class LiveAudio:
 
     def _send(self, frame: np.ndarray | None) -> np.ndarray:
         """The pre-roll first, then the microphone, one frame per frame read (never a burst). While behind,
-        pauses longer than KEEP_PAUSE_S are cut short, so it is back in real time at their first pause."""
+        pauses longer than KEEP_PAUSE_S are cut short, so it is back in real time at their first pause.
+        ``burst_preroll`` (the assistant: speech-to-text takes audio faster than real time): all of it at once."""
         if frame is not None:
             if not self._sendq:
                 return frame
             self._sendq.append(frame)
         if not self._sendq:
             return np.zeros(FRAME, dtype=np.int16)
+        if self.burst_preroll:
+            out = np.concatenate(list(self._sendq))
+            self._sendq.clear()
+            return out
         f = self._sendq.popleft()
         quiet = float(np.sqrt(np.mean((f.astype(np.float32) / 32768.0) ** 2))) < QUIET_LEVEL
         self._send_pause = self._send_pause + 1 if quiet else 0

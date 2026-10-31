@@ -986,6 +986,9 @@ class VoiceSession:
         setup = getattr(self.audio, "setup_barge_in", None)
         if not callable(setup):
             return
+        if hasattr(self.audio, "burst_preroll"):
+            # what they said over the voice reaches speech-to-text at once, not at real time (it was 400 ms behind)
+            self.audio.burst_preroll = True
         hooks: dict[str, Any] = {"on_change": self._barge_in_changed,
                                  "identify": getattr(getattr(self.ctx, "voices", None), "identify", None)}
         if getattr(self.audio, "barge_in_on", False) and getattr(self.ctx.config.chatgpt, "live_stop_words", False):
