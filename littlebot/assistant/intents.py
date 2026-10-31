@@ -26,7 +26,10 @@ _STOP_CORE = (r"stop(?: it| that| talking| now)?|cancel(?: that)?|never ?mind|fo
               # telling it to stop ends the call, without a word (asked for on the robot, 2026-10-31)
               r"(?:end|stop|close|finish) (?:the |this )?(?:call|chat|conversation|session)|end it|hang up|"
               r"stop listening|you can (?:go|stop)(?: now)?|no more questions|nothing else|that will be all|"
-              r"that'?ll be all|that'?s (?:all|it)(?: for now)?|i'?m done|we'?re done|go away|leave me alone")
+              r"that'?ll be all|that'?s (?:all|it)(?: for now)?|i'?m done|we'?re done|go away|leave me alone|"
+              # the end of "stop talking", its "stop" said under the voice's last words (the robot, 2026-10-31:
+              # "Talking." was answered with "Looks like you're still there")
+              r"(?:no )?talking")
 _STOP_LEAD = r"hey|no|oh|ok(?:ay)?|alright|all right|just|i said|(?:can|could|would|will) you(?: please)?"
 STOP = _whole(rf"(?:(?:{_STOP_LEAD})[\s,]+)?(?:{_STOP_CORE})(?:[\s,.!]+(?:{_STOP_CORE}))*|nothing")
 THANKS = _whole(r"thanks?(?: you)?(?: so much| very much| a lot)?|cheers|perfect|great(?:,? thanks?)?|awesome|"

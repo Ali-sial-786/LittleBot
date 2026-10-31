@@ -22,6 +22,8 @@ from littlebot.testing import make_test_context
     # speech-to-text often ends a sentence after the first word (the robot, 2026-10-31)
     ("Thanks. Bye.", "bye"), ("Thanks! Bye!", "bye"), ("Okay. Stop talking.", "stop"), ("Okay. Thanks.", "thanks"),
     ("Hey. Little bot. Stop.", "stop"),
+    # "stop talking" with its "stop" lost under the voice's last words (the robot, 2026-10-31)
+    ("Talking.", "stop"), ("talking!", "stop"), ("No talking.", "stop"),
 ])
 def test_matches(text: str, name: str) -> None:
     hit = intents.match(text)
@@ -43,7 +45,8 @@ def test_told_to_stop_ends_without_a_word(text: str) -> None:
 
 
 @pytest.mark.parametrize("text", ["no", "hey", "stop the music and play jazz", "no, I meant tomorrow",
-                                  "can you stop by the store", "what stops the rain"])
+                                  "can you stop by the store", "what stops the rain", "talking about dinosaurs",
+                                  "who was talking"])
 def test_not_a_stop(text: str) -> None:
     hit = intents.match(text)
     assert hit is None or hit.name != "stop"

@@ -56,6 +56,9 @@ A key in `~/LittleBot/.env` (`DEEPGRAM_API_KEY=...`) works too and wins over the
 ## How a conversation goes
 
 1. "Hey LittleBot, what's the weather tomorrow?" in one breath works: what you said with the wake word is sent first.
+   With echo cancelling on, the assistant starts listening the moment it hears its name, and plays the "listening"
+   sound itself only if you wait for it (none when you go straight on). Speech-to-text then hears your question as
+   you say it, not as a recording it has to catch up on: on the robot that ended turns about half a second sooner.
 2. LittleBot answers; its face follows its mood sentence by sentence (the brain tags its sentences `[happy]`,
    `[curious]` ...), and a card goes up when seeing helps (the forecast, a recipe, a list, a timer).
 3. It keeps listening for **8 seconds** (`assistant.follow_up_seconds`; 12 s when it asked you something): ask the
