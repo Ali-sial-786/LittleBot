@@ -852,6 +852,10 @@ async def test_a_stop_word_counts_only_when_sure_and_not_inside_a_sentence():
     assert sure(_result(("okay", 1.0), ("stop", 1.0)), phrases) == "stop"
     assert sure(_result(("hey", 1.0), ("little", 1.0), ("bot", 1.0), ("that's", 0.9), ("enough", 1.0)),
                 phrases) == "that's enough"
+    # one word, damaged by the echo canceller over a long answer (the robot, 2026-10-31: 0.44-0.86), still counts
+    assert sure(_result(("stop", 0.5)), phrases) == "stop"
+    assert sure(_result(("stop", 0.3)), phrases) is None and sure(_result(("stop", 0.0)), phrases) is None
+    assert sure(_result(("that's", 0.5), ("enough", 0.5)), phrases) is None  # two words: as sure as before
     rec = SureRecognizer(["", "that's enough", "", "stop"],
                          [_result(("what", 1.0), ("that's", 0.3), ("enough", 0.4)), _result(("stop", 1.0))])
     words = StopWords(lambda: (rec, phrases), rate=RATE)

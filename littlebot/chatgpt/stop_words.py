@@ -46,6 +46,10 @@ HIT_FRESH_S = 3.0  # a stop word said this recently (by the time its audio was h
 # sentences showed one in their words so far ("what's the capital of" as "that's enough"); 10 weren't sure, and the
 # other 3 were inside a sentence ("a long story" heard as "a lot stop", "what's the weather" as "what stop").
 MIN_CONFIDENCE = 0.6
+# A one-word stop phrase, this sure. Said over a long answer, "Stop!" comes out of the echo canceller damaged: on the
+# robot (2026-10-31) the news was read on for 38 s after one, as it scored 0.44-0.86 (1.0 alone); the everyday
+# sentences' one-word matches all scored 0.00 (the word gone from the final result).
+MIN_CONFIDENCE_ONE_WORD = 0.4
 LEAD_WORDS = frozenset("hey little lil bot okay ok no oh just please i said um uh alright so and now [unk]".split())
 MAX_LEAD_WORDS = 4
 _RESET = object()
@@ -186,8 +190,9 @@ def sure(result: dict[str, Any], phrases: list[tuple[str, tuple[str, ...]]]) -> 
     toks = [str(w.get("word", "")).lower() for w in words]
     for phrase, ph in sorted(phrases, key=lambda p: -len(p[1])):
         n = len(ph)
+        need = MIN_CONFIDENCE_ONE_WORD if n == 1 else MIN_CONFIDENCE
         for i in range(len(toks) - n + 1):
-            if tuple(toks[i:i + n]) != ph or min(float(w.get("conf", 1.0)) for w in words[i:i + n]) < MIN_CONFIDENCE:
+            if tuple(toks[i:i + n]) != ph or min(float(w.get("conf", 1.0)) for w in words[i:i + n]) < need:
                 continue
             if i <= MAX_LEAD_WORDS and all(t in LEAD_WORDS for t in toks[:i]):
                 return phrase
