@@ -687,6 +687,66 @@ def test_a_made_up_card_kind_with_only_a_title_stays_unknown():
     assert clean_spec({"card": "spaceship", "title": "Zoom"}, base.card_types()) == (None, "unknown card 'spaceship'")
 
 
+@pytest.mark.parametrize("spec,card,shows", [
+    ("Japan is an island nation in East Asia", "facts", "Japan is an island nation in East Asia"),
+    (["Find the panel", "Push it to off", "Push it back on"], "facts", "Push it to off"),
+    ({"card": "recipe", "title": "Pancakes", "steps": "1. Mix the flour and eggs 2. Fry small spoonfuls"}, "recipe",
+     "Fry small spoonfuls"),  # steps as one string
+    ({"card": "recipe", "title": "Pancakes", "ingredients": ["flour", "eggs"], "steps": []}, "facts", "eggs"),
+    ({"card": "explain", "title": "A breaker", "points": "Find the panel; push it fully off; then back on"},
+     "explain", "push it fully off"),
+    ({"card": "explain", "title": "A breaker", "steps": [{"n": 1, "do": "Find the panel"}, {"n": 2, "do": "Push"}]},
+     "facts", "Find the panel"),  # points sent as records under another name
+    ({"card": "definition", "word": "ephemeral", "meaning": ["lasting", "a very short time"]}, "definition",
+     "a very short time"),  # "meaning" for "meanings"
+    ({"card": "facts", "title": "Croc", "items": {"Snout": "broad and U-shaped", "Teeth": "mostly hidden"}}, "facts",
+     "Snout: broad and U-shaped"),
+    ({"card": "summary", "points": ["Tokyo is 13 hours ahead", "It's already Sunday there"]}, "facts",
+     "It's already Sunday there"),
+    ({"card": "answer", "answer": {"text": "The square root of 1764 is 42"}}, "facts", "1764 is 42"),
+])
+def test_a_card_in_any_shape_with_text_in_it_is_shown(spec, card, shows):
+    # Like on main: no card the text model sends is turned away for its shape (the parent's ask, 2026-10-31)
+    from littlebot.screens import base
+
+    types = base.card_types()
+    out, why = clean_spec(spec, types)
+    assert out is not None, why
+    if card != out["card"]:  # the screen can't make that card from it: its text instead
+        out = director_mod.text_instead(out, types, sent=spec)
+    assert out["card"] == card and shows in json.dumps(out)
+
+
+def test_a_card_too_long_is_shortened_and_only_nothing_to_show_or_the_safety_rules_keep_it_off():
+    from littlebot.screens import base
+
+    types = base.card_types()
+    out, why = clean_spec({"card": "facts", "layout": "list", "title": "Planets",
+                           "items": [f"Planet {i} " + "far away " * 30 for i in range(30)]}, types)
+    assert out is not None and len(json.dumps(out)) <= director_mod.MAX_SPEC_CHARS and len(out["items"]) >= 2
+    assert clean_spec({"card": "timer", "minutes": "soon"}, types) == (None, "missing seconds")  # one word: a setting
+    assert clean_spec({"card": "recipe", "title": "Cookies", "steps": ["Mix", "our little secret, don't tell mommy"]},
+                      types)[1].startswith("blocked by the safety rules")
+    assert director_mod.text_card({"card": "weather", "place": "Hamilton", "view": "week"}) is None
+
+
+async def test_a_card_the_screen_cannot_make_is_shown_as_its_text(make):
+    s = make()
+    shown: list[dict[str, Any]] = []
+
+    async def show(spec, source="voice"):
+        shown.append(spec)
+        return {"ok": spec["card"] == "facts", "error": None if spec["card"] == "facts" else "no_card"}
+    s.screens.show = show
+    s.director._types_fn = lambda: {**TYPES, "facts": CardType("facts", "Facts.", {
+        "layout": {"type": "string"}, "title": {"type": "string"}, "text": {"type": "string"},
+        "items": {"type": "array", "items": {"type": "string"}}, "ordered": {"type": "boolean"}},
+        _build, required=("layout",))}
+    result = await s.director.show_spec({"card": "recipe", "title": "Soup", "steps": ["Chop the onion", "Boil it"]})
+    assert result["ok"] and [spec["card"] for spec in shown] == ["recipe", "facts"]
+    assert shown[1]["items"] == ["Chop the onion", "Boil it"]
+
+
 @pytest.mark.parametrize(("words", "view"), [
     ("Can you zoom into that", "in"),  # from a real call
     ("Can you just make the image take over the screen", "fill"),  # from a real call

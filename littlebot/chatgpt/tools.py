@@ -1271,9 +1271,15 @@ class RobotToolbox:
             clean, why = director.clean_spec(spec, self._card_types(), relaxed)
             if clean is None:
                 return {"ok": False, "error": "invalid", "detail": why}
-            shown = _maybe_await(screens.show(clean, source="tool"))
-            result = await asyncio.wait_for(shown, director.SHOW_TIMEOUT_S)
-            return result if isinstance(result, dict) else {"ok": bool(result)}
+            result = await asyncio.wait_for(_maybe_await(screens.show(clean, source="tool")), director.SHOW_TIMEOUT_S)
+            result = result if isinstance(result, dict) else {"ok": bool(result)}
+            instead = director.text_instead(clean, self._card_types(), relaxed, spec) \
+                if result.get("error") == "no_card" else None
+            if instead is not None:  # a card the screen couldn't make: its text, rather than no card
+                result = await asyncio.wait_for(_maybe_await(screens.show(instead, source="tool")),
+                                                director.SHOW_TIMEOUT_S)
+                result = result if isinstance(result, dict) else {"ok": bool(result)}
+            return result
         except asyncio.CancelledError:
             raise
         except Exception:  # noqa: BLE001 - a card that can't be shown is simply not shown

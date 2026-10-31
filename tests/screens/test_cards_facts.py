@@ -276,8 +276,9 @@ async def test_text_fits_and_pages_hold_at_most_max_lines() -> None:
                                    {"name": "B", "facts": [f"value {i}" for i in range(8)]},
                                    {"name": "C", "facts": ["x"]}]})
     assert len(card.pages()) >= 2
-    for page in card.pages():
-        assert sum(card._row_lines(r) for r in page) <= base.MAX_LINES - 1
+    room = kit.PANEL.h - 2 * kit.PAD - facts.DOTS_H - facts.HEAD_H - 6
+    for page in card.pages():  # each page's rows fit under the names
+        assert sum(card._row_h(r) + facts.ROW_GAP for r in page) <= room
     card.command("next", {})
     assert "(page 2 of" in card.describe()
     preview.surface(card, seconds=1)
@@ -290,8 +291,31 @@ async def test_compare_without_row_labels_lines_facts_up() -> None:
     for c in range(3):
         for r in range(2):
             lines = card._cell_lines(c, r)
-            assert len(lines) <= 2 and all(kit.text_w(s, facts.CELL_PX) <= card._col_geometry()[1] - 16
-                                           for s in lines)
+            assert len(lines) <= facts.CELL_LINES and all(
+                kit.text_w(s, card._cell_px()) <= card._col_geometry()[1] - 16 for s in lines)
+
+
+async def test_compare_cells_get_the_room_their_labels_leave_and_show_where_they_are_cut() -> None:
+    # "lower teeth show when mouth is" (closed cut off) with a 150 px label column for "Snout" and "Teeth"; two rows
+    # of two lines a page and the rest of it empty (the robot, 2026-10-31)
+    croc = await make({"layout": "compare", "title": "Crocodile or alligator?", "rows": ["Snout", "Teeth", "Colour"],
+                       "columns": [{"name": "Alligator", "facts": ["broad and U-shaped", "most lower teeth hidden",
+                                                                   "dark, almost black"]},
+                                   {"name": "Crocodile", "facts": ["narrow and V-shaped",
+                                                                   "lower teeth show when mouth is closed",
+                                                                   "lighter olive brown"]}]})
+    assert croc._col_geometry()[2] < facts.LABEL_W  # as wide as "Colour", not 150 px
+    assert " ".join(croc._cell_lines(1, 1)) == "lower teeth show when mouth is closed"
+    assert croc._cell_px() == facts.CELL_PX and len(croc.pages()) == 1  # all three rows on one page
+    long = "Africa and Asia, almost everywhere they can find somewhere to hide from the sun all day long"
+    three = await make({"layout": "compare", "rows": ["Lives in"], "columns": [
+        {"name": "Lion", "facts": ["African grasslands"]}, {"name": "Tiger", "facts": ["Asian forests"]},
+        {"name": "Leopard", "facts": [long]}]})
+    assert three._cell_px() == base.BODY_PX  # a cell too long at CELL_PX: the table one size smaller
+    lines = three._cell_lines(2, 0)
+    assert len(lines) == facts.CELL_LINES and lines[-1].endswith("...")
+    assert all(len(three._cell_lines(c, 0)) <= 2 for c in (0, 1))
+    preview.surface(three, seconds=1)
 
 
 async def test_item_text_size_and_lines() -> None:

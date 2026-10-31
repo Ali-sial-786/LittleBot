@@ -13,7 +13,8 @@
 * ``item``    - one short item: "today in history", a quote, a single fact: a kicker line ("24 October
   1945"), 1-3 short lines of text and an optional picture.
 
-Text is at least BODY_PX, at most MAX_LINES lines a page; "next" / "prev" (or a tap) turn pages.
+Text is at least BODY_PX, at most MAX_LINES lines a page (a compare table: as many rows as fit, a cell up to
+three lines); "next" / "prev" (or a tap) turn pages.
 """
 
 from __future__ import annotations
@@ -42,6 +43,9 @@ LAYOUTS = ("number", "list", "compare", "profile", "score", "item")
 VALUE_SIZES = (132, 116, 100, 84, 68, 56, TITLE_PX)
 LIST_PX = 38
 CELL_PX = 34
+CELL_LINES = 3  # a compare cell's most lines (the last ends in "..." when it goes on)
+LABEL_W = 150  # a compare table's widest row-label column
+HEAD_H, ROW_GAP, DOTS_H = 50, 18, 24  # a compare table's name row, the gap between its rows, the page dots
 FACT_PX = 36
 ITEM_SIZES = (56, 50, 46, 42, 38, 34, BODY_PX)
 PIC_W = 262
@@ -217,6 +221,8 @@ class FactsCard(Card):
         self.page = 0
         self.page_t = 0.0
         self._pages: dict[bool, list[Any]] = {}
+        self._geometry: tuple[int, int, int] | None = None
+        self._cell_size: int | None = None
 
     # ------------------------------------------------------------ pages
     def pages(self) -> list[Any]:
@@ -239,8 +245,10 @@ class FactsCard(Card):
         if self.layout == "compare":
             n = max((len(c["facts"]) for c in self.columns), default=0)
             n = max(n, len(self.rows))
-            heights = [self._row_lines(r) for r in range(n)]
-            return kit.paged(heights, MAX_LINES - 1) or [[]]  # the header row counts as a line
+            # as many rows a page as fit under the names (two of two lines each before, the rest of it empty)
+            heights = [self._row_h(r) + ROW_GAP for r in range(n)]
+            room = kit.PANEL.h - 2 * kit.PAD - DOTS_H - HEAD_H - 6
+            return kit.paged(heights, room) or [[]]
         if self.layout == "profile":
             width = self._text_right(False) - (kit.PANEL.x + kit.PAD + 40) - (PIC_W + 18 if pic else 0)
             lines = [kit.wrap(f, FACT_PX, width)[:3] for f in self.facts]
@@ -248,21 +256,40 @@ class FactsCard(Card):
         return [None]
 
     def _col_geometry(self) -> tuple[int, int, int]:
-        """(x of the first value column, column width, label column width) for the compare table."""
-        left, right = kit.PANEL.x + kit.PAD, kit.PANEL.right - kit.PAD
-        label_w = 150 if self.rows else 0
-        n = max(1, len(self.columns))
-        col_w = (right - left - label_w - 12 * (n - 1)) // n
-        return left + label_w, col_w, label_w
+        """(x of the first value column, column width, label column width) for the compare table. The label
+        column is as wide as its labels ("Snout": the cells get the rest; it was 150 px, cells cut short)."""
+        if self._geometry is None:
+            left, right = kit.PANEL.x + kit.PAD, kit.PANEL.right - kit.PAD
+            label_w = min(LABEL_W, max(kit.text_w(r, BODY_PX) for r in self.rows) + 14) if self.rows else 0
+            n = max(1, len(self.columns))
+            col_w = (right - left - label_w - 12 * (n - 1)) // n
+            self._geometry = (left + label_w, col_w, label_w)
+        return self._geometry
+
+    def _cell_px(self) -> int:
+        """The table's text size: CELL_PX, or BODY_PX when a cell needs more than two lines at CELL_PX."""
+        if self._cell_size is None:
+            width = self._col_geometry()[1] - 16
+            cells = [f for c in self.columns for f in c["facts"]]
+            self._cell_size = CELL_PX if all(len(kit.wrap(f, CELL_PX, width)) <= 2 for f in cells) else BODY_PX
+        return self._cell_size
 
     def _cell_lines(self, col: int, row: int) -> tuple[str, ...]:
+        """A cell's lines: at most CELL_LINES, the last one ending in "..." when the text goes on."""
         facts = self.columns[col]["facts"]
         text = facts[row] if row < len(facts) else "-"
-        return kit.wrap(text, CELL_PX, self._col_geometry()[1] - 16)[:2]
+        size, width = self._cell_px(), self._col_geometry()[1] - 16
+        lines = kit.wrap(text, size, width)
+        if len(lines) > CELL_LINES:
+            lines = (*lines[:CELL_LINES - 1], kit.ellipsize(" ".join(lines[CELL_LINES - 1:]), size, width))
+        return lines
 
     def _row_lines(self, row: int) -> int:
         label = kit.wrap(self.rows[row], BODY_PX, self._col_geometry()[2] - 12)[:2] if row < len(self.rows) else ()
         return max([len(label)] + [len(self._cell_lines(c, row)) for c in range(len(self.columns))])
+
+    def _row_h(self, row: int) -> int:
+        return kit.line_h(self._cell_px()) * self._row_lines(row)
 
     # ------------------------------------------------------------ logic
     def update(self, dt: float) -> None:
@@ -407,12 +434,12 @@ class FactsCard(Card):
         """Candy column cards (name on top) holding this page's rows; row labels on the left."""
         x0, col_w, label_w = self._col_geometry()
         rows = self.pages()[self.page]
-        pitch = kit.line_h(CELL_PX)
-        heights = [pitch * self._row_lines(r) for r in rows]
-        head_h, row_gap = 50, 18
+        size = self._cell_px()
+        heights = [self._row_h(r) for r in rows]
+        head_h, row_gap = HEAD_H, ROW_GAP
         body_h = sum(heights) + row_gap * len(heights) + 6
         total = head_h + body_h
-        avail = kit.PANEL.h - 2 * kit.PAD - (24 if len(self.pages()) > 1 else 0)
+        avail = kit.PANEL.h - 2 * kit.PAD - (DOTS_H if len(self.pages()) > 1 else 0)
         top = kit.PANEL.y + kit.PAD + max(0, (avail - total) // 2)
         line_c = art.mix(art.INK_SOFT, art.WHITE, 0.55)
         for c, col in enumerate(self.columns):
@@ -430,7 +457,7 @@ class FactsCard(Card):
                 kit.blit_alpha(surf, label, (kit.PANEL.x + kit.PAD, y + 2), fade)
             for c in range(len(self.columns)):
                 x = x0 + c * (col_w + 12)
-                cell = kit.text_block(self._cell_lines(c, r), CELL_PX, kit.TEXT, align="center")
+                cell = kit.text_block(self._cell_lines(c, r), size, kit.TEXT, align="center")
                 kit.blit_alpha(surf, cell, cell.get_rect(midtop=(x + col_w // 2, y)).topleft, fade)
                 if n < len(rows) - 1:
                     yy = y + h + row_gap // 2 - 2
