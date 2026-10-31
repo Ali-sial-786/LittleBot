@@ -26,7 +26,10 @@ STOP = _whole(r"stop(?: it| that| talking)?|cancel(?: that)?|never ?mind|forget 
 THANKS = _whole(r"thanks?(?: you)?(?: so much| very much| a lot)?|cheers|perfect|great(?:,? thanks?)?|awesome|"
                 r"got it|cool|nice|good job|well done|appreciate it")
 BYE = _whole(r"(?:good)?bye(?: bye)?|see you(?: later)?|talk (?:to you )?later|that'?s (?:all|it)(?: for now)?|"
-             r"good ?night|i'?m done|we'?re done|go to sleep")
+             r"good ?night|i'?m done|we'?re done|go to sleep|"
+             r"(?:end|stop|close|finish) (?:the |this )?(?:call|chat|conversation|session)|end it|hang up|"
+             r"stop listening|you can (?:go|stop)(?: now)?|no more questions|nothing else|that will be all|"
+             r"that'?ll be all|go away|leave me alone|bye little ?bot")
 LOUDER = _whole(r"(?:turn (?:it |the volume |yourself )?up|louder|volume up|speak up|a bit louder|"
                 r"(?:make it |be )?louder)(?: please)?")
 QUIETER = _whole(r"(?:turn (?:it |the volume |yourself )?down|quieter|softer|volume down|(?:a bit )?quieter|"

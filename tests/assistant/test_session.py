@@ -530,3 +530,50 @@ async def test_pause_and_next_go_to_spotify_when_it_plays() -> None:
     await _wait(lambda: Hub.sp.actions == ["next"])
     assert brain.questions == [] and tts.said == []  # the music changing is the answer
     await _wait(lambda: not svc.status()["active"])
+
+
+async def test_a_turn_without_words_does_not_keep_the_session_open() -> None:
+    svc, stt, _, _ = _service(Scripted(), first_words_seconds=2.0)
+    clock = [0.0]
+    svc.now = lambda: clock[0]
+    await svc.start()
+    await svc.start_session()
+    await _wait(lambda: stt.stream is not None)
+    stt.event("start_of_turn")  # a noise: speech-to-text starts a turn and never ends it
+    await asyncio.sleep(0.1)
+    clock[0] = 3.0
+    await asyncio.sleep(0.3)
+    assert svc.status()["active"]  # still within the no-words grace
+    clock[0] = 5.0
+    await _wait(lambda: not svc.status()["active"])
+    assert svc.last_call["ended_reason"] == "no words after the wake word"
+
+
+async def test_its_own_voice_heard_back_is_not_a_turn() -> None:
+    brain = Scripted(["The Roman Empire lasted for centuries."], ["Sure."])
+    svc, stt, tts, _ = _service(brain, follow_up_seconds=3)
+    await svc.start()
+    await svc.start_session()
+    await _wait(lambda: stt.stream is not None)
+    stt.say("tell me about rome")
+    await _wait(lambda: len(tts.said) == 1)
+    await asyncio.sleep(0.1)
+    stt.say("the Roman Empire lasted for centuries")  # its own voice leaking back
+    await asyncio.sleep(0.3)
+    assert brain.questions == ["tell me about rome"]
+    stt.say("end the call")
+    await _wait(lambda: not svc.status()["active"])
+    assert svc.last_call["ended_reason"].startswith("said intent:bye")
+
+
+async def test_stop_word_ends_wait_word_only_quiets() -> None:
+    svc, stt, tts, audio = _service(Scripted(["A long answer."]), follow_up_seconds=3)
+    await svc.start()
+    await svc.start_session()
+    await _wait(lambda: stt.stream is not None)
+    audio.on_change("stop_word", {"said": "wait"})
+    await asyncio.sleep(0.2)
+    assert svc.status()["active"] and audio.dropped == 1
+    audio.on_change("stop_word", {"said": "stop"})
+    await _wait(lambda: not svc.status()["active"])
+    assert svc.last_call["ended_reason"] == "they said stop"

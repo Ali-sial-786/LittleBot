@@ -408,7 +408,7 @@ class AssistantConfig(_Section):
     openai_tts_voice: str = "coral"
     tts_first_audio_timeout_seconds: float = Field(default=2.5, ge=0.3, le=10.0)  # then the next TTS is asked
     # The brain: claude.model (Haiku 5.5) with claude.fallback_models then ChatGPT (littlebot/brain/text_model.py).
-    max_reply_tokens: int = Field(default=600, ge=64, le=4000)
+    max_reply_tokens: int = Field(default=400, ge=64, le=4000)
     reply_timeout_seconds: float = Field(default=20.0, ge=3.0, le=120.0)
     # think_harder: hard questions go to this model (adaptive thinking) while a short line plays. None: off.
     deep_model: str | None = "claude-sonnet-5-5"

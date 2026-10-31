@@ -47,14 +47,18 @@ OWNER = "assistant"
 POLL_S = 0.05
 THINKING_AFTER_S = 0.9  # a tool still running after this long: the soft thinking sound (again every REPEAT)
 THINKING_REPEAT_S = 2.2
-QUESTION_FOLLOW_UP_S = 12.0  # LittleBot asked them something: wait at least this long for the answer
+QUESTION_FOLLOW_UP_S = 10.0  # LittleBot asked them something: wait at least this long for the answer
 HEARD_KEEP_S = 12.0  # the microphone kept (in memory only) to recognise whose voice a turn was
 IDENTIFY_TIMEOUT_S = 3.0
 SPECULATION_MAX_S = 8.0
 # Instant intents that steer Spotify when it is what's playing on LittleBot (skills/spotify.py command()).
 SPOTIFY_ACTIONS = {"pause": "pause", "resume": "resume", "skip": "next", "stop_media": "stop"}  # an early answer whose turn is neither confirmed nor resumed by then is dropped
 STT_REOPENS = 3  # speech-to-text that fails this often in one session ends it
-HEARING_GRACE_S = 2.0  # a turn that never ends (noise): finished after max_turn_seconds + this
+HEARING_GRACE_S = 2.0
+ECHO_MEMORY_S = 20.0  # what LittleBot said this recently may come back through the microphone
+ECHO_SHARE = 0.8  # a turn whose words are mostly LittleBot's own recent words is its echo, not them
+PAUSE_WORDS = frozenset({"wait", "wait a second", "wait a minute", "hold on", "hang on", "pause"})
+NO_WORDS_TURN_S = 4.0  # a turn with no words at all after this long was a noise: listening goes on as before  # a turn that never ends (noise): finished after max_turn_seconds + this
 EXPRESSION_HOLD_S = 6.0
 SORRY = {
     "no_key": "My brain isn't set up yet.",
@@ -100,6 +104,8 @@ class VoiceSession:
         self._voice: VoiceOut | None = None
         self._toolbox: Any = None
         self._hearing_since: float | None = None
+        self._words_at: float | None = None  # the latest partial with words in the turn being heard
+        self._said: collections.deque[tuple[float, str]] = collections.deque(maxlen=12)  # its own recent sentences
         self._deadline = self._started + self.cfg.first_words_seconds
         self._end_after: str | None = None  # end once the current answer was heard (said "bye")
         self._handover: list[Any] = []  # take-overs to run after the session (a video, an activity ...)
@@ -281,6 +287,15 @@ class VoiceSession:
         now = self._now()
         if self._speculating() and now - self._spec_at > SPECULATION_MAX_S:
             self._cut_answer()  # neither confirmed nor dropped by speech-to-text: never said
+        if self._hearing_since is not None and self._words_at is None and \
+                now - self._hearing_since > NO_WORDS_TURN_S:
+            # speech-to-text started a turn on a noise and never ended it (seen with Flux on the robot, 2026-10-30):
+            # no words came, so nobody is talking; listening as before (a real turn still ends with its words)
+            log.info("assistant: a turn started %.1f s ago but no words came; not waiting for it",
+                     now - self._hearing_since)
+            self._hearing_since = None
+            if not self._answering():
+                self._set_phase("listening")
         if self._hearing_since is not None and now - self._hearing_since > self.cfg.max_turn_seconds + HEARING_GRACE_S:
             self._hearing_since = None
             if self.stt is not None:
@@ -299,13 +314,16 @@ class VoiceSession:
         if event.kind == "start_of_turn":
             if self._hearing_since is None:
                 self._hearing_since = self._now()
+                self._words_at = None
             if not self._answering():
                 self._set_phase("hearing")
         elif event.kind == "partial":
-            if event.text.strip() and getattr(audio, "interrupted", False):
+            if event.text.strip() and getattr(audio, "interrupted", False) and not self._echo_of_me(event.text):
                 audio.barge_in_heard(event.text, False)  # their words: the held voice is dropped
             if self._hearing_since is None:
                 self._hearing_since = self._now()
+            if event.text.strip():
+                self._words_at = self._now()
         elif event.kind == "eager_end_of_turn":
             self._speculate(" ".join(event.text.split()))
         elif event.kind == "turn_resumed":
@@ -315,8 +333,15 @@ class VoiceSession:
                 self._set_phase("hearing")
         elif event.kind == "end_of_turn":
             spoke_ms = int((self._now() - self._hearing_since) * 1000) if self._hearing_since is not None else 0
-            self._hearing_since = None
+            self._hearing_since = self._words_at = None
             text = " ".join(event.text.split())
+            if text and self._echo_of_me(text):
+                log.info("assistant: that turn was its own voice heard back (%d words); ignored", len(text.split()))
+                if not self._answering():
+                    self._set_phase("listening")
+                return
+            if text:
+                log.info("assistant: their turn ended (%d words, %d ms from its start)", len(text.split()), spoke_ms)
             if getattr(audio, "interrupted", False) and text:
                 audio.barge_in_heard(text, True)
             if self._speculating():
@@ -342,6 +367,23 @@ class VoiceSession:
     def _answering(self) -> bool:
         return self._answer is not None and not self._answer.done()
 
+    def _echo_of_me(self, text: str) -> bool:
+        """``text`` is mostly LittleBot's own recent words (its voice leaking back into the microphone), not theirs.
+        Only for 3 words or more: "stop", "yes", "next one" are always theirs."""
+        words = _words(text)
+        if len(words) < 3:
+            return False
+        now = self._now()
+        said = set()
+        for at, sentence in self._said:
+            if now - at <= ECHO_MEMORY_S:
+                said |= set(_words(sentence))
+        if not said:
+            return False
+        return sum(1 for w in words if w in said) / len(words) >= ECHO_SHARE
+
+    def _remember_said(self, s: Sentence) -> None:
+        self._said.append((self._now(), s.text))
     def _speculating(self) -> bool:
         """An early answer (started on "probably done") is waiting for their turn to really end."""
         return self._answering() and self._gate is not None and not self._gate.is_set()
@@ -731,6 +773,7 @@ class VoiceSession:
             self.end("handing over to " + ", ".join(getattr(p, "label", "?") for p in later))
 
     def _sentence_started(self, s: Sentence) -> None:
+        self._remember_said(s)
         self._set_phase("speaking")
         face = self.ctx.face
         if face is not None and self.cfg.expressions:
@@ -852,15 +895,20 @@ class VoiceSession:
         elif what == "carried_on":  # a false alarm: it talks on
             self._set_phase("speaking" if self._answering() else "listening")
         elif what == "stop_word":
+            said = str(info.get("said") or "stop")
             self.barge_ins += 1
             self._record_cut()
             self._cut_answer()
             with contextlib.suppress(Exception):
                 self.audio.drop_voice()
             self._publish(ev.INTERRUPTED, {"stop": True})
-            self._deadline = self._now() + max(2.0, float(self.cfg.follow_up_seconds))
-            self._set_phase("listening")
-            log.info("assistant: '%s': quiet now", info.get("said") or "stop")
+            if said in PAUSE_WORDS:  # "wait", "hold on": quiet, and listening for what they say next
+                self._deadline = self._now() + max(2.0, float(self.cfg.follow_up_seconds))
+                self._set_phase("listening")
+                log.info("assistant: '%s': quiet now, listening", said)
+            else:  # "stop", "be quiet", "enough": quiet, and the conversation is over
+                log.info("assistant: '%s': stopped", said)
+                self.end(f"they said {said}")
 
     # ------------------------------------------------------------ the face and the dashboard
     async def _watch(self) -> None:
@@ -1002,6 +1050,10 @@ class _GatedToolbox:
     async def run(self, name: str, arguments: Any = None) -> str:
         await self._gate.wait()
         return await self._box.run(name, arguments)
+
+
+def _words(text: str) -> list[str]:
+    return re.sub(r"[^a-z0-9' ]+", " ", text.lower()).split()
 
 
 def _same_words(a: str, b: str) -> bool:

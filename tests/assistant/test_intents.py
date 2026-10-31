@@ -13,7 +13,8 @@ from littlebot.testing import make_test_context
     ("Stop.", "stop"), ("never mind", "stop"), ("okay stop please", "stop"), ("Thanks!", "thanks"),
     ("thank you so much", "thanks"), ("bye", "bye"), ("that's all for now", "bye"), ("louder", "volume"),
     ("turn it down please", "volume"), ("volume 40", "volume"), ("set the volume to 70 percent", "volume"),
-    ("what time is it?", "time"), ("What's the time", "time"),
+    ("what time is it?", "time"), ("What's the time", "time"), ("end the call", "bye"), ("hang up", "bye"),
+    ("stop listening", "bye"), ("okay end the conversation", "bye"), ("you can go now", "bye"),
 ])
 def test_matches(text: str, name: str) -> None:
     hit = intents.match(text)
