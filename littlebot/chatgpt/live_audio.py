@@ -679,6 +679,12 @@ class LiveAudio:
             self._in.extend(keep)
         self._pcm = np.zeros(0, dtype=np.int16)
 
+    def input_behind_s(self) -> float:
+        """How far behind the microphone the call reads: audio heard but not sent yet (seconds, for the log)."""
+        with self._lock:
+            waiting = sum(len(b) for b in self._in) / float(self.mic_rate or RATE)
+        return waiting + len(self._pcm) / float(RATE) + len(self._sendq) * FRAME_S
+
     def _record_cb(self, indata: Any, frames: int, time_info: Any, status: Any) -> None:  # PortAudio thread
         block = np.array(indata[:, 0], dtype=np.int16, copy=True)
         self.mic_at = self._now()

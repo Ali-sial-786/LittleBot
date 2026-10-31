@@ -407,8 +407,10 @@ class VoiceSession:
                     if self._voice_at is not None and now - self._voice_at < 10 else ""
                 eager = f", probably done {int((now - self._eager_at) * 1000)} ms before" \
                     if self._eager_at is not None and now - self._eager_at < 10 else ""
-                log.info("assistant: their turn ended (%d words, %d ms from its start%s%s)", len(text.split()),
-                         spoke_ms, after, eager)
+                behind = _safe(audio.input_behind_s) if hasattr(audio, "input_behind_s") else None
+                late = f", the microphone {int(behind * 1000)} ms behind" if isinstance(behind, float) else ""
+                log.info("assistant: their turn ended (%d words, %d ms from its start%s%s%s)", len(text.split()),
+                         spoke_ms, after, eager, late)
             self._eager_at = None
             if getattr(audio, "interrupted", False) and text:
                 audio.barge_in_heard(text, True)
