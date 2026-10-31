@@ -13,6 +13,11 @@ Who said it: only while "Recognise family voices" is on (``keep_voice``), the ca
 itself and the first ``VOICE_KEEP_SECONDS`` of what followed, for the call to recognise the voice
 (littlebot/voices/call.py, ``voice_audio``); that copy is dropped as soon as the call has looked at it
 (``forget_voice``) and with the rest (``drop``).
+
+The wake phrase for speech-to-text (``keep_phrase`` / ``take_phrase``, at most ``PHRASE_KEEP_SECONDS``): the
+assistant sends it before the rest, so speech-to-text hears "hey little bot, who was Kublai Khan" whole instead of
+a sentence that starts in the middle of "bot" (heard as "not who was Kublai Khan"), and takes the wake phrase off
+the words. Like the rest: memory only, handed over once, dropped with it. GPT-Live never asks for it.
 """
 
 from __future__ import annotations
@@ -27,6 +32,7 @@ from littlebot.audio import dsp
 
 QUIET_RATIO = 0.7  # x audio.microphone.vad_threshold: below this a stretch counts as a pause (EnergyVAD's release)
 VOICE_KEEP_SECONDS = 5.0  # keep_voice: the wake phrase plus at most this much of what followed
+PHRASE_KEEP_SECONDS = 2.5  # keep_phrase: the end of what was heard before the carry (the wake phrase)
 
 
 class PreRoll:
@@ -113,6 +119,7 @@ class SpeechCarry:
         self._voice: list[np.ndarray] = []
         self._voice_n = 0
         self._voice_max = int(VOICE_KEEP_SECONDS * self.sample_rate)
+        self._phrase: np.ndarray | None = None  # the wake phrase, for speech-to-text (keep_phrase)
 
     # ------------------------------------------------------------ filling (the wake word's thread)
     def add(self, chunk: np.ndarray) -> bool:
@@ -150,6 +157,20 @@ class SpeechCarry:
                     self.sealed_at = time.monotonic()
             self._chunks = []
             self._voice, self._voice_n, self.keep_voice = [], 0, False
+            self._phrase = None
+
+    def keep_phrase(self, blocks: list[np.ndarray]) -> None:
+        """What was heard just before the carry (the wake phrase: its last PHRASE_KEEP_SECONDS), for speech-to-text."""
+        with self._lock:
+            if self.state != "dropped" and blocks:
+                x = np.concatenate([np.asarray(b, dtype=np.float32).reshape(-1) for b in blocks])
+                self._phrase = x[-int(PHRASE_KEEP_SECONDS * self.sample_rate):].copy()
+
+    def take_phrase(self) -> np.ndarray:
+        """The wake phrase, once (empty afterwards, or without one)."""
+        with self._lock:
+            x, self._phrase = self._phrase, None
+        return x if x is not None else np.zeros(0, dtype=np.float32)
 
     def keep_wake_phrase(self, blocks: list[np.ndarray]) -> None:
         """The wake phrase itself (said before what is carried), kept only with ``keep_voice``."""

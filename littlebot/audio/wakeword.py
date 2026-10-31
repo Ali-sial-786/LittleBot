@@ -950,7 +950,9 @@ class WakeWordService(Service):
         cut = None if end is None else max(0, int((end - WAKE_CUT_MARGIN) * rate))
         carry = SpeechCarry(rate, phrase=phrase, quiet_level=self._quiet_level(),
                             kept_talking=after > 0 or phrase == FOLLOW_UP, keep_voice=self._voices_on())
-        carry.keep_wake_phrase(heard.before(cut))  # who said it (littlebot/voices/call.py); only with keep_voice
+        before = heard.before(cut)
+        carry.keep_wake_phrase(before)  # who said it (littlebot/voices/call.py); only with keep_voice
+        carry.keep_phrase(before)  # the assistant's speech-to-text hears it whole, then takes it off the words
         for block in heard.since(cut):
             carry.add(block)
         heard.clear()

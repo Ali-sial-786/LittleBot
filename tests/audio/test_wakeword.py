@@ -514,6 +514,11 @@ async def test_only_the_wake_phrase_plays_the_earcon_and_still_carries(rig):
     assert "sound:listen" in _sounds(r.out) and not carry.kept_talking
     await until(lambda: not carry.is_open, what="the microphone handed over")
     assert carry.state == "sealed" and carry.lead_s <= 0.5 + wakeword.WAKE_CUT_MARGIN + 0.15
+    # the wake phrase too, for the assistant's speech-to-text (memory only, once, dropped with the rest)
+    assert carry.take_phrase().size > 0 and carry.take_phrase().size == 0
+    carry.keep_phrase([np.ones(160, dtype=np.float32)])
+    carry.drop("test")
+    assert carry.take_phrase().size == 0
 
 
 def _finish_early(r: Any, conf: float = 1.0) -> list[str]:

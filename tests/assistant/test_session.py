@@ -321,6 +321,43 @@ async def test_the_call_audio_opens_before_the_wake_word_lets_go_of_the_micropho
     await svc.stop_session("test")
 
 
+async def test_the_wake_phrase_goes_first_and_is_taken_off_the_words() -> None:
+    # Decided early, the carry started in the middle of "bot": "Hey little bot, who was Kublai Khan?" was heard as
+    # "not who was Kublai Khan." and answered as a correction (the robot, 2026-10-31).
+    import numpy as np
+
+    from littlebot.audio.carry import SpeechCarry
+
+    brain = Scripted(["He was a Mongol emperor."])
+    svc, stt, _tts, _ = _service(brain, follow_up_seconds=5)
+    carry = SpeechCarry(16000, phrase="hey little bot")
+    carry.keep_phrase([np.full(8000, 0.2, dtype=np.float32)])
+    carry.add(np.full(1600, 0.1, dtype=np.float32))
+    carry.seal("test")
+    await svc.start()
+    await svc.start_session(carry=carry)
+    await _wait(lambda: stt.stream is not None and stt.stream.fed >= 9600)  # the wake phrase, then the rest
+    assert carry.take_phrase().size == 0  # handed over once
+    stt.say("Hey, little bot.")  # their pause after it: a turn of its own, and nothing to answer
+    await asyncio.sleep(0.1)
+    assert brain.questions == [] and svc.status()["active"]
+    stt.say("Hey, little bot. Who was Kublai Khan?")
+    await _wait(lambda: bool(brain.questions))
+    assert brain.questions == ["Who was Kublai Khan?"]
+    await svc.stop_session("test")
+
+
+@pytest.mark.parametrize("said,question", [
+    ("Hey, little bot. What time is it?", "What time is it?"), ("hey little bot what's the weather", "What's the weather"),
+    ("Little bot, stop.", "Stop."), ("Hey Littlebot!", ""), ("Hey lil bot.", ""), ("Okay, little bot, next song", "Next song"),
+    ("What's a little bot?", "What's a little bot?"), ("a little bit louder", "a little bit louder"),
+])
+def test_the_wake_phrase_is_no_part_of_the_question(said: str, question: str) -> None:
+    from littlebot.assistant.session import _heard
+
+    assert _heard(said) == question
+
+
 async def test_typed_chat_uses_the_same_brain() -> None:
     svc, _, _, _ = _service(Scripted(["Paris is the capital of France."]))
     out = await svc.handle_text("capital of france?")

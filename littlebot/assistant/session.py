@@ -25,6 +25,7 @@ from __future__ import annotations
 import asyncio
 import collections
 import contextlib
+import dataclasses
 import logging
 import re
 import time
@@ -229,13 +230,19 @@ class VoiceSession:
         self._who_woke()
         self._watch_faces()
         if self.carry is not None:  # what they said with the wake word goes first
+            # the wake phrase itself before it: speech-to-text hears the sentence whole, not from the middle of "bot"
+            # (heard as "not who was Kublai Khan"); _heard() takes it off the words
+            take_phrase = getattr(self.carry, "take_phrase", None)
+            phrase = np.asarray(take_phrase() if callable(take_phrase) else [], dtype=np.float32)
             samples = self.carry.take()
             rate = int(getattr(self.carry, "sample_rate", STT_RATE) or STT_RATE)
             if len(samples):
                 from littlebot.audio import dsp  # noqa: PLC0415
 
-                await self.stt.feed(dsp.resample(np.asarray(samples, dtype=np.float32), rate, STT_RATE))
-                log.info("assistant: %.1f s said with the wake word sent first", len(samples) / float(rate))
+                both = np.concatenate([phrase, np.asarray(samples, dtype=np.float32)])
+                await self.stt.feed(dsp.resample(both, rate, STT_RATE))
+                log.info("assistant: %.1f s said with the wake word sent first (after %.1f s of the wake phrase)",
+                         len(samples) / float(rate), len(phrase) / float(rate))
         self._spawn(self._pump())
         self._spawn(self._watch())
         self.connect_ms = int((self._now() - t0) * 1000)
@@ -378,6 +385,8 @@ class VoiceSession:
 
     async def _on_event(self, event: STTEvent) -> None:
         audio = self.audio
+        if event.text and event.kind in ("partial", "eager_end_of_turn", "turn_resumed", "end_of_turn"):
+            event = dataclasses.replace(event, text=_heard(event.text))
         if event.kind == "start_of_turn":
             if self._hearing_since is None:
                 self._hearing_since = self._now()
@@ -1202,6 +1211,18 @@ class _GatedToolbox:
 
 def _words(text: str) -> list[str]:
     return re.sub(r"[^a-z0-9' ]+", " ", text.lower()).split()
+
+
+# The wake phrase at the start of what speech-to-text heard ("Hey, little bot. Who was Kublai Khan?"): the wake
+# word's carry sends it first so the sentence is heard whole; LittleBot's name is no part of the question.
+_WAKE_LEAD = re.compile(r"^\s*(?:(?:hey|hi|hay|okay|ok)[\s,.!]+)?(?:little|lil|li'l)[\s-]*bot\b[\s,.!?]*|"
+                        r"^\s*(?:(?:hey|hi|hay|okay|ok)[\s,.!]+)?littlebot\b[\s,.!?]*", re.IGNORECASE)
+
+
+def _heard(text: str) -> str:
+    """What they said, without a wake phrase at its start ("" when that was all)."""
+    rest = _WAKE_LEAD.sub("", text, count=1)
+    return rest[:1].upper() + rest[1:] if rest and rest != text else rest
 
 
 def _same_words(a: str, b: str) -> bool:
