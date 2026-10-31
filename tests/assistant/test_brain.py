@@ -66,6 +66,7 @@ async def test_sentences_stream_with_expressions_and_context() -> None:
     assert last.startswith("[Context for this turn") and last.endswith("what's the weather")
     assert call["messages"][0] == {"role": "user", "content": "hello"}
     assert "LittleBot" in call["system"] and "[happy]" in call["system"]
+    assert "never answer it from memory" in call["system"]  # recent facts are looked up
     assert "get_weather" in call["tools"]
 
 
