@@ -87,7 +87,10 @@ tomorrow?" works across follow-ups and the next wake word. Nothing is recorded o
   hard questions (multi-step maths, planning, comparisons) go to `assistant.deep_model` (Claude Sonnet 5.5 with
   thinking) while LittleBot says "Let me think about that";
 * the same safety check on every sentence before it is said (`safety/content.validate_reply`, the medicine-dose
-  rule); `ai.relaxed_rules` applies as for GPT-Live.
+  rule); `ai.relaxed_rules` applies as for GPT-Live;
+* short answers: one or two sentences of about 15 words (a how-to, a comparison or a week's weather: three), the
+  card holding the details. A sentence of the brain's own plan ("no tools needed, keep it brief") or about its card
+  ("I'll put it on the screen") is never said, nor a second "Done, I've..." for an action it already announced.
 
 ## Who is talking
 
@@ -130,7 +133,9 @@ Both are opt-in and run on the robot only (only a name reaches the brain, never 
 
 The brain shows a card when seeing helps (weather, a definition, steps, a recipe, a list, maths, a timer, a
 note, today at a glance). If it answers with facts but forgets the card, a short second request makes the card
-from what it said, while it is still talking (`card_backup`). Double-tap the face for **today at a glance**
+from what it said, while it is still talking (`card_backup`). A card the brain sends in an odd shape is still
+shown: if it can't be made as sent, its text is shown as a facts card (only the safety rules, or a card with no
+text at all, keep one off the screen). Double-tap the face for **today at a glance**
 (time, weather, what's coming up). The dashboard's Assistant page can send a note to the screen or have LittleBot say something (intercom).
 
 ## Measuring

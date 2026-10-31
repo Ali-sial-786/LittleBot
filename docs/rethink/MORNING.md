@@ -114,6 +114,26 @@ live on the robot):
 * Still weak: talking over the end of a long answer. "Set an alarm for 7", said while it was still finishing the
   Tokyo answer, was never heard (the echo canceller again), so no alarm was set.
 
+**Polish (late afternoon)** (each with a test; checked with the real brain and live on the robot):
+
+* Shorter answers. With the old "one to three short sentences" the brain averaged 60 words (92 at most; the breaker
+  answer took 34 s). The prompt now asks for one or two sentences of about 15 words (three for a how-to, a
+  comparison or a week's weather), the card holding the details: 36-41 words on average over 3 runs of 12
+  questions. Live, the breaker answer took 17 s and the crocodile one two sentences.
+* One confirmation per action. "Got it, I'll remember that... Done, I've saved..." now says it once: the tool's
+  result tells the brain what was already said, and a second "Done, I've..." is dropped anyway.
+* Its plan said aloud. With shorter answers, the breaker question said things like "Lead with the answer briefly, no
+  tools needed." or "Safety: mention checking for water". A sentence with three or more words about answering
+  (answer, tools, card, briefly, needed...) isn't said, nor "I'll put the comparison on the screen for you". Checked
+  on all 232 different sentences in the robot's logs: only those two card sentences were caught.
+* Comparison cards fit: the label column is as wide as its labels (it was 150 px), a cell may take three lines and
+  shows "..." where it is cut, and a page holds as many rows as fit. "Lower teeth show when mouth is closed" is
+  whole now, and three rows fit on one page.
+* Like on main, no card the brain sends is turned away for its shape: a string, a list, steps as one string, a
+  field under a near name ("meaning"), text under a made-up name, or a card too long is still shown (its text as a
+  facts card when the card itself can't be made). Only the safety rules, or a card with no text at all, keep one
+  off the screen.
+
 **Still open:**
 
 * Cartesia credits (above).
