@@ -109,6 +109,11 @@ STOP_MAX_PITCH_HZ = 400.0
 # (2026-10-31) a 101 Hz "stop" measured 571-608 Hz, higher than a baby's squeal, and the news was read on.
 STOP_SURE_CONF = 0.9
 VOICE_FILLERS = frozenset({"wait", "wait a second", "wait a minute", "hold on", "hang on"})
+# A stop word heard at the pitch the voice itself was playing then (within this share), and not STOP_SURE_CONF
+# sure: its own echo leaking through. On the robot (2026-10-31) OpenAI's voice (about 200 Hz, under
+# live_barge_in_max_pitch_hz) stopped itself mid-answer: "no stop" heard at 200 Hz, nobody talking.
+OWN_PITCH_NEAR = 0.12
+OWN_PITCH_KEEP = 300  # speaker blocks kept for it (about 3 s at 10 ms)
 # Said with no voice at all, so their "pitch" is noise (the robot measured a parent's "shh" at 579 Hz and turned it
 # down, 2026-10-31): never judged by pitch. The voice saying one itself is still caught (_said_it_itself).
 UNVOICED_STOPS = frozenset({"shh", "shush", "hush"})
@@ -436,12 +441,15 @@ class LiveAudio:
         self._hold_gain = 1.0  # PortAudio's thread only
         self._queue_cap_s = MAX_QUEUED_S
         self._played: collections.deque[tuple[float, float]] = collections.deque(maxlen=48)  # (heard at, RMS)
+        # (heard at, the block at about PITCH_RATE, that rate): the voice's own pitch (OWN_PITCH_NEAR)
+        self._played_low: collections.deque[tuple[float, np.ndarray, float]] = collections.deque(maxlen=OWN_PITCH_KEEP)
         self._identify: Callable[..., Any] | None = None  # ctx.voices.identify (optional)
         self._talking_with: Callable[[], Any] | None = None  # the call's current grown-up (optional)
         self._voice_said: Callable[[], str] | None = None  # the voice's words lately (optional)
         self._on_barge: Callable[[str, dict[str, Any]], None] | None = None
         self._stop_words: Any = None  # littlebot/chatgpt/stop_words.StopWords (optional)
-        self._stop_said: tuple[str, int] | None = None  # (the stop word that interrupts now, ms to recognise it)
+        # (the stop word that interrupts now, ms to recognise it, how sure, the voice's own pitch then)
+        self._stop_said: tuple[str, int, float, float] | None = None
         self._id_tasks: set[asyncio.Future[Any]] = set()
         self._barge_at = 0.0
         self._barge_run: _Run | None = None
@@ -818,6 +826,11 @@ class LiveAudio:
             log.info("live voice: heard '%s', but the voice itself just said it: it carried on", said)
             return False
         pitch = BargeInDetector.pitch_of(run)
+        own = self._own_pitch(run.onset - ECHO_REF_S, run.last_loud)
+        if own and pitch and abs(pitch - own) <= OWN_PITCH_NEAR * own and conf < STOP_SURE_CONF:
+            log.info("live voice: heard '%s' at the voice's own pitch (%d Hz; it played %d Hz, %.2f sure): its echo, "
+                     "it carried on", said, round(pitch), round(own), conf)
+            return False
         if said not in UNVOICED_STOPS and run.child > run.adult and (said in VOICE_FILLERS or pitch > STOP_MAX_PITCH_HZ) \
                 and (said in VOICE_FILLERS or conf < STOP_SURE_CONF):
             # a child, or the voice's own echo leaking through (on the robot its false alarms were 240-259 Hz, the
@@ -826,8 +839,23 @@ class LiveAudio:
                      "carried on", said, round(pitch), conf)
             return False
         det.fired, det.run = run, None
-        self._stop_said = (said, late)
+        self._stop_said = (said, late, conf, own)
         return True
+
+    def _own_pitch(self, start: float, end: float) -> float:
+        """The voice's median pitch in what the speaker played between ``start`` and ``end`` (0: nothing voiced)."""
+        chunks = [(c, rate) for at, c, rate in list(self._played_low) if start <= at <= end]
+        if not chunks:
+            return 0.0
+        rate = chunks[-1][1]
+        x = np.concatenate([c for c, r in chunks if r == rate])
+        win = max(16, int(0.04 * rate))
+        f0s = []
+        for i in range(0, len(x) - win + 1, win // 2):
+            f0, voicing = estimate_pitch(x[i:i + win], int(rate))
+            if voicing >= VOICED_R and f0 > 0:
+                f0s.append(f0)
+        return float(np.median(f0s)) if f0s else 0.0
 
     def _said_it_itself(self, said: str) -> bool:
         """The stop word is in the voice's own words lately: what was heard is its echo."""
@@ -935,8 +963,9 @@ class LiveAudio:
         voice = run.voice if run is not None else None
         stop, self._stop_said = self._stop_said, None
         if stop is not None:
-            log.info("live voice: interrupted: they said '%s' (recognised in %d ms; %.1f s of speech, pitch %d Hz%s)",
-                     stop[0], stop[1], now - onset, round(pitch), f", voice {voice}" if voice else "")
+            log.info("live voice: interrupted: they said '%s' (recognised in %d ms, %.2f sure; %.1f s of speech, pitch "
+                     "%d Hz, the voice's own %d Hz%s)", stop[0], stop[1], stop[2], now - onset, round(pitch),
+                     round(stop[3]), f", voice {voice}" if voice else "")
         else:
             log.info("live voice: interrupted by a grown-up after %.1f s of speech (pitch %d Hz%s)", now - onset,
                      round(pitch), f", voice {voice}" if voice else "")
@@ -1199,7 +1228,13 @@ class LiveAudio:
         if now - self._vol_at > 0.25:  # re-read the volume a few times a second, not every block
             self._vol_at, self._vol = now, max(0.0, min(1.0, float(self._volume())))
         if self.barge_in_on:  # what the speaker plays, for the barge-in detector's echo measure
-            self._played.append((now + self._output_delay(time_info), rms * self._vol))
+            heard_at = now + self._output_delay(time_info)
+            self._played.append((heard_at, rms * self._vol))
+            dec = max(1, int(self.out_rate) // PITCH_RATE)
+            n = len(y) // dec * dec
+            if n:
+                low = np.asarray(y[:n], dtype=np.float32).reshape(-1, dec).mean(axis=1)
+                self._played_low.append((heard_at, low, self.out_rate / dec))
         if self._cue and not self._muted:
             y = y + self._take_cue(frames)  # after the voice's own measures: a cue is never the voice
         y = y * self._vol

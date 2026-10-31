@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import logging
+import re
 from typing import Any
 
 import numpy as np
@@ -720,6 +721,44 @@ async def test_a_very_sure_stop_stops_it_however_high_it_reads(call, caplog, sai
         if not stops:
             assert f"heard '{said}', but it sounded like a child or its own voice (6" in caplog.text
             assert f"{conf:.2f} sure" in caplog.text
+    finally:
+        audio.close()
+
+
+@pytest.mark.parametrize("conf,stops", [(0.7, False), (1.0, True)])
+async def test_a_stop_word_at_the_voices_own_pitch_is_its_echo_unless_sure(call, caplog, conf, stops):
+    # OpenAI's voice (about 200 Hz, under live_barge_in_max_pitch_hz) stopped itself mid-answer: "no stop" heard at
+    # 200 Hz with nobody talking (the robot, 2026-10-31). The test's voice plays at 210 Hz.
+    caplog.set_level(logging.INFO, logger="littlebot.chatgpt.live")
+    audio, c = call()
+    words = FakeStopWords()
+    audio.setup_barge_in(on_change=lambda what, info: c.events.append(what), stop_words=words)
+    try:
+        await c.warm_up()
+        for u in frames_of(voiced(205.0, 0.16, 0.08, seed=13)):  # its echo leaking through, louder than measured
+            await c.tick(user=u)
+        said_at = c.clock.t
+        for i in range(10):
+            if i == 3:
+                words.hit = ("no stop", said_at, conf)
+            await c.tick()
+        assert c.events == (["interrupted", "stop_word"] if stops else [])
+        if not stops:
+            assert "heard 'no stop' at the voice's own pitch (2" in caplog.text and "0.70 sure" in caplog.text
+    finally:
+        audio.close()
+
+
+async def test_a_stop_says_how_sure_and_the_voices_own_pitch(call, caplog):
+    caplog.set_level(logging.INFO, logger="littlebot.chatgpt.live")
+    audio, c = call()
+    words = FakeStopWords()
+    audio.setup_barge_in(on_change=lambda what, info: c.events.append(what), stop_words=words)
+    try:
+        await c.warm_up()
+        await short_word(c, words)  # a grown-up at 120 Hz over the 210 Hz voice
+        line = next(r.getMessage() for r in caplog.records if "interrupted: they said" in r.getMessage())
+        assert "0.00 sure" in line and re.search(r"the voice's own 2[01]\d Hz", line), line
     finally:
         audio.close()
 
