@@ -70,8 +70,9 @@ NO_WORDS_TURN_S = 4.0  # a turn with no words at all after this long was a noise
 CUT_IN_NOTE_S = 15.0  # a turn this soon after they talked over the voice is for LittleBot (_turn_notes)
 CARRY_OVERLAP_S = 0.02  # the call keeps this much from before the wake word's carry ended (a few ms twice, not lost)
 # What was said with the wake word goes to speech-to-text at once, which works through it at about real time: its
-# pauses (after "hey little bot,") are shortened to CARRY_PAUSE_S so the end of their turn isn't later for them.
-CARRY_PAUSE_S = 0.25
+# pauses (after "hey little bot,") are shortened to CARRY_PAUSE_S so the end of their turn isn't later for them
+# (on the robot's clips, 2026-10-31, 0.1 s instead of 0.25 s ended turns another 0.1-0.4 s sooner).
+CARRY_PAUSE_S = 0.15
 CARRY_QUIET_RMS = 0.015  # a 20 ms frame quieter than this is a pause (the echo-cancelled microphone's floor: ~0.002)
 VOICE_RMS = 0.01  # a 16 kHz chunk this loud is someone talking (the log says how long after it a turn ended)
 # After Flux's "probably done" with an early answer ready: this long with no new words and nothing louder than
@@ -331,6 +332,9 @@ class VoiceSession:
                 self._voice_at = self._now()  # their voice (or a noise) was last heard now: the turn ends after it
             if level >= LOUD_RMS:
                 self._loud_at = self._now()  # surely someone talking (louder than the room's noise ever is)
+            carry = self.carry
+            if carry is not None and getattr(carry, "levels_wanted", False):
+                carry.heard(level, len(y) / STT_RATE)  # the wake word still decides on its earcon (EARLY_START)
             if len(y) and self._voices() is not None:
                 self._keep_heard(y)
             if len(y) and self.stt is not None:
@@ -981,14 +985,21 @@ class VoiceSession:
             self.audio.unmute()
         return voice
 
-    def play_sound(self, name: str) -> None:
-        """A sound effect ("tada", "uhoh" ...) through the call's own speaker stream."""
+    def play_sound(self, name: str, *, volume: float | None = None, cue: bool = False) -> bool:
+        """A sound effect ("tada", "uhoh" ...) through the call's own speaker stream. ``cue``: one they may talk
+        over (the wake word's earcon): the microphone stays open while it plays. True: queued."""
         hit = None
         with contextlib.suppress(Exception):
             hit = self.ctx.audio.sound_samples(name)
-        if hit is not None and self.audio is not None:
-            with contextlib.suppress(Exception):
-                self.audio.play_pcm(hit[0], int(hit[1]))
+        if hit is None or self.audio is None:
+            return False
+        samples = np.asarray(hit[0], dtype=np.float32) * (1.0 if volume is None else float(volume))
+        play = getattr(self.audio, "play_cue", None) if cue else None
+        try:
+            (play or self.audio.play_pcm)(samples, int(hit[1]))
+        except Exception:  # noqa: BLE001 - a sound effect must never break the session
+            return False
+        return True
 
     def announce(self, text: str) -> None:
         """Say ``text`` now in this session (a reminder rang, a game's tap was judged): after what is being said.

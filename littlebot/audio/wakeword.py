@@ -120,6 +120,9 @@ PREROLL_MAX_SECONDS = 8.0
 # On the robot (2026-10-31) 0.35 s of quiet (counted from the wake phrase's end) ran out in the usual 0.3-0.6 s
 # pause before the question: the earcon played over "seventeen" at full volume, the echo canceller couldn't take it
 # out (the microphone clips) and "what's seventeen times twenty three" was heard as "one thirteen times twenty three".
+# EARLY_START (the assistant, with echo cancelling): the call starts listening at once instead, and the decision is
+# made on its microphone; speech-to-text works through what was said before it listened at about real time (on the
+# robot, 2026-10-31, Flux ended a turn ~0.45 s later per 0.45 s of it sent at once), so the question goes in live.
 TALK_SPEECH_SECONDS = 0.08
 EARCON_QUIET_SECONDS = 0.6
 EARCON_QUIET_NO_EC_SECONDS = 0.8
@@ -1078,13 +1081,23 @@ class WakeWordService(Service):
             with contextlib.suppress(Exception):
                 entered = ctx.state.state != RobotState.LISTENING and ctx.state.transition(RobotState.LISTENING,
                                                                                           "wake word")
+            from littlebot.assistant import voice_front  # noqa: PLC0415
+
+            live = voice_front(ctx)  # the assistant (assistant.pipeline) or GPT-Live
             earcon_volume: float | None = None
-            if carry is not None and early and not carry.kept_talking:
+            deciding = carry is not None and early and not carry.kept_talking
+            # EARLY_START: the assistant listens at once, while it is not known yet whether they go on talking, and
+            # plays the earcon itself if they wait for it (_earcon_in_call)
+            later = (deciding and video is None and live is not None and self._echo_cancelled()
+                     and callable(getattr(live, "play_earcon", None)))
+            if deciding and not later:
                 ec = self._echo_cancelled()
                 quiet = EARCON_QUIET_SECONDS if ec else EARCON_QUIET_NO_EC_SECONDS
                 carry.kept_talking = await self._talk_goes_on(carry, quiet)
                 earcon_volume = EARCON_OVER_SPEECH_VOLUME if ec else None  # they may start as it plays
-            if carry is not None and carry.kept_talking:
+            if later:
+                carry.levels_wanted = True  # the call's microphone says how loud they are once it took over
+            elif carry is not None and carry.kept_talking:
                 # They asked in the same breath and wait for the answer, not for a sound; a sound now would also
                 # hide what they say next (half-duplex). The face shows it is listening.
                 log.info("wake word: no earcon, they kept talking (%.1f s said after the wake phrase)", carry.seconds)
@@ -1092,9 +1105,6 @@ class WakeWordService(Service):
                 if video is not None:
                     await self._speaker_free()
                 await self._play(self.cfg.sound, volume=earcon_volume)
-            from littlebot.assistant import voice_front  # noqa: PLC0415
-
-            live = voice_front(ctx)  # the assistant (assistant.pipeline) or GPT-Live
             if live is None:
                 res: dict[str, Any] = {"ok": False, "error": "unavailable",
                                        "detail": "Live voice isn't available on this robot."}
@@ -1106,6 +1116,8 @@ class WakeWordService(Service):
                 started = True  # the call has the carry now (it drops it when it ends)
                 log.info("wake word: live voice started; connecting")
                 self._note("started")
+                if later:
+                    self._spawn(self._earcon_in_call(live, carry))
                 self._spawn(self._watch_connect(live))
                 if video is not None or self._video_held():
                     self._spawn(self._after_video_chat(live, paused_now=video is not None))
@@ -1148,13 +1160,31 @@ class WakeWordService(Service):
         sound (``quiet`` seconds of quiet)?"""
         start = carry.speech_seconds
         deadline = time.monotonic() + TALK_WAIT_SECONDS
-        while carry.is_open and time.monotonic() < deadline:
+        while (carry.is_open or (getattr(carry, "levels_wanted", False) and not carry.dropped)) \
+                and time.monotonic() < deadline:
             if carry.speech_seconds - start >= TALK_SPEECH_SECONDS:
                 return True
             if carry.quiet_s >= quiet:
                 return False
             await asyncio.sleep(0.02)
         return carry.speech_seconds - start >= TALK_SPEECH_SECONDS or time.monotonic() >= deadline
+
+    async def _earcon_in_call(self, live: Any, carry: SpeechCarry) -> None:
+        """EARLY_START: the assistant listens already; the earcon through its own speaker stream once they wait for
+        it (never when they go on talking)."""
+        try:
+            carry.kept_talking = await self._talk_goes_on(carry, EARCON_QUIET_SECONDS)
+        finally:
+            carry.levels_wanted = False
+        if carry.dropped:
+            return
+        if carry.kept_talking:
+            log.info("wake word: no earcon, they kept talking (the assistant was listening already)")
+            return
+        played = False
+        with contextlib.suppress(Exception):
+            played = bool(live.play_earcon(self.cfg.sound, volume=EARCON_OVER_SPEECH_VOLUME))
+        log.info("wake word: they waited: earcon %s", "played by the assistant" if played else "not played (no call)")
 
     async def _watch_connect(self, live: Any) -> None:
         """Live voice connects in the background: an "uhoh" if that fails, so the child knows."""

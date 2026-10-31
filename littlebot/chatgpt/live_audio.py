@@ -402,6 +402,7 @@ class LiveAudio:
         self._vol, self._vol_at = 0.0, float("-inf")
         self._last_loud = float("-inf")
         self._voice_onset = float("-inf")  # when the voice last started after ONSET_QUIET_S of quiet
+        self._cue: collections.deque[np.ndarray] = collections.deque()  # play_cue's sounds, mixed over the voice
         self.level = 0.0  # last speaker block RMS (0..1)
         self._visemes: dsp.VisemeEstimator | None = None
         self._mouths: collections.deque[tuple[float, float, str]] = collections.deque(maxlen=64)  # (heard at, level, shape)
@@ -1090,6 +1091,33 @@ class LiveAudio:
                 self._out_queued -= len(self._out.popleft())
         self._frame_at = self._now()
 
+    def play_cue(self, samples: np.ndarray, rate: int = RATE) -> None:
+        """A short sound they may talk over (the wake word's earcon, played by the assistant: wakeword EARLY_START):
+        mixed over whatever plays, and not the voice: it never shuts the microphone's gate, counts as something
+        to cut in on or moves the mouth. Echo cancelling takes it out (it goes to the same speaker)."""
+        if self._muted or not len(samples):
+            return
+        pcm = np.asarray(samples, dtype=np.float32).reshape(-1)
+        if rate != self.out_rate:
+            pcm = dsp.resample(pcm, rate, self.out_rate)
+        with self._lock:
+            self._cue.append(pcm.astype(np.float32))
+
+    def _take_cue(self, n: int) -> np.ndarray:
+        out = np.zeros(n, dtype=np.float32)
+        filled = 0
+        with self._lock:
+            while filled < n and self._cue:
+                head = self._cue[0]
+                k = min(n - filled, len(head))
+                out[filled:filled + k] = head[:k]
+                filled += k
+                if k == len(head):
+                    self._cue.popleft()
+                else:
+                    self._cue[0] = head[k:]
+        return out
+
     @property
     def queued_s(self) -> float:
         """Seconds of voice waiting for the speaker."""
@@ -1166,6 +1194,8 @@ class LiveAudio:
             self._vol_at, self._vol = now, max(0.0, min(1.0, float(self._volume())))
         if self.barge_in_on:  # what the speaker plays, for the barge-in detector's echo measure
             self._played.append((now + self._output_delay(time_info), rms * self._vol))
+        if self._cue and not self._muted:
+            y = y + self._take_cue(frames)  # after the voice's own measures: a cue is never the voice
         y = y * self._vol
         outdata[:] = np.repeat(y[:, None], self._out_channels, axis=1) if self._out_channels > 1 else y[:, None]
 

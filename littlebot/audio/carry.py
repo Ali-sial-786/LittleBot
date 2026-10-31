@@ -110,6 +110,9 @@ class SpeechCarry:
         self.heard_at = time.monotonic() if heard_at is None else heard_at  # when the wake phrase was recognised
         self.lead_s = 0.0  # seconds of it said before the wake phrase was recognised (the rest of that sentence)
         self.quiet_s = 0.0  # how long it has been quiet at its end (a pause: a good moment to hand over)
+        # The call took over while the wake word still decides on its earcon (wakeword EARLY_START): the call's
+        # microphone tells it how loud they are (``heard``) until it has decided.
+        self.levels_wanted = False
         self.state = "open"
         self.why = ""
         self.sealed_at: float | None = None
@@ -143,6 +146,18 @@ class SpeechCarry:
             else:
                 self.quiet_s += len(x) / float(self.sample_rate)
             return True
+
+    def heard(self, level: float, seconds: float) -> None:
+        """How loud the call's microphone was for ``seconds`` once it took over (sealed): only that, no audio,
+        while ``levels_wanted`` (the wake word deciding whether they go on talking)."""
+        with self._lock:
+            if self.state != "sealed" or seconds <= 0:
+                return
+            if level >= self.quiet_level:
+                self._speech += int(seconds * self.sample_rate)
+                self.quiet_s = 0.0
+            else:
+                self.quiet_s += seconds
 
     def seal(self, why: str = "") -> None:
         """Nothing more is added; the call may now take it."""

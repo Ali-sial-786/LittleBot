@@ -494,6 +494,22 @@ async def test_quiet_the_moment_the_voice_stopped_is_its_own_echo_and_it_carries
         audio.close()
 
 
+async def test_a_cue_plays_but_leaves_the_microphone_open(call):
+    """The wake word's earcon played by the assistant (wakeword EARLY_START): they may talk over it."""
+    audio, c = call()
+    try:
+        tone = (0.3 * np.sin(2 * np.pi * 880 * np.arange(int(0.3 * RATE)) / RATE)).astype(np.float32)
+        audio.play_cue(tone, RATE)
+        u = voiced(120, 0.02, 0.08)
+        for _ in range(10):
+            sent = await c.tick(voice=False, user=u)
+            assert np.array_equal(sent, c.mics[-1])  # the microphone stays open
+        assert max(float(np.abs(p).max()) for p in c.played) > 0.1  # and it played
+        assert not audio.speaking and audio.barge_ins == 0 and c.events == []
+    finally:
+        audio.close()
+
+
 async def test_the_voice_leaking_through_as_it_starts_after_a_silence_never_interrupts(call):
     """On the robot (2026-10-31) the echo canceller let the first words of an answer through for a moment, loud and
     at a grown-up's pitch (the voice is ~190 Hz), 0.3-0.8 s after the speaker played them: held as a false alarm.

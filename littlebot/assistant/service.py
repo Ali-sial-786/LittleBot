@@ -323,6 +323,14 @@ class AssistantService(Service):
         self._task = self._loop.create_task(self._run(session), name="assistant-session")
         return {"ok": True, **self.status()}
 
+    def play_earcon(self, name: str, *, volume: float | None = None) -> bool:
+        """The wake word's "listening" sound through the session's speaker stream: the session started before they
+        were heard going on or waiting (wakeword EARLY_START). It leaves the microphone open. False: no session."""
+        session = self._session
+        if session is None or session.ended:
+            return False
+        return session.play_sound(name, volume=volume, cue=True)
+
     async def _run(self, session: Any) -> None:
         try:
             await session.run()

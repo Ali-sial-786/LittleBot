@@ -479,6 +479,7 @@ class FakeCallAudio:
         self._np = np
         self.opened = self.closed = False
         self.played: list[tuple[int, int]] = []  # (samples, rate) per play_pcm call
+        self.cues: list[tuple[int, int]] = []  # (samples, rate) per play_cue call (sounds that leave the mic open)
         self.heard_words: list[tuple[str, bool]] = []
         self.thinking = 0
         self.muted = False
@@ -508,6 +509,9 @@ class FakeCallAudio:
 
     def play_pcm(self, samples: Any, rate: int = 48000) -> None:
         self.played.append((len(samples), int(rate)))
+
+    def play_cue(self, samples: Any, rate: int = 48000) -> None:
+        self.cues.append((len(samples), int(rate)))
 
     def play_thinking(self) -> bool:
         self.thinking += 1

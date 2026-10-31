@@ -698,6 +698,78 @@ async def test_with_echo_cancelling_the_earcon_they_may_talk_over_is_quieter(rig
     assert "sound:listen" in _sounds(r.out) and volumes == [wakeword.EARCON_OVER_SPEECH_VOLUME]
 
 
+class EarlyLive(FakeLive):
+    """The assistant (wakeword EARLY_START): it plays the earcon itself, and once it has the microphone it tells the
+    carry how loud they are (session._pump)."""
+
+    def __init__(self, ctx: Any, mic: Any) -> None:
+        super().__init__(ctx)
+        self.mic = mic
+        self.earcons: list[tuple[str, Any]] = []
+
+    def play_earcon(self, name: str, *, volume: float | None = None) -> bool:
+        self.earcons.append((name, volume))
+        return True
+
+    async def _run(self) -> None:
+        await super()._run()
+        carry = self.carries[-1]
+        while carry is not None and carry.levels_wanted and self.active:
+            carry.heard(self.mic.noise_level, 0.02)
+            await asyncio.sleep(0.02)
+
+
+async def _early(rig: Any, monkeypatch: Any) -> Any:
+    from littlebot.audio.service import AudioService
+
+    r = await rig()
+    monkeypatch.setattr(AudioService, "echo_cancelling", property(lambda self: True))
+    r.live = r.ctx.live = EarlyLive(r.ctx, r.mic)
+    return r
+
+
+async def test_the_assistant_listens_at_once_and_plays_the_earcon_when_they_wait(rig, monkeypatch, caplog):
+    # Flux works through what it is sent at about real time: the 0.45 s spent deciding on the earcon, sent at
+    # once afterwards, ended their turn ~0.45 s later (the robot, 2026-10-31).
+    caplog.set_level(logging.INFO, logger="littlebot.wake")
+    r = await _early(rig, monkeypatch)
+    await _listening(r)
+    _finish_early(r)
+    r.rec.partial_text = "hey little bot"  # and quiet: they wait for the sound
+    await until(lambda: r.live.calls, what="the assistant started")
+    carry = r.live.carries[0]
+    assert r.live.earcons == [] and carry.levels_wanted  # listening before it is known whether they go on
+    await until(lambda: r.live.earcons, what="the earcon")
+    assert r.live.earcons == [("listen", wakeword.EARCON_OVER_SPEECH_VOLUME)]
+    assert "sound:listen" not in _sounds(r.out)  # through the assistant's speaker stream, not the wake word's
+    assert not carry.kept_talking and not carry.levels_wanted
+    assert "earcon played by the assistant" in caplog.text
+
+
+async def test_the_assistant_listens_at_once_and_plays_no_earcon_when_they_go_on(rig, monkeypatch, caplog):
+    caplog.set_level(logging.INFO, logger="littlebot.wake")
+    r = await _early(rig, monkeypatch)
+    await _listening(r)
+    _finish_early(r)
+    r.rec.partial_text = "hey little bot"  # heard in their pause...
+    await until(lambda: r.live.calls, what="the assistant started")
+    carry = r.live.carries[0]
+    r.mic.set_level(0.1)  # ...then the question, into the assistant's microphone
+    await until(lambda: not carry.levels_wanted, what="decided")
+    assert carry.kept_talking and r.live.earcons == [] and "sound:listen" not in _sounds(r.out)
+    assert "no earcon, they kept talking (the assistant was listening already)" in caplog.text
+
+
+async def test_without_echo_cancelling_the_earcon_is_decided_before_the_assistant_starts(rig, monkeypatch):
+    r = await rig()
+    r.live = r.ctx.live = EarlyLive(r.ctx, r.mic)  # no echo cancelling: the microphone can't hear over the sound
+    await _listening(r)
+    _finish_early(r)
+    r.rec.partial_text = "hey little bot"  # and quiet
+    await until(lambda: r.live.calls, what="the assistant started")
+    assert "sound:listen" in _sounds(r.out) and r.live.earcons == [] and not r.live.carries[0].levels_wanted
+
+
 def test_while_they_talk_the_microphone_is_handed_over_at_their_next_pause():
     from littlebot.audio.carry import SpeechCarry
 

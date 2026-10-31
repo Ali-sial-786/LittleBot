@@ -321,6 +321,33 @@ async def test_the_call_audio_opens_before_the_wake_word_lets_go_of_the_micropho
     await svc.stop_session("test")
 
 
+async def test_started_before_the_earcon_it_tells_the_wake_word_how_loud_they_are_and_can_play_it() -> None:
+    # wakeword EARLY_START: the session listens at once; the wake word decides on its earcon from the call's
+    # microphone, and the session plays it if they wait (leaving the microphone open).
+    import numpy as np
+
+    from littlebot.audio.carry import SpeechCarry
+
+    svc, _stt, _tts, _ = _service(Scripted([]), follow_up_seconds=5)
+    carry = SpeechCarry(16000, phrase="hey little bot")
+    carry.add(np.full(1600, 0.1, dtype=np.float32))
+    carry.seal("test")
+    carry.levels_wanted = True
+    await svc.start()
+    assert svc.play_earcon("listen") is False  # no session yet
+    await svc.start_session(carry=carry)
+    await _wait(lambda: carry.quiet_s >= 0.1)  # the call's (quiet) microphone
+    speech = carry.speech_seconds
+    assert svc.play_earcon("listen", volume=0.6) is True
+    audio = svc._session.audio
+    assert audio.cues and audio.played == []  # a cue, not the voice: the microphone stays open
+    carry.levels_wanted = False
+    quiet = carry.quiet_s
+    await asyncio.sleep(0.1)
+    assert carry.quiet_s == quiet and carry.speech_seconds == speech  # only while the wake word wants them
+    await svc.stop_session("test")
+
+
 async def test_the_wake_phrase_goes_first_and_is_taken_off_the_words() -> None:
     # Decided early, the carry started in the middle of "bot": "Hey little bot, who was Kublai Khan?" was heard as
     # "not who was Kublai Khan." and answered as a correction (the robot, 2026-10-31).
@@ -365,13 +392,14 @@ def test_what_was_said_with_the_wake_word_goes_without_its_long_pauses() -> None
     # Speech-to-text works through it at about real time: 2.5 s of it delayed the end of their turn by ~2 s.
     import numpy as np
 
-    from littlebot.assistant.session import _squeeze_quiet
+    from littlebot.assistant.session import CARRY_PAUSE_S, _squeeze_quiet
 
     rng = np.random.default_rng(3)
     word = (0.2 * rng.standard_normal(4800)).astype(np.float32)  # 0.3 s
     quiet = np.full(16000, 0.001, dtype=np.float32)  # 1 s
-    out = _squeeze_quiet(np.concatenate([word, quiet, word, quiet[:2400], word]), 16000, 0.015)
-    assert abs(len(out) - (3 * 4800 + 4000 + 2400)) <= 320  # the long pause down to 0.25 s (a 20 ms frame), the short one as it was
+    out = _squeeze_quiet(np.concatenate([word, quiet, word, quiet[:1600], word]), 16000, 0.015)
+    # the long pause down to CARRY_PAUSE_S (give or take a 20 ms frame), the short one (0.1 s) as it was
+    assert abs(len(out) - (3 * 4800 + round(CARRY_PAUSE_S * 16000) + 1600)) <= 320
     assert np.array_equal(out[:4800], word) and np.array_equal(out[-4800:], word)
 
 
