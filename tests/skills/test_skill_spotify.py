@@ -215,7 +215,8 @@ async def test_a_song_by_an_artist_plays_from_its_album(ctx, fake: FakeSpotify):
     choice = await sp.find("Bohemian Rhapsody by Queen", "song")
     search = fake.calls("GET", "/search")[-1]["query"]
     assert search["q"] == "track:Bohemian Rhapsody artist:Queen" and search["type"] == "track"
-    assert search["market"] == "from_token" and int(search["limit"]) <= 10
+    # no market: Spotify refuses "from_token" without the user-read-private scope (HTTP 403, 2026-10-31)
+    assert "market" not in search and int(search["limit"]) <= 10
     assert choice.what == "track" and choice.said() == "'Bohemian Rhapsody' by Queen"
     assert choice.body() == {"context_uri": "spotify:album:a1", "offset": {"uri": "spotify:track:t1"}}
     assert choice.image_url == "https://i.scdn.co/image/1-300"  # the smallest that is at least 300 px

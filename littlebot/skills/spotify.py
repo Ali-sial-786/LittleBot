@@ -85,7 +85,7 @@ PLAYING_TRUST_S = 20 * 60.0  # playing() trusts what it last heard this long
 POLL_S = 30.0  # while Spotify plays on LittleBot: check now and then (it ended, paused from a phone)
 WAKE_GRACE_S = 20.0  # a wake word with no voice session after it this long: the volume comes back
 VOLUME_STEP = 10
-SEARCH_LIMIT = 8
+SEARCH_LIMIT = 8  # Spotify's search takes at most 10 now ("Invalid limit" for 20, 2026-10-31)
 LIBRARY_LIMIT = 50
 PLAYLIST_PAGES = 3
 MATCH_MIN = 0.72  # a playlist name scoring less than this isn't the one they meant
@@ -512,8 +512,9 @@ class Spotify(Skill):
         return self._explicit_ok() or not track.get("explicit")
 
     async def _search(self, q: str, types: str) -> Any:
-        return await self.api.call("GET", "/search", params={"q": q[:200], "type": types, "limit": SEARCH_LIMIT,
-                                                             "market": "from_token"})
+        # No "market": "from_token": search now refuses it without the user-read-private scope ("Insufficient
+        # client scope", HTTP 403: every search failed; the robot, 2026-10-31). Playing what it finds still works.
+        return await self.api.call("GET", "/search", params={"q": q[:200], "type": types, "limit": SEARCH_LIMIT})
 
     def _track_choice(self, t: dict[str, Any]) -> Choice:
         album = t.get("album") if isinstance(t.get("album"), dict) else {}
