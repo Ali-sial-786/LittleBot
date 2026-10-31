@@ -26,6 +26,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import re
 import time
 from typing import Any, AsyncIterator, Callable
 
@@ -61,8 +62,9 @@ class TTSChain:
     sample_rate = OUTPUT_RATE
 
     def __init__(self, providers: list[StreamingTTS], *, cloud_ok: CloudOk, first_audio_timeout: float = 2.5,
-                 clock: Callable[[], float] = time.monotonic) -> None:
+                 clock: Callable[[], float] = time.monotonic, pronunciations: dict[str, str] | None = None) -> None:
         self.providers = list(providers)
+        self._respell = _respeller(pronunciations or {})
         self._cloud_ok = cloud_ok
         self.first_audio_timeout = float(first_audio_timeout)
         self._clock = clock
@@ -110,7 +112,7 @@ class TTSChain:
     # ------------------------------------------------------------ speaking
     async def stream(self, text: str) -> AsyncIterator[np.ndarray]:
         """The sentence as float32 mono chunks at 48 kHz, from the first voice that answers in time."""
-        text = clean_text(text, MAX_SENTENCE_CHARS)
+        text = self._respell(clean_text(text, MAX_SENTENCE_CHARS))
         if not text:
             return
         usable = self._usable()
@@ -229,6 +231,16 @@ class TTSChain:
                 "last": self.last_provider, "last_error": self.last_error, "providers": rows}
 
 
+def _respeller(words: dict[str, str]) -> Callable[[str], str]:
+    """``assistant.pronunciations`` as one function: each word (whole words, any case) respelled for the voice."""
+    table = {str(k).lower(): str(v) for k, v in words.items() if str(k).strip() and str(v).strip()}
+    if not table:
+        return lambda text: text
+    pattern = re.compile(r"\b(" + "|".join(re.escape(k) for k in sorted(table, key=len, reverse=True)) + r")\b",
+                         re.IGNORECASE)
+    return lambda text: pattern.sub(lambda m: table[m.group(1).lower()], text)
+
+
 async def _first_sound(chunks: AsyncIterator[np.ndarray]) -> np.ndarray | None:
     async for chunk in chunks:
         if len(chunk):
@@ -269,7 +281,8 @@ def build_tts_chain(ctx: Any, *, transport: Any = None, cloud_ok: CloudOk | None
             providers.append(LocalTTS.from_config(ctx.config.audio.tts))
     if not any(p.name == "local" for p in providers):
         providers.append(LocalTTS.from_config(ctx.config.audio.tts))
-    chain = TTSChain(providers, cloud_ok=ok, first_audio_timeout=a.tts_first_audio_timeout_seconds)
+    chain = TTSChain(providers, cloud_ok=ok, first_audio_timeout=a.tts_first_audio_timeout_seconds,
+                     pronunciations=getattr(a, "pronunciations", None))
     log.info("assistant tts: %s", ", ".join(f"{r['name']}" + (f" ({r['missing']})" if r["missing"] else "")
                                             for r in chain.describe()["providers"]))
     return chain

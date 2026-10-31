@@ -532,3 +532,17 @@ async def test_no_key_in_logs_errors_or_descriptions(caplog):
         repr(p) for p in chain.providers) + repr(rec.requests)
     for key in KEYS.values():
         assert key not in seen
+
+
+async def test_words_the_voice_says_wrong_are_respelled_for_it():
+    voice = FakeVoice("cartesia")
+    chain = TTSChain([voice], cloud_ok=lambda: True, pronunciations={"Genghis": "Jenghis", "Siobhan": "Shivawn"})
+    await _collect(chain.stream("Kublai was GENGHIS Khan's grandson; ask Siobhan."))
+    assert voice.texts == ["Kublai was Jenghis Khan's grandson; ask Shivawn."]
+    await _collect(chain.stream("Genghisville is a town."))  # whole words only
+    assert voice.texts[-1] == "Genghisville is a town."
+
+
+def test_genghis_is_respelled_by_default():
+    chain = build_tts_chain(_ctx())
+    assert chain._respell("Genghis Khan") == "Jenghis Khan"

@@ -153,6 +153,7 @@ ssh alisial3@littlebot.local "grep -a assistant.turn ~/LittleBot/data/logs/littl
 | `cartesia_speed` | `1.0` | 0.6-1.5 (1.0 normal; 0.9 is a little slower) |
 | `cartesia_emotion` | `calm` | the voice's emotion when a sentence has no mood; tagged sentences get a gentle matching one ([happy] → content, [sad] → sympathetic, [excited] → happy) |
 | `cartesia_concurrency` | `1` | Cartesia requests open at once (the free plan allows 2: one is kept spare for a sentence just cut off). The next sentence is made while one plays, so there's no gap |
+| `pronunciations` | `{Genghis: Jenghis}` | words the voice says wrong, respelled for it (whole words, any case); add your own, e.g. a name |
 | `follow_up_seconds` | `8` | listening after an answer without the wake word (0: one question per wake word) |
 | `deep_model` | `claude-sonnet-5-5` | think_harder's model (null: off) |
 | `barge_in` | `true` | talk over LittleBot to interrupt it |
