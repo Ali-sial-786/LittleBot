@@ -5,19 +5,22 @@ It works, but it can mishear (it heard "little" in other words, so `min_confiden
 tuned). A wake word model trained only on "Hey LittleBot" is smaller, faster and should mishear less. This page is
 how that model is made, on the robot itself, with [openWakeWord](https://github.com/dscripka/openWakeWord).
 
-> **Status.** The tools are installed on the robot and a small test run went through every step (made-up voices,
-> features, training, a 200 KB model, the check). With only 48 clips of each kind that test model learned nothing
-> useful, as expected; the full run (10,000 clips) started on 1 November 2026 at 03:16. LittleBot doesn't use the
-> model yet: it will be tried on recordings first, next to Vosk, and only switched on if it is better.
+> **Status.** The first full run (1 November 2026, 03:16 to 06:52: 10,000 wake word clips, 8,000 near misses, a
+> 32-wide network, 50,000 steps) caught 68% of the test clips at 0.5, with about 1 false alarm an hour: not good
+> enough. It is kept in `~/wwtrain/hey_little_bot/run1`. The second run, started the same morning, has 40,000 wake
+> word clips and 24,000 near misses, each heard in two different rooms, a 64-wide network and 200,000 steps (about
+> 11 hours). LittleBot doesn't use either model yet: the better one will be tried on recordings first, next to Vosk,
+> and only switched on if it beats it.
 
 ## How it works, in plain words
 
 1. **Made-up voices.** A free voice generator (LibriTTS-R, 904 speakers, mixed two at a time) says "hey little
-   bot" and "hey lil bot" 10,000 times in different voices and speeds. It also says about 80 things that sound
-   close but aren't it, thousands of times: "hey little boat", "a little bit", "hey Bob", "little bot" without the
+   bot" and "hey lil bot" 40,000 times in different voices and speeds. It also says about 80 things that sound
+   close but aren't it, 24,000 times: "hey little boat", "a little bit", "hey Bob", "little bot" without the
    "hey" and so on.
 2. **Real rooms.** Each clip gets a real room's echo (270 recorded rooms) and everyday background sound (AudioSet:
-   talk, TV, music, kitchens) at a random loudness, so it sounds like a living room, not a studio.
+   talk, TV, music, kitchens) at a random loudness, so it sounds like a living room, not a studio. Each training
+   clip is done twice, in two different rooms with two different sounds.
 3. **Training.** openWakeWord's own trainer teaches a small network to say yes to the wake word and no to the near
    misses and to about 2,000 hours of everyday sound. It keeps the version that catches the most wake words with
    the fewest false alarms, measured on 11 more hours it never trained on.
@@ -44,12 +47,16 @@ cd ~/wwtrain && (nohup bash ~/LittleBot/scripts/wake_training/run_all.sh > train
 
 Watch it with `tail -f ~/wwtrain/train.log`.
 
-| Step | Time on the Pi 5 (guessed from the test run) | What you see in `train.log` |
+| Step | Time on the Pi 5 (from the first run) | What you see in `train.log` |
 |---|---|---|
-| `voices` | about 3.5 hours | `voices: positive_train 2000/10000` ... |
-| `features` | about 1 hour | `features: positive_train ...` |
-| `train` | 1 to 2 hours | openWakeWord's progress bars, then `train: saved ... hey_little_bot.onnx` |
-| `check` | a few minutes | the catch rate and false alarms per hour |
+| `voices` | about 2.6 wake word clips and 1.9 near misses a second: 6 hours from nothing | `positive_train: 2000 of 40000` ... |
+| `features` | about 26 clips a second: under 2 hours | `features: positive_train ...` |
+| `train` | about 20 steps a second: 3 to 4 hours for 200,000 | openWakeWord's progress bars, then `train: saved ... hey_little_bot.onnx` |
+| `check` | a few seconds | the catch rate and false alarms per hour |
+
+To train again with other settings, move the old model out of `~/wwtrain/hey_little_bot` first (the `train` step
+skips if `hey_little_bot.onnx` is there). More clips: raise `COUNTS` in `train.py`; only the missing clips are made,
+and the features are made again when their count doesn't match. `--steps` and `--layer-dim` change the training.
 
 Each step can be run on its own (`train.py voices`, `features`, `train`, `check`) and carries on where it stopped.
 `train.py all --smoke` is a 10-minute test with 48 clips of each kind (in `~/wwtrain/smoke`).

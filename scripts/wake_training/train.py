@@ -54,8 +54,11 @@ OUT = ROOT / MODEL_NAME
 EVERYDAY = DATA / "openwakeword_features_ACAV100M_2000_hrs_16bit.npy"  # what it must not answer: ~2,000 hours
 RATE = 16000
 
-# How many clips of each kind. On the Pi 5 the generator makes about 2 a second (3 threads).
-COUNTS = {"positive_train": 10000, "positive_test": 1500, "negative_train": 8000, "negative_test": 1500}
+# How many clips of each kind. On the Pi 5 the generator makes about 2 a second (3 threads). The first run (10,000
+# and 8,000, a 32-wide network, 50,000 steps) caught only 68% of the test clips: the second run has more of all three.
+COUNTS = {"positive_train": 40000, "positive_test": 1500, "negative_train": 24000, "negative_test": 1500}
+# Each training clip is put in a room and under background sound this many times, differently each time.
+ROUNDS = {"positive_train": 2, "negative_train": 2}
 
 # What the wake word is. Repeats weigh the usual way of saying it more.
 POSITIVE = ["hey little bot", "hey little bot", "hey little bot", "hey little bot.", "hey, little bot",
@@ -280,27 +283,29 @@ def step_features(threads: int) -> None:
                           device="cpu", ncpu=threads)
     for kind in COUNTS:
         dst = OUT / f"{kind}_features.npy"
-        if dst.exists():
+        files = sorted((OUT / kind).glob("*.wav"))
+        rounds = ROUNDS.get(kind, 1)
+        rows = len(files) * rounds
+        if dst.exists() and np.load(dst, mmap_mode="r").shape[0] == rows:
             log.info("features: %s already", kind)
             continue
-        files = sorted((OUT / kind).glob("*.wav"))
         aug = Augmenter(np.random.default_rng(zlib.crc32(kind.encode())))
         shape = feats.embed_clips(np.zeros((1, total), dtype=np.int16), batch_size=1).shape[1:]
         tmp = OUT / f"{kind}_features.tmp.npy"
-        arr = open_memmap(str(tmp), mode="w+", dtype=np.float32, shape=(len(files), *shape))
+        arr = open_memmap(str(tmp), mode="w+", dtype=np.float32, shape=(rows, *shape))
         t0 = time.monotonic()
-        for i in range(0, len(files), 256):
-            chunk = files[i:i + 256]
+        for i in range(0, rows, 256):  # round after round over the same files, a new room and sound each time
+            chunk = [files[j % len(files)] for j in range(i, min(i + 256, rows))]
             batch = np.stack([aug(to_16k(*read_wav(f)), total) for f in chunk])
             arr[i:i + len(chunk)] = feats.embed_clips(batch, batch_size=64, ncpu=threads)
             if (i // 256) % 8 == 0:
-                log.info("features: %s %d of %d (%.0f s)", kind, i + len(chunk), len(files), time.monotonic() - t0)
+                log.info("features: %s %d of %d (%.0f s)", kind, i + len(chunk), rows, time.monotonic() - t0)
         arr.flush()
         del arr
         tmp.replace(dst)
-        names = [f.name for f in files]
+        names = [f.name for f in files] * rounds
         (OUT / f"{kind}_features.files.json").write_text(json.dumps(names), encoding="utf-8")
-        log.info("features: %s done (%d clips, %.0f s)", kind, len(files), time.monotonic() - t0)
+        log.info("features: %s done (%d clips x %d, %.0f s)", kind, len(files), rounds, time.monotonic() - t0)
 
 
 # ---------------------------------------------------------------- 3. train
@@ -322,7 +327,7 @@ def false_alarm_set(frames: int, chunk: int = 20000):
     return torch.utils.data.DataLoader(Chunks(), batch_size=None)
 
 
-def step_train(threads: int, steps: int) -> None:
+def step_train(threads: int, steps: int, layer_dim: int) -> None:
     import torch  # noqa: PLC0415
 
     _stub_missing()
@@ -337,7 +342,7 @@ def step_train(threads: int, steps: int) -> None:
     pos_test = np.load(OUT / "positive_test_features.npy")
     neg_test = np.load(OUT / "negative_test_features.npy")
     input_shape = pos_test.shape[1:]
-    oww = Model(n_classes=1, input_shape=input_shape, model_type="dnn", layer_dim=32,
+    oww = Model(n_classes=1, input_shape=input_shape, model_type="dnn", layer_dim=layer_dim,
                 seconds_per_example=1280 * input_shape[0] / 16000)
 
     def fit(x, n=input_shape[0]):
@@ -441,7 +446,9 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("step", choices=("voices", "features", "train", "check", "all"))
     ap.add_argument("--threads", type=int, default=3, help="CPU threads (the robot keeps one for itself)")
-    ap.add_argument("--steps", type=int, default=50000, help="training steps (openWakeWord's default)")
+    ap.add_argument("--steps", type=int, default=200000,
+                    help="training steps (openWakeWord's default is 50,000: too few for the first run)")
+    ap.add_argument("--layer-dim", type=int, default=64, help="how wide the network is (the first run had 32)")
     ap.add_argument("--smoke", action="store_true",
                     help="a tiny run in ~/wwtrain/smoke that only checks every step works (the check set stands in "
                          "for the 17 GB of everyday sound)")
@@ -451,6 +458,7 @@ def main() -> int:
         global OUT, EVERYDAY  # noqa: PLW0603
         OUT, EVERYDAY = ROOT / "smoke", DATA / "validation_set_features.npy"
         COUNTS.update({k: 48 for k in COUNTS})
+        ROUNDS.clear()
         args.steps = min(args.steps, 400)
     for noisy in ("piper_sample_generator", "piper_sample_generator.__main__", "urllib3", "numba"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
@@ -463,7 +471,7 @@ def main() -> int:
         elif step == "features":
             step_features(args.threads)
         elif step == "train":
-            step_train(args.threads, args.steps)
+            step_train(args.threads, args.steps, args.layer_dim)
         else:
             step_check()
     return 0
