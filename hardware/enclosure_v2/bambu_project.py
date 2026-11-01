@@ -5,9 +5,9 @@ Bambu Lab P2S (0.4 nozzle, 0.20mm Standard, Bambu PLA Basic, Textured PEI Plate)
     python3 bambu_project.py OUT.3mf plates_256/04_main.3mf plates_256/05_black.3mf plates_256/06_glow.3mf
     python3 bambu_project.py --fetch      # re-make bambu_p2s_pla.json from Bambu's own profiles (GitHub)
 
-Each plate file becomes a plate and gets its own filament slot (1, 2, 3...), so the black and white parts
+Each plate file becomes a plate; each colour gets its own filament slot (main, black, white...), so the parts
 show in their colours; when printing, Bambu Studio maps each slot to an AMS slot. Brims follow pack_plates.py:
-an 8 mm outer brim on tall parts only, none on the others.
+an 8 mm outer brim on tall parts only, none on the others. The head gets supports on the build plate only.
 
 Bambu Studio only keeps a project's plates if the project carries its printer settings. It selects its
 own installed presets by name ("Bambu Lab P2S 0.4 nozzle" ...) and takes every value from them, so the
@@ -26,7 +26,7 @@ from pathlib import Path
 
 import numpy as np
 
-from pack_plates import BRIM, is_tall, read_3mf
+from pack_plates import BRIM, read_3mf, tall
 from stl_tools import vertex_ids
 
 HERE = Path(__file__).resolve().parent
@@ -37,6 +37,9 @@ APP = "BambuStudio-02.02.00.00"              # 2.0 or later: no old-file convers
 PRINTER, PROCESS, FILAMENT = "Bambu Lab P2S 0.4 nozzle", "0.20mm Standard @BBL P2S", "Bambu PLA Basic @BBL P2S"
 COLOURS = {"main": "#F5F0E6", "black": "#161616", "glow": "#FFFFFF"}
 NAMES = {"main": "main colour", "black": "black", "glow": "white / translucent"}
+BRIMMED = {"base", "head", "torso"}         # the README's tall parts (the base is wide, but 72 mm tall; 20 mm from the edges)
+# the head prints face down: its visor seat needs supports, from the bed only (README, Material and settings)
+SUPPORT = {"head": '    <metadata key="enable_support" value="1"/>\n    <metadata key="support_on_build_plate_only" value="1"/>\n'}
 PROFILES = "https://raw.githubusercontent.com/bambulab/BambuStudio/master/resources/profiles/"
 
 
@@ -91,6 +94,7 @@ def project_settings(groups: list[str]) -> dict:
 def build(out: Path, plate_files: list[Path]) -> None:
     r = np.sqrt(len(plate_files)); cols = int(round(r)) + (1 if r > round(r) else 0)    # compute_colum_count() in PartPlate.hpp
     groups = [f.stem.split("_", 1)[1] for f in plate_files]
+    colours = list(dict.fromkeys(groups))                    # one filament slot per colour
     objects, items, obj_cfg, plates, assemble = [], [], [], [], []
     k = 0
     for i, f in enumerate(plate_files):
@@ -109,9 +113,9 @@ def build(out: Path, plate_files: list[Path]) -> None:
             p = centre + origin
             tf = f"1 0 0 0 1 0 0 0 1 {p[0]:.4f} {p[1]:.4f} {p[2]:.4f}"
             items.append(f'<item objectid="{k}" transform="{tf}" printable="1"/>')
-            brim = (f'    <metadata key="brim_type" value="outer_only"/>\n    <metadata key="brim_width" value="{BRIM:g}"/>\n' if is_tall(name)
+            brim = (f'    <metadata key="brim_type" value="outer_only"/>\n    <metadata key="brim_width" value="{BRIM:g}"/>\n' if tall(hi - lo) or name in BRIMMED
                     else '    <metadata key="brim_type" value="no_brim"/>\n')        # as pack_plates.py: a brim near the edge lifts the part
-            obj_cfg.append(f'  <object id="{k}">\n    <metadata key="name" value="{label}"/>\n    <metadata key="extruder" value="{i + 1}"/>\n{brim}'
+            obj_cfg.append(f'  <object id="{k}">\n    <metadata key="name" value="{label}"/>\n    <metadata key="extruder" value="{colours.index(groups[i]) + 1}"/>\n{brim}{SUPPORT.get(name, "")}'
                            f'    <part id="{k}" subtype="normal_part">\n      <metadata key="name" value="{label}"/>\n'
                            f'      <metadata key="matrix" value="1 0 0 0 0 1 0 0 0 0 1 0 0 0 0 1"/>\n    </part>\n  </object>\n')
             inst.append(f'    <model_instance>\n      <metadata key="object_id" value="{k}"/>\n      <metadata key="instance_id" value="0"/>\n'
@@ -138,7 +142,7 @@ def build(out: Path, plate_files: list[Path]) -> None:
                    '</Relationships>')
         z.writestr("3D/3dmodel.model", model)
         z.writestr("Metadata/model_settings.config", config)
-        z.writestr("Metadata/project_settings.config", json.dumps(project_settings(groups), indent=4))
+        z.writestr("Metadata/project_settings.config", json.dumps(project_settings(colours), indent=4))
     print(f"{out}: {len(plate_files)} plates, {k} parts ({', '.join(f.stem for f in plate_files)})")
 
 
