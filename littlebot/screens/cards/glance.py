@@ -109,7 +109,7 @@ class GlanceCard(Card):
 
 
 def upcoming_lines(ctx: Any) -> list[str]:
-    """What's next, from the skills (reminders, timers, lists): short lines, most urgent first."""
+    """What's next, from the skills (timers, the calendar, reminders, lists): short lines, most urgent first."""
     out: list[str] = []
     screens = getattr(ctx, "screens", None)
     try:
@@ -119,7 +119,7 @@ def upcoming_lines(ctx: Any) -> list[str]:
     if timers:
         out.append(timers)
     hub = getattr(ctx, "skills", None)
-    for name in ("reminders", "lists"):
+    for name in ("calendar", "reminders", "lists"):
         skill = hub.get(name) if hub is not None and hasattr(hub, "get") else None
         if skill is None:
             continue

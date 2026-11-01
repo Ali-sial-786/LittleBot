@@ -22,6 +22,7 @@ log = logging.getLogger("littlebot.skills")
 SKILLS: tuple[tuple[str, str], ...] = (
     ("littlebot.skills.memory", "Memory"),
     ("littlebot.skills.reminders", "Reminders"),
+    ("littlebot.skills.agenda", "Calendar"),
     ("littlebot.skills.lists", "Lists"),
     ("littlebot.skills.persona", "Persona"),
     ("littlebot.skills.briefing", "Briefing"),
@@ -30,6 +31,7 @@ SKILLS: tuple[tuple[str, str], ...] = (
     ("littlebot.skills.spotify", "Spotify"),
     ("littlebot.skills.music", "Music"),
     ("littlebot.skills.translator", "Translator"),
+    ("littlebot.skills.heads_up", "HeadsUp"),
     ("littlebot.games.voice.skill", "VoiceGames"),
 )
 

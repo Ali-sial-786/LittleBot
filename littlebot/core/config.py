@@ -510,6 +510,20 @@ class SkillsConfig(_Section):
     # goes in .env (HOME_ASSISTANT_TOKEN) or data/home_assistant_token (chmod 600). Empty: no smart-home tools.
     home_assistant_url: str = ""
     home_timeout_seconds: float = Field(default=5.0, gt=0, le=30)
+    # Calendar (littlebot/skills/agenda.py, docs/CALENDAR.md): Google Calendar (see, add, move and cancel events;
+    # connected with scripts/setup_calendar.py) and/or calendars' secret iCal addresses (see only; CALENDAR_ICS_URL
+    # in .env or data/calendar_ics_url, chmod 600, several separated by spaces). Neither set up: no calendar tools.
+    calendar: bool = True
+    calendar_default: str = ""  # the calendar new events go on, by name ("" = the main Google calendar)
+    calendar_timeout_seconds: float = Field(default=6.0, gt=0, le=30)
+    # Heads-ups (littlebot/skills/heads_up.py): LittleBot speaks up by itself when something is coming, and sends it
+    # to the family's phones too once scripts/setup_phone.py has set up ntfy (NTFY_TOPIC / data/ntfy_topic). The
+    # parent can change these by voice ("stop telling me about the weather"); the defaults are here.
+    heads_up: bool = True
+    heads_up_calendar_minutes: int = Field(default=30, ge=0, le=240)  # before an event with a time (0: none)
+    heads_up_weather: bool = True  # rain, snow or storms expected within a few hours
+    heads_up_quiet_hours: str = "21:30-07:00"  # nothing said out loud then (the phone still gets it); "" = never
+    ntfy_server: str = "https://ntfy.sh"  # or your own ntfy server
 
 
 class VoiceGamesConfig(_Section):
@@ -872,6 +886,10 @@ class LittleBotConfig(BaseModel):
     cartesia_api_key: SecretStr | None = Field(default=None, exclude=True)
     elevenlabs_api_key: SecretStr | None = Field(default=None, exclude=True)
     home_assistant_token: SecretStr | None = Field(default=None, exclude=True)
+    # The calendar's secret iCal address(es) and the phone notifications' ntfy topic (littlebot/skills/agenda.py,
+    # push.py): not API keys, but anyone who has them can read the calendar / the notifications.
+    calendar_ics_url: SecretStr | None = Field(default=None, exclude=True)
+    ntfy_topic: SecretStr | None = Field(default=None, exclude=True)
 
     @field_validator("mode", mode="before")
     @classmethod
@@ -915,6 +933,8 @@ EXTRA_KEYS: tuple[tuple[str, str, str], ...] = (
     ("cartesia_api_key", "CARTESIA_API_KEY", "cartesia_api_key"),
     ("elevenlabs_api_key", "ELEVENLABS_API_KEY", "elevenlabs_api_key"),
     ("home_assistant_token", "HOME_ASSISTANT_TOKEN", "home_assistant_token"),
+    ("calendar_ics_url", "CALENDAR_ICS_URL", "calendar_ics_url"),
+    ("ntfy_topic", "NTFY_TOPIC", "ntfy_topic"),
 )
 
 

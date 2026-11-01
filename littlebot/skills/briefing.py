@@ -44,11 +44,13 @@ WARM_EVERY_S = 9 * 60.0  # within the forecast's 10 minutes (info.cache_minutes)
 
 SAY = {
     "morning": "Turn this into a warm, natural 20-40 second spoken morning briefing: the greeting, the weather in "
-               "plain words (what to wear or bring), what's on today (reminders, alarms) and anything on the lists "
+               "plain words (what to wear or bring), what's on today (the calendar, reminders, alarms) and anything on "
+               "the lists "
                "worth a mention, then the top 2-3 headlines briefly with their source, and one friendly closing "
                "line. Skip parts that are empty; never read it out like a list.",
-    "evening": "Turn this into a calm 20-40 second spoken evening wind-down: tomorrow's weather, what is set for "
-               "tomorrow (alarms, reminders), a quick look at the lists if useful, two headlines at most, and a warm "
+    "evening": "Turn this into a calm 20-40 second spoken evening wind-down: tomorrow's weather, what is on and set "
+               "for tomorrow (the calendar, alarms, reminders), a quick look at the lists if useful, two headlines at "
+               "most, and a warm "
                "good night. Skip parts that are empty.",
     "news": "Say the top headlines naturally (about 20-40 seconds), each in a sentence with its source in passing; "
             "offer more on any of them.",
@@ -71,7 +73,8 @@ class Briefing(Skill):
     def tools(self) -> list[ToolSpec]:
         return [
             tool("get_briefing", "Everything for a spoken briefing in one call: the local time and a greeting, the "
-                 "weather at home (today's for morning, tomorrow's for evening), today's reminders and alarms, the "
+                 "weather at home (today's for morning, tomorrow's for evening), the day's calendar, reminders and "
+                 "alarms, the "
                  "lists, and the top news headlines. Call it only when they ask for a briefing: good morning, good "
                  "night, 'what's my day (look like)', 'what's on tomorrow', 'brief me', 'what did I miss' or "
                  "'what's the news'. Never for a question about the weather (today, tonight, tomorrow, the week): "
@@ -165,8 +168,8 @@ class Briefing(Skill):
         if weather is not None:
             out["weather"] = weather
         if kind != "news":
-            for skill_name in ("reminders", "lists"):
-                note = self._note(skill_name)
+            for skill_name in ("calendar", "reminders", "lists"):
+                note = self._note(skill_name, kind)
                 if note:
                     out[skill_name] = note
         if headlines:
@@ -220,8 +223,9 @@ class Briefing(Skill):
             log.warning("briefing: news failed", exc_info=True)
             return [], "the news feeds didn't work"
 
-    def _note(self, skill_name: str) -> str:
-        """What another skill (reminders, lists) holds right now, for the briefing; "" when it isn't there."""
+    def _note(self, skill_name: str, kind: str = "morning") -> str:
+        """What another skill (calendar, reminders, lists) holds right now, for the briefing; "" when it isn't there.
+        The calendar's says today's events (tomorrow's in the evening)."""
         skill = self._skill(skill_name)
         if skill is None:
             return ""
@@ -230,7 +234,7 @@ class Briefing(Skill):
             if not callable(fn):
                 continue
             try:
-                text = str(fn() or "").strip()
+                text = str((fn(kind) if attr == "briefing_note" and skill_name == "calendar" else fn()) or "").strip()
             except Exception:  # noqa: BLE001 - another skill's trouble is not the briefing's
                 log.debug("briefing: %s.%s failed", skill_name, attr, exc_info=True)
                 continue

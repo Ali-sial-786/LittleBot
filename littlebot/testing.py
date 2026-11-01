@@ -456,6 +456,9 @@ def make_test_context(*, fakes: bool = True, **config_overrides: Any) -> RobotCo
     # ... nor a real Spotify sign-in (littlebot/skills/spotify.py reads this path instead of data/)
     ctx.extras["spotify_token_file"] = Path(tempfile.gettempdir()) / f"littlebot-test-{uuid.uuid4().hex}" / \
         "spotify_token.json"
+    # ... nor a real Google Calendar sign-in (littlebot/skills/agenda.py)
+    ctx.extras["google_calendar_token_file"] = Path(tempfile.gettempdir()) / f"littlebot-test-{uuid.uuid4().hex}" / \
+        "google_calendar.json"
     if fakes:
         ctx.face = FakeFace(ctx.bus)
         ctx.audio = FakeAudio(ctx.bus)

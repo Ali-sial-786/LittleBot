@@ -55,6 +55,14 @@ def build_defaults(cfg: LittleBotConfig) -> dict[str, Any]:
         # and the Client ID of the owner's Spotify app (not a secret; the sign-in is in data/spotify_token.json)
         "music.provider": cfg.skills.music_provider,
         "spotify.client_id": cfg.skills.spotify_client_id,
+        # heads-ups (littlebot/skills/heads_up.py): LittleBot speaks up by itself (a calendar event soon, rain coming)
+        # and tells the phone; changed by voice ("stop telling me about the weather") or here
+        "heads_up.enabled": cfg.skills.heads_up,
+        "heads_up.calendar_minutes": cfg.skills.heads_up_calendar_minutes,
+        "heads_up.weather": cfg.skills.heads_up_weather,
+        "heads_up.speaker": True,
+        "heads_up.phone": True,  # only once the phone is set up (scripts/setup_phone.py)
+        "heads_up.quiet_hours": cfg.skills.heads_up_quiet_hours,
         # ai
         "ai.enabled": False,  # cloud conversation, parent must opt in
         "ai.provider": cfg.ai.provider,
