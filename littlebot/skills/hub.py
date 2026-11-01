@@ -33,6 +33,7 @@ SKILLS: tuple[tuple[str, str], ...] = (
     ("littlebot.skills.translator", "Translator"),
     ("littlebot.skills.heads_up", "HeadsUp"),
     ("littlebot.skills.doorbell", "Doorbell"),
+    ("littlebot.skills.mirror", "Mirror"),
     ("littlebot.games.voice.skill", "VoiceGames"),
 )
 
