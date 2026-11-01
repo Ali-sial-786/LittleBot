@@ -120,9 +120,11 @@ Both are opt-in and run on the robot only (only a name reaches the brain, never 
 |---|---|---|
 | Memory | "Remember that my sister's birthday is May 3rd", "What do you know about me?", "Forget my sister's birthday" | facts kept on the robot (SQLite); the recent ones go with every question |
 | Reminders & alarms | "Remind me at 6 to call mom", "Wake me at 7 on weekdays", "Snooze", "What are my reminders?" | announced by voice with a card, even outside a conversation |
+| Calendar | "What's on today?", "When is the dentist?", "Add the dentist on Tuesday at 3", "Move it to 4", "Cancel it" | Google Calendar (`scripts/setup_calendar.py`) or a secret iCal address (read only): [CALENDAR.md](CALENDAR.md) |
+| Heads-ups | (by itself) "Heads up: Dentist at 3 pm, in 30 minutes", "Heads up: rain is likely around 3 pm"; "stop telling me about the weather" | quiet hours 9:30 pm to 7 am; also to your phone with ntfy (`scripts/setup_phone.py`), and "send the list to my phone" |
 | Lists | "Add milk and eggs to the shopping list", "What's on my to-do list?", "Take milk off" | tap an item on the card to tick it off |
 | Personality | "Be more concise", "Be witty", "Go back to normal" | warm, witty, calm, concise, playful |
-| Briefing & news | "Good morning", "What's my day?", "What's the news?" | weather, reminders, lists, headlines (CBC, BBC) |
+| Briefing & news | "Good morning", "What's my day?", "What's the news?" | weather, the calendar, reminders, lists, headlines (CBC, BBC) |
 | Smart home | "Turn off the kitchen lights", "Set the thermostat to 21" | Home Assistant: `skills.home_assistant_url` + `scripts/set_key.py home_assistant` |
 | Routines | "When I say good night, turn off the lights and set an alarm for 7" | then "Good night" runs it |
 | Music | "Play some jazz", "Play my liked songs", "Next song", "What's playing?", "Play it on YouTube" | Spotify by default once it is set up ([SPOTIFY.md](SPOTIFY.md): Premium, `scripts/setup_spotify.sh`, Connect on the dashboard), with a now-playing card; else YouTube audio with a now-playing screen |
