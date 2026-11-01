@@ -88,6 +88,17 @@ def _obj(props: dict[str, Any] | None = None, required: tuple[str, ...] = ()) ->
 _STR = {"type": "string"}
 _PERCENT = {"type": "integer", "minimum": 0, "maximum": 100}
 
+
+def _screen_games() -> str:
+    """The on-screen games by id and name, for start_game's description: without them the assistant's brain saw only
+    start_voice_game's list and said "I don't have a game for that one" to rock paper scissors, then played it out
+    loud with picks of its own (the robot, 2026-10-31)."""
+    try:
+        from littlebot.games.catalog import GAMES  # noqa: PLC0415 - metadata only, no pygame
+    except Exception:  # noqa: BLE001
+        return ""
+    return ", ".join(f"{g.id} ({g.name})" for g in GAMES)
+
 TOOLS: tuple[_Tool, ...] = (
     _Tool("get_robot_status", "LittleBot's own status right now: what it is doing, CPU temperature, CPU load, "
           "memory, how long it has been running, Wi-Fi, which devices work (camera, microphone, speaker, screen, "
@@ -144,7 +155,9 @@ TOOLS: tuple[_Tool, ...] = (
           "('keep watching', 'go back to the video') carries on once you have finished speaking.", _obj()),
     _Tool("list_games", "The games LittleBot can play.", _obj()),
     _Tool("start_game", "Start one of LittleBot's on-screen games by id or name (you can keep talking while it "
-          "runs).", _obj({"game": {**_STR, "description": "game id or name"}}, ("game",))),
+          f"runs): {_screen_games()}. The game plays itself: in rock paper scissors it reads their hand with the "
+          "camera or hears their move, picks for you and says who won, so never play it out loud or make up a pick.",
+          _obj({"game": {**_STR, "description": "game id or name"}}, ("game",))),
     _Tool("stop_game", "Stop the game that is running.", _obj()),
     _Tool("look_through_camera", "Take one photo with LittleBot's camera (only if a grown-up allows it) and say "
           "what is in it, to answer a question like 'what am I holding?'.",
