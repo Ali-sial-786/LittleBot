@@ -159,6 +159,16 @@ browser:
   mobile_layout: false     # true: claim to be a phone for sites' phone layout (Google then asks more captchas)
   kiosk: null              # null = full screen on the robot only (a 720x480 window on a desktop)
 
+mirror:
+  # A phone's screen on LittleBot's screen (docs/MIRRORING.md): an iPhone by AirPlay (uxplay), an Android phone by
+  # scrcpy over Wi-Fi (adb). Only while someone asked for it. Install: scripts/setup_mirroring.sh
+  enabled: true
+  wait_seconds: 90         # the AirPlay receiver stops again if no iPhone starts mirroring by then
+  max_size: 0              # the picture's longer side in pixels; 0 = the screen's
+  fps: 30
+  sound: false             # the phone's sound out of LittleBot's speaker (the wake word and "stop" then hear it too)
+  touch_control: false     # Android: taps on LittleBot's screen work the phone
+
 power:
   # The battery (docs/POWER.md section 8): an RP2040-Zero battery monitor on a USB port. Without one
   # LittleBot behaves exactly as on mains power. Low / shutdown levels are dashboard settings.

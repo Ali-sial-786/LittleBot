@@ -50,6 +50,7 @@ class RobotContext:
     games: Any = None  # on-screen games (littlebot.games.service.GamesService)
     screens: Any = None  # info cards over the face (littlebot.screens.service.ScreenService)
     browser: Any = None  # Google on the screen when a grown-up asks (littlebot.browser.service.BrowserView)
+    mirror: Any = None  # a phone's screen on the screen when asked (littlebot.mirror.service.MirrorService)
     live: Any = None  # live voice (littlebot.chatgpt.live.LiveVoiceService)
     wake: Any = None  # wake word, "Hey LittleBot" (littlebot.audio.wakeword.WakeWordService)
     voices: Any = None  # the family's voices, opt-in (littlebot.voices.service.VoiceRecognition; get_voices(ctx))

@@ -639,6 +639,37 @@ class BrowserConfig(_Section):
     extra_args: list[str] = Field(default_factory=list)  # more Chromium switches (e.g. --renderer-process-limit=2)
 
 
+class MirrorConfig(_Section):
+    """Phone screen mirroring on LittleBot's screen (littlebot/mirror, docs/MIRRORING.md): an iPhone through AirPlay
+    (UxPlay) or an Android phone through scrcpy over Wi-Fi (adb wireless debugging), only while someone asked for it.
+
+    The parent's switch (dashboard Assistant page: ``mirror.enabled``) can turn it off; ``enabled: false`` here
+    switches the feature off whatever the parent chose. A program that isn't installed makes that phone kind
+    "not installed" (scripts/setup_mirroring.sh says what to install)."""
+
+    enabled: bool = True
+    uxplay_command: str = "uxplay"  # a name on PATH or an absolute path
+    scrcpy_command: str = "scrcpy"
+    adb_command: str = "adb"
+    airplay_name: str = Field(default="LittleBot", min_length=1, max_length=40)  # what the iPhone's list shows
+    # The AirPlay receiver waits this long for an iPhone to start mirroring, then stops again (it isn't left open on
+    # the Wi-Fi). Android: scrcpy starts at once, or not at all.
+    wait_seconds: float = Field(default=90.0, ge=15.0, le=600.0)
+    # The longer side of the phone's picture in pixels; 0 = the screen's longer side (display.width / height).
+    max_size: int = Field(default=0, ge=0, le=1920)
+    fps: int = Field(default=30, ge=5, le=60)
+    android_bit_rate_mbps: float = Field(default=4.0, ge=0.5, le=20.0)  # scrcpy's --video-bit-rate
+    # The phone's sound out of LittleBot's speaker (beside the voice, never through its speaker lease). Off: the
+    # wake word and "stop" hear the room, not the phone.
+    sound: bool = False
+    # Android only: taps on LittleBot's touch screen work the phone. Off: only the phone itself controls it
+    # (a child tapping the robot's screen can't use a grown-up's phone).
+    touch_control: bool = False
+    video_sink: str = "waylandsink"  # UxPlay's GStreamer video sink (-vs): waylandsink | autovideosink | kmssink ...
+    extra_uxplay_args: list[str] = Field(default_factory=list)
+    extra_scrcpy_args: list[str] = Field(default_factory=list)
+
+
 class PowerConfig(_Section):
     """Running on the battery (littlebot/power, docs/POWER.md "Running on the battery").
 
@@ -873,6 +904,7 @@ class LittleBotConfig(BaseModel):
     voice_games: VoiceGamesConfig = Field(default_factory=VoiceGamesConfig)
     screens: ScreensConfig = Field(default_factory=ScreensConfig)
     browser: BrowserConfig = Field(default_factory=BrowserConfig)
+    mirror: MirrorConfig = Field(default_factory=MirrorConfig)
     decide: DecideConfig = Field(default_factory=DecideConfig)
     power: PowerConfig = Field(default_factory=PowerConfig)
     media: MediaConfig = Field(default_factory=MediaConfig)

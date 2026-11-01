@@ -115,6 +115,11 @@ def build_defaults(cfg: LittleBotConfig) -> dict[str, Any]:
         # ... and whether it keeps its cookies (Google's "you're a person"), history and cache between searches
         # (data/browser-profile); off: a fresh browser that is deleted afterwards
         "browser.keep_signins": False,
+        # phone screen mirroring (littlebot/mirror): an iPhone (AirPlay) or Android phone (scrcpy) on the screen when
+        # asked; and the Android phones paired on the dashboard ([{guid, address, name, paired_at}]: no secrets,
+        # adb keeps its own keys in ~/.android)
+        "mirror.enabled": True,
+        "mirror.android_phones": [],
         # fast decision models (littlebot/decide): the provider (off | jev | openai | claude) and each feature's mode
         # (off | shadow | on); {} = the config's decide.modes / decide.default_mode
         "decide.provider": cfg.decide.provider,
