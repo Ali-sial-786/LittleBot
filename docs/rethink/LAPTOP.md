@@ -5,21 +5,21 @@ robot and the laptop's speaker and microphone beside it. Paste the prompt below 
 
 ```
 You are continuing work on LittleBot (GitHub: Ali-sial-786/LittleBot), a Raspberry Pi 5 voice robot, on the branch
-`rethink`. The robot is on the network as alisial3@littlebot.local and this computer already has SSH to it. The
+`main`. The robot is on the network as alisial3@littlebot.local and this computer already has SSH to it. The
 robot is switched on, right next to this computer, whose speaker and microphone are on. Ali (the dad, the main user)
 is asleep: don't ask anything, make every decision yourself.
 
 Rules (from Ali, still in force):
-- Work only on `rethink`. NEVER merge into or push to `main` (the robot normally pulls main; Ali switches it). Never
-  force-push. Commit small and often, with clear messages.
+- Work on `main` (the rethink became main on 31 October; the `rethink` branch is gone and the old main is kept as
+  `old-backup`: never change that branch). Never force-push. Commit small and often, with clear messages.
 - Never print or write API keys or tokens (they live on the robot in data/*_api_key and ~/LittleBot/.env).
-- The full test suite must pass on the branch (tests/audio/test_audio_scripts.py::test_check_audio_help_and_list and
+- The full test suite must pass on main (tests/audio/test_audio_scripts.py::test_check_audio_help_and_list and
   tests/test_deploy_scripts.py::test_install_live_voice_extra[default] fail only in the cloud container).
 - Keep docs in plain words. Read docs/ASSISTANT.md (the new voice pipeline) and docs/rethink/MORNING.md first.
 
-Where the code is: edit in a local clone of the repo on this computer (clone it and check out `rethink` if there
-isn't one), push to `rethink`, then on the robot:
-  ssh alisial3@littlebot.local "cd ~/LittleBot && git fetch -q && git checkout -q rethink && git pull -q && systemctl --user restart littlebot"
+Where the code is: edit in a local clone of the repo on this computer (clone it if there isn't one), push to
+`main`, then on the robot:
+  ssh alisial3@littlebot.local "cd ~/LittleBot && git fetch -q && git checkout -q main && git pull -q && systemctl --user restart littlebot"
 If the tests don't run here (Windows), run them on the robot after pulling:
   ssh alisial3@littlebot.local "cd ~/LittleBot && .venv/bin/python -m pytest -q -n 4 -p no:cacheprovider"
 

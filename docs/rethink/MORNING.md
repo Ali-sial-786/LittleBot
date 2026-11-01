@@ -1,7 +1,7 @@
 # Good morning: what changed overnight
 
-Everything is on the **`rethink`** branch. `main` is untouched; since the laptop session the robot runs `rethink`
-(going back: step 6 of "Try it on the robot").
+Since 31 October the rethink **is `main`**: the `rethink` branch is gone, and the old main is kept as the branch
+**`old-backup`** (going back: step 6 of "Try it on the robot"). The robot runs `main`.
 The full test suite passes on the branch (about 5,760 tests, 830 of them new; the only failures are 2-3 that
 also fail on `main` in the cloud build machine: no sound card there, running as root). The new voice session was
 also read by an independent reviewer and its 12 findings fixed.
@@ -171,10 +171,10 @@ new skills already work through it ("Hey LittleBot, remind me at 6 to call mom")
 
 Each line works as it is in PowerShell and in a shell on the Pi.
 
-1. Put the robot on the new branch (and make sure two small Python packages are there; usually they already are):
+1. Put the robot on `main` (and make sure two small Python packages are there; usually they already are):
 
    ```
-   ssh alisial3@littlebot.local "cd ~/LittleBot && git fetch -q && git checkout rethink && .venv/bin/pip install -q websockets anthropic && systemctl --user restart littlebot"
+   ssh alisial3@littlebot.local "cd ~/LittleBot && git fetch -q && git checkout main && git pull -q && .venv/bin/pip install -q websockets anthropic && systemctl --user restart littlebot"
    ```
 
 2. See that it started and which voice the wake word uses:
@@ -211,10 +211,10 @@ Each line works as it is in PowerShell and in a shell on the Pi.
 
    The last one shows each real answer's timing (`first_audio_ms` = end of your question to the first sound).
 
-6. Going back: GPT-Live only, on the new branch:
+6. Going back: GPT-Live only, on `main`:
    `ssh alisial3@littlebot.local "cd ~/LittleBot && .venv/bin/python scripts/set_config.py assistant.pipeline live && systemctl --user restart littlebot"`;
    or the old code entirely:
-   `ssh alisial3@littlebot.local "cd ~/LittleBot && git checkout main && systemctl --user restart littlebot"`.
+   `ssh alisial3@littlebot.local "cd ~/LittleBot && git fetch -q && git checkout old-backup && systemctl --user restart littlebot"`.
 
 ## Added in the afternoon (your follow-up)
 
