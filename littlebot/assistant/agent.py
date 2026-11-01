@@ -153,9 +153,12 @@ _SELF_TALK = re.compile(
 _META = re.compile(r"\b(?:answer(?:s|ing)?|tools?|cards?|key points|briefly|brief|directly|mention|lead with|how-to|"
                    r"needed|web search|look it up)\b", re.I)
 # The card told aloud although the prompt says never to ("I'll put the comparison on the screen for you.", "Let me
-# show the working on the screen."; the robot, 2026-10-31): the card shows itself
+# show the working on the screen."; the robot, 2026-10-31): the card shows itself. Also its tool call said as an
+# order to itself ("Start the game on my screen.", before start_game; the robot, 2026-10-31)
 _CARD_TALK = re.compile(r"\b(?:I'll|I will|I'm|I am|I've|I have|let me|here's)\b[^.?!]{0,30}?\b(?:put|show|pop|bring|"
-                        r"display|draw|pull)\w*\b[^.?!]{0,40}?\b(?:on|onto|to) (?:the|my) screen\b", re.I)
+                        r"display|draw|pull)\w*\b[^.?!]{0,40}?\b(?:on|onto|to) (?:the|my) screen\b|"
+                        r"^\s*(?:now,? )?(?:start|open|put|bring|pull|pop|display)(?:ing)? (?:up )?(?:the|a) "
+                        r"(?:[\w'-]+ ){0,2}?[\w'-]+ (?:up )?(?:on|onto) (?:the|my) screen\b", re.I)
 
 
 def _self_talk(text: str) -> bool:

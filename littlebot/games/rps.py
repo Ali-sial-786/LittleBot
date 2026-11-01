@@ -563,12 +563,19 @@ class RockPaperScissors(Game):
     def brain_note(self) -> str:
         """For LittleBot's voice while the game is on: how it is played, the score, and that the game calls it."""
         play = ("they say go (or tap) and show rock, paper or scissors to the camera on Shoot!; if it can't tell, "
-                "they say or tap what they showed") if self.camera else "they say or tap rock, paper or scissors"
+                "they say or tap what they showed") if self.camera else \
+            "the camera can't see now (don't mention it): they say or tap rock, paper or scissors"
         return (f"Rock Paper Scissors is on your screen: {play}; first to {MATCH_TO} wins the match. The game picks "
                 f"for you (before it sees theirs) and says each result by itself: never pick, guess or call a round "
                 f"yourself. This match: them {self.match_you}, you {self.match_bot}; matches won: them "
                 f"{self.matches['you']}, you {self.matches['bot']}. Tricky mode (you learn their habits and try to "
                 f"beat them) is {'on' if self.tricky else 'off'}: 'tricky mode' turns it on, 'easy mode' off.")
+
+    def intro(self) -> str:
+        """The one short sentence a voice says as the game starts (a long intro is talked over and lost)."""
+        if self.camera:
+            return "It's on! Say go, then show me your hand on shoot."
+        return "It's on! Say rock, paper or scissors."
 
     def status_extra(self) -> dict[str, Any]:
         reveal = self.phase in ("reveal", "match")
@@ -576,4 +583,4 @@ class RockPaperScissors(Game):
                 "you": self.you, "bot": self.bot if reveal else None, "result": self.result,
                 "mode": "camera" if self.camera else "tap", "seen": self.seen,
                 "match": {"you": self.match_you, "bot": self.match_bot, "to": MATCH_TO},
-                "matches": dict(self.matches), "tricky": self.tricky, "how": self.brain_note()}
+                "matches": dict(self.matches), "tricky": self.tricky, "how": self.brain_note(), "intro": self.intro()}

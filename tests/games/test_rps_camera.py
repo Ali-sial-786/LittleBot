@@ -352,8 +352,11 @@ def test_the_voice_is_told_how_to_play_and_the_score(camera_host):
     game = _game(camera_host)
     how = game.status()["how"]
     assert "show rock, paper or scissors to the camera" in how and "never pick" in how and "first to 3" in how
+    assert game.status()["intro"] == "It's on! Say go, then show me your hand on shoot."
     camera_host.can_see = False
-    assert "say or tap rock, paper or scissors" in _game(camera_host).status()["how"]
+    off = _game(camera_host).status()
+    assert "say or tap rock, paper or scissors" in off["how"] and "don't mention it" in off["how"]
+    assert off["intro"] == "It's on! Say rock, paper or scissors."
 
 
 def test_match_and_tricky_phases_draw(host):

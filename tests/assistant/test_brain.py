@@ -222,7 +222,8 @@ async def test_its_own_reasoning_is_never_said() -> None:
     for line in ("So I can answer that, I'd need your town.", "Tell me more so I can answer better.",
                  "Keep the lid on so it boils sooner.", "A simple how-to video would help here.",
                  "Short answers are best when you're busy.", "No tools are needed for this, just your hands.",
-                 "Press the button and the TV will show the menu on the screen.", "The screen shows the comparison."):
+                 "Press the button and the TV will show the menu on the screen.", "The screen shows the comparison.",
+                 "Open the settings and tap the menu on the screen.", "Start with the eggs."):
         _, said, _ = await _turn(ScriptedProvider([line]))  # not its reasoning
         assert len(said) == 1, line
     for line in ("I know this one, so I can answer it directly.", "No web search needed, it's easy.",
@@ -230,7 +231,8 @@ async def test_its_own_reasoning_is_never_said() -> None:
                  "Walk through it briefly, with a card.",  # the breaker question, with the shorter answers rule
                  "Lead with the answer briefly, no tools needed.",
                  "Safety: mention checking for water or damage first, and not to touch if smell of burning.",
-                 "I'll put the comparison on the screen for you.", "Let me show the working on the screen."):
+                 "I'll put the comparison on the screen for you.", "Let me show the working on the screen.",
+                 "Start the game on my screen.", "Now, put the recipe on the screen."):
         _, said, _ = await _turn(ScriptedProvider([line]))
         assert said == [], line
 
