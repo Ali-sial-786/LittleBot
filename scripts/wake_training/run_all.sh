@@ -7,13 +7,14 @@
 # Progress: tail -f ~/wwtrain/train.log. The model: ~/wwtrain/hey_little_bot/hey_little_bot.onnx.
 set -uo pipefail
 
+HERE="$(cd "$(dirname "$0")" && pwd)"  # train.py is next to this script
 ROOT="${WWTRAIN:-$HOME/wwtrain}"
-cd "$ROOT"
+cd "$ROOT" || exit 1
 BIG=data/openwakeword_features_ACAV100M_2000_hrs_16bit.npy
 BIG_SIZE=17280000128
 log() { echo "[$(date '+%F %T')] $*"; }
 step() {  # a step that wants too much memory stops on its own: LittleBot and the robot keep going
-  systemd-run --user --scope -q -p MemoryMax=1700M -p MemorySwapMax=200M nice -n 15 venv/bin/python train.py "$@"
+  systemd-run --user --scope -q -p MemoryMax=1700M -p MemorySwapMax=200M nice -n 15 venv/bin/python "$HERE/train.py" "$@"
 }
 
 step voices || { log "voices failed"; exit 1; }

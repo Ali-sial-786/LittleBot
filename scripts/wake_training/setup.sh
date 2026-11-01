@@ -10,7 +10,7 @@ set -euo pipefail
 
 ROOT="${WWTRAIN:-$HOME/wwtrain}"
 mkdir -p "$ROOT"
-cd "$ROOT"
+cd "$ROOT" || exit 1
 log() { echo "[$(date '+%F %T')] $*"; }
 
 # The two projects the training uses, at the versions it was written against.

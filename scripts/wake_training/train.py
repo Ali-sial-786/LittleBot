@@ -3,7 +3,7 @@
 
 Runs on the robot, in the training environment that setup.sh made (download.sh first):
 
-    cd ~/wwtrain && (nohup bash run_all.sh > train.log 2>&1 < /dev/null &)
+    cd ~/wwtrain && (nohup bash ~/LittleBot/scripts/wake_training/run_all.sh > train.log 2>&1 < /dev/null &)
 
 (run_all.sh runs each step under a memory limit, so a step that wants too much stops on its own instead of taking
 the robot down, and waits for download.sh before the training itself).

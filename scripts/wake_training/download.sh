@@ -21,7 +21,7 @@ set -euo pipefail
 ROOT="${WWTRAIN:-$HOME/wwtrain}"
 DATA="$ROOT/data"
 mkdir -p "$DATA/rirs" "$DATA/audioset" "$DATA/background"
-cd "$DATA"
+cd "$DATA" || exit 1
 log() { echo "[$(date '+%F %T')] $*"; }
 
 HF=https://huggingface.co/datasets

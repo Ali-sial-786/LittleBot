@@ -30,9 +30,7 @@ Everything is in `~/wwtrain`, with its own Python environment: LittleBot's own i
 23 GB of disk (the robot's card had 34 GB free before) and no sudo.
 
 ```
-cd ~/LittleBot
-bash scripts/wake_training/setup.sh       # the tools, ~2 GB, a few minutes
-cp scripts/wake_training/train.py scripts/wake_training/run_all.sh ~/wwtrain/
+bash ~/LittleBot/scripts/wake_training/setup.sh       # the tools, ~2 GB, a few minutes
 cd ~/wwtrain && (nohup bash ~/LittleBot/scripts/wake_training/download.sh > prep.log 2>&1 < /dev/null &)
 ```
 
@@ -41,7 +39,7 @@ the voices and features first and waits for the download before the training its
 limit, so it can't take the robot down (see below):
 
 ```
-cd ~/wwtrain && (nohup bash run_all.sh > train.log 2>&1 < /dev/null &)
+cd ~/wwtrain && (nohup bash ~/LittleBot/scripts/wake_training/run_all.sh > train.log 2>&1 < /dev/null &)
 ```
 
 Watch it with `tail -f ~/wwtrain/train.log`.
