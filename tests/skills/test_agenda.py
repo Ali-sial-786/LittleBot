@@ -135,6 +135,8 @@ async def test_search_looks_ahead(env):
     assert gets
     none = await cal.run("calendar_events", {"search": "volcano"})
     assert none.startswith("ok: nothing matching 'volcano'")
+    free = await events(cal, **{"from": "monday", "search": "afternoon"})  # "am I free Monday afternoon?"
+    assert [e["title"] for e in free["events"]] == ["Breakfast", "Dentist"]
 
 
 async def test_one_calendar_failing_still_answers(env):
@@ -153,8 +155,9 @@ async def test_context_briefing_and_glance_from_the_copy(env):
     assert cal.context_note() == ""  # nothing fetched yet: nothing claimed
     assert await cal.refresh()
     note = cal.context_note()
-    assert note.startswith("Calendar: today 3 pm to 4 pm Dentist (e")
-    assert "at Main St Clinic" in note and "tomorrow all day Zayn's birthday" in note and "Breakfast" not in note
+    assert note.startswith("Calendar: today (Monday) 3 pm to 4 pm Dentist (e")
+    assert "at Main St Clinic" in note and "tomorrow (Tuesday) all day Zayn's birthday" in note
+    assert "Breakfast" not in note
     assert cal.briefing_note("morning") == ("Calendar today: 8 am to 9 am: Breakfast; 3 pm to 4 pm: Dentist at Main "
                                             "St Clinic.")
     assert cal.briefing_note("evening").startswith("Calendar tomorrow: all day: Zayn's birthday; 6 pm to 7 pm: Soccer")

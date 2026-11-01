@@ -422,10 +422,12 @@ class Calendar(Skill):
                  "date). To cancel one: delete_calendar_event, which first gives the question to ask them; never "
                  "say it is cancelled (or being cancelled) before they said yes and the result says so. "
                  if self.can_write else "The calendar is read-only here: LittleBot can't add or change events. ")
-        return ("Calendar: the family's calendar. For what's on (today, tomorrow, Friday, this week), when "
-                "something is, or whether they're free, use calendar_events (from: an ISO date or words like "
-                "'tomorrow' or 'this week'; days; or search: a few words), which also shows the events on the screen; "
-                "today's and tomorrow's are in the context already, so 'what's next?' needs no tool. " + write +
+        return ("Calendar: the family's calendar. Today's and tomorrow's events are in the context: a quick "
+                "question about one of them ('what's next?', 'when's the dentist?') is answered from it, with no "
+                "tool. To go through a day or more (what's on today, Friday, this week), or whether they're free, "
+                "call calendar_events first (from: an ISO date or words like 'tomorrow' or 'this week'; days; or "
+                "search: a few words; it shows the events on the screen) and then say the answer once, from its "
+                "result: never answer first and look it up after. " + write +
                 "'Remind me' is set_reminder; 'put it on the calendar' is the calendar.")
 
     def context_note(self) -> str:
@@ -446,8 +448,10 @@ class Calendar(Skill):
             parts = ["nothing more today or tomorrow"]
         else:
             parts = []
-            for e in events[:CONTEXT_EVENTS]:
-                day = "today" if e.start.astimezone(self.zone()).date() <= today else "tomorrow"
+            tomorrow = today + _dt.timedelta(days=1)
+            for e in events[:CONTEXT_EVENTS]:  # "tomorrow (Monday)": the brain matches "Monday" to it
+                day = f"today ({today:%A})" if e.start.astimezone(self.zone()).date() <= today else \
+                    f"tomorrow ({tomorrow:%A})"
                 bits = [f"{day} {self.time_words(e)} {e.title} ({e.key}"]
                 if e.location:
                     bits.append(f", at {e.location}")
@@ -534,8 +538,8 @@ class Calendar(Skill):
                   "end": STR, "minutes": {**INT, "minimum": 5, "maximum": 1440}, "title": STR, "where": STR},
                  ("id",)),
             tool("delete_calendar_event", "Cancel (delete) an event by its id. Without confirmed it only gives the "
-                 "question to ask (so don't say it's cancelled yet: just ask); after they say yes, call again with "
-                 "confirmed true. A repeating event is cancelled only that once.",
+                 "question to ask: call it first, say nothing about cancelling before, then just ask that question; "
+                 "after they say yes, call again with confirmed true. A repeating event is cancelled only that once.",
                  {"id": STR, "confirmed": BOOL}, ("id",)),
         ]
         return out
@@ -619,7 +623,8 @@ class Calendar(Skill):
         return f"{self.day_label(first)} to {self.day_label(last)}"
 
     async def _list(self, args: dict[str, Any]) -> str:
-        search = " ".join(str(args.get("search") or "").split())[:60]
+        search = " ".join(w for w in str(args.get("search") or "").split()
+                          if w.lower().strip(".,?!") not in _NOT_SEARCH)[:60]
         now = self.local()
         if search and not args.get("from"):
             first, count = now.date(), SEARCH_DAYS
@@ -822,6 +827,11 @@ class Calendar(Skill):
         await self.show(self.card_spec(events, self.day_label(day).capitalize(), highlight=ev.key,
                                        linger=CARD_LINGER_S))
 
+
+# Words that are about when or whether, not what: searching for them finds nothing ("am I free Monday afternoon?").
+_NOT_SEARCH = frozenset({"morning", "afternoon", "evening", "night", "tonight", "today", "tomorrow", "free", "busy",
+                         "anything", "something", "events", "event", "appointments", "appointment", "plans", "plan",
+                         "schedule", "calendar", "meetings", "the", "my", "any", "on", "in", "at"})
 
 _EVENT_FIELDS = frozenset({"id", "calendar_id", "calendar", "title", "start", "end", "all_day", "location", "color",
                            "can_edit", "recurring"})
