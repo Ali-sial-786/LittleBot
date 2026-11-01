@@ -17,8 +17,9 @@ live voice's hand-offs (with their tool calls) can use either (``text.provider``
   (``cache_control`` on the system block: tools are cached with it);
 * never logs a prompt, an answer or the key; errors carry only a status and a short label.
 
-The key (``ANTHROPIC_API_KEY``: .env, or data/anthropic_api_key with mode 0600) is passed in as a SecretStr and
-only ever given to the SDK client. Refusals (``stop_reason: refusal``) come back as an empty answer with that
+The key (``ANTHROPIC_API_KEY``: the dashboard's Keys page, .env, or data/anthropic_api_key with mode 0600) is passed
+in as a SecretStr (a ``core.keys.LiveKey``: a key changed on the dashboard gets a new client) and only ever given to
+the SDK client. Refusals (``stop_reason: refusal``) come back as an empty answer with that
 stop reason: the callers' checks then say "not sure" (no other model is asked to answer what Claude declined).
 
 Tested here with a fake client only (tests/brain/test_claude_provider.py), not against the real API.
@@ -99,6 +100,7 @@ class ClaudeProvider(BaseProvider):
         self.base_url = base_url
         self.purpose = purpose
         self._client = client  # injected (tests) or made on first use
+        self._client_key: str | None = None  # the key a client made here was made with
         self._allowed = allowed  # () -> why requests may not go now ("offline", "cloud_off") or None
         self._no_web_search = False  # the account refused Anthropic's web search: not offered again
         self._must_think = False  # the model refused thinking "disabled" (not a Haiku-class one): never sent again
@@ -128,11 +130,14 @@ class ClaudeProvider(BaseProvider):
         return {**super().describe(), "has_key": bool(_secret(self._key)), "missing": self.missing()}
 
     def _get_client(self) -> Any:
+        key = _secret(self._key)
+        if self._client is not None and self._client_key is not None and self._client_key != key:
+            self._client = None  # the key was changed on the dashboard (a LiveKey): a client with the new one
         if self._client is None:
             import anthropic  # noqa: PLC0415
 
-            self._client = anthropic.AsyncAnthropic(api_key=_secret(self._key), base_url=self.base_url,
-                                                    max_retries=0, timeout=30.0)
+            self._client = anthropic.AsyncAnthropic(api_key=key, base_url=self.base_url, max_retries=0, timeout=30.0)
+            self._client_key = key
         return self._client
 
     async def warm(self, timeout: float = 5.0) -> bool:

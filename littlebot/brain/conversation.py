@@ -152,15 +152,17 @@ class ConversationEngine(Service):
                             favourite_animals=favourites)
 
     def _build_providers(self, transport: httpx.AsyncBaseTransport | None) -> dict[str, BaseProvider]:
+        from littlebot.core.keys import live_key  # noqa: PLC0415 - a key changed on the dashboard is used at once
+
         cfg, root = self.cfg, self.ctx.config
         return {
             "mock": self._make_mock(),
             "anthropic": AnthropicProvider(
-                api_key=root.anthropic_api_key, model=cfg.anthropic_model, base_url=cfg.anthropic_base_url,
+                api_key=live_key(root, "anthropic_api_key"), model=cfg.anthropic_model, base_url=cfg.anthropic_base_url,
                 effort=cfg.anthropic_effort, thinking=cfg.anthropic_thinking,
                 thinking_headroom=cfg.thinking_headroom_tokens, transport=transport,
             ),
-            "openai": OpenAIProvider(api_key=root.openai_api_key, model=cfg.openai_model,
+            "openai": OpenAIProvider(api_key=live_key(root, "openai_api_key"), model=cfg.openai_model,
                                      base_url=cfg.openai_base_url, transport=transport),
             "chatgpt": self._make_chatgpt(transport),
         }

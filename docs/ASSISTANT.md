@@ -42,7 +42,9 @@ play trivia", "B!", "Paris", "is there an E?", "play again").
 
 The speech services (which ones, prices, measured latencies, privacy): [ASSISTANT_SPEECH.md](ASSISTANT_SPEECH.md).
 
-Keys (each one: a hidden prompt, saved in `data/<name>_api_key` with chmod 600, never printed):
+Keys: easiest on the dashboard's **Keys** page (More → Keys, from your phone): paste the key, LittleBot checks it and
+uses it straight away, no restart. See [KEYS.md](KEYS.md). Over ssh instead (each one: a hidden prompt, saved in
+`data/<name>_api_key` with chmod 600, never printed):
 
 ```
 ssh -t alisial3@littlebot.local "cd ~/LittleBot && .venv/bin/python scripts/set_key.py deepgram"
@@ -50,8 +52,8 @@ ssh -t alisial3@littlebot.local "cd ~/LittleBot && .venv/bin/python scripts/set_
 ssh alisial3@littlebot.local "cd ~/LittleBot && .venv/bin/python scripts/set_key.py --check"
 ```
 
-A key in `~/LittleBot/.env` (`DEEPGRAM_API_KEY=...`) works too and wins over the file. Restart after:
-`systemctl --user restart littlebot`. The dashboard's **Assistant** page says which pipeline is on and why.
+A key in `~/LittleBot/.env` (`DEEPGRAM_API_KEY=...`) works too and wins over that file (a key saved on the Keys page
+wins over both). After an ssh change restart: `systemctl --user restart littlebot`. The dashboard's **Assistant** page says which pipeline is on and why.
 
 ## How a conversation goes
 
@@ -122,6 +124,7 @@ Both are opt-in and run on the robot only (only a name reaches the brain, never 
 | Reminders & alarms | "Remind me at 6 to call mom", "Wake me at 7 on weekdays", "Snooze", "What are my reminders?" | announced by voice with a card, even outside a conversation |
 | Calendar | "What's on today?", "When is the dentist?", "Add the dentist on Tuesday at 3", "Move it to 4", "Cancel it" | Google Calendar (`scripts/setup_calendar.py`) or a secret iCal address (read only): [CALENDAR.md](CALENDAR.md) |
 | Heads-ups | (by itself) "Heads up: Dentist at 3 pm, in 30 minutes", "Heads up: rain is likely around 3 pm"; "stop telling me about the weather" | quiet hours 9:30 pm to 7 am; also to your phone with ntfy (`scripts/setup_phone.py`), and "send the list to my phone" |
+| Doorbell & cameras | (by itself) "Someone's at the front door.", "A package was left at the front door."; "Who was at the door?", "Stop telling me about motion" | a phone (Android: MacroDroid or Home Assistant's app) or Home Assistant calls a secret address on the robot; no video: [DOORBELL.md](DOORBELL.md) |
 | Lists | "Add milk and eggs to the shopping list", "What's on my to-do list?", "Take milk off" | tap an item on the card to tick it off |
 | Personality | "Be more concise", "Be witty", "Go back to normal" | warm, witty, calm, concise, playful |
 | Briefing & news | "Good morning", "What's my day?", "What's the news?" | weather, the calendar, reminders, lists, headlines (CBC, BBC) |

@@ -63,6 +63,14 @@ def build_defaults(cfg: LittleBotConfig) -> dict[str, Any]:
         "heads_up.speaker": True,
         "heads_up.phone": True,  # only once the phone is set up (scripts/setup_phone.py)
         "heads_up.quiet_hours": cfg.skills.heads_up_quiet_hours,
+        # whose each calendar is (littlebot/skills/agenda.py): {"<account>:<calendar id>" or "<account>": person id,
+        # 0 = the whole family}; a calendar not listed is its account's person's (or named after someone)
+        "calendar.owners": {},
+        # door and camera alerts (littlebot/skills/doorbell.py): what is said out loud (doorbell, person, package,
+        # motion, vehicle, animal, other), and whether a doorbell press is said in quiet hours / asleep too
+        "doorbell.enabled": True,
+        "doorbell.events": ["doorbell", "person", "package"],
+        "doorbell.at_night": True,
         # ai
         "ai.enabled": False,  # cloud conversation, parent must opt in
         "ai.provider": cfg.ai.provider,

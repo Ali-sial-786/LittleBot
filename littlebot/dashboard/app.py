@@ -10,7 +10,9 @@ Security layers applied here (details in docs/modules/dashboard.md):
 * an HTTP middleware that, for every ``/api/*`` request except the public
   allowlist, resolves the session cookie (401 if missing / expired) and, for
   state-changing methods, checks the ``X-CSRF-Token`` header and the
-  Origin / Referer host (403 on mismatch);
+  Origin / Referer host (403 on mismatch); ``/hooks/doorbell/{secret}`` is outside ``/api`` on purpose (a phone
+  can't log in: the secret is its password; littlebot/dashboard/routes/doorbell_routes.py), the guard above still
+  applies;
 * security headers on every response (CSP, X-Frame-Options, nosniff ...);
 * exception mapping: PermissionError -> 403, KeyError -> 404, ValueError -> 422,
   with sanitised validation errors (request values are never echoed back).

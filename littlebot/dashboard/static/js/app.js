@@ -17,6 +17,7 @@ import motion from './pages/motion.js';
 import devices from './pages/devices.js';
 import simulator from './pages/simulator.js';
 import settings from './pages/settings.js';
+import keys from './pages/keys.js';
 import more from './pages/more.js';
 
 export const NAV = [
@@ -33,6 +34,7 @@ export const NAV = [
   { id: 'motion', label: 'Motion', icon: 'robot', page: motion, blurb: 'Gestures and emergency stop' },
   { id: 'devices', label: 'Audio & devices', icon: 'speaker', page: devices, blurb: 'Speaker, microphone, camera' },
   { id: 'simulator', label: 'Simulator', icon: 'gamepad', page: simulator, blurb: 'Pretend speech and faces' },
+  { id: 'keys', label: 'Keys', icon: 'key', page: keys, blurb: 'API keys for Claude, the voices, the smart home' },
   { id: 'settings', label: 'Settings', icon: 'sliders', page: settings, blurb: 'Password, access, system' },
 ];
 const PAGES = Object.fromEntries(NAV.map((n) => [n.id, n]));

@@ -8,8 +8,9 @@ Layering (later wins):
   5. an explicit --config file
   6. environment variables  LITTLEBOT__<SECTION>__<KEY>=value
 
-Secrets (API keys) are never stored in YAML: they come from the environment
-or a git-ignored `.env` file and are exposed as `SecretStr`.
+Secrets (API keys) are never stored in YAML: they come from the dashboard's
+Keys page (data/keys/), the environment or a git-ignored `.env` file
+(littlebot/core/keys.py) and are exposed as `SecretStr`.
 
 Runtime, parent-editable settings (privacy toggles, volume, child profile...)
 live in the SQLite-backed `Settings` store (core/settings.py), which uses the
@@ -524,6 +525,10 @@ class SkillsConfig(_Section):
     heads_up_weather: bool = True  # rain, snow or storms expected within a few hours
     heads_up_quiet_hours: str = "21:30-07:00"  # nothing said out loud then (the phone still gets it); "" = never
     ntfy_server: str = "https://ntfy.sh"  # or your own ntfy server
+    # Doorbell and camera alerts (littlebot/skills/doorbell.py, docs/DOORBELL.md): a secret web address a phone or
+    # Home Assistant calls when the doorbell rings or a camera sees someone; LittleBot says it. Off: no address, no
+    # tools. What is said changes by voice ("stop telling me about motion") or on the dashboard.
+    doorbell: bool = True
 
 
 class VoiceGamesConfig(_Section):
@@ -1061,17 +1066,13 @@ def load_config(
 
     cfg = LittleBotConfig.model_validate(data)
     if chosen != Mode.OFFLINE:
-        if env.get("ANTHROPIC_API_KEY"):
-            cfg.anthropic_api_key = SecretStr(env["ANTHROPIC_API_KEY"])
-        if env.get("OPENAI_API_KEY"):
-            cfg.openai_api_key = SecretStr(env["OPENAI_API_KEY"])
-        if env.get("TYPESAFE_API_KEY"):
-            cfg.typesafe_api_key = SecretStr(env["TYPESAFE_API_KEY"])
-        if cfg.anthropic_api_key is None:
-            key = read_key_file(cfg.data_path / cfg.claude.key_file)
-            if key:
-                cfg.anthropic_api_key = SecretStr(key)
+        from littlebot.core import keys  # noqa: PLC0415 - it uses this module's file helpers
+
+        # The API keys (littlebot/core/keys.py): saved on the dashboard, else the environment / .env, else data/<file>.
+        keys.load_into(cfg, env)
         for name, env_name, file_name in EXTRA_KEYS:
+            if name in keys.ATTRS:
+                continue
             value = env.get(env_name) or read_key_file(cfg.data_path / file_name)
             if value:
                 setattr(cfg, name, SecretStr(value))

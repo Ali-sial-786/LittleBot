@@ -245,9 +245,10 @@ class Brain:
         if self._deep is None and self.cfg.deep_model:
             from littlebot.brain.providers.claude import ClaudeProvider  # noqa: PLC0415
             from littlebot.brain.text_model import client_factory, cloud_block  # noqa: PLC0415
+            from littlebot.core.keys import live_key  # noqa: PLC0415
 
             c = self.ctx.config.claude
-            self._deep = ClaudeProvider(api_key=self.ctx.config.anthropic_api_key, model=self.cfg.deep_model,
+            self._deep = ClaudeProvider(api_key=live_key(self.ctx.config, "anthropic_api_key"), model=self.cfg.deep_model,
                                         effort="medium", thinking="adaptive", max_tokens=6000,
                                         first_token_timeout=self.cfg.deep_timeout_seconds, web_search=c.web_search,
                                         web_search_max_uses=c.web_search_max_uses, base_url=c.base_url, purpose="deep",

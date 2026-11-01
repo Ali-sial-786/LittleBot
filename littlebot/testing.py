@@ -459,6 +459,9 @@ def make_test_context(*, fakes: bool = True, **config_overrides: Any) -> RobotCo
     # ... nor a real Google Calendar sign-in (littlebot/skills/agenda.py)
     ctx.extras["google_calendar_token_file"] = Path(tempfile.gettempdir()) / f"littlebot-test-{uuid.uuid4().hex}" / \
         "google_calendar.json"
+    # ... nor the real doorbell hook's secret (littlebot/skills/doorbell.py)
+    ctx.extras["doorbell_hook_token_file"] = Path(tempfile.gettempdir()) / f"littlebot-test-{uuid.uuid4().hex}" / \
+        "doorbell_hook_token"
     if fakes:
         ctx.face = FakeFace(ctx.bus)
         ctx.audio = FakeAudio(ctx.bus)

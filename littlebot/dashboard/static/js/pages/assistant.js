@@ -4,6 +4,7 @@
 
 import { get, post } from '../api.js';
 import { append, banner, button, clear, h, icon, pageHead, setText, switchRow, toast } from '../ui.js';
+import { doorbellPanel } from './doorbell_panel.js';
 
 const SPEAK_KEY = 'littlebot.assistant.speak';
 const KEY_HELP = {
@@ -189,6 +190,7 @@ export default {
 
     // ---------- Spotify
     const spotify = spotifySection(app);
+    const doorbell = doorbellPanel(app); // doorbell and camera alerts (doorbell_panel.js)
     let spotifyTick = 0;
 
     // ---------- skills
@@ -249,6 +251,7 @@ export default {
           h('div', { class: 'card-head' }, h('h2', {}, icon('mic'), 'Voice'), h('div', { class: 'btn-row' }, talkBtn, stopBtn)),
           pipeBody),
         spotify.el,
+        doorbell.el,
         h('section', { class: 'card' }, h('div', { class: 'card-head' }, h('h2', {}, icon('star'), 'Lists')), listsBody),
         h('section', { class: 'card' }, h('div', { class: 'card-head' }, h('h2', {}, icon('sun'), 'Reminders and alarms')), remindersBody),
         h('section', { class: 'card' }, h('div', { class: 'card-head' }, h('h2', {}, icon('sparkles'), 'What LittleBot remembers')), memoriesBody),
@@ -266,6 +269,7 @@ export default {
         a.active ? banner('info', 'mic', `Listening now: ${a.phase || ''}`, a.detail || '') : null,
         h('ul', { class: 'plain-list' }, Object.entries(a.keys || {}).map(([k, on]) =>
           h('li', {}, h('span', { class: on ? 'ok-dot' : 'off-dot', text: on ? '● ' : '○ ' }), KEY_HELP[k] || k, on ? ' (set)' : ' (not set)'))),
+        h('p', { class: 'muted small' }, 'Add or change these on the ', h('a', { href: '#/keys', text: 'Keys page' }), '.'),
         a.last_call ? h('p', { class: 'muted small', text: `Last conversation: ${a.last_call.turns || 0} turn(s), ${a.last_call.seconds || 0} s, ended: ${a.last_call.ended_reason || '–'}${a.last_call.error ? ` (error: ${a.last_call.error})` : ''}` }) : null,
       ]);
       talkBtn.hidden = !!a.active;
@@ -287,6 +291,6 @@ export default {
     }
     refresh();
     timer = setInterval(refresh, 4000);
-    return { destroy() { clearInterval(timer); } };
+    return { destroy() { clearInterval(timer); doorbell.destroy(); } };
   },
 };

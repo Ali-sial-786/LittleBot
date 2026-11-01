@@ -38,7 +38,8 @@ class HttpProvider(BaseProvider):
     ) -> None:
         if isinstance(api_key, str):
             api_key = SecretStr(api_key)
-        self._key: SecretStr | None = api_key if (api_key and api_key.get_secret_value().strip()) else None
+        # Kept even when empty: a core.keys.LiveKey may be given a key on the dashboard later.
+        self._key: SecretStr | None = api_key
         self.model = model
         self.base_url = base_url.rstrip("/")
         self._client = client
@@ -47,10 +48,10 @@ class HttpProvider(BaseProvider):
 
     # -- helpers -----------------------------------------------------------
     def configured(self) -> bool:
-        return self._key is not None
+        return self._key is not None and bool(self._key.get_secret_value().strip())
 
     def _secret(self) -> str:
-        if self._key is None:
+        if not self.configured():
             raise AuthenticationError(f"{self.name}: no API key configured", kind="no_key")
         return self._key.get_secret_value().strip()
 

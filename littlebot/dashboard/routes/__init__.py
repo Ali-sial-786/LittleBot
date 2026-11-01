@@ -11,9 +11,11 @@ from littlebot.dashboard.routes.camera_routes import router as camera
 from littlebot.dashboard.routes.chatgpt_routes import router as chatgpt
 from littlebot.dashboard.routes.decide_routes import router as decide
 from littlebot.dashboard.routes.device_routes import router as devices
+from littlebot.dashboard.routes.doorbell_routes import router as doorbell  # also /hooks/doorbell (no login: a secret)
 from littlebot.dashboard.routes.face_routes import router as face
 from littlebot.dashboard.routes.games_routes import router as games
 from littlebot.dashboard.routes.info_routes import router as info
+from littlebot.dashboard.routes.keys_routes import router as keys
 from littlebot.dashboard.routes.media_routes import router as media
 from littlebot.dashboard.routes.motion_routes import router as motion
 from littlebot.dashboard.routes.people_routes import router as people
@@ -26,6 +28,6 @@ from littlebot.dashboard.routes.sim_routes import router as sim
 from littlebot.dashboard.routes.voice_routes import router as voice_lines
 
 ROUTERS = (auth, robot, assistant, face, camera, activities, games, screens, browser, media, profile, people, ai, chatgpt, decide,
-           info, privacy, devices, motion, sim, voice_lines, power)
+           info, privacy, devices, motion, sim, voice_lines, power, doorbell, keys)
 
 __all__ = ["ROUTERS"]
