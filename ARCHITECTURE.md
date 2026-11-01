@@ -57,6 +57,7 @@ and reported as degraded — the robot keeps running (only the face is mandatory
 | `brain/` | `BrainAPI` | Conversation turns (listen → think → speak), providers (mock / Anthropic / OpenAI via httpx), code-enforced safety validation, rate + budget limits. |
 | `motion/` | `MotionAPI` | Servo joints with hard limits, eased interpolation, gestures, latched emergency stop, register-level PCA9685 mock; real driver gated behind config + calibration + parent arming. |
 | `power/` | — | `ctx.power`: the battery, read from an RP2040-Zero monitor's JSON lines on a USB serial port (stdlib termios, no pyserial; `firmware/battery_monitor/`). Percent, charging, temperature, time left; low / empty / hot alarms, the gentle low-battery line, the goodbye and clean power-off. Quiet and "not fitted" without a monitor. See docs/POWER.md section 8. |
+| `mirror/` | — | `ctx.mirror`: a phone's screen on LittleBot's screen when a grown-up asks (voice tools in `skills/mirror.py`, the dashboard's Phone mirroring card). iPhone: UxPlay (AirPlay receiver "LittleBot", full screen, software H.264) runs only while asked for and stops after `mirror.wait_seconds` with no phone; its log lines say when mirroring starts and stops. Android: a phone paired once (`adb pair`) is found with adb (mDNS, `adb connect`) and shown with scrcpy, which exits when the phone goes. Takes `Resource.SCREEN` like the browser view (a game or video wins), never the speaker. See docs/MIRRORING.md. |
 | `dashboard/` | — | FastAPI + vanilla JS parent dashboard; setup-code first run, scrypt passwords, server-side sessions, CSRF tokens, localhost-only by default. |
 | `safety/` | — | `AgePolicy` (video/cloud gates, reply length), `PrivacyManager`, AI content validation. |
 | `app/behaviours.py` | — | Reactive glue in one place: state → face, faces → gaze, person arrives → greeting / wake, idle → sleepy → sleep. |
@@ -94,6 +95,12 @@ CSRF token.
 **Restart from the dashboard**
 `robot.request_shutdown(restart=True)` → the process exits with code 75 → systemd
 (`Restart=on-failure`) starts it again. A plain shutdown exits 0 and stays down.
+
+**Phone mirroring**
+"Mirror my iPhone" → `mirror_phone` (skills/mirror.py) answers with the steps and hands the start to
+`skills/takeover.py` (after the answer, the chat carries on) → `mirror.start("iphone")` → `uxplay` waits →
+the iPhone picks LittleBot → "starting mirroring" in its output → lease (screen; priority 45) → the phone fills
+the screen → the phone stops (or "stop mirroring", STOP, a video or game) → uxplay exits → the face is back.
 
 **STOP**
 Dashboard STOP / keyboard X → `robot.stop_all()` → `system.stop_all` event, motion cancel, audio cut,
