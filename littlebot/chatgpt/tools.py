@@ -1053,6 +1053,10 @@ class RobotToolbox:
             why = (_safe(games.status) or {}).get("last_error")
             return _err(f"the game '{name}' couldn't start" + (f": {str(why)[:160]}" if why else ""))
         self.done.append(f"the game '{name}' started")
+        how = str(((_safe(games.status) or {}).get("game") or {}).get("how") or "")
+        if how:  # how it's played and that it calls each round itself: say it's on and how to play, in a few words
+            return _ok(f"the game '{name}' started on the screen. {how[:600]} Tell them it's on and how to play, "
+                       "in a few words.")
         return _ok(f"the game '{name}' started on the screen")
 
     async def _stop_game(self, args: dict[str, Any]) -> str:

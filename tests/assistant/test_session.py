@@ -698,6 +698,30 @@ async def test_voice_games_are_played_without_the_brain() -> None:
     await svc.stop_session("test")
 
 
+async def test_moves_in_the_game_on_the_screen_go_to_it_and_it_says_who_won() -> None:
+    from littlebot.games.service import GamesService
+
+    brain = Scripted()
+    svc, stt, tts, _ = _service(brain, follow_up_seconds=5)
+    games = svc.ctx.games = GamesService(svc.ctx)
+    await svc.start()
+    assert await games.start("rps", source="test")
+    await svc.start_session()
+    await _wait(lambda: stt.stream is not None)
+    stt.say("Go!")  # no camera: it says how to play instead
+    await _wait(lambda: any(s.startswith("Say rock, paper or scissors") for s in tts.said))
+    said = len(tts.said)
+    stt.say("Rock!")
+    await _wait(lambda: any(w in " ".join(tts.said[said:]) for w in ("win", "draw")), timeout=6.0)
+    assert "rock" in " ".join(tts.said[said:]).lower()
+    assert brain.questions == []  # the brain never made up a pick of its own
+    stt.say("play some jazz")  # not a move: for the brain
+    await _wait(lambda: brain.questions == ["play some jazz"])
+    assert "Rock Paper Scissors is on your screen" in brain.asked[-1]  # it knows the game calls the rounds
+    games.stop()
+    await svc.stop_session("test")
+
+
 class SlowTTS(FakeTTS):
     """Two seconds of voice per sentence, streamed in 50 ms pieces (a real answer takes a while to say)."""
 

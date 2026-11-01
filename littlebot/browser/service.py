@@ -107,7 +107,7 @@ CLOSED = "browser.closed"  # {reason}
 KEEP_AWAKE = "screen.keep_awake"  # {kind}: littlebot/screens' topic; LittleBot doesn't fall asleep meanwhile
 GAME_STARTED = "game.started"  # littlebot.games.service.GAME_STARTED
 VOICE_SPEAKER = "voice.speaker"  # {is_child, ...}: who spoke (voice recognition, ctx.voices)
-VOICE_OWNERS = frozenset({"conversation", "live_voice"})
+VOICE_OWNERS = frozenset({"conversation", "live_voice", "assistant"})  # assistant: littlebot/assistant/session.py
 VOICE_RESOURCES = (Resource.FACE, Resource.AUDIO_OUT, Resource.MICROPHONE)
 _CLOSE_STATES = {RobotState.SLEEPING.value, RobotState.ERROR.value, RobotState.PLAYING_MEDIA.value,
                  RobotState.PLAYING_ACTIVITY.value}

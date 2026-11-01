@@ -467,7 +467,7 @@ def test_rps_hears_choices_and_keys(host):
     game.begin()
     assert game.hear("hmm let me think") is False
     assert game.hear("I choose STONE") is True and game.you == "rock"
-    assert game.hear("paper") is False  # already picked this round
+    assert game.hear("paper") is True and game.you == "rock"  # already picked this round: kept from the voice
     game.set_phase("pick")
     assert game.key("3") is True and game.you == "scissors"
 

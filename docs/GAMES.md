@@ -12,7 +12,7 @@ rounded, candy-coloured style; LittleBot's own eyes host every game.
 | Memory Lights | `memory` | 3 years+ | Simon-style: four pads (circle, heart, star, diamond) light up with tones; copy the pattern, one step longer each round. A mistake shows the right pad and starts again; best round is kept. |
 | Tic-Tac-Toe | `tictactoe` | 4 years+ | You are X. LittleBot always takes a win in front of it, otherwise plays perfectly only some of the time: it gets cleverer when you win and gentler when you lose. Who starts alternates. |
 | Reaction Race | `reaction` | 4 years+ | LittleBot's round face goes red ("Wait..."), then green - tap! Shows milliseconds; five tries per round with best and average. Tapping early says "Too soon!" and doesn't count. |
-| Rock Paper Scissors | `rps` | 4 years+ | With the camera on: tap Go (or say "go"), show rock, paper or scissors to the camera on "Shoot!" and LittleBot reads your hand on the robot (nothing is sent or kept; it asks you to tap what you showed when it can't tell). Without the camera or the hand models: tap a choice. LittleBot's own pick is random, made at the reveal. |
+| Rock Paper Scissors | `rps` | 4 years+ | With the camera on: tap Go (or say "go"), show rock, paper or scissors to the camera on "Shoot!" and LittleBot reads your hand on the robot (nothing is sent or kept). When it can't tell, it says why ("I couldn't see your hand") and asks what you showed; a move said as you show it counts too. Without the camera or the hand models: tap or say a choice. First to 3 wins the match ("Match point!", a celebration, then "go" for a rematch). LittleBot locks its pick in as the countdown starts, before it sees yours: at random, or in **tricky mode** ("tricky mode" / "easy mode") it learns your habits (what you play after a win or a loss, what you play most) and tries to beat them. In a voice chat it says each result itself ("I saw rock. Paper wraps rock: I win! 2 to 1 to me."). |
 
 The little-ones games need no reading and reward every tap (nothing is ever "wrong"). They also
 play by themselves, so a baby who only watches still sees bubbles pop and animals peek. They are
@@ -34,7 +34,14 @@ pop bubbles side by side. Sounds are LittleBot's gentle built-in effects at the 
   read on the robot (`littlebot/games/hand_sign.py`, ~30 ms each here), and the sign counts once two
   frames in a row agree. On TensorFlow's rock-paper-scissors test pictures (372 rendered hands) all were
   read right; made smaller, turned 25 degrees, mirrored or darker, 96-100% right, the rest "not sure",
-  none wrong. Not yet tried with the real camera and real hands.
+  none wrong. On the robot with real hands (23-24 October 2026, 21 rounds) it read a sign in 20; the
+  camera has been unplugged since, so the game is played by tap and voice until it is back.
+* **In the fast voice** (`littlebot/assistant`): while a game is on, words that are only a move or "go"
+  ("Rock!", "I'll go with paper", "one more time", "tricky mode") go straight to the game, never to the
+  brain (which would make up its own pick); anything else ("play some jazz") is answered as usual. The
+  game's ready words (`game.news`'s `say`) are said as they are, and the brain is told how the game is
+  played and the score. The voice chat shares the face and speaker with the game, both ways: starting a
+  game in a chat, or saying "Hey LittleBot" during a game, keeps the game on the screen.
 
 Each game ends by itself (babies' games after 3 minutes, the others after 5 unless a length is
 chosen; always between 30 s and 15 min): a short finale (confetti, LittleBot's happy eyes, a
@@ -137,8 +144,10 @@ always instant. Sounds that matter even when a little late (the giggle after "Mo
 
 `host.child_gaze()` returns where LittleBot should look to look at the child (from
 `vision.faces`, fresh for 2 s) - used by Follow the Star. Recognised speech (`audio.utterance`
-events) is passed to the running game's `hear(text)`: Rock Paper Scissors picks "rock", "paper"
-or "scissors" from it. Games never start listening themselves.
+events, and the fast voice's turns) is passed to the running game's `hear(text)`: Rock Paper Scissors
+takes "rock", "paper" or "scissors" when that is all the words say. `host.tell(note, say=...)` gives a
+voice chat what to say: the note for GPT-Live, which words it itself, and the ready words for the fast
+voice. Games never start listening themselves.
 
 ## Adding a game
 

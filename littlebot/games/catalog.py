@@ -67,7 +67,8 @@ GAMES: tuple[GameInfo, ...] = (
              "after the countdown.", "4 years+", 48, "big", 5.0, "✂️",
              "With the camera on: tap Go and show rock, paper or scissors to the camera on Shoot! Otherwise tap "
              "a choice (or say it if LittleBot is listening). Rock beats scissors, scissors beat paper, "
-             "paper beats rock.",
+             "paper beats rock. First to 3 wins the match; say \"tricky mode\" for a LittleBot that learns your "
+             "habits.",
              "littlebot.games.rps", "RockPaperScissors"),
 )
 

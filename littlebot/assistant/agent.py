@@ -329,6 +329,12 @@ class Brain:
             timers = _safe(screens.timers_now)
             if timers:
                 items.append(f"timers: {timers}")
+        games = getattr(ctx, "games", None)
+        if games is not None and _safe(lambda: games.active):
+            st = _safe(games.status) or {}
+            how = str((st.get("game") or {}).get("how") or "")
+            items.append(how or f"the game {st.get('name') or 'a game'} is on your screen: it plays itself, never "
+                                "play it out loud")
         card = _safe(toolbox.card_now) if toolbox is not None and hasattr(toolbox, "card_now") else None
         if card:  # change_card's own description doesn't change with it (_tool_specs): the prompt cache holds
             items.append(f"change_card can change: {card}")

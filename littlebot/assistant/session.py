@@ -569,6 +569,8 @@ class VoiceSession:
         games = hub.get("voice_games") if hub is not None and hasattr(hub, "get") else None
         if games is not None and getattr(games, "active", None) is not None:
             return False
+        if _safe(lambda: self.ctx.games.active):  # a move in the game on the screen ("rock!", "go")
+            return False
         rem = hub.get("reminders") if hub is not None and hasattr(hub, "get") else None
         return not (rem is not None and _safe(rem.ringing))
 
@@ -748,6 +750,12 @@ class VoiceSession:
             if hit.name == "stop":
                 return "stop", "", True
             return f"intent:{hit.name}", words, hit.end
+        screen_game = getattr(self.ctx, "games", None)
+        if _safe(lambda: screen_game.active) and _safe(lambda: screen_game.hear(text)):
+            # a move in the game on the screen ("rock!", "go", "tricky mode"): the game says what happened itself
+            # (game.news); the brain would make up its own pick (only GPT-Live passed them on before)
+            log.info("assistant: their words went to the game on the screen")
+            return "screen_game", "", False
         hub = getattr(self.ctx, "skills", None)
         games = hub.get("voice_games") if hub is not None and hasattr(hub, "get") else None
         if games is not None:  # every turn: a move, or "let's play trivia" / "play again" (cheap when no game runs)

@@ -496,10 +496,10 @@ class AssistantService(Service):
                 log.info("assistant: an alarm woke LittleBot up")
 
     def _on_game_news(self, event: Event) -> None:
-        """An on-screen game's news ("you picked rock, I picked paper"): said in the session (GPT-Live says it in its
-        own call)."""
+        """An on-screen game's news ("Paper wraps rock: I win!"): its ready words are said in the session, as they
+        are (its ``text`` is a note for GPT-Live, which says it in its own call)."""
         session = self._session
-        text = str(event.get("text") or "").strip()
+        text = str(event.get("say") or event.get("text") or "").strip()
         if session is not None and text and self._loop is not None:
             with contextlib.suppress(RuntimeError):
                 self._loop.call_soon_threadsafe(session.announce, text)
