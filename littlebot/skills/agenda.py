@@ -365,7 +365,8 @@ class Calendar(Skill):
         return f"{day:%A} {day.day} {day:%B}{year}"
 
     def time_words(self, e: Event) -> str:
-        twelve = self._twelve()
+        """ "3 pm to 4 pm", "all day": for the brain and for speaking (always 12 hours; the card follows the home)."""
+        twelve = True
         if e.all_day:
             last = (e.end - _dt.timedelta(seconds=1)).date()
             return "all day" if last <= e.start.date() else f"all day, until {self.day_label(last)}"
@@ -416,9 +417,10 @@ class Calendar(Skill):
     # ------------------------------------------------------------ notes for the brain and the screen
     def prompt_note(self) -> str:
         write = ("To add one: add_calendar_event, with the start as an ISO-8601 local time ('2026-11-04T15:00', or "
-                 "a date with all_day for a whole day); confirm it in a few words from the result. To move or rename "
-                 "one: change_calendar_event (give the new start with its date). To cancel one: "
-                 "delete_calendar_event, which first gives the question to ask them. "
+                 "a date with all_day for a whole day; no time given: all day, without asking); confirm it in a few "
+                 "words from the result. To move or rename one: change_calendar_event (give the new start with its "
+                 "date). To cancel one: delete_calendar_event, which first gives the question to ask them; never "
+                 "say it is cancelled (or being cancelled) before they said yes and the result says so. "
                  if self.can_write else "The calendar is read-only here: LittleBot can't add or change events. ")
         return ("Calendar: the family's calendar. For what's on (today, tomorrow, Friday, this week), when "
                 "something is, or whether they're free, use calendar_events (from: an ISO date or words like "
@@ -515,7 +517,8 @@ class Calendar(Skill):
                      "user's words ('Tuesday at 3pm') work too")
         out += [
             tool("add_calendar_event", "Add an event to the family calendar (Google Calendar). 'Add the dentist on "
-                 "Tuesday at 3', 'put Zayn's birthday on the 12th'. The result says exactly what was added.",
+                 "Tuesday at 3', 'put Zayn's birthday on the 12th' (no time said: all_day, don't ask for one). The "
+                 "result says exactly what was added.",
                  {"title": {**STR, "description": "short, as it should appear: 'Dentist', 'Zayn's birthday'"},
                   "start": {**STR, "description": when_help},
                   "end": {**STR, "description": "optional end, same format"},
@@ -531,8 +534,8 @@ class Calendar(Skill):
                   "end": STR, "minutes": {**INT, "minimum": 5, "maximum": 1440}, "title": STR, "where": STR},
                  ("id",)),
             tool("delete_calendar_event", "Cancel (delete) an event by its id. Without confirmed it only gives the "
-                 "question to ask; after they say yes, call again with confirmed true. A repeating event is "
-                 "cancelled only that once.",
+                 "question to ask (so don't say it's cancelled yet: just ask); after they say yes, call again with "
+                 "confirmed true. A repeating event is cancelled only that once.",
                  {"id": STR, "confirmed": BOOL}, ("id",)),
         ]
         return out
@@ -634,7 +637,7 @@ class Calendar(Skill):
         if not events:
             what = f"nothing matching '{search}'" if search else "nothing on the calendar"
             return ok(f"{what} {span}" + ("" if self.can_write else " (read-only calendar)"))
-        out: dict[str, Any] = {"range": span, "now": W.clock_words(now, self._twelve()),
+        out: dict[str, Any] = {"range": span, "now": W.clock_words(now),
                                "events": [self._for_model(e, now) for e in events[:MAX_LISTED]],
                                "shown_on_screen": True}
         if len(events) > MAX_LISTED:

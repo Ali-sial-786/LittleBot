@@ -226,7 +226,7 @@ class HeadsUp(Skill):
                 continue
             self._remember(key)
             minutes = max(1, round((ev.start - now).total_seconds() / 60))
-            clock = W.clock_words(ev.start.astimezone(now.tzinfo), self._twelve())
+            clock = W.clock_words(ev.start.astimezone(now.tzinfo))  # spoken: "3 pm" (the card follows the home)
             where = f", at {ev.location}" if ev.location else ""
             title = ev.title[:1].upper() + ev.title[1:]
             text = f"Heads up: {title} at {clock}, in {_minutes(minutes)}{where}."
@@ -292,7 +292,7 @@ class HeadsUp(Skill):
             kind = wet_kind(hour.get("conditions"))
             chance = hour.get("chance_of_rain_or_snow_percent")
             if kind and isinstance(chance, (int, float)) and chance >= WET_CHANCE:
-                return kind, _clock_text(str(hour.get("time") or ""), self._twelve()), i == 0
+                return kind, _clock_text(str(hour.get("time") or ""), True), i == 0
         return None
 
     # ------------------------------------------------------------ reminders
