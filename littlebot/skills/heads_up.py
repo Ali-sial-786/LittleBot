@@ -1,7 +1,8 @@
 """Heads-ups: LittleBot speaks up by itself, briefly, when something is coming, and tells the family's phones.
 
 * **Calendar**: "Heads up: Dentist at 3 pm, in 30 minutes." ``heads_up.calendar_minutes`` before an event with a time
-  (from the calendar skill's copy, littlebot/skills/agenda.py), once per event; not for one added a moment ago.
+  (from the calendar skill's copy, littlebot/skills/agenda.py), once per event; not for one added a moment ago. When
+  several people have their own calendars it says whose ("Heads up, Ali: ...") and goes to that person's phone.
 * **Weather**: "Heads up: rain is likely around 3 pm. Take an umbrella if you go out." Once when rain, snow, freezing
   rain or storms are likely (``WET_CHANCE``) to start within ``WEATHER_AHEAD_H`` hours while it is dry now; at most
   once every ``WEATHER_GAP_S``, between ``WEATHER_HOURS``. Checked every ``WEATHER_EVERY_S`` from Open-Meteo.
@@ -221,7 +222,7 @@ class HeadsUp(Skill):
             return
         now = self.local()
         for ev in cal.soon(lead * 60 + SOON_MARGIN_S):
-            key = f"cal:{ev.source}:{ev.calendar_id}:{ev.id}:{ev.start.isoformat()}"
+            key = f"cal:{ev.source}:{getattr(ev, 'account', '')}:{ev.calendar_id}:{ev.id}:{ev.start.isoformat()}"
             if key in self._told:
                 continue
             self._remember(key)
@@ -229,7 +230,9 @@ class HeadsUp(Skill):
             clock = W.clock_words(ev.start.astimezone(now.tzinfo))  # spoken: "3 pm" (the card follows the home)
             where = f", at {ev.location}" if ev.location else ""
             title = ev.title[:1].upper() + ev.title[1:]
-            text = f"Heads up: {title} at {clock}, in {_minutes(minutes)}{where}."
+            owner = getattr(ev, "owner", None)
+            name = cal.owner_name(owner) if owner is not None and cal.several_owners() else None
+            text = f"Heads up{', ' + name if name else ''}: {title} at {clock}, in {_minutes(minutes)}{where}."
             card = None
             try:
                 day = ev.start.astimezone(now.tzinfo).date()
@@ -238,7 +241,7 @@ class HeadsUp(Skill):
             except Exception:  # noqa: BLE001
                 card = None
             self.give(text, kind="calendar", card=card, phone_title=f"{title} in {_minutes(minutes)}",
-                      phone_text=f"{clock}{where}".lstrip(", "), tags=("calendar",))
+                      phone_text=f"{clock}{where}".lstrip(", "), tags=("calendar",), to=owner)
 
     # ------------------------------------------------------------ weather
     async def _weather_step(self) -> None:
@@ -330,14 +333,16 @@ class HeadsUp(Skill):
             return False
 
     def give(self, text: str, *, kind: str, card: dict[str, Any] | None = None, phone_title: str = "",
-             phone_text: str = "", tags: tuple[str, ...] = (), phone: bool = True) -> None:
+             phone_text: str = "", tags: tuple[str, ...] = (), phone: bool = True, to: int | None = None) -> None:
+        """Say it (when it may) and send it to the phones: ``to`` one person's (their own event), else the
+        family's."""
         spoken = self._speaker_ok()
         if spoken:
             self._sound("chime")
             self.announce(text, kind="heads_up", card=card)
-        to_phone = phone and self.phone_on()
+        to_phone = phone and bool(self.setting("phone")) and self.push.set_up(to)
         if to_phone:
-            self._spawn(self.push.send(phone_title or text, phone_text or text, tags=tags))
+            self._spawn(self.push.send(phone_title or text, phone_text or text, tags=tags, to=to))
         self.sent = (self.sent + [{"kind": kind, "at": self.now(), "spoken": spoken, "phone": to_phone}])[-10:]
         log.info("heads-up: %s (%s)", kind, ", ".join(w for w, on in (("said", spoken), ("phone", to_phone)) if on)
                  or "nowhere: quiet hours and no phone")
@@ -393,10 +398,14 @@ class HeadsUp(Skill):
                      "phone": {**BOOL, "description": "also sent to the phone"},
                      "quiet_hours": {**STR, "description": "'21:30-07:00' (nothing said out loud then), or 'off'"}})]
         if self.push.set_up():
-            out.append(tool("send_to_phone", "Send a message to the family's phones (a notification): 'send the "
-                            "shopping list to my phone', 'text me that recipe'. Write the full text to send.",
-                            {"title": {**STR, "description": "a short title"},
-                             "text": {**STR, "description": "what to send, in full"}}, ("text",)))
+            props: dict[str, Any] = {"title": {**STR, "description": "a short title"},
+                                     "text": {**STR, "description": "what to send, in full"}}
+            if self.push.person_ids():
+                props["person"] = {**STR, "description": "optional: whose phone ('Sara', 'everyone'); default the "
+                                                         "person talking's own"}
+            out.append(tool("send_to_phone", "Send a message to the phone (a notification): 'send the shopping "
+                            "list to my phone', 'text me that recipe'. Write the full text to send.", props,
+                            ("text",)))
         return out
 
     def prompt_note(self) -> str:
@@ -436,10 +445,27 @@ class HeadsUp(Skill):
             if not self.push.set_up():
                 return err("the phone isn't set up yet (scripts/setup_phone.py)")
             title = " ".join(str(args.get("title") or "From LittleBot").split())[:80]
-            if await self.push.send(title, text, tags=("robot",)):
-                return ok("sent to the phone")
+            to, whose = self._phone_for(args.get("person"))
+            if await self.push.send(title, text, tags=("robot",), to=to):
+                return ok(f"sent to {whose}")
             return err(f"it didn't go ({self.push.last_error or 'unknown'})")
         return err(f"heads_up has no tool called {str(name)[:40]}")
+
+    def _phone_for(self, person: Any) -> tuple[int | None, str]:
+        """Whose phone "send it to my phone" means: ``person`` if given, else the person talking's own (when they
+        have one), else the family's phones. (Who's who id or None, and in words.)"""
+        cal = self._calendar()
+        said = " ".join(str(person or "").lower().split())
+        if cal is not None and said and said not in ("me", "my", "mine", "my phone"):
+            if said in ("everyone", "all", "family", "the family", "everybody"):
+                return None, "the family's phones"
+            p = cal.person_named(said)
+            if p is not None and self.push.topic(p["id"]):
+                return p["id"], f"{p['name']}'s phone"
+        who = cal.speaker() if cal is not None else None
+        if who is not None and self.push.topic(who.person_id):
+            return who.person_id, f"{who.name}'s phone"
+        return None, "the phone" if len(self.push.topics()) <= 1 else "the family's phones"
 
     def _settings(self, args: dict[str, Any]) -> str:
         settings = getattr(self.ctx, "settings", None)

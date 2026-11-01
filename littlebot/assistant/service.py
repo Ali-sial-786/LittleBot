@@ -192,6 +192,17 @@ class AssistantService(Service):
             "openai": bool(c.openai_api_key and c.openai_api_key.get_secret_value()),
             "anthropic": bool(c.anthropic_api_key and c.anthropic_api_key.get_secret_value())}
 
+    def speaker(self) -> Any:
+        """Who is talking in the conversation going on now (``assistant.who.Who``: voice and face recognition), or
+        None (no conversation, recognition off, or not sure). The calendar uses it: "what's on today?" is theirs."""
+        session = self._session
+        if session is None or getattr(session, "ended", False):
+            return None
+        try:
+            return session.speaker
+        except Exception:  # noqa: BLE001
+            return None
+
     def use_cascade(self) -> bool:
         mode = self.cfg.pipeline
         if mode == "live":
