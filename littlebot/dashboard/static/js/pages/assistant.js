@@ -4,6 +4,7 @@
 
 import { get, post } from '../api.js';
 import { append, banner, button, clear, h, icon, pageHead, setText, switchRow, toast } from '../ui.js';
+import { calendarPanel } from './calendar_panel.js';
 import { doorbellPanel } from './doorbell_panel.js';
 
 const SPEAK_KEY = 'littlebot.assistant.speak';
@@ -191,6 +192,7 @@ export default {
     // ---------- Spotify
     const spotify = spotifySection(app);
     const doorbell = doorbellPanel(app); // doorbell and camera alerts (doorbell_panel.js)
+    const calendars = calendarPanel(app); // each person's calendar and phone (calendar_panel.js)
     let spotifyTick = 0;
 
     // ---------- skills
@@ -251,6 +253,7 @@ export default {
           h('div', { class: 'card-head' }, h('h2', {}, icon('mic'), 'Voice'), h('div', { class: 'btn-row' }, talkBtn, stopBtn)),
           pipeBody),
         spotify.el,
+        calendars.el,
         doorbell.el,
         h('section', { class: 'card' }, h('div', { class: 'card-head' }, h('h2', {}, icon('star'), 'Lists')), listsBody),
         h('section', { class: 'card' }, h('div', { class: 'card-head' }, h('h2', {}, icon('sun'), 'Reminders and alarms')), remindersBody),
@@ -291,6 +294,6 @@ export default {
     }
     refresh();
     timer = setInterval(refresh, 4000);
-    return { destroy() { clearInterval(timer); doorbell.destroy(); } };
+    return { destroy() { clearInterval(timer); doorbell.destroy(); calendars.destroy(); } };
   },
 };

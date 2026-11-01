@@ -87,8 +87,24 @@ async def update_person(body: PersonUpdateBody, person_id: int = Path(ge=1),
 async def delete_person(person_id: int = Path(ge=1), dash: DashState = Depends(get_dash)) -> dict[str, Any]:
     if not _faces(dash).store.delete_person(person_id):
         raise HTTPException(status_code=404, detail="That person isn't on the list.")
+    _forget_calendar(dash, person_id)
     log.info("who's who: a person and their face samples and voiceprints were deleted from the dashboard")
     return {"ok": True, **_view(dash)}
+
+
+def _forget_calendar(dash: DashState, person_id: int) -> None:
+    """Their own calendar sign-in, iCal addresses and phone go with them (littlebot/skills/agenda.py, push.py)."""
+    hub = getattr(dash.ctx, "skills", None)
+    get = hub.get if hub is not None and hasattr(hub, "get") else (lambda _n: None)
+    try:
+        cal = get("calendar")
+        if cal is not None:
+            cal.forget_person(person_id)
+        heads = get("heads_up")
+        if heads is not None:
+            heads.push.remove_topic(person_id)
+    except Exception:  # noqa: BLE001 - the person is gone anyway
+        log.warning("who's who: a person's calendar or phone couldn't be removed", exc_info=True)
 
 
 @router.post("/{person_id}/samples")
