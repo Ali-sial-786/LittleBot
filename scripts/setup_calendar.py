@@ -6,11 +6,14 @@
     .venv/bin/python scripts/setup_calendar.py --check      # what LittleBot sees (never a token or the address)
     .venv/bin/python scripts/setup_calendar.py --disconnect # forget the Google sign-in
     .venv/bin/python scripts/setup_calendar.py --remove-ics # forget the iCal address(es)
+    .venv/bin/python scripts/setup_calendar.py --person Sara  # any of the above for one grown-up's own calendar
 
 Over ssh use -t so it can ask: ssh -t alisial3@littlebot.local "cd ~/LittleBot && .venv/bin/python
 scripts/setup_calendar.py". The client secret and the iCal address are typed at a hidden prompt. The sign-in is kept in
-data/google_calendar.json, the address in data/calendar_ics_url (both readable only by you). LittleBot picks it up
-within 5 minutes, or at once after: systemctl --user restart littlebot
+data/google_calendar.json, the address in data/calendar_ics_url (both readable only by you); a person's own (--person,
+the name on Who's who) in data/google_calendar_p<id>.json and data/calendar_ics_url_p<id>. The dashboard does the same
+(Assistant, "Calendars and phones"). LittleBot picks it up within 5 minutes, or at once after:
+systemctl --user restart littlebot
 """
 from __future__ import annotations
 
@@ -26,11 +29,43 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from littlebot.skills.agenda import PERSON_ICS, PERSON_TOKEN  # noqa: E402
 from littlebot.skills.google_calendar import (  # noqa: E402
     REDIRECT_URI, CalendarError, GoogleAuth, GoogleCalendar)
 
 ICS_FILE = "calendar_ics_url"
 TOKEN_FILE = "google_calendar.json"
+
+
+def person_by_name(folder: Path, name: str) -> tuple[int, str]:
+    """The Who's who id and name for a name (read-only look at LittleBot's database); stops if nobody has it."""
+    import sqlite3
+
+    rows: list[tuple[int, str]] = []
+    db = folder / "littlebot.db"
+    if db.is_file():
+        con = sqlite3.connect(f"file:{db.as_posix()}?mode=ro", uri=True)
+        try:
+            rows = [(int(i), str(n)) for i, n in con.execute("SELECT id, name FROM face_people ORDER BY id")]
+        except sqlite3.Error:
+            rows = []
+        finally:
+            con.close()
+    for pid, n in rows:
+        if n.strip().lower() == name.strip().lower():
+            return pid, n
+    print(f"{name} isn't on Who's who (add them on the dashboard: Profile, Who's who). "
+          f"On it: {', '.join(n for _i, n in rows) or 'nobody yet'}.")
+    raise SystemExit(1)
+
+
+def known_client(folder: Path) -> tuple[str, str] | None:
+    """The Google Cloud client an earlier sign-in (the household's or anyone's) was made with."""
+    for path in [folder / TOKEN_FILE, *sorted(folder.glob("google_calendar_p*.json"))]:
+        t = GoogleAuth(path).tokens() if path.is_file() else None
+        if t is not None and t.client_id and t.client_secret:
+            return t.client_id, t.client_secret
+    return None
 
 
 def data_dir() -> Path:
@@ -86,18 +121,23 @@ async def today_count(auth: GoogleAuth) -> tuple[list[str], int]:
         await cal.close()
 
 
-def connect_google(folder: Path) -> int:
+def connect_google(folder: Path, token_file: str = TOKEN_FILE, who: str = "") -> int:
     print(__doc__.split("\n\n")[0])
-    print("You need a Google Cloud 'Desktop app' OAuth client first (docs/CALENDAR.md, step 1).")
-    auth = GoogleAuth(folder / TOKEN_FILE)
-    client_id = ask("Client ID (ends in .apps.googleusercontent.com): ")
-    secret = ask("Client secret (hidden): ", hidden=True)
+    auth = GoogleAuth(folder / token_file)
+    known = known_client(folder)
+    if known is not None and not ask("Use the same Google Cloud app as the last sign-in? [Y/n] ").lower().startswith("n"):
+        client_id, secret = known
+    else:
+        print("You need a Google Cloud 'Desktop app' OAuth client first (docs/CALENDAR.md, step 1).")
+        client_id = ask("Client ID (ends in .apps.googleusercontent.com): ")
+        secret = ask("Client secret (hidden): ", hidden=True)
     try:
         url = auth.begin(client_id, secret)
     except CalendarError as e:
         print(f"Not connected: {e}.")
         return 1
-    print("\n1. Open this address on your phone or PC and sign in with the Google account that has the calendar:\n")
+    print(f"\n1. Open this address on your phone or PC and sign in with {who or 'the'} Google account"
+          f"{'' if who else ' that has the calendar'}:\n")
     print(url)
     print("\n2. If Google says it hasn't verified the app, press Advanced, then Go to (your app's name).")
     print("3. Tick both calendar permissions and press Continue.")
@@ -120,7 +160,7 @@ def connect_google(folder: Path) -> int:
     return 0
 
 
-def add_ics(folder: Path) -> int:
+def add_ics(folder: Path, ics_file: str = ICS_FILE) -> int:
     print("Paste the calendar's secret iCal address (Google Calendar: Settings, your calendar, 'Secret address in")
     print("iCal format'; Outlook: Settings, Calendar, Shared calendars, Publish, ICS). It is hidden while you paste.")
     url = ask("Address (hidden): ", hidden=True)
@@ -144,19 +184,19 @@ def add_ics(folder: Path) -> int:
     except Exception as e:  # noqa: BLE001 - say why, never the address
         print(f"That address didn't work ({type(e).__name__}). Nothing saved.")
         return 1
-    path = folder / ICS_FILE
+    path = folder / ics_file
     old = path.read_text(encoding="utf-8").split() if path.is_file() else []
     if url in old:
         print("That address was already saved.")
         return 0
     save_secret(path, " ".join(old + [url]))
-    print(f"Saved in data/{ICS_FILE} ({len(old) + 1} address{'es' if old else ''}; only you can read it).")
+    print(f"Saved in data/{ics_file} ({len(old) + 1} address{'es' if old else ''}; only you can read it).")
     print("LittleBot picks it up after: systemctl --user restart littlebot")
     return 0
 
 
-def check(folder: Path) -> int:
-    auth = GoogleAuth(folder / TOKEN_FILE)
+def check(folder: Path, token_file: str = TOKEN_FILE, ics_file: str = ICS_FILE) -> int:
+    auth = GoogleAuth(folder / token_file)
     if auth.connected:
         try:
             names, count = asyncio.run(today_count(auth))
@@ -165,9 +205,10 @@ def check(folder: Path) -> int:
             print(f"Google Calendar: connected, but it didn't answer ({e})")
     else:
         print("Google Calendar: not connected")
-    path = folder / ICS_FILE
+    path = folder / ics_file
     n = len(path.read_text(encoding="utf-8").split()) if path.is_file() else 0
-    print(f"iCal addresses: {n}" + (" (in .env too?)" if os.environ.get("CALENDAR_ICS_URL") else ""))
+    print(f"iCal addresses: {n}" + (" (in .env too?)" if os.environ.get("CALENDAR_ICS_URL") and ics_file == ICS_FILE
+                                    else ""))
     return 0
 
 
@@ -177,23 +218,29 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--check", action="store_true", help="what LittleBot sees")
     p.add_argument("--disconnect", action="store_true", help="forget the Google sign-in")
     p.add_argument("--remove-ics", action="store_true", help="forget the iCal address(es)")
+    p.add_argument("--person", metavar="NAME", help="a grown-up's own calendar (their name on Who's who)")
     args = p.parse_args(argv)
     folder = data_dir()
+    token_file, ics_file, who = TOKEN_FILE, ICS_FILE, ""
+    if args.person:
+        pid, name = person_by_name(folder, args.person)
+        token_file, ics_file, who = PERSON_TOKEN.format(id=pid), PERSON_ICS.format(id=pid), f"{name}'s"
+        print(f"{name}'s own calendar.")
     if args.check:
-        return check(folder)
+        return check(folder, token_file, ics_file)
     if args.disconnect:
-        had = GoogleAuth(folder / TOKEN_FILE).disconnect()
+        had = GoogleAuth(folder / token_file).disconnect()
         print("Google Calendar disconnected." if had else "Google Calendar wasn't connected.")
         return 0
     if args.remove_ics:
-        path = folder / ICS_FILE
+        path = folder / ics_file
         if path.is_file():
             path.unlink()
             print("The iCal address(es) are forgotten. Restart LittleBot: systemctl --user restart littlebot")
         else:
             print("There was no iCal address saved.")
         return 0
-    return add_ics(folder) if args.ics else connect_google(folder)
+    return add_ics(folder, ics_file) if args.ics else connect_google(folder, token_file, who)
 
 
 if __name__ == "__main__":

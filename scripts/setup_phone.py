@@ -5,22 +5,24 @@
     .venv/bin/python scripts/setup_phone.py --test    # send another test
     .venv/bin/python scripts/setup_phone.py --new     # a new topic (phones on the old one stop getting them)
     .venv/bin/python scripts/setup_phone.py --remove  # stop sending to phones
+    .venv/bin/python scripts/setup_phone.py --person Sara  # Sara's own phone: her events' heads-ups go there
 
 Over ssh use -t: ssh -t alisial3@littlebot.local "cd ~/LittleBot && .venv/bin/python scripts/setup_phone.py".
 The topic is long and random because it is the only thing that keeps the notifications private: anyone who knows it
-can read them, so only put it on the family's phones. It is kept in data/ntfy_topic (readable only by you).
+can read them, so only put it on the family's phones. It is kept in data/ntfy_topic, a person's own in
+data/ntfy_topic_p<id> (readable only by you). The dashboard does the same (Assistant, "Calendars and phones").
 """
 from __future__ import annotations
 
 import argparse
-import os
-import secrets
 import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
+
+from littlebot.skills.push import PERSON_TOPIC, new_topic  # noqa: E402
 
 TOPIC_FILE = "ntfy_topic"
 
@@ -48,14 +50,21 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--test", action="store_true")
     p.add_argument("--new", action="store_true")
     p.add_argument("--remove", action="store_true")
+    p.add_argument("--person", metavar="NAME", help="a grown-up's own phone (their name on Who's who)")
     args = p.parse_args(argv)
     cfg = config()
     path = cfg.data_path / TOPIC_FILE
+    whose = "each phone that should get"
+    if args.person:
+        from scripts.setup_calendar import person_by_name  # noqa: PLC0415
+
+        pid, name = person_by_name(cfg.data_path, args.person)
+        path, whose = cfg.data_path / PERSON_TOPIC.format(id=pid), f"{name}'s phone, to get their"
     server = cfg.skills.ntfy_server or "https://ntfy.sh"
     if args.remove:
         if path.is_file():
             path.unlink()
-            print("Phones won't get LittleBot's notifications any more. Restart LittleBot: "
+            print("That phone won't get LittleBot's notifications any more. Restart LittleBot: "
                   "systemctl --user restart littlebot")
         else:
             print("No phone was set up.")
@@ -63,15 +72,13 @@ def main(argv: list[str] | None = None) -> int:
     topic = path.read_text(encoding="utf-8").strip() if path.is_file() and not args.new else ""
     made = False
     if not topic:
-        topic = "littlebot-" + secrets.token_urlsafe(18).replace("_", "x").replace("-", "y")
-        path.parent.mkdir(parents=True, exist_ok=True)
-        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            fh.write(topic + "\n")
-        os.chmod(path, 0o600)
+        from littlebot.core.keys import write_private  # noqa: PLC0415
+
+        topic = new_topic()
+        write_private(path.parent, path.name, topic)
         made = True
     if not args.test:
-        print("On each phone that should get LittleBot's heads-ups and reminders:")
+        print(f"On {whose} heads-ups and reminders:")
         print("  1. Install the free 'ntfy' app (Google Play or the App Store).")
         print("  2. Tap +, and subscribe to this topic" + ("" if server.rstrip("/") == "https://ntfy.sh" else
                                                          f" on the server {server}") + ":")

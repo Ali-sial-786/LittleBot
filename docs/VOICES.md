@@ -66,6 +66,10 @@ conversation and with the faces in view, so a short "yes" doesn't lose track of 
   sounds like Sara, the voice is told they disagree and to ask, never to guess.
 * **When unsure, nothing.** Too little speech (under about 1.5 s of talking), a voice that isn't
   clearly one person's, two people at once: LittleBot says nothing about who it is.
+* **Their own calendar.** When it knows who is talking, "what's on today?" is that person's events
+  and the family's, and "add the dentist on Tuesday" goes on their own calendar
+  ([CALENDAR.md](CALENDAR.md), "Everyone's own calendar"). When it isn't sure, it gives everyone's,
+  each with whose it is, and asks whose calendar before adding.
 
 ### The `voice.speaker` event (for other parts of LittleBot)
 

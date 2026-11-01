@@ -23,6 +23,43 @@ and your reminders to your phone.
 
 Double-tap the face for **today at a glance**: the next events are listed there too.
 
+## Everyone's own calendar
+
+Each grown-up can have their own calendar and phone, as well as the family's. LittleBot tells who is talking by
+their **voice** or their **face** (Profile → Who's who; [VOICES.md](VOICES.md)), and then:
+
+| Who is talking | "What's on today?" | "Add the dentist on Tuesday" | Heads-up |
+|---|---|---|---|
+| Ali (known) | Ali's events and the family's; it says how many of others' it left out | on Ali's calendar | "Heads up, Ali: Dentist at 3 pm ..." on Ali's phone |
+| not sure | everyone's, each with whose it is ("Sara's yoga at 6") | it asks whose calendar, unless only one is connected | |
+| anyone | "What's on Sara's calendar?", "What's on for everyone?" | "Put it on Sara's calendar", "Add it to the family calendar" | a family event goes to every phone |
+
+"Probably Ali" (recognised but not sure) still uses Ali's, and LittleBot says so when it adds. The little one has no
+calendar of their own.
+
+**Set it up on the dashboard**: Assistant → **Calendars and phones**. The family's row and one row per grown-up on
+Who's who, each with:
+
+* **Connect Google Calendar**: the first time, paste the Client ID and secret from step A.4 below. Everyone after
+  that uses the same Google Cloud app, so it only opens Google's sign-in: sign in **as that person** (use "switch
+  account" if the phone is signed in as someone else), allow it, then paste the address the tab lands on (the one
+  that doesn't load) back into the dashboard. If your Google Cloud app isn't published yet, add each person's email
+  as a test user first (step A.3).
+* **Add an iCal address**: their own secret address, read only.
+* **Set up a phone**: shows a topic for their phone's ntfy app, once, and sends a test.
+* **Whose calendar**: LittleBot guesses whose each calendar is (one you signed in with is yours, one named after
+  someone like "Sara's calendar" is Sara's, one called Family, Home or Holidays is everyone's, and so is anything
+  in the family's own sign-in). Change it there.
+
+Or from the robot's shell, with `--person` and the name on Who's who:
+
+```
+ssh -t alisial3@littlebot.local "cd ~/LittleBot && .venv/bin/python scripts/setup_calendar.py --person Sara"
+ssh -t alisial3@littlebot.local "cd ~/LittleBot && .venv/bin/python scripts/setup_phone.py --person Sara"
+```
+
+Deleting someone on Who's who also removes their sign-in, their iCal addresses and their phone.
+
 ## 1. Connect your calendar
 
 There are two ways. Do either one, or both.
@@ -138,7 +175,11 @@ notifications, so keep it in the family; `--new` makes a new one. Messages go th
 * Events are kept **in memory only** (the next 8 days, fetched every 5 minutes) and never written to disk.
 * Today's and tomorrow's events (title, time, place) go to the brain with each question, like reminders do.
 * The Google sign-in is in `data/google_calendar.json` and the iCal address in `data/calendar_ics_url`, both
-  readable only by you. The ntfy topic is in `data/ntfy_topic`. None of them is ever logged.
+  readable only by you. The ntfy topic is in `data/ntfy_topic`. A person's own are next to them, ending in `_p` and
+  their Who's who number (`google_calendar_p2.json`, `calendar_ics_url_p2`, `ntfy_topic_p2`). None of them is ever
+  logged, and the dashboard never shows them again after they are saved.
+* Who is talking (voice and face recognition) stays on the robot; only the name goes with the question, to pick
+  whose events to use.
 * Nothing is fetched or sent in offline mode or while cloud communication is off in Privacy.
 
 ## Troubleshooting
@@ -151,5 +192,6 @@ notifications, so keep it in the family; `--new` makes a new one. Messages go th
 | `push: the notification didn't go (http_429)` | ntfy.sh is limiting this robot; try again later |
 
 Code: `littlebot/skills/agenda.py` (the skill), `google_calendar.py`, `ics.py`, `heads_up.py`, `push.py`,
-`littlebot/screens/cards/calendar.py`. Tests: `tests/skills/test_agenda.py`, `test_google_calendar.py`,
-`test_ics.py`, `test_heads_up.py`, `test_calendar_card.py`.
+`littlebot/screens/cards/calendar.py`, the dashboard's `littlebot/dashboard/routes/calendar_routes.py` and
+`static/js/pages/calendar_panel.js`. Tests: `tests/skills/test_agenda.py`, `test_google_calendar.py`, `test_ics.py`,
+`test_heads_up.py`, `test_calendar_card.py`, `test_calendar_people.py`, `tests/dashboard/test_dashboard_calendar.py`.
