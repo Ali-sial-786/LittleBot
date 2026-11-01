@@ -266,8 +266,10 @@ class MirrorService(Service):
         if why is None:
             missing = [t for t, ok in self.installed().items() if not ok]
             self.set_status(ServiceStatus.RUNNING, f"not installed: {', '.join(missing)}" if missing else "")
-        else:
+        elif not self.cfg.enabled:  # switched off: as the browser view does
             self.set_status(ServiceStatus.DISABLED, why)
+        else:  # no screen: degraded, like the browser view without one
+            self.set_status(ServiceStatus.DEGRADED, why)
 
     # ================================================================ what is installed
     def _path(self, tool: str) -> str | None:
