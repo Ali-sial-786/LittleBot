@@ -42,7 +42,7 @@ v1 (`../enclosure/`) is smaller and simpler (212 mm, 11 parts). v2 is bigger, mo
 | `checks.scad`, `run_checks.sh` | 72 automated interference and finger-pinch checks (head ±60°, arms −90…+100°) and a self-test that must find an overlap. A result with no volume (parts designed to touch) passes |
 | `build.sh`, `stl_tools.py` | rebuild the STLs and images. Report per part: size, watertight, number of separate bodies, bed fit, overhang area |
 | `assembly_video/` | `./make_video.sh` renders a video (about 2½ minutes) of the assembly order below: every printed part in place, electronics as blocks, **every screw** driven in with its size, and **every cable** drawn along its route with its name. The screws and cable routes come from the model (`hardware.json`, written by `build.sh`): `assembly_video/build/LittleBot_assembly.mp4` |
-| `make_plates.py` → `plates/`, `pack_plates.py` → `plates_256/` | the parts grouped into print jobs: 9 for a 220 mm bed, 6 for a 256 mm bed (Bambu Lab) |
+| `make_plates.py` → `plates/`, `pack_plates.py` → `plates_256/`, `bambu_project.py` | the parts grouped into print jobs: 9 for a 220 mm bed, 6 for a 256 mm bed (Bambu Lab); plates 04–06 also as one Bambu Studio project for the P2S |
 
 ### What has been verified (by the scripts, not by a real print yet)
 
@@ -100,6 +100,8 @@ Each plate is a single STL with several separate bodies. Most slicers can split 
 Plates 01–03 were printed before the Pi and the UPS moved into the base (2026-10-30). `pack_plates.py` keeps them exactly as they were (`PRINTED`), so the change only touched plates 04 and 05; the Pi carrier on plate 02 is simply not used.
 
 ![256 mm plates](images/plates_256.png)
+
+**Plates 04–06 in one Bambu Studio project:** `plates_256/project/LittleBot_plates_04-06_P2S.3mf` holds the three plates still to print after 01–03, each on its own plate. It is set up for a **P2S**: 0.4 nozzle, 0.20mm Standard, Bambu PLA Basic, Textured PEI Plate. Bambu Studio picks your own installed presets of those names. Each plate has its own filament slot (1 main colour, 2 black, 3 white / translucent), so when you print, map each one to the matching AMS slot. No part on these plates gets a brim (none is tall). Remake it with `python3 bambu_project.py OUT.3mf plates_256/04_main.3mf plates_256/05_black.3mf plates_256/06_glow.3mf`; `python3 bambu_project.py --fetch` refreshes its settings (`bambu_p2s_pla.json`) from Bambu's published profiles.
 
 - **Brim on the tall part only, never on the whole plate.** The tall parts, base (72 mm), head (100 mm) and torso (125 mm), are at least 20 mm from every edge with room for an 8 mm brim. The other parts are only 5 mm from the edge, so a plate-wide brim runs off the plate there, lifts, and the nozzle catches it: that failed a P2S three times in PLA. In Bambu Studio leave the plate's brim off (**Others → Brim type: No-brim**), then right-click the tall part → **Add settings → Others** → Brim type **Outer brim only**, Brim width **8 mm**. After slicing, check in the Preview tab that no brim reaches an edge. **Don't press Arrange (A)**: it moves parts.
 - **Why not more room at the edges?** Every part 8 mm or more from the edges needs a seventh plate; 6 plates need the flat parts close to the edge, which is fine without a brim (they have big, flat footprints).
