@@ -7,15 +7,35 @@ for it ("play it on YouTube"), and LittleBot uses it when Spotify can't play.
 The robot also shows up as a speaker called **LittleBot** in the Spotify app on your phone or computer, so you
 can send music to it yourself, like to any Spotify Connect speaker.
 
-> **Status.** Written from Spotify's and librespot's documentation and tested against a fake Spotify,
-> **not yet on the robot**. After setting it up, run `scripts/setup_spotify.sh --check` and try it.
+> **Status.** The receiver changed to **Spotify Soloist** on 2026-11-02 (see below). Written from Spotify's
+> Soloist documentation and tested against fakes, **not yet run on the robot**. After setting it up, run
+> `scripts/setup_spotify.sh --check` and try it.
+
+## Why Soloist, not librespot
+
+The robot's speaker used to be **librespot** (from raspotify), an open-source Spotify Connect receiver. It
+signed in fine, but Spotify then refused to give it the key for each song ("error audio key 0 1",
+"Service unavailable { audio key error }"), so every song was skipped. Many people have the same problem
+(librespot issue #1649, raspotify issue #774), and it isn't something LittleBot can fix.
+
+**Spotify Soloist** is Spotify's own receiver for Linux and the Raspberry Pi, released in August 2026
+([Spotify's page](https://developer.spotify.com/documentation/soloist)). Spotify makes it, so it gets the songs.
+Two things are different:
+
+* It needs a **Soloist API key** from your Spotify account (free, but the account must have Premium).
+* Each build **stops working 90 days after Spotify built it**. The setup adds a weekly check that fetches the
+  newest build by itself, so you shouldn't notice.
 
 ## What you need
 
 * **Spotify Premium.** Spotify only lets apps (and Connect speakers) play music on a Premium account. A free
   account doesn't work.
-* **A Spotify developer app.** It's free and takes two minutes. It gives LittleBot a **Client ID**. There's no
-  secret to copy: LittleBot signs in with PKCE, which needs no client secret.
+* **A Soloist API key** (for the robot's speaker): on
+  [developer.spotify.com/dashboard/soloist](https://developer.spotify.com/dashboard/soloist), logged in with
+  your Spotify account, accept the terms if it asks, and make a key. The setup asks for it.
+* **A Spotify developer app** (for LittleBot to choose the music). It's free and takes two minutes. It gives
+  LittleBot a **Client ID**. There's no secret to copy: LittleBot signs in with PKCE, which needs no client
+  secret.
 * The robot on Wi-Fi, and **Cloud communication** switched on in the dashboard's Privacy page. Spotify never
   works in offline mode.
 
@@ -23,22 +43,30 @@ can send music to it yourself, like to any Spotify Connect speaker.
 
 ### 1. Make the robot a Spotify speaker
 
-From your PC (PowerShell) or a terminal on the robot:
+From your PC (PowerShell) or a terminal on the robot. Use `ssh -t`: the script asks you things.
 
 ```
 ssh -t alisial3@littlebot.local "cd ~/LittleBot && bash scripts/setup_spotify.sh"
 ```
 
-It asks for your password once, to install a package. It explains each step as it goes:
+It needs no sudo for itself. It explains each step as it goes:
 
-1. It installs **librespot**, the open-source Spotify Connect receiver, from raspotify (raspotify's official
-   install script adds its apt repository).
-2. It switches off raspotify's own system service, which would be a second receiver outside your sound
-   session.
-3. It runs librespot as **your** user service, `littlebot-spotify`. Its sound goes through PipeWire into the
-   echo-cancelled speaker, so LittleBot's microphone hears the music taken out and the music never sets off
-   the wake word. Settings: name LittleBot, 160 kbit/s, volume 60% at the start, no music stored, autoplay off.
-4. It starts the service and checks everything.
+1. It downloads **Soloist** from Spotify and puts it in `~/.local/bin/soloist`. Spotify only offers "the newest
+   build" (no version numbers and no published checksum), so the script checks the download against the
+   checksum Spotify's server sends, checks that it runs, and notes its SHA-256 in
+   `~/.config/littlebot-spotify/soloist-sha256`.
+2. It retires the old receiver. librespot's old sign-in is deleted. If raspotify (librespot) is still installed,
+   it **asks** whether to remove it (`sudo apt-get remove raspotify`): say y and type your password, or n to
+   keep it. If you keep it, it asks whether to switch off raspotify's own system service. Nothing uses sudo
+   without your y.
+3. It asks for your **Soloist API key**. Paste it and press Enter; nothing shows as you type. It is kept only
+   on the robot, in `~/.config/littlebot-spotify/api-key.env`, readable only by you.
+4. It runs Soloist as **your** user service, `littlebot-spotify` (the same service librespot used, so there are
+   never two "LittleBot" speakers). Its sound goes through PipeWire into the echo-cancelled speaker, so
+   LittleBot's microphone hears the music taken out and the music never sets off the wake word. Settings:
+   name LittleBot, volume 60% at the start. It also adds the weekly update check
+   (`littlebot-spotify-update.timer`).
+5. It starts it and checks everything.
 
 To see what it would do without changing anything, add `--dry-run`. To undo it all, run `--uninstall`.
 
@@ -47,6 +75,19 @@ To see what it would do without changing anything, add `--dry-run`. To undo it a
 On a phone on the **same Wi-Fi**, open Spotify, play anything, tap the speaker icon and pick **LittleBot**. You
 should hear it on the robot. This signs the receiver in to your account, and it remembers that. From then on
 it signs in by itself at every start, so LittleBot can find it. You only do this once.
+
+You did this before, for librespot? Do it **once more**: Soloist is a new receiver and has its own sign-in.
+
+**LittleBot isn't in the list?** Run the pairing on its own:
+
+```
+ssh -t alisial3@littlebot.local "cd ~/LittleBot && bash scripts/setup_spotify.sh --pair"
+```
+
+It waits up to 3 minutes for you to pick LittleBot. Phones find speakers through a port that the robot's
+avahi-daemon (the thing that makes `littlebot.local` work) may already hold. If the pairing doesn't work, the
+script asks whether to pause avahi-daemon during a second try (sudo, y/N), and starts it again afterwards.
+Once signed in, the speaker shows up through Spotify's servers, so this is only needed for the pairing.
 
 ### 3. Make a Spotify developer app
 
@@ -87,7 +128,25 @@ address works once, and only for the sign-in you just started. If it is refused,
 ssh alisial3@littlebot.local "cd ~/LittleBot && bash scripts/setup_spotify.sh --check"
 ```
 
-Every line should say PASS. A WARN says what to do.
+Every line should say PASS. A WARN says what to do. It also says how many days the Soloist build has left.
+
+The dashboard was already connected for librespot? Nothing to do there: LittleBot finds the new receiver by its
+name, LittleBot.
+
+## Updates and expiry
+
+Spotify makes every Soloist build stop working **90 days** after it was built. When that happens the receiver
+stops (exit code 10) and LittleBot can't play on Spotify (it says so, and plays from YouTube in Auto).
+
+* **By itself:** every Monday morning, `littlebot-spotify-update.timer` runs `setup_spotify.sh --update`. It asks
+  Spotify's server whether there is a newer build (a few bytes), downloads it only when there is, and restarts
+  the receiver. If music is playing on LittleBot just then, it waits and restarts next time instead. No sudo.
+* **By hand:** `ssh alisial3@littlebot.local "cd ~/LittleBot && bash scripts/setup_spotify.sh --update"`
+* **How long is left:** `--check` says "the build works for N more day(s)". Under 14 days it warns.
+* The old build is kept as `~/.local/bin/soloist.old`, in case a new one misbehaves.
+* To insist on one exact download, set `LITTLEBOT_SOLOIST_SHA256` to its SHA-256: anything else is refused.
+
+See when it last ran: `ssh alisial3@littlebot.local "journalctl --user-unit littlebot-spotify-update -n 30 --no-pager"`
 
 ## What to say
 
@@ -137,6 +196,13 @@ Your **own** music (liked songs, your playlists, "something I like") always need
 | What you see or hear | What to do |
 |---|---|
 | "LittleBot's Spotify receiver isn't running" / the dashboard says the speaker isn't visible | Run `setup_spotify.sh --check`. If the receiver isn't signed in yet, pick LittleBot once in the Spotify app on the same Wi-Fi (step 2). Restart it: `ssh alisial3@littlebot.local "systemctl --user restart littlebot-spotify"` |
+| "the receiver is running but isn't signed in" | pick LittleBot once in the Spotify app on the same Wi-Fi, or run `setup_spotify.sh --pair` (step 2) |
+| LittleBot isn't in the Spotify app's speaker list | the phone must be on the same Wi-Fi. Then `setup_spotify.sh --pair`, and say y when it offers to pause avahi-daemon |
+| `--check` says the build expired, or the log says it exited with code 10 | `setup_spotify.sh --update` (the weekly timer normally does this: `systemctl --user enable --now littlebot-spotify-update.timer`) |
+| `--check` says "no Soloist API key", or the log says the key was refused | make a new key on [developer.spotify.com/dashboard/soloist](https://developer.spotify.com/dashboard/soloist) and run `ssh -t alisial3@littlebot.local "cd ~/LittleBot && bash scripts/setup_spotify.sh --new-key"` |
+| The first song after setting it up is very loud | a known Soloist problem (it can start at 100% with PipeWire, Soloist issue #23). Turn it down once in the Spotify app or say "music volume 40"; PipeWire remembers it |
+| Songs are skipped, the log says "audio key error" | that is librespot, the old receiver: run `setup_spotify.sh` again so the service runs Soloist |
+| `--check` says librespot or raspotify is still running | a second "LittleBot". Run `setup_spotify.sh` and say y to removing raspotify, or `sudo apt-get remove raspotify` yourself |
 | "Spotify only lets apps play music on an account with Spotify Premium" | the account isn't Premium; LittleBot plays from YouTube meanwhile |
 | "Spotify no longer lets apps open its own personal playlists" | since November 2024, apps can't open Spotify-made playlists such as Discover Weekly, Release Radar or Daily Mix. Start it in the Spotify app and pick LittleBot as the speaker, or save its songs into a playlist of your own |
 | "the songs Spotify found for that are marked explicit" | LittleBot skips songs marked explicit (`skills.spotify_explicit: false`). Albums and playlists play as they are, so also turn off **Allow explicit content** in the Spotify app's settings |
@@ -161,8 +227,13 @@ ssh alisial3@littlebot.local "journalctl --user-unit littlebot -n 300 --no-pager
 * **Spotify's sign-in** stays on the robot, in `data/spotify_token.json`, readable only by you (chmod 600). It
   is never shown on the dashboard, never sent anywhere else and never written to a log. **Disconnect Spotify**
   on the dashboard deletes it. You can also remove LittleBot's access from your Spotify account page (Apps).
-* **The receiver** keeps only its own sign-in, in `~/.cache/littlebot-spotify`. No music is stored on the
-  robot. `setup_spotify.sh --uninstall` deletes it.
+* **The receiver** (Soloist) keeps its sign-in in `~/.local/share/soloist` and a playback cache in
+  `~/.cache/soloist` (100 MB at most). Its local control port only listens on the robot itself (127.0.0.1).
+  `setup_spotify.sh --uninstall` deletes all of it.
+* **The Soloist API key** is in `~/.config/littlebot-spotify/api-key.env`, readable only by you, and never
+  printed. Soloist only accepts it on its command line, so other users logged in to the robot could see it in
+  the process list (Soloist issue #24). On LittleBot you are the only user. If it ever leaks, make a new one on
+  the Soloist key page and run `--new-key`.
 * Spotify is treated like the other cloud services: it never works in offline mode, and it stops while Cloud
   communication is off in Privacy.
 * Spotify's app, and your account's listening history, will show what LittleBot played, as for any speaker.
@@ -176,7 +247,15 @@ ssh alisial3@littlebot.local "journalctl --user-unit littlebot -n 300 --no-pager
 | where music plays from, the tools (`play_music`, `music_control`, `whats_playing`) | `littlebot/skills/music.py` |
 | the now-playing card | `littlebot/screens/cards/music.py` |
 | the dashboard routes (`/api/assistant/spotify/...`) | `littlebot/dashboard/routes/assistant_routes.py` |
-| the receiver | `scripts/setup_spotify.sh` |
+| the receiver (Soloist: install, key, service, weekly update, pairing) | `scripts/setup_spotify.sh` |
+
+The receiver: Soloist runs as `~/.local/bin/littlebot-spotify` → `soloist --device-name LittleBot --api-key …
+--data-dir ~/.local/share/soloist --cache-dir ~/.cache/soloist --cache-size 100 --initial-volume 60
+--ws 127.0.0.1:0`. Soloist has no bitrate, device type or autoplay option: the quality and autoplay follow the
+Spotify app's settings. It plays to the default PipeWire output (the echo-cancelled speaker). Its local
+WebSocket API writes its port to `ws.port` in the data folder; `soloist ctl status` / `soloist ctl now` use it,
+and so does `Spotify.receiver()` (running, signed in), which the dashboard shows. That is only a hint: LittleBot
+plays through the Web API on the device named LittleBot, whatever its type.
 
 Settings (`skills:` in config/local.yaml): `music_provider` (auto), `spotify` (true: on), `spotify_client_id`
 (the dashboard sets it too), `spotify_device_name` (LittleBot: the receiver's name; `setup_spotify.sh --name`
