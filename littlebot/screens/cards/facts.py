@@ -215,6 +215,14 @@ class FactsCard(Card):
         self.status_text = kit.clean(spec.get("status"), 24)
         self.kicker = kit.clean(spec.get("kicker"), 40)
         self.text = kit.clean(spec.get("text"), 200)
+        if self.layout == "profile" and "facts" not in spec:  # (_build's other layouts' tries always set "facts")
+            # its facts sent as "items" or "text": a profile shows only "facts", so "Fun history facts" came as a
+            # picture of a pyramid and no words (the robot, 2026-11-02). More than a profile holds: a list of them.
+            given = kit.str_list(spec.get("items"), max_items=MAX_ITEMS, limit=80) or ([self.text] if self.text else [])
+            if len(given) > 4:
+                self.layout = "list"
+            else:
+                self.facts = given
         self.mood = {"number": "surprised", "score": "happy"}.get(self.layout, "curious")
         wants_pic = self.layout in ("number", "list", "profile", "item")
         self.slot = kit.PictureSlot(self.host, kit.clean(spec.get("picture_query"), 80) if wants_pic else "")

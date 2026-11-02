@@ -63,6 +63,24 @@ async def test_describe(spec: dict[str, Any], said: str) -> None:
     assert (await make(spec)).describe() == said
 
 
+@pytest.mark.parametrize(("spec", "layout", "shown"), [
+    # the robot, 2026-11-02: a profile with a picture and its facts as items showed the picture and no words
+    ({"layout": "profile", "title": "Fun history facts", "picture_query": "pyramids of Giza",
+      "items": ["The Great Wall is over 21,000 km long", "Egyptians built the pyramids about 4,500 years ago"]},
+     "profile", ["The Great Wall is over 21,000 km long", "Egyptians built the pyramids about 4,500 years ago"]),
+    ({"layout": "profile", "title": "Giraffe", "picture_query": "giraffe", "text": "The tallest animal on land"},
+     "profile", ["The tallest animal on land"]),
+    ({"layout": "profile", "title": "Fun facts", "picture_query": "pyramid", "items": [f"fact {i}" for i in range(6)]},
+     "list", [f"fact {i}" for i in range(6)]),
+])
+async def test_a_profile_shows_its_facts_however_they_came(spec: dict[str, Any], layout: str,
+                                                           shown: list[str]) -> None:
+    card = await make(spec)
+    assert card.layout == layout
+    assert (card.facts if layout == "profile" else card.items) == shown
+    assert preview.surface(card, seconds=1.0).get_size() == (base.W, base.H)
+
+
 @pytest.mark.parametrize("spec", [
     {"layout": "number", "title": "x"},
     {"layout": "list", "items": []},
