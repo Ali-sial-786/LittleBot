@@ -246,6 +246,17 @@ class WakeConfig(_Section):
     # wake word heard the video itself, so the call ends and the video carries on (0 = wait for the call's
     # own idle hang-up).
     video_no_words_seconds: float = Field(default=15.0, ge=0.0)
+    # --- LittleBot's own trained "Hey LittleBot" model (littlebot/audio/oww.py, docs/WAKE_TRAINING.md) ---
+    # A second check next to Vosk. off: not loaded. shadow: it scores the same microphone sound and logs its score
+    # for every Vosk wake (and its own peaks) in data/wake/shadow.jsonl, changing nothing about waking. confirm:
+    # Vosk only wakes LittleBot when the model's best score in the last oww_window_seconds is at least
+    # oww_threshold. Anything wrong with it (files, onnxruntime) switches it off with one warning.
+    oww_mode: Literal["off", "shadow", "confirm"] = "off"
+    oww_threshold: float = Field(default=0.5, ge=0.0, le=1.0)  # confirm: Vosk's wake counts at this score or more
+    oww_peak_threshold: float = Field(default=0.5, ge=0.0, le=1.0)  # a score this high with no Vosk wake is logged
+    oww_window_seconds: float = Field(default=2.0, gt=0.0, le=5.0)  # the sound before Vosk's wake that is looked at
+    oww_confirm_wait_seconds: float = Field(default=0.3, ge=0.0, le=1.0)  # confirm: wait this long for the model
+    oww_model_dir: str = "wake"  # in the data folder (data/wake): hey_little_bot.onnx and the two feature models
 
 
 class AIConfig(_Section):
