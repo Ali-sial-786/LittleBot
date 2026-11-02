@@ -469,7 +469,8 @@ class VoiceSession:
                 log.info("assistant: their turn ended (%d words, %d ms from its start%s%s%s)", len(text.split()),
                          spoke_ms, after, eager, late)
                 if self.cfg.log_words:
-                    log.info("assistant: heard %r", text[:300])
+                    log.info("assistant: heard %r%s", text[:300],
+                             f" (unsure of: {', '.join(self._unsure)})" if self._unsure else "")
             self._eager_at = None
             if getattr(audio, "interrupted", False) and text:
                 audio.barge_in_heard(text, True)
