@@ -315,6 +315,37 @@ async def test_a_takeover_ends_the_session_and_runs_after() -> None:
     await _wait(lambda: svc.ctx.state.state == RobotState.SLEEPING)
 
 
+async def test_music_starts_under_the_answer_and_the_session_ends_after_it() -> None:
+    # "play 80s music" waited for the answer to be said (4-5 s), then played turned down through the follow-up wait
+    # (~8 s more) (the robot, 2026-11-02)
+    from types import SimpleNamespace
+
+    from littlebot.assistant import session as S
+
+    ran: list[str] = []
+
+    class Item:
+        def __init__(self, label: str, takeover: bool) -> None:
+            self.label, self.takeover = label, takeover
+
+        async def run(self) -> bool:
+            ran.append(self.label)
+            return True
+
+    box = SimpleNamespace(pending=[Item("music spotify", False), Item("video abc", True)])
+    me = SimpleNamespace(_music_after=False)
+    S.VoiceSession._start_quiet(me, box)  # type: ignore[arg-type]
+    assert [p.label for p in box.pending] == ["video abc"]  # a take-over still waits for the answer
+    assert me._music_after is True
+    await asyncio.wait_for(asyncio.gather(*S._QUIET_STARTS), 2.0)
+    assert ran == ["music spotify"]
+    other = SimpleNamespace(pending=[Item("note", False)])
+    me2 = SimpleNamespace(_music_after=False)
+    S.VoiceSession._start_quiet(me2, other)  # type: ignore[arg-type]
+    assert me2._music_after is False and other.pending == []
+    await asyncio.wait_for(asyncio.gather(*S._QUIET_STARTS), 2.0)
+
+
 async def test_no_words_after_the_wake_word() -> None:
     svc, stt, _, _ = _service(Scripted(), first_words_seconds=2.0)
     clock = [0.0]

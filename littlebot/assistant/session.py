@@ -57,6 +57,7 @@ SPECULATION_MAX_S = 8.0  # an early answer whose turn is neither confirmed nor r
 SPOTIFY_ACTIONS = {"pause": "pause", "resume": "resume", "skip": "next", "stop_media": "stop"}
 STT_REOPENS = 3  # speech-to-text that fails this often in one session ends it
 HEARING_GRACE_S = 2.0  # a turn that never ends (noise): finished after max_turn_seconds + this
+_QUIET_STARTS: set[asyncio.Task[Any]] = set()  # quiet starts (Spotify) still going when their session ends
 ECHO_MEMORY_S = 20.0  # what LittleBot said this recently may come back through the microphone
 ECHO_SHARE = 0.8  # a turn whose words are mostly LittleBot's own recent words is its echo, not them
 # ... but only words of sentences still being said (or just over: the echo, then speech-to-text's lag) when their
@@ -139,6 +140,7 @@ class VoiceSession:
         self._said: collections.deque[tuple[float, str]] = collections.deque(maxlen=12)  # its own recent sentences
         self._deadline = self._started + self.cfg.first_words_seconds
         self._end_after: str | None = None  # end once the current answer was heard (said "bye")
+        self._music_after = False  # music started under this answer: end once it was heard (the music comes up)
         self._quiet_end = False  # the brain called end_conversation: nothing more is said, and the session ends
         self._handover: list[Any] = []  # take-overs to run after the session (a video, an activity ...)
         self._suspended = False
@@ -647,6 +649,7 @@ class VoiceSession:
                 if result.error and not result.sentences:
                     for s in _sentences(SORRY.get(result.error, SORRY_DEFAULT)):
                         say(s)
+                self._start_quiet(box)
             if waiter is not None:
                 await waiter  # an early answer waits here until their turn really ended
             if self._card_missing(result, box, card_before):
@@ -688,6 +691,12 @@ class VoiceSession:
             return
         if self._end_after:
             self.end(f"said {self._end_after}")
+            return
+        if self._music_after:
+            # The music plays turned down while the session listens: it came up only after the follow-up wait,
+            # ~8 s after the answer (the robot, 2026-11-02). "Hey LittleBot" still works over it.
+            self._music_after = False
+            self.end("music started")
             return
         follow = float(self.cfg.follow_up_seconds)
         if heard.rstrip().endswith("?"):
@@ -988,6 +997,22 @@ class VoiceSession:
         if intents.STOP.match(text) or STOP_ALARM.match(text) or intents.THANKS.match(text):
             return "Okay, it's off." if _safe(rem.stop_ringing) else None
         return None
+
+    def _start_quiet(self, box: Any) -> None:
+        """What needs neither the screen nor the speaker (Spotify) starts as soon as the answer is ready, under
+        the voice still saying it (music starts turned down while a session is on), not after it was said: "play
+        80s music" took 4-5 s more that way (the robot, 2026-11-02). Its own task, so the session ending meanwhile
+        doesn't stop it. Music among them: the session ends once the answer was heard."""
+        pending = list(getattr(box, "pending", []) or [])
+        quiet = [p for p in pending if not getattr(p, "takeover", True)]
+        if not quiet:
+            return
+        box.pending = [p for p in pending if getattr(p, "takeover", True)]
+        if any(str(getattr(p, "label", "")).startswith("music") for p in quiet):
+            self._music_after = True
+        task = asyncio.ensure_future(_run_quiet(quiet))
+        _QUIET_STARTS.add(task)
+        task.add_done_callback(_QUIET_STARTS.discard)
 
     async def _after_turn(self, box: Any) -> None:
         pending = list(getattr(box, "pending", []) or [])
@@ -1390,6 +1415,21 @@ def _claim(ctx: Any, voices: Any, text: str) -> Any:
         return claimed(text, voices.store.people.people(), robot_name=ctx.config.robot_name)
     except Exception:  # noqa: BLE001
         return None
+
+
+async def _run_quiet(items: list[Any]) -> None:
+    """Run quiet starts (``Session._start_quiet``), as ``RobotToolbox.run_pending`` does."""
+    for p in items:
+        label = getattr(p, "label", "?")
+        try:
+            started = await p.run()
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:  # noqa: BLE001
+            log.warning("after the turn, %s didn't start (%s): %s", label, type(e).__name__, str(e)[:200])
+            continue
+        if started is not False:
+            log.info("after the turn: %s (under the answer)", label)
 
 
 def _sentences(text: str) -> list[Sentence]:
