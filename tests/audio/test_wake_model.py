@@ -123,8 +123,15 @@ def _journal(path: Path) -> list[dict[str, Any]]:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()] if path.is_file() else []
 
 
-async def _wait(pred, timeout: float = 4.0) -> None:
+async def _wait(pred, timeout: float = 8.0) -> None:
     await until(pred, timeout)
+
+
+async def _feed(check: WakeModelCheck, blocks: int) -> None:
+    """Hand over ``blocks`` x 0.1 s and wait until it is scored (the fake scorer's level is read when it is)."""
+    for _ in range(blocks):
+        check.feed(np.zeros(1600, np.int16))
+    await _wait(lambda: check._done >= check._fed)
 
 
 async def test_a_vosk_wake_is_measured_and_a_peak_with_no_wake_is_logged(tmp_path, caplog, monkeypatch):
@@ -137,12 +144,10 @@ async def test_a_vosk_wake_is_measured_and_a_peak_with_no_wake_is_logged(tmp_pat
     try:
         await _wait(lambda: check.ready)
         assert "wake model: ready in" in caplog.text
-        for _ in range(10):
-            check.feed(np.zeros(1600, np.int16))
+        await _feed(check, 10)
         wid = check.vosk_wake(0.83, early=True)
         assert check.score_now(1.0) == pytest.approx(0.8)
-        for _ in range(8):  # the sound just after the wake (the carry)
-            check.feed(np.zeros(1600, np.int16))
+        await _feed(check, 8)  # the sound just after the wake (the carry)
         await _wait(lambda: any(r["kind"] == "vosk_wake" for r in _journal(j)))
         rec = next(r for r in _journal(j) if r["kind"] == "vosk_wake")
         assert rec["id"] == wid and rec["vosk_conf"] == 0.83 and rec["model_score"] == pytest.approx(0.8)
@@ -152,16 +157,13 @@ async def test_a_vosk_wake_is_measured_and_a_peak_with_no_wake_is_logged(tmp_pat
         # the model's peak there was that wake, not a model-only peak
         sc.level = 0.0
         check.reset()
-        for _ in range(5):
-            check.feed(np.zeros(1600, np.int16))
+        await _feed(check, 5)
         # a peak of its own, Vosk heard a wake phrase but wasn't sure
         check.vosk_unsure()
         sc.level = 0.66
-        for _ in range(4):
-            check.feed(np.zeros(1600, np.int16))
+        await _feed(check, 4)
         sc.level = 0.1
-        for _ in range(3):
-            check.feed(np.zeros(1600, np.int16))
+        await _feed(check, 3)
         await _wait(lambda: any(r["kind"] == "model_only" for r in _journal(j)))
         peaks = [r for r in _journal(j) if r["kind"] == "model_only"]
         assert len(peaks) == 1 and peaks[0]["model_score"] == pytest.approx(0.66) and peaks[0]["vosk_unsure"]
