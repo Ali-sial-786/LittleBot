@@ -195,6 +195,19 @@ async def test_flux_turn_events():
     await stream.aclose()
 
 
+async def test_flux_tells_which_words_it_was_unsure_of():
+    # misheard words were taken literally (the robot, 2026-11-02): the brain is told which ones may be wrong
+    conn, events = Connector(), Events()
+    stream = await _flux(conn).open(events)
+    ws = conn.ws
+    ws.push(type="Connected", request_id="r1", sequence_id=0)
+    ws.turn("StartOfTurn", 0)
+    ws.turn("EndOfTurn", 0, "play eighty music", [("play", 0.95), ("eighty", 0.41), ("music", 0.58)])
+    await settle()
+    assert events[-1].kind == "end_of_turn" and events[-1].unsure == ("eighty", "music")
+    await stream.aclose()
+
+
 async def test_flux_says_how_far_behind_it_ended_a_turn(caplog):
     # It works through what it is sent at about real time: the log says how long after their last word it ended the
     # turn and how far behind the audio sent it was (the robot, 2026-10-31: the first turn ended ~2 s late).

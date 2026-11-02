@@ -65,6 +65,7 @@ class STTEvent:
     text: str = ""
     confidence: float = 1.0
     detail: str = ""  # error: SpeechError.kind
+    unsure: tuple[str, ...] = ()  # (eager_)end_of_turn: words the recogniser wasn't sure of (may be misheard)
 
 
 OnEvent = Callable[[STTEvent], Any]

@@ -141,6 +141,7 @@ class VoiceSession:
         self._deadline = self._started + self.cfg.first_words_seconds
         self._end_after: str | None = None  # end once the current answer was heard (said "bye")
         self._music_after = False  # music started under this answer: end once it was heard (the music comes up)
+        self._unsure: tuple[str, ...] = ()  # the words speech-to-text wasn't sure of in their last turn
         self._quiet_end = False  # the brain called end_conversation: nothing more is said, and the session ends
         self._handover: list[Any] = []  # take-overs to run after the session (a video, an activity ...)
         self._suspended = False
@@ -435,6 +436,7 @@ class VoiceSession:
             if event.text.strip():
                 self._words_at = self._now()
         elif event.kind == "eager_end_of_turn":
+            self._unsure = event.unsure
             self._eager_at = at = self._now()
             self._speculate(" ".join(event.text.split()))
             if self._speculating() and self._loop is not None:
@@ -445,6 +447,7 @@ class VoiceSession:
                 self._cut_answer()
                 self._set_phase("hearing")
         elif event.kind == "end_of_turn":
+            self._unsure = event.unsure
             began = self._hearing_since
             spoke_ms = int((self._now() - began) * 1000) if began is not None else 0
             self._hearing_since = self._words_at = None
@@ -650,6 +653,8 @@ class VoiceSession:
                     for s in _sentences(SORRY.get(result.error, SORRY_DEFAULT)):
                         say(s)
                 self._start_quiet(box)
+                if getattr(result, "silent", False):
+                    log.info("assistant: answered nothing ([silent]: taken as talk not meant for it)")
             if waiter is not None:
                 await waiter  # an early answer waits here until their turn really ended
             if self._card_missing(result, box, card_before):
@@ -925,12 +930,20 @@ class VoiceSession:
         """For the brain: when what they said is certainly for LittleBot (so never [silent]). On the robot
         (2026-10-31) words said right after cutting in were twice taken for people talking to each other."""
         first = self.turns + (1 if gate is not None else 0) == 1
+        notes = []
+        if self._unsure:
+            # (the robot, 2026-11-02: misheard words were taken literally, where GPT-Live, hearing the sound itself,
+            # guessed what was meant)
+            notes.append("speech-to-text wasn't sure of these words, so they may be misheard: "
+                         + ", ".join(f'"{w}"' for w in self._unsure)
+                         + ". Work out what they most likely said from how it sounds and the conversation, and answer "
+                           "that; don't mention the mishearing")
         if self._cut_in_at is not None and self._now() - self._cut_in_at < CUT_IN_NOTE_S:
-            return ["they just talked over you to say this: it is for you; answer it (if it's a new question, "
-                    "answer that one)"]
+            return [*notes, "they just talked over you to say this: it is for you; answer it (if it's a new "
+                            "question, answer that one)"]
         if first:
-            return ["they woke you with your name to say this: it is for you; answer it"]
-        return []
+            return [*notes, "they woke you with your name to say this: it is for you; answer it"]
+        return notes
 
     def _session_tools(self) -> dict[str, Any]:
         return {"end_conversation": ({"name": "end_conversation", "final": True,

@@ -99,6 +99,24 @@ def _confidence(words: Any) -> float:
     return round(sum(confs) / len(confs), 3) if confs else 1.0
 
 
+UNSURE_BELOW = 0.6  # a word Flux is less sure of than this may be misheard: the brain is told (STTEvent.unsure)
+MAX_UNSURE = 6
+
+
+def _unsure(words: Any) -> tuple[str, ...]:
+    """The words Flux wasn't sure of, in order (at most MAX_UNSURE), for the brain to read past: "play eighty
+    music" taken literally instead of "play 80s music" (the robot, 2026-11-02)."""
+    out: list[str] = []
+    for w in words or ():
+        try:
+            conf, word = float(w.get("confidence")), str(w.get("word") or "").strip()
+        except (AttributeError, TypeError, ValueError):
+            continue
+        if word and conf < UNSURE_BELOW and word not in out:
+            out.append(word[:30])
+    return tuple(out[:MAX_UNSURE])
+
+
 class FluxStream:
     """One session's ``STTStream`` over an open Flux websocket."""
 
@@ -228,13 +246,14 @@ class FluxStream:
             self._turn, self._old, self._partial = None, max(self._old, index), ""
             self._log_lag(m)
             # no words (a cough): an empty end, so the session stops waiting for them
-            await emit(self._on_event, STTEvent("end_of_turn", text=text, confidence=_confidence(m.get("words"))))
+            await emit(self._on_event, STTEvent("end_of_turn", text=text, confidence=_confidence(m.get("words")),
+                                                unsure=_unsure(m.get("words"))))
             return
         if text and text != self._partial:  # Update, StartOfTurn with words, EagerEndOfTurn, TurnResumed
             self._partial = text
             await emit(self._on_event, STTEvent("partial", text=text))
         if event == "EagerEndOfTurn" and text:  # probably done: the answer may start (said only after EndOfTurn)
-            await emit(self._on_event, STTEvent("eager_end_of_turn", text=text))
+            await emit(self._on_event, STTEvent("eager_end_of_turn", text=text, unsure=_unsure(m.get("words"))))
         elif event == "TurnResumed":  # they went on talking: a started answer is dropped
             await emit(self._on_event, STTEvent("turn_resumed", text=text))
 

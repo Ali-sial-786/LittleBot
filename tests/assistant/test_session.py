@@ -346,6 +346,23 @@ async def test_music_starts_under_the_answer_and_the_session_ends_after_it() -> 
     await asyncio.wait_for(asyncio.gather(*S._QUIET_STARTS), 2.0)
 
 
+def test_the_brain_hears_which_words_may_be_misheard() -> None:
+    from types import SimpleNamespace
+
+    from littlebot.assistant import session as S
+
+    me = SimpleNamespace(turns=3, _cut_in_at=None, _now=lambda: 0.0, _unsure=("eighty",))
+    notes = S.VoiceSession._turn_notes(me, None)  # type: ignore[arg-type]
+    assert len(notes) == 1 and '"eighty"' in notes[0] and "most likely said" in notes[0]
+    me._unsure = ()
+    assert S.VoiceSession._turn_notes(me, None) == []  # type: ignore[arg-type]
+    me.turns = 0
+    assert S.VoiceSession._turn_notes(me, None) == []  # type: ignore[arg-type]
+    me.turns, me._unsure = 1, ("Kubla",)
+    first = S.VoiceSession._turn_notes(me, None)  # type: ignore[arg-type]
+    assert len(first) == 2 and "woke you" in first[1]
+
+
 async def test_no_words_after_the_wake_word() -> None:
     svc, stt, _, _ = _service(Scripted(), first_words_seconds=2.0)
     clock = [0.0]
