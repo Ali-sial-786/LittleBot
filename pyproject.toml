@@ -35,6 +35,9 @@ pi = ["smbus2>=0.4"]
 # vosk ships one prebuilt aarch64 wheel for every Python 3 (py3-none-manylinux2014_aarch64, ~2.4 MB);
 # the model comes separately: scripts/download_models.py vosk-en (40 MB download, ~130 MB RAM).
 local-stt = ["vosk>=0.3.45"]
+# Optional: LittleBot's own trained "Hey LittleBot" model as a second check next to Vosk (wake.oww_mode,
+# littlebot/audio/oww.py, docs/WAKE_TRAINING.md). Prebuilt aarch64 wheels (~15 MB); the model files go in data/wake.
+wake-model = ["onnxruntime>=1.17"]
 # GPT-Live voice over WebRTC (Sign in with ChatGPT, docs/CHATGPT.md). aiortc is a pure-Python
 # wheel; its dependencies (PyAV, pylibsrtp, cryptography, ...) have prebuilt aarch64 wheels
 # (~40 MB download, nothing to compile). Without it, live voice reports itself as not installed.

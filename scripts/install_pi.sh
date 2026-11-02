@@ -425,6 +425,9 @@ if ((NO_WAKE == 0)); then
     step "Wake word (offline speech recogniser)"
     run "${PIP[@]}" install --prefer-binary --only-binary=vosk,cffi -e "${REPO_DIR}[local-stt]" \
         || warn "The wake word could not be installed (no internet?). Later: .venv/bin/python -m pip install -e '.[local-stt]'"
+    # onnxruntime for LittleBot's own trained wake word model (wake.oww_mode, docs/WAKE_TRAINING.md): optional
+    run "${PIP[@]}" install --prefer-binary --only-binary=onnxruntime -e "${REPO_DIR}[wake-model]" \
+        || warn "onnxruntime could not be installed (the wake word works without it). Later: .venv/bin/python -m pip install -e '.[wake-model]'"
     if ((NO_MODELS == 0)) && [[ -f "$REPO_DIR/scripts/download_models.py" ]]; then
         run "$VENV_DIR/bin/python" "$REPO_DIR/scripts/download_models.py" vosk-en \
             || warn "Wake-word model download failed (no internet?). Later: .venv/bin/python scripts/download_models.py vosk-en"
