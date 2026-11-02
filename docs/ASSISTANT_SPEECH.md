@@ -14,6 +14,7 @@ works, with the OpenAI key the robot already has, or entirely on the robot (Vosk
 | Listening (`assistant.stt`) | What it is | Needs |
 |---|---|---|
 | `deepgram` | **Deepgram Flux**: streams the words while you talk and itself decides when you finished (it hears the difference between a pause and the end of a sentence) | `DEEPGRAM_API_KEY`, the `websockets` package, cloud on |
+| `cartesia` | **Cartesia Ink 2**: works the same way as Flux (streams the words, decides when you finished); not in the list by default, see "Comparing two" below | `CARTESIA_API_KEY` (the voice's key), the `websockets` package, cloud on |
 | `openai` | **OpenAI gpt-4o-mini-transcribe**: the whole turn is sent once LittleBot decides you finished | `OPENAI_API_KEY` (already on the robot for GPT-Live), cloud on |
 | `vosk` | **Vosk** on the robot, the small English model the wake word already uses | nothing (offline). Less accurate |
 
@@ -43,6 +44,19 @@ What happens when something is missing or goes wrong:
 
 The dashboard and the log can show which service would be used now and which was used last
 (`describe()`); they never show a key.
+
+**Comparing two listening services.** `assistant.stt_shadow: cartesia` sends every chat's sound to Cartesia
+Ink 2 as well as to the one that listens (Deepgram). Ink only listens: what it hears is written to the log
+next to what Deepgram heard (only with `assistant.log_words: true`), and changes nothing. After a day,
+
+```bash
+cd ~/LittleBot && .venv/bin/python scripts/stt_compare.py
+```
+
+lists every turn where the two heard different words, so you can see which one mishears less. To switch to
+Ink: `assistant.stt: [cartesia, deepgram, openai, vosk]`. Turn the comparison off with `assistant.stt_shadow:
+""`. It costs Cartesia credits for every second of a chat (3 a second, silence included: about 11,000 for an
+hour of chats).
 
 ## 2. Putting the keys on the robot
 

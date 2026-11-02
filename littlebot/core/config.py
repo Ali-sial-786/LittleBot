@@ -413,9 +413,14 @@ class AssistantConfig(_Section):
     # else GPT-Live as before; cascade: always the assistant (with what is there: OpenAI or local speech); live:
     # always GPT-Live.
     pipeline: Literal["auto", "cascade", "live"] = "auto"
-    # Speech-to-text, first that works: deepgram (streaming, end-of-turn built in), openai (after LittleBot's own
-    # end-of-turn), vosk (on the robot, offline).
-    stt: list[Literal["deepgram", "openai", "vosk"]] = Field(default_factory=lambda: ["deepgram", "openai", "vosk"])
+    # Speech-to-text, first that works: deepgram (streaming, end-of-turn built in), cartesia (Ink 2, the same kind;
+    # not a default), openai (after LittleBot's own end-of-turn), vosk (on the robot, offline).
+    stt: list[Literal["deepgram", "cartesia", "openai", "vosk"]] = Field(
+        default_factory=lambda: ["deepgram", "openai", "vosk"])
+    # A second streaming service fed the same sound in every chat, to compare: what each heard is logged side by
+    # side (needs log_words; scripts/stt_compare.py lists the differences) and it changes nothing. "" = off.
+    stt_shadow: Literal["", "deepgram", "cartesia"] = ""
+    cartesia_stt_model: str = "ink-2"
     deepgram_model: str = "flux-general-en"
     # Flux: how sure the turn ended. On the robot (2026-10-31, 18 phrases in OpenAI voices streamed at real time):
     # 0.6 ended turns 0.1-0.25 s sooner than 0.7 (up to 0.6 s on "and divide that by four."), every phrase whole;

@@ -530,6 +530,43 @@ async def test_build_stt_order_and_choice(tmp_path):
     assert conn.calls == []  # building never connects
 
 
+async def test_cartesia_listens_alongside_to_compare(caplog):
+    from littlebot.assistant.stt import ShadowedStream
+
+    caplog.set_level(logging.INFO, logger="littlebot.assistant.stt")
+    ctx = _ctx(assistant={"stt_shadow": "cartesia", "log_words": True})
+    ctx.config.cartesia_api_key = SecretStr("test-cartesia-key")
+    sockets: list[FakeWS] = []
+
+    async def connect(url: str, headers: dict[str, str]) -> FakeWS:
+        sockets.append(FakeWS())
+        return sockets[-1]
+
+    chain = build_stt(ctx, ws_connect=connect, transport=NO_HTTP)
+    assert "cartesia also listens, to compare" in caplog.text
+    events = Events()
+    stream = await chain.open(events)
+    assert isinstance(stream, ShadowedStream) and chain.last_provider == "deepgram" and len(sockets) == 2
+    await stream.feed(tone(200))
+    assert sockets[0].audio() and [m for m in sockets[1].sent if isinstance(m, bytes)]  # both hear the sound
+    sockets[0].turn("StartOfTurn", 0)
+    sockets[0].turn("EndOfTurn", 0, "play eighty music", [("play", 0.9), ("eighty", 0.4), ("music", 0.9)])
+    sockets[1].inbox.put_nowait(json.dumps({"type": "turn.end", "turn_id": "1", "transcript": "Play 80s music."}))
+    await settle()
+    assert "assistant stt: compare deepgram 'play eighty music'" in caplog.text
+    assert "assistant stt: compare cartesia 'Play 80s music.'" in caplog.text
+    assert [e.kind for e in events] == ["start_of_turn", "end_of_turn"]  # only the listening one's events
+    sockets[1].inbox.put_nowait(json.dumps({"type": "error", "status_code": 402, "error_code": "quota_exceeded"}))
+    await settle()
+    assert "cartesia (comparison) stopped (quota)" in caplog.text and chain.last_error is None
+    await stream.aclose()
+    assert sockets[0].closed and sockets[1].closed
+    caplog.clear()
+    quiet = _ctx(assistant={"stt_shadow": "cartesia"})  # without the words there is nothing to compare
+    assert build_stt(quiet, ws_connect=connect, transport=NO_HTTP).shadow is None
+    assert "needs assistant.log_words: true" in caplog.text
+
+
 async def test_chain_falls_back_when_deepgram_cannot_connect():
     now = [0.0]
     conn = Connector(error=OSError("unreachable"))

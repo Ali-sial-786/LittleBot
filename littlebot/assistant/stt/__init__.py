@@ -18,6 +18,7 @@ from typing import Any, Callable
 
 from littlebot.assistant.speech import CloudOk, OnEvent, SpeechError, STTEvent, STTProvider, STTStream
 from littlebot.assistant.speech_http import cloud_ok_for, is_allowed, key_reader
+from littlebot.assistant.stt.cartesia import CartesiaInk
 from littlebot.assistant.stt.deepgram import DeepgramFlux, WsConnect
 from littlebot.assistant.stt.endpoint import EndpointedSTT, Endpointer, pause_needed_ms
 from littlebot.assistant.stt.openai import OpenAITranscriber
@@ -30,12 +31,72 @@ REST_S = {"auth": 600.0, "quota": 3600.0, "bad_request": 600.0, "rate_limit": 60
 REST_DEFAULT_S = 20.0
 
 
+class ShadowedStream:
+    """The listening stream, and a second service fed the same sound (``assistant.stt_shadow``): what each heard
+    in a turn is logged side by side ("assistant stt: compare <name> '<words>'", scripts/stt_compare.py). The second
+    one changes nothing: its events go nowhere else, and when it fails it is just dropped."""
+
+    def __init__(self, main: STTStream, shadow: STTStream, shadow_name: str) -> None:
+        self.main = main
+        self.shadow: STTStream | None = shadow
+        self.shadow_name = shadow_name
+
+    async def _quiet(self, what: str, *args: Any) -> None:
+        shadow = self.shadow
+        if shadow is None:
+            return
+        try:
+            await getattr(shadow, what)(*args)
+        except Exception:  # noqa: BLE001 - only a comparison
+            log.info("assistant stt: %s (comparison) stopped", self.shadow_name)
+            self.shadow = None
+
+    async def feed(self, samples: Any) -> None:
+        await self.main.feed(samples)
+        await self._quiet("feed", samples)
+
+    async def finish(self) -> None:
+        await self.main.finish()
+        await self._quiet("finish")
+
+    async def reset(self) -> None:
+        await self.main.reset()
+        await self._quiet("reset")
+
+    async def set_keyterms(self, terms: list[str]) -> None:
+        for s in (self.main, self.shadow):
+            fn = getattr(s, "set_keyterms", None)
+            if fn is not None:
+                await fn(terms)
+
+    async def aclose(self) -> None:
+        try:
+            await self.main.aclose()
+        finally:
+            await self._quiet("aclose")
+            self.shadow = None
+
+
+def _compare(name: str, on_event: OnEvent | None = None) -> OnEvent:
+    """``on_event`` that also logs the words of each turn's end, for the comparison."""
+    def watch(event: STTEvent) -> Any:
+        if event.kind == "end_of_turn" and event.text.strip():
+            log.info("assistant stt: compare %s %r", name, event.text.strip()[:300])
+        elif event.kind == "error" and on_event is None:
+            log.info("assistant stt: %s (comparison) stopped (%s)", name, event.detail or "error")
+        return on_event(event) if on_event is not None else None
+
+    return watch
+
+
 class STTChain:
-    """The providers in order as one ``STTProvider``. ``name`` / ``streaming``: of the one that would open now."""
+    """The providers in order as one ``STTProvider``. ``name`` / ``streaming``: of the one that would open now.
+    ``shadow``: a second service fed the same sound, to compare (``ShadowedStream``)."""
 
     def __init__(self, providers: list[STTProvider], *, cloud_ok: CloudOk,
-                 clock: Callable[[], float] = time.monotonic) -> None:
+                 clock: Callable[[], float] = time.monotonic, shadow: STTProvider | None = None) -> None:
         self.providers = list(providers)
+        self.shadow = shadow
         self._cloud_ok = cloud_ok
         self._clock = clock
         self.last_provider: str | None = None
@@ -100,21 +161,34 @@ class STTChain:
         """The first provider's stream that opens. Raises SpeechError when none does."""
         failure: SpeechError | None = None
         for p in self._usable():
+            shadow = self.shadow if self.shadow is not None and self.shadow.name != p.name else None
+
             def watch(event: STTEvent, p: STTProvider = p) -> Any:
                 if event.kind == "error":
                     self._failed(p, event.detail or "server_error")
                 return on_event(event)
 
             try:
-                stream = await p.open(watch)
+                stream = await p.open(_compare(p.name, watch) if shadow is not None else watch)
             except SpeechError as e:
                 log.warning("assistant stt: %s could not start (%s)", p.name, e.kind)
                 self._failed(p, e.kind)
                 failure = e
                 continue
             self.last_provider = p.name
-            return stream
+            return await self._with_shadow(stream, shadow)
         raise failure or SpeechError(self.missing() or "not_installed")
+
+    async def _with_shadow(self, stream: STTStream, shadow: STTProvider | None) -> STTStream:
+        if shadow is None or self._why_not(shadow) is not None:
+            return stream
+        try:
+            other = await shadow.open(_compare(shadow.name))
+        except Exception as e:  # noqa: BLE001 - only a comparison
+            log.info("assistant stt: %s (comparison) could not start (%s)", shadow.name,
+                     getattr(e, "kind", type(e).__name__))
+            return stream
+        return ShadowedStream(stream, other, shadow.name)
 
     async def aclose(self) -> None:
         for p in self.providers:
@@ -155,26 +229,36 @@ def build_stt(ctx: Any, *, transport: Any = None, ws_connect: WsConnect | None =
             return hearing_terms(ctx)
     turn = {"end_of_turn_ms": a.end_of_turn_ms, "max_turn_seconds": a.max_turn_seconds,
             "threshold": ctx.config.audio.microphone.vad_threshold}
+    def streaming(name: str) -> STTProvider:
+        if name == "cartesia":
+            return CartesiaInk(key=key_reader(ctx, "cartesia_api_key"), cloud_ok=ok, model=a.cartesia_stt_model,
+                               turn_end_timeout_ms=a.deepgram_eot_timeout_ms, keyterms=keyterms, ws_connect=ws_connect)
+        return DeepgramFlux(key=key_reader(ctx, "deepgram_api_key"), cloud_ok=ok, model=a.deepgram_model,
+                            eot_threshold=a.deepgram_eot_threshold, eot_timeout_ms=a.deepgram_eot_timeout_ms,
+                            eager_eot_threshold=_eager(a), keyterms=keyterms, ws_connect=ws_connect)
+
     providers: list[STTProvider] = []
     for name in dict.fromkeys(a.stt):
-        if name == "deepgram":
-            providers.append(DeepgramFlux(key=key_reader(ctx, "deepgram_api_key"), cloud_ok=ok, model=a.deepgram_model,
-                                          eot_threshold=a.deepgram_eot_threshold,
-                                          eot_timeout_ms=a.deepgram_eot_timeout_ms,
-                                          eager_eot_threshold=_eager(a),
-                                          keyterms=keyterms,
-                                          ws_connect=ws_connect))
+        if name in ("deepgram", "cartesia"):
+            providers.append(streaming(name))
         elif name == "openai":
             providers.append(EndpointedSTT(OpenAITranscriber(key=key_reader(ctx, "openai_api_key"), cloud_ok=ok,
                                                              model=a.openai_stt_model, language=a.language,
                                                              transport=transport), **turn))
         elif name == "vosk":
             providers.append(EndpointedSTT(VoskSTT(model_path_for(ctx.config)), **turn))
-    chain = STTChain(providers, cloud_ok=ok)
+    shadow = None
+    if a.stt_shadow:
+        if a.log_words:
+            shadow = streaming(a.stt_shadow)
+        else:  # nothing to compare without the words: no credits spent on it
+            log.info("assistant stt: the %s comparison needs assistant.log_words: true", a.stt_shadow)
+    chain = STTChain(providers, cloud_ok=ok, shadow=shadow)
     rows = chain.describe()["providers"]
-    log.info("assistant stt: %s", ", ".join(r["name"] + (f" ({r['missing']})" if r["missing"] else "") for r in rows)
-             or "none configured")
+    log.info("assistant stt: %s%s", ", ".join(r["name"] + (f" ({r['missing']})" if r["missing"] else "")
+                                             for r in rows) or "none configured",
+             f"; {shadow.name} also listens, to compare" if shadow is not None else "")
     return chain if chain.missing() is None else None
 
 
-__all__ = ["EndpointedSTT", "Endpointer", "STTChain", "build_stt", "pause_needed_ms"]
+__all__ = ["EndpointedSTT", "Endpointer", "STTChain", "ShadowedStream", "build_stt", "pause_needed_ms"]
