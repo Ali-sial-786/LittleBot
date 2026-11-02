@@ -122,7 +122,7 @@ claude:  # Anthropic API (pip install -e '.[claude]'); the key in .env or data/a
 assistant:  # the fast voice pipeline (docs/ASSISTANT.md): speech-to-text -> Claude -> natural voice, with barge-in
   pipeline: auto         # auto: the assistant once DEEPGRAM_API_KEY and CARTESIA_API_KEY (or ELEVENLABS_API_KEY) are set,
                          # else GPT-Live as before | cascade: always the assistant | live: always GPT-Live
-  stt: [deepgram, openai, vosk]                    # first that works
+  stt: [deepgram, openai, vosk]                    # first that works (also: cartesia, assemblyai)
   tts: [cartesia, elevenlabs, openai, local]       # first that works (local: piper / espeak on the robot)
   follow_up_seconds: 8   # keeps listening this long after an answer: no wake word for the next question
   deep_model: claude-sonnet-5-5   # think_harder: hard questions go to this model while a short line plays

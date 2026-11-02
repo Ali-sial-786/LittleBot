@@ -414,13 +414,16 @@ class AssistantConfig(_Section):
     # always GPT-Live.
     pipeline: Literal["auto", "cascade", "live"] = "auto"
     # Speech-to-text, first that works: deepgram (streaming, end-of-turn built in), cartesia (Ink 2, the same kind;
-    # not a default), openai (after LittleBot's own end-of-turn), vosk (on the robot, offline).
-    stt: list[Literal["deepgram", "cartesia", "openai", "vosk"]] = Field(
+    # not a default), assemblyai (Universal-3.6 Pro, the same kind; not a default), openai (after LittleBot's own
+    # end-of-turn), vosk (on the robot, offline).
+    stt: list[Literal["deepgram", "cartesia", "assemblyai", "openai", "vosk"]] = Field(
         default_factory=lambda: ["deepgram", "openai", "vosk"])
-    # A second streaming service fed the same sound in every chat, to compare: what each heard is logged side by
-    # side (needs log_words; scripts/stt_compare.py lists the differences) and it changes nothing. "" = off.
-    stt_shadow: Literal["", "deepgram", "cartesia"] = ""
+    # Other streaming services fed the same sound in every chat, to compare: what each heard is logged side by side
+    # (needs log_words; scripts/stt_compare.py lists the differences) and they change nothing. One name, a list
+    # ([cartesia, assemblyai]), or "" = off.
+    stt_shadow: list[Literal["deepgram", "cartesia", "assemblyai"]] = Field(default_factory=list)
     cartesia_stt_model: str = "ink-2"
+    assemblyai_stt_model: str = "universal-3-6-pro"
     deepgram_model: str = "flux-general-en"
     # Flux: how sure the turn ended. On the robot (2026-10-31, 18 phrases in OpenAI voices streamed at real time):
     # 0.6 ended turns 0.1-0.25 s sooner than 0.7 (up to 0.6 s on "and divide that by four."), every phrase whole;
@@ -495,6 +498,15 @@ class AssistantConfig(_Section):
     log_timings: bool = True  # one "assistant turn:" line per answer (stt, brain, first audio; never the words)
     # For testing only (off: what is said is never written anywhere): the words heard and said go in the log too.
     log_words: bool = False
+
+    @field_validator("stt_shadow", mode="before")
+    @classmethod
+    def _one_or_more(cls, v: Any) -> Any:  # "cartesia" (as before) = [cartesia]; "" or none = off
+        if v is None or v == "":
+            return []
+        if isinstance(v, str):
+            return [v]
+        return list(dict.fromkeys(v)) if isinstance(v, (list, tuple)) else v
 
 
 class SkillsConfig(_Section):
@@ -971,6 +983,7 @@ class LittleBotConfig(BaseModel):
     # The fast voice pipeline's speech services and the smart home (littlebot/assistant, littlebot/skills/home.py).
     deepgram_api_key: SecretStr | None = Field(default=None, exclude=True)
     cartesia_api_key: SecretStr | None = Field(default=None, exclude=True)
+    assemblyai_api_key: SecretStr | None = Field(default=None, exclude=True)
     elevenlabs_api_key: SecretStr | None = Field(default=None, exclude=True)
     home_assistant_token: SecretStr | None = Field(default=None, exclude=True)
     # The calendar's secret iCal address(es) and the phone notifications' ntfy topic (littlebot/skills/agenda.py,
@@ -1018,6 +1031,7 @@ class LittleBotConfig(BaseModel):
 EXTRA_KEYS: tuple[tuple[str, str, str], ...] = (
     ("deepgram_api_key", "DEEPGRAM_API_KEY", "deepgram_api_key"),
     ("cartesia_api_key", "CARTESIA_API_KEY", "cartesia_api_key"),
+    ("assemblyai_api_key", "ASSEMBLYAI_API_KEY", "assemblyai_api_key"),
     ("elevenlabs_api_key", "ELEVENLABS_API_KEY", "elevenlabs_api_key"),
     ("home_assistant_token", "HOME_ASSISTANT_TOKEN", "home_assistant_token"),
     ("calendar_ics_url", "CALENDAR_ICS_URL", "calendar_ics_url"),

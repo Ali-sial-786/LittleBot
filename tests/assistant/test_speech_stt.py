@@ -563,8 +563,53 @@ async def test_cartesia_listens_alongside_to_compare(caplog):
     assert sockets[0].closed and sockets[1].closed
     caplog.clear()
     quiet = _ctx(assistant={"stt_shadow": "cartesia"})  # without the words there is nothing to compare
-    assert build_stt(quiet, ws_connect=connect, transport=NO_HTTP).shadow is None
+    assert build_stt(quiet, ws_connect=connect, transport=NO_HTTP).shadows == []
     assert "needs assistant.log_words: true" in caplog.text
+
+
+async def test_cartesia_and_assemblyai_both_listen_alongside(caplog):
+    from littlebot.assistant.stt import ShadowedStream
+
+    caplog.set_level(logging.INFO, logger="littlebot.assistant.stt")
+    ctx = _ctx(assistant={"stt_shadow": ["cartesia", "assemblyai", "deepgram"], "log_words": True})
+    ctx.config.cartesia_api_key = SecretStr("test-cartesia-key")
+    ctx.config.assemblyai_api_key = SecretStr("test-assemblyai-key")
+    sockets: list[tuple[str, FakeWS]] = []
+
+    async def connect(url: str, headers: dict[str, str]) -> FakeWS:
+        sockets.append((url.split("?")[0], FakeWS()))
+        return sockets[-1][1]
+
+    chain = build_stt(ctx, ws_connect=connect, transport=NO_HTTP)
+    assert "cartesia and assemblyai and deepgram also listen, to compare" in caplog.text
+    stream = await chain.open(Events())  # deepgram listens: it isn't also its own comparison
+    assert isinstance(stream, ShadowedStream) and isinstance(stream.main, ShadowedStream)
+    assert [u for u, _ in sockets] == ["wss://api.deepgram.com/v2/listen", "wss://api.cartesia.ai/stt/turns/websocket",
+                                       "wss://streaming.assemblyai.com/v3/ws"]
+    await stream.feed(tone(200))
+    assert all(ws.audio() for _, ws in sockets)  # all three hear the sound
+    await stream.set_keyterms(["Amara", "Great Wall"])
+    assert sockets[0][1].control()[-1] == {"type": "Configure", "keyterms": ["Amara", "Great Wall"]}
+    assert sockets[2][1].control()[-1] == {"type": "UpdateConfiguration", "keyterms_prompt": ["Amara", "Great Wall"]}
+    sockets[2][1].push(type="Turn", turn_order=0, end_of_turn=True, turn_is_formatted=True,
+                       transcript="Play 80s music.", words=[])
+    await settle()
+    assert "assistant stt: compare assemblyai 'Play 80s music.'" in caplog.text
+    sockets[2][1].push(type="Error", error_code=1008, error="Unauthorized Connection: Insufficient funds")
+    await settle()
+    assert "assemblyai (comparison) stopped (quota)" in caplog.text
+    await stream.aclose()
+    assert all(ws.closed for _, ws in sockets)
+
+
+def test_stt_shadow_takes_one_name_a_list_or_nothing():
+    from littlebot.core.config import AssistantConfig
+
+    assert AssistantConfig(stt_shadow="cartesia").stt_shadow == ["cartesia"]
+    assert AssistantConfig(stt_shadow="").stt_shadow == [] and AssistantConfig().stt_shadow == []
+    assert AssistantConfig(stt_shadow=["assemblyai", "cartesia", "assemblyai"]).stt_shadow == ["assemblyai", "cartesia"]
+    with pytest.raises(ValueError):
+        AssistantConfig(stt_shadow="whisper")
 
 
 async def test_chain_falls_back_when_deepgram_cannot_connect():

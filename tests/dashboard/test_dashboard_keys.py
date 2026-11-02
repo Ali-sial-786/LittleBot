@@ -45,7 +45,8 @@ async def test_list_shows_every_key_without_the_keys(authed, dctx, service):
     assert r.status_code == 200
     d = r.json()
     rows = {k["name"]: k for k in d["keys"]}
-    assert set(rows) == {"anthropic", "openai", "deepgram", "cartesia", "elevenlabs", "home_assistant", "typesafe"}
+    assert set(rows) == {"anthropic", "openai", "deepgram", "cartesia", "assemblyai", "elevenlabs", "home_assistant",
+                         "typesafe"}
     assert rows["anthropic"]["set"] and rows["anthropic"]["source"] == "env"
     assert rows["anthropic"]["ends_with"] == dctx.config.secret("anthropic_api_key")[-4:]
     assert rows["cartesia"] == {**rows["cartesia"], "set": False, "source": None, "ends_with": None,

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Compare the two speech-to-text services on the same speech (``assistant.stt_shadow``).
+"""Compare the speech-to-text services on the same speech (``assistant.stt_shadow``).
 
-While ``assistant.stt_shadow`` names a second service, every chat's sound goes to both, and the log gets a
-"assistant stt: compare <name> '<words>'" line from each for every turn (only with ``assistant.log_words`` on).
-This pairs them up by time and shows where they heard different words:
+While ``assistant.stt_shadow`` names other services (cartesia, assemblyai), every chat's sound goes to each, and the
+log gets a "assistant stt: compare <name> '<words>'" line from each for every turn (only with ``assistant.log_words``
+on). This pairs them up by time and shows where they heard different words:
 
     .venv/bin/python scripts/stt_compare.py            # today's and the older logs in data/logs
     .venv/bin/python scripts/stt_compare.py --all      # also the turns where both heard the same

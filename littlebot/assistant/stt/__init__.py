@@ -6,18 +6,20 @@ stream of the first provider that opens: one that isn't set up or not allowed no
 line when that changes); one that fails to open, or whose stream reports an ``error`` event, rests for a while
 (a refused key: 10 minutes; a lost connection: 20 s), so the session's next ``open`` gets the next provider.
 
-Every stream it gives emits ``end_of_turn`` itself: Deepgram Flux finds the end of a turn on its own (``streaming``);
-OpenAI and Vosk only transcribe, so they get LittleBot's endpointer around them (stt/endpoint.py).
+Every stream it gives emits ``end_of_turn`` itself: Deepgram Flux, Cartesia Ink and AssemblyAI find the end of a
+turn on their own (``streaming``); OpenAI and Vosk only transcribe, so they get LittleBot's endpointer around them
+(stt/endpoint.py).
 """
 
 from __future__ import annotations
 
 import logging
 import time
-from typing import Any, Callable
+from typing import Any, Callable, Sequence
 
 from littlebot.assistant.speech import CloudOk, OnEvent, SpeechError, STTEvent, STTProvider, STTStream
 from littlebot.assistant.speech_http import cloud_ok_for, is_allowed, key_reader
+from littlebot.assistant.stt.assemblyai import AssemblyAIUniversal
 from littlebot.assistant.stt.cartesia import CartesiaInk
 from littlebot.assistant.stt.deepgram import DeepgramFlux, WsConnect
 from littlebot.assistant.stt.endpoint import EndpointedSTT, Endpointer, pause_needed_ms
@@ -32,9 +34,10 @@ REST_DEFAULT_S = 20.0
 
 
 class ShadowedStream:
-    """The listening stream, and a second service fed the same sound (``assistant.stt_shadow``): what each heard
-    in a turn is logged side by side ("assistant stt: compare <name> '<words>'", scripts/stt_compare.py). The second
-    one changes nothing: its events go nowhere else, and when it fails it is just dropped."""
+    """The listening stream, and another service fed the same sound (``assistant.stt_shadow``): what each heard
+    in a turn is logged side by side ("assistant stt: compare <name> '<words>'", scripts/stt_compare.py). The other
+    one changes nothing: its events go nowhere else, and when it fails it is just dropped. With more than one to
+    compare, each wraps the one before (``main`` is then a ShadowedStream itself)."""
 
     def __init__(self, main: STTStream, shadow: STTStream, shadow_name: str) -> None:
         self.main = main
@@ -91,12 +94,12 @@ def _compare(name: str, on_event: OnEvent | None = None) -> OnEvent:
 
 class STTChain:
     """The providers in order as one ``STTProvider``. ``name`` / ``streaming``: of the one that would open now.
-    ``shadow``: a second service fed the same sound, to compare (``ShadowedStream``)."""
+    ``shadows``: other services fed the same sound, to compare (``ShadowedStream``)."""
 
     def __init__(self, providers: list[STTProvider], *, cloud_ok: CloudOk,
-                 clock: Callable[[], float] = time.monotonic, shadow: STTProvider | None = None) -> None:
+                 clock: Callable[[], float] = time.monotonic, shadows: Sequence[STTProvider] = ()) -> None:
         self.providers = list(providers)
-        self.shadow = shadow
+        self.shadows = list(shadows)
         self._cloud_ok = cloud_ok
         self._clock = clock
         self.last_provider: str | None = None
@@ -161,7 +164,7 @@ class STTChain:
         """The first provider's stream that opens. Raises SpeechError when none does."""
         failure: SpeechError | None = None
         for p in self._usable():
-            shadow = self.shadow if self.shadow is not None and self.shadow.name != p.name else None
+            shadows = [s for s in self.shadows if s.name != p.name]
 
             def watch(event: STTEvent, p: STTProvider = p) -> Any:
                 if event.kind == "error":
@@ -169,18 +172,20 @@ class STTChain:
                 return on_event(event)
 
             try:
-                stream = await p.open(_compare(p.name, watch) if shadow is not None else watch)
+                stream = await p.open(_compare(p.name, watch) if shadows else watch)
             except SpeechError as e:
                 log.warning("assistant stt: %s could not start (%s)", p.name, e.kind)
                 self._failed(p, e.kind)
                 failure = e
                 continue
             self.last_provider = p.name
-            return await self._with_shadow(stream, shadow)
+            for shadow in shadows:
+                stream = await self._with_shadow(stream, shadow)
+            return stream
         raise failure or SpeechError(self.missing() or "not_installed")
 
-    async def _with_shadow(self, stream: STTStream, shadow: STTProvider | None) -> STTStream:
-        if shadow is None or self._why_not(shadow) is not None:
+    async def _with_shadow(self, stream: STTStream, shadow: STTProvider) -> STTStream:
+        if self._why_not(shadow) is not None:
             return stream
         try:
             other = await shadow.open(_compare(shadow.name))
@@ -233,13 +238,17 @@ def build_stt(ctx: Any, *, transport: Any = None, ws_connect: WsConnect | None =
         if name == "cartesia":
             return CartesiaInk(key=key_reader(ctx, "cartesia_api_key"), cloud_ok=ok, model=a.cartesia_stt_model,
                                turn_end_timeout_ms=a.deepgram_eot_timeout_ms, keyterms=keyterms, ws_connect=ws_connect)
+        if name == "assemblyai":
+            return AssemblyAIUniversal(key=key_reader(ctx, "assemblyai_api_key"), cloud_ok=ok,
+                                       model=a.assemblyai_stt_model, max_turn_silence_ms=a.deepgram_eot_timeout_ms,
+                                       keyterms=keyterms, ws_connect=ws_connect)
         return DeepgramFlux(key=key_reader(ctx, "deepgram_api_key"), cloud_ok=ok, model=a.deepgram_model,
                             eot_threshold=a.deepgram_eot_threshold, eot_timeout_ms=a.deepgram_eot_timeout_ms,
                             eager_eot_threshold=_eager(a), keyterms=keyterms, ws_connect=ws_connect)
 
     providers: list[STTProvider] = []
     for name in dict.fromkeys(a.stt):
-        if name in ("deepgram", "cartesia"):
+        if name in ("deepgram", "cartesia", "assemblyai"):
             providers.append(streaming(name))
         elif name == "openai":
             providers.append(EndpointedSTT(OpenAITranscriber(key=key_reader(ctx, "openai_api_key"), cloud_ok=ok,
@@ -247,17 +256,18 @@ def build_stt(ctx: Any, *, transport: Any = None, ws_connect: WsConnect | None =
                                                              transport=transport), **turn))
         elif name == "vosk":
             providers.append(EndpointedSTT(VoskSTT(model_path_for(ctx.config)), **turn))
-    shadow = None
+    shadows: list[STTProvider] = []
     if a.stt_shadow:
         if a.log_words:
-            shadow = streaming(a.stt_shadow)
+            shadows = [streaming(name) for name in a.stt_shadow]
         else:  # nothing to compare without the words: no credits spent on it
-            log.info("assistant stt: the %s comparison needs assistant.log_words: true", a.stt_shadow)
-    chain = STTChain(providers, cloud_ok=ok, shadow=shadow)
+            log.info("assistant stt: the %s comparison needs assistant.log_words: true", " and ".join(a.stt_shadow))
+    chain = STTChain(providers, cloud_ok=ok, shadows=shadows)
     rows = chain.describe()["providers"]
     log.info("assistant stt: %s%s", ", ".join(r["name"] + (f" ({r['missing']})" if r["missing"] else "")
                                              for r in rows) or "none configured",
-             f"; {shadow.name} also listens, to compare" if shadow is not None else "")
+             f"; {' and '.join(s.name for s in shadows)} also listen{'s' if len(shadows) == 1 else ''}, to compare"
+             if shadows else "")
     return chain if chain.missing() is None else None
 
 

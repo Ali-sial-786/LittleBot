@@ -194,6 +194,7 @@ def _serve(monkeypatch, **kw) -> _Service:
     ("openai", "https://api.openai.com/v1/models", "authorization", "Bearer {k}"),
     ("deepgram", "https://api.deepgram.com/v1/projects", "authorization", "Token {k}"),
     ("cartesia", "https://api.cartesia.ai/voices", "authorization", "Bearer {k}"),
+    ("assemblyai", "https://api.assemblyai.com/v2/transcript?limit=1", "authorization", "{k}"),
     ("elevenlabs", "https://api.elevenlabs.io/v1/user", "xi-api-key", "{k}"),
     ("home_assistant", "http://homeassistant.local:8123/api/", "authorization", "Bearer {k}"),
 ])

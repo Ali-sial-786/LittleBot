@@ -3,6 +3,7 @@
 
     .venv/bin/python scripts/set_key.py deepgram       # asks for the key (hidden), saves it
     .venv/bin/python scripts/set_key.py cartesia
+    .venv/bin/python scripts/set_key.py assemblyai
     .venv/bin/python scripts/set_key.py elevenlabs
     .venv/bin/python scripts/set_key.py anthropic
     .venv/bin/python scripts/set_key.py home_assistant  # the Home Assistant long-lived access token
@@ -30,6 +31,7 @@ if str(REPO_ROOT) not in sys.path:
 KEYS = {
     "deepgram": ("deepgram_api_key", "DEEPGRAM_API_KEY"),
     "cartesia": ("cartesia_api_key", "CARTESIA_API_KEY"),
+    "assemblyai": ("assemblyai_api_key", "ASSEMBLYAI_API_KEY"),
     "elevenlabs": ("elevenlabs_api_key", "ELEVENLABS_API_KEY"),
     "anthropic": ("anthropic_api_key", "ANTHROPIC_API_KEY"),
     "home_assistant": ("home_assistant_token", "HOME_ASSISTANT_TOKEN"),

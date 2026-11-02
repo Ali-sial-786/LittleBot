@@ -64,6 +64,9 @@ KEYS: tuple[KeySpec, ...] = (
     KeySpec("cartesia", "cartesia_api_key", "CARTESIA_API_KEY", "cartesia_api_key", "Cartesia",
             "The fastest natural voice LittleBot talks with.",
             "https://play.cartesia.ai/keys"),
+    KeySpec("assemblyai", "assemblyai_api_key", "ASSEMBLYAI_API_KEY", "assemblyai_api_key", "AssemblyAI",
+            "Speech-to-text to compare with Deepgram, or to listen instead (only when it is chosen).",
+            "https://www.assemblyai.com/dashboard/api-keys"),
     KeySpec("elevenlabs", "elevenlabs_api_key", "ELEVENLABS_API_KEY", "elevenlabs_api_key", "ElevenLabs",
             "A natural voice, used when Cartesia isn't set or doesn't answer.",
             "https://elevenlabs.io/app/settings/api-keys"),
@@ -313,6 +316,8 @@ def _request(s: KeySpec, key: str, cfg: Any) -> tuple[str, dict[str, str]]:
         from littlebot.assistant.tts.cartesia import API_VERSION  # noqa: PLC0415 - the version the voice sends
 
         return "https://api.cartesia.ai/voices", {"Cartesia-Version": API_VERSION, "Authorization": f"Bearer {key}"}
+    if s.name == "assemblyai":
+        return "https://api.assemblyai.com/v2/transcript?limit=1", {"Authorization": key}
     if s.name == "elevenlabs":
         return "https://api.elevenlabs.io/v1/user", {"xi-api-key": key}
     if s.name == "home_assistant":
