@@ -226,4 +226,5 @@ def spotify_skill(ctx: Any, fake: FakeSpotify, *, connect: bool = True, **kw: An
         connected(path)
     if not ctx.config.is_offline:
         ctx.privacy.set(cloud_enabled=True)
+    kw.setdefault("receiver_dir", path.parent / "no-soloist-here")  # never this computer's own Soloist
     return Spotify(ctx, transport=fake.transport(), token_path=path, **kw)

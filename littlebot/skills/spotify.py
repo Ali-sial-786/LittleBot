@@ -2,10 +2,14 @@
 
 The pieces (docs/SPOTIFY.md):
 
-* the receiver: librespot (the open-source Spotify Connect speaker, from raspotify) runs on the robot as the user
-  service ``littlebot-spotify.service`` (scripts/setup_spotify.sh). It shows up in every Spotify app as a speaker
-  called "LittleBot" (``skills.spotify_device_name``) and plays through the robot's PipeWire, into the
-  echo-cancelled speaker, so its music never sets off the wake word;
+* the receiver: Spotify Soloist (Spotify's own headless Spotify Connect client; librespot until 2026-11-02, when
+  Spotify refused its audio keys) runs on the robot as the user service ``littlebot-spotify.service``
+  (scripts/setup_spotify.sh). It shows up in every Spotify app as a speaker called "LittleBot"
+  (``skills.spotify_device_name``; found by that name in ``/me/player/devices``, whatever its type) and plays
+  through the robot's PipeWire, into the echo-cancelled speaker, so its music never sets off the wake word.
+  ``receiver()`` asks it, on 127.0.0.1 only, whether it runs and is signed in (its data folder's ``soloist.pid``
+  and its local WebSocket API's ``auth_state``): only a hint for the dashboard and for a plainer "can't play",
+  never needed to play;
 * control: Spotify's Web API as the owner, signed in with PKCE from the dashboard (littlebot/skills/spotify_api.py,
   the tokens in data/spotify_token.json, chmod 600);
 * this skill: the Spotify side of the music skill's tools (littlebot/skills/music.py ``play_music``,
@@ -25,8 +29,9 @@ Public API (the music skill, the music card, the dashboard, the assistant's inst
     await spotify.now_playing(fresh=False) -> dict | None;  spotify.snapshot() -> dict | None (no network)
     spotify.begin_connect(client_id) -> url;  await spotify.finish_connect(pasted);  spotify.disconnect()
     spotify.status() -> dict                    never a token
+    await spotify.receiver() -> dict | None     the robot's own Soloist: {running, signed_in, active} (127.0.0.1)
 
-Playing: a song plays from its album (so the next songs follow; librespot's autoplay is off), an artist, album or
+Playing: a song plays from its album (so the next songs follow), an artist, album or
 playlist as itself, liked songs / favourites as a shuffled list. ``play_choice`` sends ``PUT /me/player/play`` with
 LittleBot's device id (transferring playback to the robot); when the device isn't in ``/me/player/devices`` it says
 plainly that the receiver isn't running on the robot. Songs marked explicit are skipped unless
@@ -46,7 +51,9 @@ from __future__ import annotations
 
 import asyncio
 import difflib
+import json
 import logging
+import os
 import random
 import re
 import time
@@ -91,6 +98,9 @@ PLAYLIST_PAGES = 3
 MATCH_MIN = 0.72  # a playlist name scoring less than this isn't the one they meant
 CARD_WAIT_S = 0.5
 WAKE_RECEIVER_S = 0.6  # after waking an idle receiver with a transfer, before playing again
+RECEIVER_ASK_S = 1.5  # the robot's own Soloist: how long its local WebSocket API gets to answer
+RECEIVER_TTL_S = 10.0  # ... and how long its answer is reused
+LOOPBACK = ("127.0.0.1", "localhost", "::1")
 LIBRARY_KINDS = ("liked_songs", "my_playlist", "my_favorites")
 CONTROLS = ("pause", "resume", "next", "previous", "stop", "volume_up", "volume_down", "set_volume",
             "shuffle_on", "shuffle_off")
@@ -218,16 +228,68 @@ def mmss(ms: Any) -> str:
     return f"{s // 60}:{s % 60:02d}"
 
 
+# ---------------------------------------------------------------- the robot's own receiver (Soloist)
+def soloist_data_dir() -> Path:
+    """Where Soloist keeps its sign-in and runtime files (its default on Linux; scripts/setup_spotify.sh)."""
+    base = os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local" / "share")
+    return Path(base) / "soloist"
+
+
+async def ask_soloist(host: str, port: int, timeout: float) -> dict[str, Any] | None:
+    """Soloist's ``auth_state`` ({logged_in, is_active, device_name}) from its local WebSocket API, which sends it
+    first on every connection; None when it doesn't answer (or the websockets package isn't there)."""
+    try:
+        import websockets  # noqa: PLC0415 - optional (the assistant extra)
+    except ImportError:
+        return None
+
+    async def first_auth_state() -> dict[str, Any] | None:
+        async with websockets.connect(f"ws://{host}:{port}", open_timeout=timeout, max_size=1 << 20) as ws:
+            for _ in range(4):
+                msg = json.loads(await ws.recv())
+                if isinstance(msg, dict) and msg.get("type") == "auth_state":
+                    return msg
+        return None
+
+    try:
+        return await asyncio.wait_for(first_auth_state(), timeout)
+    except Exception:  # noqa: BLE001 - not running, an old build, no answer: only a hint
+        return None
+
+
+def _read_text(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8").strip()
+    except (OSError, UnicodeDecodeError):
+        return ""
+
+
+def _ws_endpoint(data_dir: Path) -> tuple[str, int] | None:
+    """The local WebSocket API's address from ``ws.addr`` / ``ws.port`` (written while it runs with --ws)."""
+    addr, port_text = _read_text(data_dir / "ws.addr"), _read_text(data_dir / "ws.port")
+    if addr.count(":") == 1 and not port_text:  # "127.0.0.1:41234"
+        addr, port_text = addr.split(":")
+    host = addr.strip("[]") or "127.0.0.1"
+    if host not in LOOPBACK or not port_text.isdigit() or not 0 < int(port_text) < 65536:
+        return None  # only ever this robot
+    return host, int(port_text)
+
+
 # ---------------------------------------------------------------- the skill
 class Spotify(Skill):
     name = "spotify"
 
     def __init__(self, ctx: Any, *, now: Callable[[], float] = time.time, clock: Callable[[], float] = time.monotonic,
                  transport: httpx.AsyncBaseTransport | None = None, token_path: Path | None = None,
-                 rng: random.Random | None = None) -> None:
+                 rng: random.Random | None = None, receiver_dir: Path | None = None,
+                 ask_receiver: Callable[[str, int, float], Any] = ask_soloist) -> None:
         super().__init__(ctx, now=now)
         self._clock = clock
         self._rng = rng or random.Random()
+        self._receiver_dir = receiver_dir or soloist_data_dir()
+        self._ask_receiver = ask_receiver
+        self._receiver: dict[str, Any] | None = None  # what receiver() last found
+        self._receiver_at: float | None = None
         path = token_path or _token_path(ctx)
         self.auth = SpotifyAuth(path, transport=transport, now=now)
         self.api = SpotifyAPI(self.auth, transport=transport, timeout=lambda: getattr(self.cfg,
@@ -348,10 +410,11 @@ class Spotify(Skill):
                                                  "active": bool(dev and dev.get("is_active")),
                                                  "volume": _int(dev.get("volume_percent")) if dev else None},
                 "now": st, "ducked": self._duck_from is not None, "provider": music_provider(self.ctx),
-                "last_error": self.last_error}
+                "receiver": self._receiver, "last_error": self.last_error}
 
     async def refresh(self) -> dict[str, Any]:
         """Ask Spotify for the device and what's playing (the dashboard), then ``status()``. Never raises."""
+        await self.receiver(fresh=True)
         if self.available():
             try:
                 await self.device(fresh=self._device_at is None or self._clock() - self._device_at > 10)
@@ -383,6 +446,33 @@ class Spotify(Skill):
         self._device, self._device_at = found, self._clock()
         return found
 
+    async def receiver(self, *, fresh: bool = False) -> dict[str, Any] | None:
+        """The robot's own receiver, as Soloist tells it on 127.0.0.1: {"running", "signed_in", "active"} (each
+        True / False, or None when it can't be told), or None when Soloist isn't set up on this computer. Only a
+        hint: whether Spotify lists the device decides. Never raises; no network beyond this robot."""
+        now = self._clock()
+        if not fresh and self._receiver_at is not None and now - self._receiver_at < RECEIVER_TTL_S:
+            return self._receiver
+        info: dict[str, Any] | None = None
+        try:
+            d = self._receiver_dir
+            if d.is_dir():
+                pid = _read_text(d / "soloist.pid")
+                running: bool | None = None
+                if Path("/proc").is_dir():  # Linux: a pid file left behind by a crash isn't "running"
+                    running = pid.isdigit() and Path(f"/proc/{pid}").exists()
+                info = {"running": running, "signed_in": None, "active": None}
+                where = _ws_endpoint(d)
+                if where is not None and running is not False:
+                    st = await self._ask_receiver(where[0], where[1], RECEIVER_ASK_S)
+                    if isinstance(st, dict) and "logged_in" in st:
+                        info.update(running=True, signed_in=bool(st.get("logged_in")),
+                                    active=bool(st.get("is_active")))
+        except Exception:  # noqa: BLE001 - a hint only
+            log.debug("spotify: couldn't ask the receiver", exc_info=True)
+        self._receiver, self._receiver_at = info, self._clock()
+        return info
+
     async def ready_to_play(self) -> tuple[dict[str, Any] | None, bool]:
         """(LittleBot's device or None, Spotify is playing on another device right now). Raises SpotifyError."""
         dev, st = await asyncio.gather(self.device(), self.now_playing(fresh=True))
@@ -394,6 +484,9 @@ class Spotify(Skill):
         if dev is None:
             dev = await self.device(fresh=True)
         if dev is None:
+            local = await self.receiver()
+            if local and local.get("running") and local.get("signed_in") is False:
+                raise SpotifyError("receiver_signed_out")
             raise SpotifyError("no_device")
         if dev.get("is_restricted"):
             raise SpotifyError("restricted")
@@ -659,7 +752,7 @@ class Spotify(Skill):
         except SpotifyError as e:
             if e.kind not in ("no_device", "no_active"):
                 raise
-            # librespot that has been idle a long time: wake it with a transfer, then play again
+            # a receiver that has been idle a long time: wake it with a transfer, then play again
             self._device_at = None
             await self.api.call("PUT", "/me/player", body={"device_ids": [dev_id], "play": False})
             await asyncio.sleep(WAKE_RECEIVER_S)

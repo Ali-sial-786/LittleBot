@@ -303,6 +303,85 @@ async def test_the_receiver_missing_is_said_plainly(ctx, fake: FakeSpotify):
     await sp.stop()
 
 
+async def test_soloist_is_found_by_its_name_whatever_its_type(ctx, fake: FakeSpotify):
+    fake.devices = [dict(PHONE), {**DEVICE, "id": "dev-soloist", "name": " littlebot ", "type": "Computer"}]
+    sp = spotify_skill(ctx, fake)
+    await sp.play_choice(Choice("artist", "Queen", context_uri="spotify:artist:Queen"), show_card=False)
+    assert fake.calls("PUT", "/me/player/play")[-1]["query"]["device_id"] == "dev-soloist"
+    await sp.stop()
+
+
+def _soloist_dir(tmp_path: Path, *, pid: str | None = None, addr: str = "127.0.0.1", port: str = "41234") -> Path:
+    d = tmp_path / "soloist"
+    d.mkdir(exist_ok=True)
+    (d / "soloist.pid").write_text(pid if pid is not None else str(os.getpid()))
+    (d / "ws.addr").write_text(addr + "\n")
+    (d / "ws.port").write_text(port + "\n")
+    return d
+
+
+async def test_the_robots_own_receiver_says_whether_it_is_signed_in(ctx, fake: FakeSpotify, tmp_path: Path):
+    asked: list[tuple[str, int]] = []
+
+    async def signed_out(host: str, port: int, timeout: float) -> dict[str, Any]:
+        asked.append((host, port))
+        return {"type": "auth_state", "logged_in": False, "is_active": False, "device_name": "LittleBot"}
+
+    fake.devices = [dict(PHONE)]  # Spotify doesn't list it: it isn't signed in
+    sp = spotify_skill(ctx, fake, receiver_dir=_soloist_dir(tmp_path), ask_receiver=signed_out)
+    with pytest.raises(SpotifyError) as e:
+        await sp.play_choice(Choice("artist", "Queen", context_uri="spotify:artist:Queen"), show_card=False)
+    assert e.value.kind == "receiver_signed_out" and "pick LittleBot once" in str(e.value)
+    assert asked == [("127.0.0.1", 41234)]
+    st = await sp.refresh()
+    assert st["receiver"] == {"running": True, "signed_in": False, "active": False}
+    await sp.stop()
+
+
+async def test_the_receiver_hint_never_gets_in_the_way(ctx, fake: FakeSpotify, tmp_path: Path):
+    async def boom(host: str, port: int, timeout: float) -> dict[str, Any]:
+        raise OSError("refused")
+
+    sp = spotify_skill(ctx, fake)  # no Soloist on this computer: no hint, and nothing asked
+    assert await sp.receiver() is None and (await sp.refresh())["receiver"] is None
+    await sp.stop()
+
+    asked: list[str] = []
+
+    async def note(host: str, port: int, timeout: float) -> None:
+        asked.append(host)
+
+    d = _soloist_dir(tmp_path, addr="192.168.1.20")  # never anything but this robot
+    sp = spotify_skill(ctx, fake, receiver_dir=d, ask_receiver=note)
+    info = await sp.receiver(fresh=True)
+    assert asked == [] and info is not None and info["signed_in"] is None
+    (d / "ws.addr").write_text("127.0.0.1")
+    sp = spotify_skill(ctx, fake, receiver_dir=d, ask_receiver=boom)
+    assert (await sp.receiver(fresh=True))["signed_in"] is None  # its API failing is only "can't tell"
+    await sp.play_choice(Choice("artist", "Queen", context_uri="spotify:artist:Queen"), show_card=False)
+    assert sp.playing()  # Spotify lists the device: it plays, whatever the hint said
+    await sp.stop()
+    if Path("/proc").is_dir():  # Linux: a pid file left by a crash isn't running, and isn't asked
+        sp = spotify_skill(ctx, fake, receiver_dir=_soloist_dir(tmp_path, pid="999999999"), ask_receiver=note)
+        assert (await sp.receiver(fresh=True))["running"] is False and asked == []
+        await sp.stop()
+
+
+async def test_ask_soloist_reads_its_auth_state():
+    websockets = pytest.importorskip("websockets")
+    from littlebot.skills.spotify import ask_soloist  # noqa: PLC0415
+
+    async def handler(ws) -> None:  # what Soloist sends first on every connection
+        await ws.send('{"type": "auth_state", "logged_in": true, "is_active": true, "device_name": "LittleBot"}')
+        await asyncio.sleep(0.5)
+
+    async with websockets.serve(handler, "127.0.0.1", 0) as server:
+        port = next(iter(server.sockets)).getsockname()[1]
+        st = await ask_soloist("127.0.0.1", port, 2.0)
+    assert st is not None and st["logged_in"] is True and st["device_name"] == "LittleBot"
+    assert await ask_soloist("127.0.0.1", port, 0.5) is None  # nothing listening any more
+
+
 async def test_an_idle_receiver_is_woken_with_a_transfer(ctx, fake: FakeSpotify, monkeypatch):
     monkeypatch.setattr(spotify_mod, "WAKE_RECEIVER_S", 0.0)
     sp = spotify_skill(ctx, fake)

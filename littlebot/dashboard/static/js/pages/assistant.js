@@ -69,7 +69,7 @@ function spotifySection(app) {
 
   function render(s) {
     const now = s.now && s.now.on_littlebot && s.now.title ? s.now : null;
-    const key = JSON.stringify([s.error, s.connected, s.pending, s.device, s.blocked, s.client_id, s.provider, s.last_error, now && [now.title, now.artist, now.playing]]);
+    const key = JSON.stringify([s.error, s.connected, s.pending, s.device, s.receiver, s.blocked, s.client_id, s.provider, s.last_error, now && [now.title, now.artist, now.playing]]);
     if (key === shownKey) return; // unchanged: keep what is being typed (and its focus)
     shownKey = key;
     clear(body);
@@ -79,8 +79,11 @@ function spotifySection(app) {
     const dev = s.device;
     const name = `“${s.device_name || 'LittleBot'}”`;
     let speaker = `LittleBot’s Spotify speaker (${name}): connect first.`;
+    const rcv = s.receiver; // what the robot's own receiver (Soloist) says about itself: a hint only
     if (s.connected && s.available && dev) {
       speaker = dev.visible ? `LittleBot’s Spotify speaker (${name}) is ready${dev.volume != null ? `, volume ${dev.volume}%` : ''}.`
+        : rcv && rcv.running === false ? `LittleBot’s Spotify speaker (${name}) isn’t running on the robot: run scripts/setup_spotify.sh --check on the robot.`
+        : rcv && rcv.signed_in === false ? `LittleBot’s Spotify speaker (${name}) is running but isn’t signed in: pick ${name} once in the Spotify app on the same Wi-Fi (or run scripts/setup_spotify.sh --pair on the robot).`
         : `LittleBot’s Spotify speaker (${name}) isn’t visible: run scripts/setup_spotify.sh on the robot, then pick ${name} once in the Spotify app on the same Wi-Fi.`;
     } else if (s.connected) speaker = `LittleBot’s Spotify speaker (${name}): not checked.`;
     append(body, [

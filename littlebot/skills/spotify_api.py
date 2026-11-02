@@ -76,6 +76,8 @@ ERRORS: dict[str, str] = {
     "forbidden": "Spotify didn't allow that",
     "no_device": "LittleBot's Spotify receiver isn't running, so Spotify can't play on the robot "
                  "(scripts/setup_spotify.sh --check)",
+    "receiver_signed_out": "LittleBot's Spotify receiver is running but isn't signed in: pick LittleBot once as the "
+                           "speaker in the Spotify app, on the same Wi-Fi",
     "restricted": "Spotify won't let LittleBot control its receiver right now",
     "no_active": "nothing is playing on Spotify right now",
     "not_found": "Spotify couldn't find that",
