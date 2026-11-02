@@ -58,6 +58,7 @@ and reported as degraded — the robot keeps running (only the face is mandatory
 | `motion/` | `MotionAPI` | Servo joints with hard limits, eased interpolation, gestures, latched emergency stop, register-level PCA9685 mock; real driver gated behind config + calibration + parent arming. |
 | `power/` | — | `ctx.power`: the battery, read from an RP2040-Zero monitor's JSON lines on a USB serial port (stdlib termios, no pyserial; `firmware/battery_monitor/`). Percent, charging, temperature, time left; low / empty / hot alarms, the gentle low-battery line, the goodbye and clean power-off. Quiet and "not fitted" without a monitor. See docs/POWER.md section 8. |
 | `mirror/` | — | `ctx.mirror`: a phone's screen on LittleBot's screen when a grown-up asks (voice tools in `skills/mirror.py`, the dashboard's Phone mirroring card). iPhone: UxPlay (AirPlay receiver "LittleBot", full screen, software H.264) runs only while asked for and stops after `mirror.wait_seconds` with no phone; its log lines say when mirroring starts and stops. Android: a phone paired once (`adb pair`) is found with adb (mDNS, `adb connect`) and shown with scrcpy, which exits when the phone goes. Takes `Resource.SCREEN` like the browser view (a game or video wins), never the speaker. See docs/MIRRORING.md. |
+| `nanit/` | — | `ctx.nanit`: the Nanit baby camera's live picture on the screen when a grown-up asks (voice tools in `skills/nanit.py`, the dashboard's Baby camera card). An unofficial bridge (indiefan/home_assistant_nanit, pinned, built and signed in by `scripts/setup_nanit.sh`, run as the user unit `littlebot-nanit`, 200 MB cap) keeps the camera sending to its RTMP server on port 1935; ffplay plays `rtmp://127.0.0.1:1935/local/<uid>` full screen, retries until the picture comes (20 s), closes after `nanit.max_minutes`. LittleBot never reads the bridge's sign-in, only `data/nanit/cameras.json` (names, uids). Takes `Resource.SCREEN` at mirroring's priority, never the speaker. See docs/NANIT.md. |
 | `dashboard/` | — | FastAPI + vanilla JS parent dashboard; setup-code first run, scrypt passwords, server-side sessions, CSRF tokens, localhost-only by default. |
 | `safety/` | — | `AgePolicy` (video/cloud gates, reply length), `PrivacyManager`, AI content validation. |
 | `app/behaviours.py` | — | Reactive glue in one place: state → face, faces → gaze, person arrives → greeting / wake, idle → sleepy → sleep. |
@@ -101,6 +102,13 @@ CSRF token.
 `skills/takeover.py` (after the answer, the chat carries on) → `mirror.start("iphone")` → `uxplay` waits →
 the iPhone picks LittleBot → "starting mirroring" in its output → lease (screen; priority 45) → the phone fills
 the screen → the phone stops (or "stop mirroring", STOP, a video or game) → uxplay exits → the face is back.
+
+**Baby camera**
+"Show the baby camera" → `show_baby_camera` (skills/nanit.py) answers and hands the start to `skills/takeover.py`
+(the chat carries on) → `nanit.show()` → bridge unit active? (`systemctl --user is-active`) → lease (screen;
+priority 45) → `ffplay rtmp://127.0.0.1:1935/local/<uid>` → "Input #0" = the picture → "close the camera" (or STOP,
+a video or game, the stream ending, 30 minutes) → ffplay exits → the face is back. No picture in 20 s → it closes
+and the voice says why.
 
 **STOP**
 Dashboard STOP / keyboard X → `robot.stop_all()` → `system.stop_all` event, motion cancel, audio cut,
