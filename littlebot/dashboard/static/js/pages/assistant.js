@@ -7,6 +7,7 @@ import { append, banner, button, clear, h, icon, pageHead, setText, switchRow, t
 import { calendarPanel } from './calendar_panel.js';
 import { doorbellPanel } from './doorbell_panel.js';
 import { mirrorPanel } from './mirror_panel.js';
+import { nanitPanel } from './nanit_panel.js';
 
 const SPEAK_KEY = 'littlebot.assistant.speak';
 const KEY_HELP = {
@@ -195,6 +196,7 @@ export default {
     const doorbell = doorbellPanel(app); // doorbell and camera alerts (doorbell_panel.js)
     const calendars = calendarPanel(app); // each person's calendar and phone (calendar_panel.js)
     const mirror = mirrorPanel(app); // a phone's screen on LittleBot's screen (mirror_panel.js)
+    const nanit = nanitPanel(app); // the Nanit baby camera on LittleBot's screen (nanit_panel.js)
     let spotifyTick = 0;
 
     // ---------- skills
@@ -258,6 +260,7 @@ export default {
         calendars.el,
         doorbell.el,
         mirror.el,
+        nanit.el,
         h('section', { class: 'card' }, h('div', { class: 'card-head' }, h('h2', {}, icon('star'), 'Lists')), listsBody),
         h('section', { class: 'card' }, h('div', { class: 'card-head' }, h('h2', {}, icon('sun'), 'Reminders and alarms')), remindersBody),
         h('section', { class: 'card' }, h('div', { class: 'card-head' }, h('h2', {}, icon('sparkles'), 'What LittleBot remembers')), memoriesBody),
@@ -297,6 +300,6 @@ export default {
     }
     refresh();
     timer = setInterval(refresh, 4000);
-    return { destroy() { clearInterval(timer); doorbell.destroy(); calendars.destroy(); mirror.destroy(); } };
+    return { destroy() { clearInterval(timer); doorbell.destroy(); calendars.destroy(); mirror.destroy(); nanit.destroy(); } };
   },
 };

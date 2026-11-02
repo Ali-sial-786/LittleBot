@@ -20,6 +20,7 @@ from littlebot.dashboard.routes.keys_routes import router as keys
 from littlebot.dashboard.routes.media_routes import router as media
 from littlebot.dashboard.routes.mirror_routes import router as mirror
 from littlebot.dashboard.routes.motion_routes import router as motion
+from littlebot.dashboard.routes.nanit_routes import router as nanit
 from littlebot.dashboard.routes.people_routes import router as people
 from littlebot.dashboard.routes.power_routes import router as power
 from littlebot.dashboard.routes.privacy_routes import router as privacy
@@ -31,6 +32,6 @@ from littlebot.dashboard.routes.voice_routes import router as voice_lines
 
 ROUTERS = (auth, robot, assistant, face, camera, activities, games, screens, browser, media, profile, people, ai, chatgpt, decide,
            info, privacy, devices, motion, sim, voice_lines, power, doorbell, keys, calendar,
-           mirror)
+           mirror, nanit)
 
 __all__ = ["ROUTERS"]
