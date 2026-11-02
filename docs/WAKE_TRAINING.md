@@ -5,12 +5,16 @@ It works, but it can mishear (it heard "little" in other words, so `min_confiden
 tuned). A wake word model trained only on "Hey LittleBot" is smaller, faster and should mishear less. This page is
 how that model is made, on the robot itself, with [openWakeWord](https://github.com/dscripka/openWakeWord).
 
-> **Status.** The first full run (1 November 2026, 03:16 to 06:52: 10,000 wake word clips, 8,000 near misses, a
-> 32-wide network, 50,000 steps) caught 68% of the test clips at 0.5, with about 1 false alarm an hour: not good
-> enough. It is kept in `~/wwtrain/hey_little_bot/run1`. The second run, started the same morning, has 40,000 wake
-> word clips and 24,000 near misses, each heard in two different rooms, a 64-wide network and 200,000 steps (about
-> 11 hours). LittleBot doesn't use either model yet: the better one will be tried on recordings first, next to Vosk,
-> and only switched on if it beats it.
+> **Status (2 November 2026).**
+>
+> | Run | Clips | Network, steps | Caught at 0.5 | False alarms an hour | Where |
+> |---|---|---|---|---|---|
+> | 1 (1 November, 03:16 to 06:52) | 10,000 wake word, 8,000 near misses | 32 wide, 50,000 | 68% | about 1.1 | `~/wwtrain/hey_little_bot/run1` |
+> | 2 (1 November, 11:57 to 22:22) | 40,000 wake word, 24,000 near misses, each in two rooms | 64 wide, 200,000 | 78% | about 2.5 | `~/wwtrain/hey_little_bot` |
+>
+> On its own neither is good enough to replace Vosk. Run 2 now listens **next to Vosk, in shadow mode**: it only
+> measures and logs, and changes nothing about when LittleBot wakes (see [Shadow mode](#shadow-mode-the-model-next-to-vosk)
+> below). The idea is that it may be a good second opinion on Vosk's wakes, to cut the times Vosk mishears.
 
 ## How it works, in plain words
 
@@ -61,8 +65,93 @@ and the features are made again when their count doesn't match. `--steps` and `-
 Each step can be run on its own (`train.py voices`, `features`, `train`, `check`) and carries on where it stopped.
 `train.py all --smoke` is a 10-minute test with 48 clips of each kind (in `~/wwtrain/smoke`).
 
-The model ends up in `~/wwtrain/hey_little_bot/hey_little_bot.onnx` (about 200 KB). LittleBot would run it with
-onnxruntime and openWakeWord's two shared feature models (`melspectrogram.onnx`, `embedding_model.onnx`).
+The model ends up in `~/wwtrain/hey_little_bot/hey_little_bot.onnx` (about 400 KB for run 2). LittleBot runs it
+with onnxruntime and openWakeWord's two shared feature models (`melspectrogram.onnx`, `embedding_model.onnx`), see
+below.
+
+## Shadow mode: the model next to Vosk
+
+LittleBot keeps hearing "Hey LittleBot" with Vosk, exactly as before. With `wake.oww_mode: shadow` the trained
+model hears the same microphone sound on its own thread (`littlebot/audio/oww.py`) and writes down what it would
+have said:
+
+* **Every time Vosk wakes LittleBot:** Vosk's word confidence and the model's best score in the 2 seconds before
+  (and up to 0.6 s after). In the log: `wake model: Vosk woke it (word confidence 0.83); the model's score: 0.91 at
+  the wake, 0.95 up to 0.6 s after (shadow: it changes nothing)`.
+* **How the chat after it went,** once it ends: a real request, dismissed at once ("stop"), nobody said anything
+  (most likely a false wake), or it didn't connect. In the log: `wake model: after the wake at 18:02:11: it became
+  a real request (2 turns, 35 s)`.
+* **When the model scores 0.5 or more and Vosk doesn't wake:** `wake model: score 0.72 with no Vosk wake`, and
+  whether Vosk heard a wake phrase there but wasn't sure enough (perhaps a wake Vosk missed).
+* Once an hour, how much sound it scored, its highest score and the CPU it took.
+
+All of it also goes to `data/wake/shadow.jsonl`, one line each: the time, the numbers and the outcome. **No sound
+and no words** are ever kept or logged by it.
+
+It runs openWakeWord's own steps (the same as its `AudioFeatures` and `Model.predict`): 80 ms of sound at a time
+→ mel spectrogram → 96-number embedding → the last 16 embeddings (1.28 s) → a score from 0 to 1. On the robot its
+scores were the same as the openwakeword package's to 6 decimals on 40 test clips. It takes about 5 to 6% of one
+CPU core of the Pi 5 while the wake word listens (almost all of it the shared embedding model), and only then.
+
+If anything is wrong with it (a file missing, onnxruntime not installed, an error), it switches itself off with one
+warning (`wake model: switched off (...)`) and the wake word goes on with Vosk alone.
+
+### Setting it up
+
+The files live in `data/wake/` (not in git): `hey_little_bot.onnx`, `melspectrogram.onnx`, `embedding_model.onnx`,
+`check.json` and `MODELS.md` (where they came from). onnxruntime is the `wake-model` extra:
+
+```
+.venv/bin/python -m pip install -e '.[wake-model]'
+mkdir -p data/wake && cp ~/wwtrain/hey_little_bot/{hey_little_bot.onnx,check.json} \
+    ~/wwtrain/openWakeWord/openwakeword/resources/models/{melspectrogram,embedding_model}.onnx data/wake/
+.venv/bin/python scripts/set_config.py wake.oww_mode shadow
+systemctl --user restart littlebot
+```
+
+| Setting | Default | What it does |
+|---|---|---|
+| `wake.oww_mode` | `off` | `off`, `shadow` (log only) or `confirm` (see below). The robot has `shadow`. |
+| `wake.oww_threshold` | `0.5` | confirm: the score Vosk's wake needs |
+| `wake.oww_peak_threshold` | `0.5` | a score this high with no Vosk wake is logged |
+| `wake.oww_window_seconds` | `2.0` | how far back before Vosk's wake the model's score is looked at |
+| `wake.oww_confirm_wait_seconds` | `0.3` | confirm: how long to wait for the model to catch up |
+| `wake.oww_model_dir` | `wake` | the folder in `data/` with the files |
+
+### Reading the report
+
+Use LittleBot normally for a few days, then:
+
+```
+.venv/bin/python scripts/wake_shadow_report.py
+.venv/bin/python scripts/wake_shadow_report.py --since 2026-11-03     # only from that day on
+```
+
+It says how many times Vosk woke LittleBot and what happened after (real requests, dismissed, nobody spoke), how
+many of those wakes the model agreed with at 0.1, 0.3, 0.5, 0.7 and 0.9, how many peaks of its own it had per hour
+of listening, and which threshold would have kept every real request and dropped the most false wakes. "Nobody
+said anything" and "dismissed" count as false wakes, "a real request" as a real one. With fewer than 20 wakes it
+says to wait.
+
+What to look for: if the model scores high on (nearly) every real request and low on the false wakes, confirm mode
+would cut Vosk's mishears without missing you. If it scores low on real requests too, it isn't ready.
+
+### Confirm mode, later
+
+With `wake.oww_mode: confirm`, Vosk's wake only counts when the model's best score in the last 2 seconds is at least
+`wake.oww_threshold`; otherwise the log says `... below wake.oww_threshold 0.50: not waking` and LittleBot keeps
+listening. If the model can't give a score (still loading, switched off), Vosk decides alone, as now. Confirm looks
+at the score at the moment Vosk wakes ("at the wake" in the report); with `wake.early` Vosk can wake just before the
+phrase ends, so compare that column, not the "0.6 s later" one. It is built and tested but **not switched on**:
+only once the report shows it helps, and with your OK:
+
+```
+.venv/bin/python scripts/set_config.py wake.oww_threshold 0.5     # the report's suggestion
+.venv/bin/python scripts/set_config.py wake.oww_mode confirm
+systemctl --user restart littlebot
+```
+
+To go back: `scripts/set_config.py wake.oww_mode shadow` (or `off`) and restart.
 
 ## Memory: run it with the limit
 
@@ -86,4 +175,5 @@ All public, for research and training:
 Nothing recorded in the house is used: every voice is made up. To make room again afterwards, delete
 `~/wwtrain/data` (the 17 GB file is only needed for training).
 
-Code: `scripts/wake_training/setup.sh`, `download.sh`, `train.py`, `run_all.sh`.
+Code: `scripts/wake_training/setup.sh`, `download.sh`, `train.py`, `run_all.sh`; on LittleBot `littlebot/audio/oww.py`
+and `scripts/wake_shadow_report.py`.

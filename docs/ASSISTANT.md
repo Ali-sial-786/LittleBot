@@ -1,6 +1,8 @@
 # The assistant: LittleBot's fast voice
 
-LittleBot has two voice pipelines. The wake word ("Hey LittleBot") starts whichever one is in use.
+LittleBot has two voice pipelines. The wake word ("Hey LittleBot") starts whichever one is in use. The wake word
+is heard by Vosk; LittleBot's own trained wake word model can listen next to it as a second opinion
+(`wake.oww_mode`, see [WAKE_TRAINING.md](WAKE_TRAINING.md)).
 
 * **The assistant** (new, `littlebot/assistant`): your words → fast speech-to-text that knows when you've
   finished → **one** Claude call that talks, uses LittleBot's tools, sets the face and puts a card on the screen →
