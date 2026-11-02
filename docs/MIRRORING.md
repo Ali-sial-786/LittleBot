@@ -113,7 +113,10 @@ it up instead of remembering it).
   `stdbuf -oL` so its log lines arrive at once. "raop_rtp_mirror starting mirroring" means a phone started; then
   "raop_rtp_mirror->running is no longer true", "Open connections: 0" or "lost connection with client" means it
   stopped. LittleBot takes the screen only once a phone really mirrors, so cards still show while it waits.
-* **Android**: `adb devices`, else `adb mdns services` and `adb connect` to each paired phone it sees, then
+* **Android**: `adb devices`, else `adb mdns services` and `adb connect` to each paired phone it sees. Debian's
+  adb can't look for phones itself (it was built without mDNS: "adb mdns check" prints nothing), so after pairing
+  the phone was never found again. LittleBot looks for them on the Wi-Fi with the zeroconf package instead (the
+  `mirror` extra: `.venv/bin/python -m pip install -e '.[mirror]'`), paired phones first. Then
   `scrcpy --serial=<phone> --fullscreen --window-borderless --max-size=480 --video-bit-rate=4000000 --max-fps=30
   --no-audio --no-control`. scrcpy exits when the phone goes away or stops sharing.
 * The screen lease is the browser view's: taken like a video, held at priority 45, so a game or video wins and

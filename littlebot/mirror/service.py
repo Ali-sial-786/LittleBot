@@ -30,7 +30,8 @@ Android (scrcpy over Wi-Fi)
 ---------------------------
 Paired once on the dashboard (Android 11+: Developer options → Wireless debugging → Pair device with pairing
 code: ``adb pair <ip>:<port>`` with the code on stdin). Then each time: ``adb devices`` (adb's own mDNS may have
-connected the phone already), else ``adb mdns services`` and ``adb connect`` to each paired phone it sees
+connected the phone already), else ``adb mdns services`` (or, as Debian's adb has no mDNS, python-zeroconf:
+``adb.zeroconf_phones``) and ``adb connect`` to each paired phone it sees
 (Wireless debugging's port changes each time it is switched on, so the address is looked up, not kept), then
 ``scrcpy --serial=<phone> --fullscreen --window-borderless --max-size=<n> --video-bit-rate=<b> --max-fps=<f>
 --no-audio --no-control`` (sound and taps on LittleBot's screen only when the config says so; ``--stay-awake``
@@ -237,14 +238,16 @@ class MirrorService(Service):
     def __init__(self, ctx: Any, *, launcher: Launcher | None = None, runner: A.Runner | None = None,
                  which: Callable[[str], str | None] = shutil.which, clock: Callable[[], float] = time.monotonic,
                  screen: bool | None = None, wait_seconds: float | None = None,
-                 keep_awake_every: float = KEEP_AWAKE_EVERY_S) -> None:
-        """``launcher`` starts uxplay / scrcpy, ``runner`` runs adb's short commands (tests fake both).
+                 keep_awake_every: float = KEEP_AWAKE_EVERY_S, browser: A.Browser | None = None) -> None:
+        """``launcher`` starts uxplay / scrcpy, ``runner`` runs adb's short commands, ``browser`` looks for the
+        phones on the Wi-Fi (tests fake all three).
         ``screen``: whether there is a screen to show on (default: not in a headless run)."""
         super().__init__()
         self.ctx = ctx
         self.cfg = ctx.config.mirror
         self._launcher = launcher or default_launcher
         self._runner = runner or A.default_runner
+        self._browser = browser or A.zeroconf_phones
         self._which = which
         self._clock = clock
         self._screen = (not ctx.config.display.headless) if screen is None else bool(screen)
@@ -580,10 +583,22 @@ class MirrorService(Service):
         found = await self._wifi_devices()
         if not found:
             _, out = await self._adb("mdns", "services")
-            for _name, address in A.parse_mdns(out)[:MAX_PHONES]:
+            offered = A.parse_mdns(out)
+            if not offered:  # Debian's adb has no mDNS: looked for here instead
+                try:
+                    offered = await self._browser()
+                except Exception:  # noqa: BLE001 - no Wi-Fi, no zeroconf: nothing found
+                    log.debug("mirror: looking for phones on the Wi-Fi failed", exc_info=True)
+                    offered = []
+            guids = {str(p.get("guid") or "") for p in self.phones()} - {""}
+            offered.sort(key=lambda o: not any(o[0].startswith(g) for g in guids))  # the paired ones first
+            for _name, address in offered[:MAX_PHONES]:
+                if A.check_address(address) is None:
+                    continue
                 _, said = await self._adb("connect", address)
                 if A.connected(said):
                     log.info("mirror: connected to a paired Android phone on the Wi-Fi")
+                    break
             found = await self._wifi_devices()
         if not found:
             log.info("mirror: no paired Android phone answered on the Wi-Fi")

@@ -116,8 +116,12 @@ class Env:
         self.events: list[tuple[str, dict[str, Any]]] = []
         for topic in (STARTED, SHOWING, STOPPED, "screen.keep_awake"):
             self.ctx.bus.subscribe(topic, lambda e, t=topic: self.events.append((t, dict(e.data or {}))))
+        self.found: list[tuple[str, str]] = []  # what looking on the Wi-Fi finds (when adb's mDNS finds nothing)
         self.svc = MirrorService(self.ctx, launcher=self.launcher, runner=self.adb, which=self.which, screen=True,
-                                 wait_seconds=0.3, keep_awake_every=0.05)
+                                 wait_seconds=0.3, keep_awake_every=0.05, browser=self.browse)
+
+    async def browse(self) -> list[tuple[str, str]]:
+        return list(self.found)
 
     def which(self, name: str) -> str | None:
         return f"/usr/bin/{name}" if name in self.installed else None
@@ -258,6 +262,20 @@ async def test_android_already_connected_needs_no_mdns(env: Env) -> None:
     res = await env.svc.start("android")
     assert res["ok"] and ["mdns", "services"] not in env.adb.commands()
     assert "--serial=adb-R5CT-abc123._adb-tls-connect._tcp" in env.launcher.proc.argv
+
+
+async def test_android_found_on_the_wifi_when_adb_has_no_mdns(env: Env) -> None:
+    # Debian's adb has no mDNS: the paired phone was never found again (the robot, 2026-11-02)
+    env.pair()
+    env.adb.mdns = "List of discovered mdns services\n"
+    env.found = [("adb-OTHER-zzz", "192.168.1.40:40001"), ("adb-R5CT-abc123", "192.168.1.23:41235"),
+                 ("adb-BAD", "not an address")]
+    res = await env.svc.start("android", source="dashboard")
+    assert res["ok"] and res["state"] == "showing"
+    connects = [c for c in env.adb.commands() if c[0] == "connect"]
+    assert connects[0] == ["connect", "192.168.1.23:41235"]  # the paired phone first
+    assert ["connect", "not an address"] not in connects
+    assert "--serial=192.168.1.23:41235" in env.launcher.proc.argv
 
 
 async def test_android_touch_control_from_the_config() -> None:

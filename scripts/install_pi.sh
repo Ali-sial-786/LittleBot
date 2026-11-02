@@ -269,9 +269,9 @@ if ((SKIP_APT == 0)); then
 fi
 
 if ((SYSTEM_OPENCV)); then
-    EXTRAS="audio,pi"
+    EXTRAS="audio,pi,mirror"
 else
-    EXTRAS="vision,audio,pi"
+    EXTRAS="vision,audio,pi,mirror"
 fi
 ((WITH_DEV)) && EXTRAS="$EXTRAS,dev"
 

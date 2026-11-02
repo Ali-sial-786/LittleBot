@@ -31,6 +31,9 @@ vision = ["opencv-python-headless>=4.8,<5"]  # 5.x dropped the bundled Haar dete
 audio = ["sounddevice>=0.4.6"]
 # PCA9685 servo controller over I2C (Raspberry Pi only; physical motion is disabled by default).
 pi = ["smbus2>=0.4"]
+# Finding a paired Android phone on the Wi-Fi for mirroring (littlebot/mirror/adb.py): Debian's adb has no mDNS.
+# Pure Python; without it Android mirroring only finds a phone adb is already connected to.
+mirror = ["zeroconf>=0.130"]
 # Optional offline speech recognition: the wake word ("Hey LittleBot" starts live voice) and local STT.
 # vosk ships one prebuilt aarch64 wheel for every Python 3 (py3-none-manylinux2014_aarch64, ~2.4 MB);
 # the model comes separately: scripts/download_models.py vosk-en (40 MB download, ~130 MB RAM).

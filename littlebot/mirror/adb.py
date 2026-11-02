@@ -21,6 +21,7 @@ from __future__ import annotations
 import asyncio
 import re
 import subprocess
+import time
 from typing import Awaitable, Callable, Sequence
 
 # (argv, timeout seconds, standard input) -> (exit code, what it printed: stdout and stderr together)
@@ -118,5 +119,53 @@ async def default_runner(argv: Sequence[str], timeout: float, stdin: bytes | Non
     return int(proc.returncode or 0), (out or b"")[:MAX_OUTPUT].decode("utf-8", "replace")
 
 
-__all__ = ["Runner", "check_address", "check_code", "connected", "default_runner", "is_wifi", "parse_devices",
-           "parse_mdns", "parse_pair"]
+# Debian trixie's adb is built without mDNS ("adb mdns check" prints nothing, "adb mdns services" lists nothing),
+# so a paired phone was never found again after pairing (the robot, 2026-11-02). The phones are looked for on the
+# Wi-Fi with python-zeroconf instead: (service name, "ip:port") of each that offers its wireless debugging.
+# () -> [(service name, "ip:port")]
+Browser = Callable[[], Awaitable["list[tuple[str, str]]"]]
+CONNECT_SERVICE = "_adb-tls-connect._tcp.local."
+BROWSE_S = 3.0
+
+
+async def zeroconf_phones(seconds: float = BROWSE_S) -> list[tuple[str, str]]:
+    """The phones on the Wi-Fi offering a (paired) wireless debugging connection, found by mDNS; [] when the
+    zeroconf package isn't installed or nothing answered."""
+    return await asyncio.to_thread(_browse, seconds)
+
+
+def _browse(seconds: float) -> list[tuple[str, str]]:
+    try:
+        from zeroconf import ServiceBrowser, ServiceListener, Zeroconf  # noqa: PLC0415
+    except ImportError:
+        return []
+    found: dict[str, str] = {}
+
+    class Listener(ServiceListener):
+        def add_service(self, zc: Zeroconf, type_: str, name: str) -> None:
+            info = zc.get_service_info(type_, name, 1500)
+            if info is None or not info.port:
+                return
+            ipv4 = [a for a in info.parsed_addresses() if check_address(f"{a}:{info.port}")]
+            if ipv4:
+                found[name.removesuffix("." + CONNECT_SERVICE)] = f"{ipv4[0]}:{info.port}"
+
+        update_service = add_service
+
+        def remove_service(self, zc: Zeroconf, type_: str, name: str) -> None:
+            pass
+
+    try:
+        zc = Zeroconf()
+    except OSError:
+        return []
+    try:
+        ServiceBrowser(zc, CONNECT_SERVICE, Listener())
+        time.sleep(seconds)  # (a worker thread: the answers come in meanwhile)
+    finally:
+        zc.close()
+    return list(found.items())
+
+
+__all__ = ["Browser", "Runner", "check_address", "check_code", "connected", "default_runner", "is_wifi",
+           "parse_devices", "parse_mdns", "parse_pair", "zeroconf_phones"]
