@@ -179,10 +179,40 @@ Launcher = Callable[[Sequence[str], "dict[str, str] | None"], Awaitable[Any]]
 
 
 async def default_launcher(argv: Sequence[str], env: dict[str, str] | None = None) -> _MirrorProcess:
+    """Start a full-screen program over the face (also the Nanit camera view's ffplay, littlebot/nanit)."""
     proc = await asyncio.create_subprocess_exec(
         *argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         start_new_session=True, env=env)
-    return _MirrorProcess(proc)
+    handle = _MirrorProcess(proc)
+    _LIVE.add(handle)  # terminated if LittleBot exits while it runs
+    return handle
+
+
+async def make_room(ctx: Any, who: str, why: str) -> None:
+    """A playing video and a running activity stop first (as for the browser view); ``who`` names the caller in
+    the log, ``why`` is the activity's stop reason. Used by mirroring and the Nanit camera view."""
+    media = getattr(ctx, "media", None)
+    try:
+        st = media.status() if media is not None else None
+    except Exception:  # noqa: BLE001
+        st = None
+    if isinstance(st, dict) and not st.get("held") and (
+            st.get("state") not in (None, "idle") or (st.get("player") or {}).get("running")):
+        log.info("%s: stopping the video first", who)
+        try:
+            await media.stop("stopped")
+        except Exception:  # noqa: BLE001
+            log.exception("%s: stopping the video failed", who)
+    acts = getattr(ctx, "activities", None)
+    try:
+        running = acts is not None and bool(acts.status().get("running"))
+    except Exception:  # noqa: BLE001
+        running = False
+    if running:
+        try:
+            await acts.stop(why)
+        except Exception:  # noqa: BLE001
+            log.exception("%s: stopping the activity failed", who)
 
 
 @dataclass(eq=False)
@@ -465,29 +495,7 @@ class MirrorService(Service):
         return on_preempt
 
     async def _make_room(self) -> None:
-        """A playing video and a running activity stop first (as for the browser view)."""
-        media = getattr(self.ctx, "media", None)
-        try:
-            st = media.status() if media is not None else None
-        except Exception:  # noqa: BLE001
-            st = None
-        if isinstance(st, dict) and not st.get("held") and (
-                st.get("state") not in (None, "idle") or (st.get("player") or {}).get("running")):
-            log.info("mirror: stopping the video first")
-            try:
-                await media.stop("stopped")
-            except Exception:  # noqa: BLE001
-                log.exception("mirror: stopping the video failed")
-        acts = getattr(self.ctx, "activities", None)
-        try:
-            running = acts is not None and bool(acts.status().get("running"))
-        except Exception:  # noqa: BLE001
-            running = False
-        if running:
-            try:
-                await acts.stop("phone mirroring started")
-            except Exception:  # noqa: BLE001
-                log.exception("mirror: stopping the activity failed")
+        await make_room(self.ctx, "mirror", "phone mirroring started")
 
     def _showing(self, s: _Session) -> None:
         s.state, s.shown_at = "showing", self._clock()
@@ -779,4 +787,4 @@ class MirrorService(Service):
 
 
 __all__ = ["ERRORS", "INSTALL", "KINDS", "OWNER", "PRIORITY", "SHOWING", "STARTED", "STOPPED", "MirrorService",
-           "default_launcher"]
+           "default_launcher", "make_room"]

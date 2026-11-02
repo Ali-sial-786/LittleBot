@@ -120,6 +120,9 @@ def build_defaults(cfg: LittleBotConfig) -> dict[str, Any]:
         # adb keeps its own keys in ~/.android)
         "mirror.enabled": True,
         "mirror.android_phones": [],
+        # the Nanit baby camera on the screen when asked (littlebot/nanit), and whether its sound plays
+        "nanit.enabled": True,
+        "nanit.sound": cfg.nanit.sound,
         # fast decision models (littlebot/decide): the provider (off | jev | openai | claude) and each feature's mode
         # (off | shadow | on); {} = the config's decide.modes / decide.default_mode
         "decide.provider": cfg.decide.provider,

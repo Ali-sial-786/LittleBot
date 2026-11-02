@@ -169,6 +169,14 @@ mirror:
   sound: false             # the phone's sound out of LittleBot's speaker (the wake word and "stop" then hear it too)
   touch_control: false     # Android: taps on LittleBot's screen work the phone
 
+nanit:
+  # The Nanit baby camera on LittleBot's screen when asked (docs/NANIT.md), through an unofficial bridge.
+  # Set up once on the robot: bash ~/LittleBot/scripts/setup_nanit.sh (you sign in to Nanit there yourself).
+  enabled: true
+  sound: true              # the baby's sounds through the system's sound (the dashboard switch starts from this)
+  max_minutes: 30          # the view closes by itself after this long; 0 = never
+  start_timeout_seconds: 20  # the picture must start by then, else it closes and says why
+
 power:
   # The battery (docs/POWER.md section 8): an RP2040-Zero battery monitor on a USB port. Without one
   # LittleBot behaves exactly as on mains power. Low / shutdown levels are dashboard settings.

@@ -670,6 +670,31 @@ class MirrorConfig(_Section):
     extra_scrcpy_args: list[str] = Field(default_factory=list)
 
 
+class NanitConfig(_Section):
+    """The Nanit baby camera on LittleBot's screen (littlebot/nanit, docs/NANIT.md), when a grown-up asks.
+
+    An unofficial community bridge (indiefan/home_assistant_nanit, built and signed in by scripts/setup_nanit.sh,
+    run by the systemd user unit ``littlebot-nanit.service``) asks the camera to send its picture to the robot;
+    ffplay shows it full screen. Not set up: the voice and the dashboard say how. The parent's switch
+    (``nanit.enabled``, dashboard Assistant page) can turn it off; ``enabled: false`` here switches it off whatever
+    the parent chose."""
+
+    enabled: bool = True
+    ffplay_command: str = "ffplay"  # a name on PATH or an absolute path
+    bridge_command: str = "~/.local/nanit-bridge/bin/nanit"  # what setup_nanit.sh builds ("set up?")
+    systemctl_command: str = "systemctl"
+    unit: str = Field(default="littlebot-nanit.service", pattern=r"^[A-Za-z0-9@_.-]+\.service$")
+    rtmp_port: int = Field(default=1935, ge=1, le=65535)  # the bridge's RTMP server (setup_nanit.sh's port)
+    # The baby's sounds through the system's sound (beside the voice, never through its speaker lease). The
+    # parent's switch (``nanit.sound``) starts from this.
+    sound: bool = True
+    # The camera view closes by itself after this many minutes, so it doesn't run all night by accident; 0 = never.
+    max_minutes: int = Field(default=30, ge=0, le=720)
+    # The picture must start by then, else the view closes and says why (the bridge or the camera).
+    start_timeout_seconds: float = Field(default=20.0, ge=5.0, le=120.0)
+    extra_ffplay_args: list[str] = Field(default_factory=list)
+
+
 class PowerConfig(_Section):
     """Running on the battery (littlebot/power, docs/POWER.md "Running on the battery").
 
@@ -905,6 +930,7 @@ class LittleBotConfig(BaseModel):
     screens: ScreensConfig = Field(default_factory=ScreensConfig)
     browser: BrowserConfig = Field(default_factory=BrowserConfig)
     mirror: MirrorConfig = Field(default_factory=MirrorConfig)
+    nanit: NanitConfig = Field(default_factory=NanitConfig)
     decide: DecideConfig = Field(default_factory=DecideConfig)
     power: PowerConfig = Field(default_factory=PowerConfig)
     media: MediaConfig = Field(default_factory=MediaConfig)

@@ -42,6 +42,7 @@ SUBSYSTEMS: tuple[tuple[str, str], ...] = (
     ("voices", "littlebot.voices"),  # the family's voices (opt-in): before live voice, which uses them
     ("browser", "littlebot.browser"),  # Google on the screen when a grown-up asks (one Chromium with the videos)
     ("mirror", "littlebot.mirror"),  # a phone's screen on LittleBot's screen when asked (AirPlay / scrcpy)
+    ("nanit", "littlebot.nanit"),  # the Nanit baby camera on the screen when asked (an unofficial bridge + ffplay)
     ("skills", "littlebot.skills"),  # tools for both voices (memory, reminders, lists, games ...): before them
     ("live", "littlebot.chatgpt"),
     ("assistant", "littlebot.assistant"),  # the fast voice pipeline (GPT-Live stays the fallback)
