@@ -143,7 +143,8 @@ class Env:
     async def showing(self, camera: Any = None) -> FakeProc:
         res = await self.svc.show(camera, source="dashboard")
         assert res["ok"] and res["state"] == "starting", res
-        self.launcher.proc.say("Input #0, flv, from 'rtmp://127.0.0.1:1935/local/a1b2c3d4':")
+        # What ffplay -nostats -loglevel verbose really prints once the picture comes (on the robot, 2026-11-02).
+        self.launcher.proc.say("[h264 @ 0x7ffef4002da0] Reinit context to 1920x1088, pix_fmt: yuvj420p")
         await self.until(lambda: self.svc.status()["state"] == "showing")
         return self.launcher.proc
 
@@ -158,6 +159,21 @@ async def env(tmp_path: Path) -> Any:
 
 
 # ---------------------------------------------------------------- showing and closing
+async def test_the_picture_counts_without_ffplays_summary(env: Env) -> None:
+    """-nostats hides "Input #0": the picture showed on the robot and the view still closed after the start wait,
+    saying the camera wasn't sending. Only the connecting lines, then the decoder: it shows, and stays past the wait."""
+    res = await env.svc.show(None, source="voice")
+    assert res["ok"]
+    assert "verbose" in env.launcher.proc.argv
+    env.launcher.proc.say("[tcp @ 0x7ffef4001800] Successfully connected to 127.0.0.1 port 1935")
+    await asyncio.sleep(0.05)
+    assert env.svc.status()["state"] == "starting"
+    env.launcher.proc.say("[h264 @ 0x7ffef4002da0] Reinit context to 1920x1088, pix_fmt: yuvj420p")
+    await env.until(lambda: env.svc.status()["state"] == "showing")
+    await asyncio.sleep(0.6)  # past the start wait (0.4 s here)
+    assert env.svc.status()["state"] == "showing" and not env.topics(STOPPED)
+
+
 async def test_show_then_close(env: Env) -> None:
     proc = await env.showing()
     argv = proc.argv

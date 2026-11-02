@@ -27,8 +27,11 @@ LittleBot never reads the session file (it only checks that one exists). The uni
 The view
 --------
 ``ffplay -fs -noborder -alwaysontop -window_title LittleBot -fflags nobuffer -flags low_delay -framedrop -autoexit
--nostats [-an] rtmp://127.0.0.1:1935/local/<uid>``: full screen and borderless over the face, the picture scaled to
-fit (ffplay keeps its shape), little delay. "Input #0" in its output = the stream opened (``state`` "showing").
+-nostats -loglevel verbose [-an] rtmp://127.0.0.1:1935/local/<uid>``: full screen and borderless over the face, the
+picture scaled to fit (ffplay keeps its shape), little delay. The video decoder starting ("[h264 @ ...] Reinit
+context to 1920x1088", verbose) = the picture is on the screen (``state`` "showing"). (``-nostats`` also hides
+ffplay's "Input #0" summary, which the first version waited for: the picture showed and the view still closed after
+20 s, 2026-11-02.)
 ffplay exiting before that = no picture yet: it is tried again every ``RETRY_S`` until
 ``nanit.start_timeout_seconds``, then the view closes and says why (the bridge isn't running, or the camera isn't
 sending). ffplay exiting after that = the stream ended: the face comes back.
@@ -92,7 +95,9 @@ MAX_CAMERAS = 8
 MAX_LIST_BYTES = 64 * 1024
 SETUP_COMMAND = "bash ~/LittleBot/scripts/setup_nanit.sh"
 STATUS_COMMAND = "systemctl --user status littlebot-nanit"
-STREAM_OPEN = re.compile(r"^\s*Input #0\b")  # ffplay opened the stream
+# The picture is coming: the video decoder started (verbose; the camera's H.264), or ffplay's stream summary (only
+# printed without -nostats).
+STREAM_OPEN = re.compile(r"^\s*Input #0\b|\bReinit context to \d+x\d+")
 UID_RE = re.compile(r"^[a-z0-9_-]{1,64}$")  # the bridge's own rule for /local/<uid>
 BRIDGE_STATES = ("active", "inactive", "failed", "activating", "deactivating", "reloading", "refreshing",
                  "maintenance")
@@ -397,7 +402,7 @@ class NanitService(Service):
         return f"rtmp://127.0.0.1:{int(self.cfg.rtmp_port)}/local/{uid}"
 
     def ffplay_command(self, uid: str) -> list[str]:
-        argv = [self._player() or "ffplay", "-hide_banner", "-nostats", "-loglevel", "info",
+        argv = [self._player() or "ffplay", "-hide_banner", "-nostats", "-loglevel", "verbose",
                 "-fflags", "nobuffer", "-flags", "low_delay", "-framedrop",
                 "-fs", "-noborder", "-alwaysontop", "-window_title", "LittleBot", "-autoexit"]
         if not self.sound:
