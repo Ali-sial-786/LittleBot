@@ -225,17 +225,20 @@ def build_grammar(phrases: Sequence[str], *, known: Callable[[str], bool] | None
     return grammar, usable, dropped
 
 
-def match_wake_phrase(result: dict[str, Any], phrases: Sequence[tuple[str, tuple[str, ...]]],
-                      min_confidence: float = 0.0) -> str | None:
-    """The wake phrase heard in a recogniser result (consecutive words, each confident enough)."""
+def _heard_words(result: dict[str, Any]) -> tuple[list[str], list[float]]:
+    """A recogniser result's words and their confidences (1.0 each when it gave no word details)."""
     words = result.get("result")
     if isinstance(words, list) and words:
         items = [w for w in words if isinstance(w, dict)]
-        toks = [str(w.get("word", "")).lower() for w in items]
-        confs = [float(w.get("conf", 1.0)) for w in items]
-    else:
-        toks = str(result.get("text", "")).lower().split()
-        confs = [1.0] * len(toks)
+        return [str(w.get("word", "")).lower() for w in items], [float(w.get("conf", 1.0)) for w in items]
+    toks = str(result.get("text", "")).lower().split()
+    return toks, [1.0] * len(toks)
+
+
+def match_wake_phrase(result: dict[str, Any], phrases: Sequence[tuple[str, tuple[str, ...]]],
+                      min_confidence: float = 0.0) -> str | None:
+    """The wake phrase heard in a recogniser result (consecutive words, each confident enough)."""
+    toks, confs = _heard_words(result)
     for phrase, ph in sorted(phrases, key=lambda p: -len(p[1])):  # "hey little bot" before "hey bot"
         n = len(ph)
         for i in range(len(toks) - n + 1):
@@ -952,7 +955,8 @@ class WakeWordService(Service):
             return None
         self._last_partial = text
         words = text.split()
-        if not any(tuple(words[i:i + len(ph)]) == ph for _, ph in self._phrases for i in range(len(words))):
+        if not any(tuple(words[i:i + len(ph)]) == ph for _, ph in self._phrases
+                   for i in range(len(words) if len(ph) > 1 else 1)):  # "bot" alone only counts first
             return None
         try:
             return finish()
@@ -963,7 +967,9 @@ class WakeWordService(Service):
         """The wake phrase in a final result; while a video plays only the video phrases, more confident."""
         if not video:
             phrase = match_wake_phrase(result, self._phrases, self.cfg.min_confidence)
-            return phrase if phrase is None or len(phrase.split()) > 2 else self._short_ok(result, phrase)
+            if phrase is None or len(phrase.split()) > 2:
+                return phrase
+            return self._single_ok(result, phrase) if len(phrase.split()) == 1 else self._short_ok(result, phrase)
         phrase = match_wake_phrase(result, self._video_phrases, self.cfg.video_min_confidence)
         if phrase is None:
             heard = match_wake_phrase(result, self._phrases, 0.0)
@@ -1017,6 +1023,32 @@ class WakeWordService(Service):
         log.info("wake word: '%s' ignored (word confidence below wake.short_min_confidence %.2f and nobody in "
                  "front of the camera)", phrase, self.cfg.short_min_confidence)
         return None
+
+    def _single_ok(self, result: dict[str, Any], phrase: str) -> str | None:
+        """"bot" alone: only as the first word heard after a pause ("Bot, what time is it?", not "the bot I
+        made"), sure of it (``wake.short_min_confidence``; a face doesn't make up for it, as "But I..." is heard
+        as an unsure "bot"), and not while Spotify plays (songs say "but" a lot)."""
+        toks, confs = _heard_words(result)
+        if not toks or toks[0] != phrase:
+            why = "not the first word heard"
+        elif confs[0] < self.cfg.short_min_confidence:
+            why = f"word confidence {confs[0]:.2f} below wake.short_min_confidence {self.cfg.short_min_confidence:.2f}"
+        elif self._music_on():
+            why = "music is playing"
+        else:
+            return phrase
+        self.short_ignored += 1
+        log.info("wake word: '%s' ignored (%s)", phrase, why)
+        return None
+
+    def _music_on(self) -> bool:
+        try:
+            from littlebot.skills.spotify import get_spotify  # noqa: PLC0415
+
+            sp = get_spotify(self.ctx)
+            return bool(sp is not None and sp.playing())
+        except Exception:  # noqa: BLE001 - no Spotify: no music to hear
+            return False
 
     def _output_note(self) -> str:
         fn = getattr(self.ctx.audio, "output_note", None)

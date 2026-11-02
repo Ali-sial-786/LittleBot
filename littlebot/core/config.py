@@ -199,10 +199,14 @@ class WakeConfig(_Section):
     # ("hey bot") trigger by mistake more often (e.g. on "hey but"): remove it here if that happens.
     # "lil bot" / "little bot": the "hey" is sometimes not heard (on the robot, 2026-10-29); like "hey bot" they
     # need short_min_confidence.
-    # "hey bot" is no longer a default: in 87 phrases played to the robot (2026-10-31) it caught nothing the others
-    # missed, and "Hey Bob, can you grab that?" was heard as "hey bot" (sure of it) by two of eleven voices.
+    # "hey bot" and "bot" are back by the parent's choice (2026-11-02), knowing the cost: "Hey Bob, can you grab
+    # that?" was heard as "hey bot" by two of eleven voices (2026-10-31), and "Hey, but that's mine!" by all eight
+    # espeak voices tried (2026-11-02). "bot" alone only counts as the first word after a pause, sure of it (see
+    # short_min_confidence), and not while Spotify plays: "But I wanted..." was heard as "bot" at 0.41-0.69, and
+    # "Bot, what time is it?" at 0.72-0.83 in American voices (British ones were heard as "bought"). Remove
+    # either here if it wakes by mistake.
     phrases: list[str] = Field(default_factory=lambda: ["hey little bot", "hey littlebot", "hey lil bot", "lil bot",
-                                                         "little bot"])
+                                                         "little bot", "hey bot", "bot"])
     model_path: str = "models/vosk-model-small-en-us-0.15"  # scripts/download_models.py vosk-en
     # Silence after a phrase before the recogniser decides it (null: the model's own 0.5-1.0 s). Measured on the
     # robot (2026-10-31: 48 phrases in the laptop's voices, 77 in eleven OpenAI voices and three styles): 0.25 s
@@ -217,6 +221,7 @@ class WakeConfig(_Section):
     min_confidence: float = Field(default=0.35, ge=0.0, le=1.0)
     # Two-word phrases ("hey bot") are what triggers by mistake most: they need this word confidence, or
     # a face in front of the camera within short_face_seconds (someone is there, likely talking to it).
+    # One-word phrases ("bot") need this confidence whoever is in front of the camera.
     short_min_confidence: float = Field(default=0.7, ge=0.0, le=1.0)
     short_face_seconds: float = Field(default=10.0, ge=0.0)
     # Follow-up: this soon after a chat ended by itself (time limit, quiet, a lost connection; not "goodbye" or

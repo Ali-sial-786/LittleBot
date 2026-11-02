@@ -19,6 +19,7 @@ from littlebot.audio.errors import AudioDeviceError
 from littlebot.audio.stt import MockSTT
 from littlebot.audio.tts import MockTTS
 from littlebot.audio.wakeword import WakeWordService, build_grammar, match_wake_phrase, normalise_phrase
+from littlebot.core.config import WakeConfig
 from littlebot.core.events import collect
 from littlebot.core.service import ServiceStatus
 from littlebot.core.state import RobotState
@@ -598,6 +599,45 @@ async def test_early_only_for_a_wake_phrase_and_still_word_confidence_decides(ri
     assert asked == ["hey little bot"]  # switched off: only final results
 
 
+async def test_bot_alone_wakes_only_first_sure_and_without_music(rig, caplog, monkeypatch):
+    caplog.set_level(logging.INFO, logger="littlebot.wake")
+    r = await rig(wake={"phrases": ["hey little bot", "hey bot", "bot"]})
+    await _listening(r)
+    r.rec.say("did you see the bot")  # in the middle of a sentence
+    await until(lambda: "'bot' ignored (not the first word heard)" in caplog.text, what="the mid-sentence line")
+    r.ctx.vision = type("V", (), {"face_seen_within": staticmethod(lambda _s: True)})()
+    r.rec.say("bot i wanted that", conf=0.6)  # "But I wanted that": an unsure "bot"; a face doesn't make up for it
+    await until(lambda: "'bot' ignored (word confidence 0.60 below" in caplog.text, what="the unsure line")
+    import littlebot.skills.spotify as spotify
+
+    monkeypatch.setattr(spotify, "get_spotify", lambda _ctx: type("S", (), {"playing": lambda self: True})())
+    r.rec.say("bot what time is it")
+    await until(lambda: "'bot' ignored (music is playing)" in caplog.text, what="the music line")
+    assert r.live.calls == [] and r.wake.short_ignored == 3
+    monkeypatch.setattr(spotify, "get_spotify", lambda _ctx: None)
+    r.rec.say("bot what time is it", conf=0.8)
+    await until(lambda: r.live.calls, what="live voice started")
+    assert "wake word heard (phrase=bot)" in caplog.text
+
+
+async def test_bot_alone_is_decided_early_only_as_the_first_word(rig):
+    r = await rig(wake={"phrases": ["hey little bot", "bot"]})
+    await _listening(r)
+    asked = _finish_early(r)
+    r.rec.partial_text = "did you see the bot"
+    await asyncio.sleep(0.3)
+    assert asked == []  # the sentence goes on
+    r.rec.partial_text = "bot"
+    await until(lambda: r.live.calls, what="live voice started")
+    assert asked == ["bot"]
+
+
+def test_bot_and_hey_bot_are_default_wake_phrases():
+    _, usable, _ = build_grammar(WakeConfig().phrases)
+    assert {"lil bot", "hey lil bot", "hey bot", "bot"} <= {p for p, _ in usable}
+    assert normalise_phrase("Lilbot") == "lil bot" and normalise_phrase("hey lilbot") == "hey lil bot"
+
+
 async def test_a_call_already_listening_gets_the_microphone_at_once(rig, caplog):
     caplog.set_level(logging.INFO, logger="littlebot.wake")
     r = await rig()
@@ -936,7 +976,8 @@ async def test_wake_enabled_defaults_on():
     ctx = make_test_context()
     try:
         assert ctx.settings.get("wake.enabled") is True
-        assert ctx.config.wake.phrases == ["hey little bot", "hey littlebot", "hey lil bot", "lil bot", "little bot"]
+        assert ctx.config.wake.phrases == ["hey little bot", "hey littlebot", "hey lil bot", "lil bot", "little bot",
+                                           "hey bot", "bot"]
         assert ctx.config.wake.end_silence_seconds == 0.25 and ctx.config.wake.early is True
         assert ctx.config.wake.min_confidence == 0.35
     finally:
