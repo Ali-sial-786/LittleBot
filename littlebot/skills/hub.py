@@ -133,6 +133,10 @@ class SkillHub(Service):
         """What the skills hold right now (changes turn to turn: after the cached part)."""
         return "\n".join(n for n in (_safe_str(s.context_note) for s in self._live()) if n)
 
+    def hearing_words(self) -> list[str]:
+        """The skills' names for speech-to-text to listen for (``Skill.hearing_words``), each skill's in turn."""
+        return [str(w) for s in self._live() for w in _safe_list(s.hearing_words) if str(w).strip()]
+
     def status(self) -> dict[str, Any]:
         return {"skills": [_safe_status(s) for s in self.skills], "tools": len(self.specs())}
 

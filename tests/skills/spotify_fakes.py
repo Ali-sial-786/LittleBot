@@ -166,6 +166,8 @@ class FakeSpotify:
             return httpx.Response(200, json={"items": page, "next": None if off + lim >= len(self.playlists) else "x"})
         if method == "GET" and path == "/me/tracks":
             return httpx.Response(200, json={"items": [{"track": t} for t in self.liked]})
+        if method == "GET" and path == "/me/top/artists":
+            return httpx.Response(200, json={"items": [{"name": "Taylor Swift"}, {"name": "Raffi"}]})
         if method == "GET" and path == "/me/top/tracks":
             return httpx.Response(200, json={"items": self.top})
         dev_id = query.get("device_id")

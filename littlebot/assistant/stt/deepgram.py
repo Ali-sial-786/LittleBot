@@ -9,7 +9,10 @@ pay-as-you-go accounts since 2026-03-05); header ``Authorization: Token <key>``.
 messages of 80 ms (Deepgram's strong recommendation: 2,560 bytes of 16-bit samples). Flux answers with JSON:
 ``Connected``; ``TurnInfo`` with ``event`` StartOfTurn / Update / EagerEndOfTurn / TurnResumed / EndOfTurn, the
 ``turn_index``, the ``transcript`` so far and its ``words`` (``word``, ``confidence``); ``Warning``; ``Error``.
-Client messages: ``{"type": "ForceEndTurn"}`` ends the turn now, ``{"type": "CloseStream"}`` before closing.
+Client messages: ``{"type": "ForceEndTurn"}`` ends the turn now, ``{"type": "CloseStream"}`` before closing,
+``{"type": "Configure", "keyterms": [...]}`` replaces the keyterms mid-stream (answered ``ConfigureSuccess`` or
+``ConfigureFailure``, which keeps the old ones; https://developers.deepgram.com/docs/flux/configure, read
+2026-11-02). Keyterms: at most 100 and 500 tokens (assistant/keyterms.py keeps them well under).
 
 Here: StartOfTurn -> ``start_of_turn``; Update (and the eager ones) -> ``partial`` with the words so far;
 EagerEndOfTurn -> also ``eager_end_of_turn`` (the session starts the answer, says it only after EndOfTurn);
@@ -30,11 +33,12 @@ import asyncio
 import importlib.util
 import json
 import logging
-from typing import Any, Awaitable, Callable
+from typing import Any, Awaitable, Callable, Sequence
 from urllib.parse import urlencode
 
 import numpy as np
 
+from littlebot.assistant.keyterms import fit
 from littlebot.assistant.speech import STT_RATE, CloudOk, OnEvent, SpeechError, STTEvent
 from littlebot.assistant.speech_http import is_allowed, status_kind
 from littlebot.assistant.stt.base import emit
@@ -120,10 +124,11 @@ def _unsure(words: Any) -> tuple[str, ...]:
 class FluxStream:
     """One session's ``STTStream`` over an open Flux websocket."""
 
-    def __init__(self, ws: Any, on_event: OnEvent, *, cloud_ok: CloudOk) -> None:
+    def __init__(self, ws: Any, on_event: OnEvent, *, cloud_ok: CloudOk, keyterms: Sequence[str] = ()) -> None:
         self._ws = ws
         self._on_event = on_event
         self._cloud_ok = cloud_ok
+        self.keyterms = list(keyterms)  # what Flux listens for now (as asked: Configure may still refuse it)
         self._buf = bytearray()
         self._turn: int | None = None  # the turn in progress (Flux's turn_index), None between turns
         self._old = -1  # events of turns up to this index are ignored (ended, or forgotten by reset)
@@ -162,6 +167,14 @@ class FluxStream:
             self._turn = None
             if not (self._closed or self._failed):
                 await self._send(FORCE_END)  # Flux starts the next turn fresh; this one's end is ignored
+
+    async def set_keyterms(self, terms: Sequence[str]) -> None:
+        """The keyterms from now on (Configure: the whole list replaces the old one), when they changed."""
+        terms = fit(terms)
+        if self._closed or self._failed or not terms or terms == self.keyterms:
+            return
+        self.keyterms = terms
+        await self._send(json.dumps({"type": "Configure", "keyterms": terms}))
 
     async def aclose(self) -> None:
         if self._closed:
@@ -227,6 +240,10 @@ class FluxStream:
                              "rate_limit" if ("RATE" in code or "LIMIT" in code) else "server_error")
         elif kind == "Warning":
             log.info("deepgram: warning %s", str(m.get("code") or "?")[:60])
+        elif kind == "ConfigureFailure":  # the old keyterms stay
+            log.info("deepgram: new keyterms refused (%s)", str(m.get("code") or "?")[:60])
+        elif kind == "ConfigureSuccess":
+            log.debug("deepgram: listening for %d keyterms", len(m.get("keyterms") or ()))
         elif kind == "Connected":
             log.debug("deepgram: connected")
 
@@ -288,21 +305,32 @@ class DeepgramFlux:
 
     def __init__(self, *, key: Callable[[], str], cloud_ok: CloudOk, model: str = "flux-general-en",
                  eot_threshold: float = 0.7, eot_timeout_ms: int = 3000, eager_eot_threshold: float | None = None,
-                 keyterms: list[str] | tuple[str, ...] = (), url: str = URL, ws_connect: WsConnect | None = None,
-                 open_timeout: float = OPEN_TIMEOUT_S) -> None:
+                 keyterms: Sequence[str] | Callable[[], Sequence[str]] = (), url: str = URL,
+                 ws_connect: WsConnect | None = None, open_timeout: float = OPEN_TIMEOUT_S) -> None:
         self._key = key
         self._cloud_ok = cloud_ok
         self.model = model
         self.eot_threshold = eot_threshold
         self.eot_timeout_ms = eot_timeout_ms
         self.eager_eot_threshold = eager_eot_threshold
-        self.keyterms = [t for t in dict.fromkeys(" ".join(str(t).split()) for t in keyterms) if t]
+        self._keyterms = keyterms  # a list, or asked each time a stream opens (assistant/keyterms.py)
         self.url = url
         self._ws_connect = ws_connect
         self.open_timeout = open_timeout
 
     def __repr__(self) -> str:  # never the key
         return f"DeepgramFlux(model={self.model!r})"
+
+    @property
+    def keyterms(self) -> list[str]:
+        terms = self._keyterms
+        if callable(terms):
+            try:
+                terms = terms()
+            except Exception:  # noqa: BLE001 - it listens without them
+                log.debug("deepgram: gathering the keyterms failed", exc_info=True)
+                terms = ()
+        return fit(terms)
 
     def _key_value(self) -> str:
         try:
@@ -319,14 +347,15 @@ class DeepgramFlux:
             return "cloud_off"
         return None
 
-    def stream_url(self) -> str:
+    def stream_url(self, keyterms: Sequence[str] | None = None) -> str:
         params: dict[str, Any] = {"model": self.model, "encoding": "linear16", "sample_rate": STT_RATE,
                                   "eot_threshold": self.eot_threshold, "eot_timeout_ms": int(self.eot_timeout_ms),
                                   "mip_opt_out": "true"}
         if self.eager_eot_threshold is not None:
             params["eager_eot_threshold"] = self.eager_eot_threshold
-        if self.keyterms:
-            params["keyterm"] = self.keyterms  # one keyterm=... each (Flux wants them repeated, not joined)
+        terms = self.keyterms if keyterms is None else list(keyterms)
+        if terms:
+            params["keyterm"] = terms  # one keyterm=... each (Flux wants them repeated, not joined)
         return f"{self.url}?{urlencode(params, doseq=True)}"
 
     async def open(self, on_event: OnEvent) -> FluxStream:
@@ -335,13 +364,15 @@ class DeepgramFlux:
             raise SpeechError(why)
         connect = self._ws_connect or connect_websocket
         headers = {"Authorization": f"Token {self._key_value()}"}
+        terms = self.keyterms
         try:
-            ws = await asyncio.wait_for(connect(self.stream_url(), headers), self.open_timeout)
+            ws = await asyncio.wait_for(connect(self.stream_url(terms), headers), self.open_timeout)
         except Exception as e:  # noqa: BLE001
             err = ws_error(e)
             log.warning("assistant stt: deepgram did not connect (%s)", err.kind)
             raise err from None
-        stream = FluxStream(ws, on_event, cloud_ok=self._cloud_ok)
+        log.info("assistant stt: deepgram listening for %d keyterms", len(terms))
+        stream = FluxStream(ws, on_event, cloud_ok=self._cloud_ok, keyterms=terms)
         stream.start()
         return stream
 

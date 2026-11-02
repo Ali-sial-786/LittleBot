@@ -92,6 +92,25 @@ async def test_a_question_answered_then_follow_up_then_end() -> None:
     await svc.stop()
 
 
+async def test_speech_to_text_listens_for_the_names_just_said() -> None:
+    brain = Scripted(["The Great Wall of China is about 21,000 kilometres long."], ["Sure."])
+    svc, stt, tts, _ = _service(brain, follow_up_seconds=0.5)
+    svc.brain.talked_today()
+    await svc.start()
+    await svc.start_session()
+    await _wait(lambda: stt.stream is not None)
+    asked: list[list[str]] = []
+
+    async def set_keyterms(terms: list[str]) -> None:
+        asked.append(list(terms))
+
+    stt.stream.set_keyterms = set_keyterms
+    stt.say("how long is the great wall")
+    await _wait(lambda: asked)
+    assert asked[0][0] == svc.ctx.config.robot_name and "Great Wall of China" in asked[0]
+    await svc.stop()
+
+
 async def test_the_next_turn_knows_what_the_tools_really_did() -> None:
     # The history kept only the words, so a turn later the brain said "I should correct myself: I said the volume
     # was at 60 percent, but I never actually checked it" (the robot, 2026-10-31).

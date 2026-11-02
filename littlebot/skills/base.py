@@ -84,6 +84,11 @@ class Skill:
         """What the skill holds right now, for this turn ("Timers: ...", "Next reminder: 6 pm call mom")."""
         return ""
 
+    def hearing_words(self) -> list[str]:
+        """Names speech-to-text should listen harder for ("Bedtime Songs", "kitchen lamp"): only what the skill
+        already holds (no waiting on the network), most useful first."""
+        return []
+
     async def start(self) -> None:
         """Background work (a reminder clock). Runs on the robot's asyncio loop."""
 

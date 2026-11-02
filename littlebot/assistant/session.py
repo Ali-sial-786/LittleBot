@@ -313,6 +313,17 @@ class VoiceSession:
         if took_ms is not None:
             took_ms.append(int((self._now() - t0) * 1000))
 
+    async def _refresh_keyterms(self) -> None:
+        """After a turn: speech-to-text listens for the names in it too ("the Great Wall"), when it can change its
+        keyterms mid-stream (Deepgram Flux's Configure)."""
+        set_terms, terms = getattr(self.stt, "set_keyterms", None), getattr(self.svc, "keyterms", None)
+        if set_terms is None or terms is None:
+            return
+        try:
+            await set_terms(terms())
+        except Exception:  # noqa: BLE001 - it hears as before
+            log.debug("assistant: updating the keyterms failed", exc_info=True)
+
     def _on_stt(self, event: STTEvent) -> None:
         """From the STT provider (any thread): into the session's queue."""
         loop = self._loop
@@ -680,6 +691,7 @@ class VoiceSession:
             self._publish(ev.CAPTION, {"who": "robot", "text": heard})
             if self.cfg.log_words:
                 log.info("assistant: said %r", heard[:400])
+            await self._refresh_keyterms()
         await self._after_turn(box)
         first = int((voice.first_audio_at - t0) * 1000) if voice.first_audio_at is not None else None
         self._publish(ev.TURN_DONE, {"ms_to_first_audio": first, "tools": list(getattr(result, "tools", []) or [])})

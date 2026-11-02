@@ -95,6 +95,8 @@ VOLUME_STEP = 10
 SEARCH_LIMIT = 8  # Spotify's search takes at most 10 now ("Invalid limit" for 20, 2026-10-31)
 LIBRARY_LIMIT = 50
 PLAYLIST_PAGES = 3
+NAMES_EVERY_S = 6 * 3600.0  # their artists' and playlists' names for speech-to-text, fetched again this often
+NAMES_EACH = 8  # most-played artists, and playlists (Spotify lists the newest first)
 MATCH_MIN = 0.72  # a playlist name scoring less than this isn't the one they meant
 CARD_WAIT_S = 0.5
 WAKE_RECEIVER_S = 0.6  # after waking an idle receiver with a transfer, before playing again
@@ -307,6 +309,8 @@ class Spotify(Skill):
         self._tasks: set[asyncio.Task[Any]] = set()
         self._poller: asyncio.Task[Any] | None = None
         self._wake_timer: asyncio.TimerHandle | None = None
+        self._names: list[str] = []  # their most-played artists and playlists (hearing_words), fetched now and then
+        self._names_at: float | None = None
         self.last_error: str | None = None
         try:
             ctx.settings.register_validator(CLIENT_ID_SETTING, _validate_client_id)
@@ -373,6 +377,34 @@ class Spotify(Skill):
         quiet = " (turned down while you talk)" if self._duck_from is not None else ""
         return (f"Spotify: playing {what} on LittleBot{quiet} (music_control: pause, next, previous, volume, "
                 f"shuffle; whats_playing).")
+
+    def hearing_words(self) -> list[str]:
+        """What's playing, their most-played artists and their playlists, for speech-to-text ("play Bedtime Bops").
+        The names are fetched in the background at most every NAMES_EVERY_S: asking never waits on Spotify."""
+        if self._names_at is None or self._clock() - self._names_at >= NAMES_EVERY_S:
+            self._names_at = self._clock()
+            try:
+                task = asyncio.get_running_loop().create_task(self._fetch_names())
+            except RuntimeError:  # no loop (a test calling it bare): what it has
+                task = None
+            if task is not None:
+                self._tasks.add(task)
+                task.add_done_callback(self._tasks.discard)
+        st = self.snapshot() or {}
+        return [str(st.get("artist") or ""), str(st.get("title") or ""), *self._names]
+
+    async def _fetch_names(self) -> None:
+        names: list[str] = []
+        try:
+            for path, params in (("/me/top/artists", {"limit": NAMES_EACH, "time_range": "medium_term"}),
+                                 ("/me/playlists", {"limit": NAMES_EACH})):
+                data = await self.api.call("GET", path, params=params)
+                items = (data.get("items") if isinstance(data, dict) else None) or []
+                names += [clean(i.get("name"), 60) for i in items if isinstance(i, dict)]
+        except Exception:  # noqa: BLE001 - SpotifyError, the network: what it found so far
+            log.debug("spotify: fetching names to listen for failed", exc_info=True)
+        if names:
+            self._names = [n for n in names if n]
 
     # ------------------------------------------------------------ connecting (the dashboard)
     def begin_connect(self, client_id: Any = None) -> str:

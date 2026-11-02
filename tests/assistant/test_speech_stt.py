@@ -143,7 +143,28 @@ def test_flux_listens_harder_for_its_name_and_the_volume_words(monkeypatch):
     ctx = make_test_context(assistant={"stt": ["deepgram"]})
     chain = stt_mod.build_stt(ctx, ws_connect=Connector(), cloud_ok=lambda: True)
     assert chain is not None
-    assert chain.providers[0].keyterms == [ctx.config.robot_name, "louder", "quieter", "volume"]
+    assert chain.providers[0].keyterms[:4] == [ctx.config.robot_name, "louder", "quieter", "volume"]
+
+
+async def test_flux_keyterms_are_gathered_when_it_opens_and_changed_mid_stream(caplog):
+    caplog.set_level(logging.INFO, logger="littlebot.assistant.stt.deepgram")
+    names = ["LittleBot", "Amara"]
+    conn = Connector()
+    stream = await _flux(conn, keyterms=lambda: list(names)).open(Events())
+    assert parse_qs(urlsplit(conn.calls[0][0]).query)["keyterm"] == ["LittleBot", "Amara"]  # asked at open
+    await stream.set_keyterms(["LittleBot", "Amara"])  # the same: nothing sent
+    assert conn.ws.control() == []
+    await stream.set_keyterms(["LittleBot", "Amara", "Great Wall"])
+    assert conn.ws.control() == [{"type": "Configure", "keyterms": ["LittleBot", "Amara", "Great Wall"]}]
+    conn.ws.push(type="ConfigureFailure", request_id="r1", sequence_id=2, code="CONFIGURE_KEYTERM_LIMIT_EXCEEDED")
+    await settle()
+    assert "deepgram: new keyterms refused (CONFIGURE_KEYTERM_LIMIT_EXCEEDED)" in caplog.text
+    await stream.aclose()
+
+    def broken() -> list[str]:
+        raise RuntimeError("no database")
+
+    assert "keyterm" not in parse_qs(urlsplit(_flux(Connector(), keyterms=broken).stream_url()).query)
 
 
 async def test_flux_url_header_and_80ms_packets():

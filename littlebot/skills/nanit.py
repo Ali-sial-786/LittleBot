@@ -72,6 +72,14 @@ class NanitCamera(Skill):
             return f"Baby camera: {st.get('camera')} is coming up on your screen."
         return f"Baby camera: {st.get('camera')} is on your screen (close_baby_camera closes it)."
 
+    def hearing_words(self) -> list[str]:
+        """The cameras' names for speech-to-text ("show the Nursery camera"), and "Nanit"."""
+        svc = self._svc()
+        try:
+            return ["Nanit", *(str(c.get("name") or "") for c in (svc.cameras() if svc is not None else []))]
+        except Exception:  # noqa: BLE001
+            return ["Nanit"]
+
     async def run(self, name: str, args: dict[str, Any]) -> str:
         svc = self._svc()
         if svc is None:

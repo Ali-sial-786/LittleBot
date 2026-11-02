@@ -266,6 +266,19 @@ async def test_a_genre_plays_a_playlist_and_my_playlists_come_first(ctx, fake: F
     await sp.stop()
 
 
+async def test_their_artists_and_playlists_are_names_to_listen_for(ctx, fake: FakeSpotify):
+    sp = spotify_skill(ctx, fake)
+    assert sp.hearing_words() == ["", ""]  # nothing yet: fetched in the background, never waited for
+    for _ in range(50):
+        await asyncio.sleep(0.01)
+        if len(sp.hearing_words()) > 2:
+            break
+    assert sp.hearing_words()[2:] == ["Taylor Swift", "Raffi", "Road Trip 2026", "Sunday chill"]
+    sp.hearing_words()
+    assert len(fake.calls("GET", "/me/top/artists")) == 1  # not again for 6 hours
+    await sp.stop()
+
+
 async def test_liked_songs_and_favourites_play_shuffled_without_explicit_ones(ctx, fake: FakeSpotify):
     sp = spotify_skill(ctx, fake, rng=random.Random(4))
     liked = await sp.find("my liked songs", "liked_songs")

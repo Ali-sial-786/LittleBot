@@ -141,12 +141,18 @@ def _eager(a: Any) -> float | None:
 
 
 def build_stt(ctx: Any, *, transport: Any = None, ws_connect: WsConnect | None = None,
-              cloud_ok: CloudOk | None = None) -> STTChain | None:
+              cloud_ok: CloudOk | None = None, keyterms: Callable[[], list[str]] | None = None) -> STTChain | None:
     """The providers of ``ctx.config.assistant.stt`` in order, or None when none can be used now.
     ``transport``: an httpx transport (tests); ``ws_connect``: the websocket connector (tests); ``cloud_ok``: a
-    stricter cloud gate than the default (offline mode + the parent's privacy switch)."""
+    stricter cloud gate than the default (offline mode + the parent's privacy switch); ``keyterms``: the words to
+    listen harder for, asked each time a stream opens (default: assistant/keyterms.py without recent turns)."""
     a = ctx.config.assistant
     ok = cloud_ok or cloud_ok_for(ctx)
+    if keyterms is None:
+        from littlebot.assistant.keyterms import hearing_terms  # noqa: PLC0415
+
+        def keyterms() -> list[str]:
+            return hearing_terms(ctx)
     turn = {"end_of_turn_ms": a.end_of_turn_ms, "max_turn_seconds": a.max_turn_seconds,
             "threshold": ctx.config.audio.microphone.vad_threshold}
     providers: list[STTProvider] = []
@@ -156,7 +162,7 @@ def build_stt(ctx: Any, *, transport: Any = None, ws_connect: WsConnect | None =
                                           eot_threshold=a.deepgram_eot_threshold,
                                           eot_timeout_ms=a.deepgram_eot_timeout_ms,
                                           eager_eot_threshold=_eager(a),
-                                          keyterms=[ctx.config.robot_name, *a.deepgram_keyterms],
+                                          keyterms=keyterms,
                                           ws_connect=ws_connect))
         elif name == "openai":
             providers.append(EndpointedSTT(OpenAITranscriber(key=key_reader(ctx, "openai_api_key"), cloud_ok=ok,

@@ -119,6 +119,12 @@ minutes). Less talking (a few questions a day) fits in Cartesia's or ElevenLabs'
   doesn't change the price for pay-as-you-go accounts).
 * Audio goes to Deepgram as raw 16 kHz sound in 80 ms pieces; to OpenAI as one short WAV per turn, made in
   memory.
+* **Names it listens for.** So it hears "Amara" and not "a mara", Deepgram is given a short list of words to
+  listen harder for when a chat starts, updated after every turn: the robot's name, the volume words, who built
+  it, the baby's nickname (only if `ai.share_child_name` is on), the people in Family & faces, Spotify's
+  most-played artists and playlists (looked up every 6 hours), the smart-home devices, the baby cameras, and
+  names from the last few turns ("the Great Wall"). At most 50 of them. Set `assistant.personal_keyterms:
+  false` to send only the robot's name and the volume words.
 
 ## 5. Settings (config `assistant:` section)
 
@@ -132,6 +138,7 @@ Change them in `config/local.yaml` (or with `scripts/set_config.py`):
 | `deepgram_eager_eot_threshold` | 0.3 | when the brain (and the voice of its first sentence) starts on "probably done" (null: off) |
 | `deepgram_eot_timeout_ms` | 3000 | Flux ends the turn after this much silence, however unsure it is |
 | `deepgram_keyterms` | `[louder, quieter, volume]` | words Flux listens harder for; the robot's name is always added |
+| `personal_keyterms` | true | also listen harder for the family's names, Spotify playlists and artists, smart-home devices and baby cameras, and names said in the last few turns (see below); false: only the words above |
 | `cartesia_voice`, `cartesia_speed` | Katie, normal | the Cartesia voice id and speed (slowest ... fastest) |
 | `elevenlabs_voice` | Jessica | the ElevenLabs voice id |
 | `openai_tts_voice` | coral | alloy, ash, ballad, coral, echo, fable, onyx, nova, sage, shimmer, verse, marin, cedar |

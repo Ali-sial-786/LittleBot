@@ -36,6 +36,7 @@ from littlebot.skills.base import BOOL, STR, Skill, ToolSpec, as_json, err, ok, 
 log = logging.getLogger("littlebot.skills.home")
 
 CACHE_S = 30.0
+HEARING_MAX = 12  # device names offered to speech-to-text
 MAX_LISTED = 40
 CARD_DEVICES = 12
 MATCH_MIN = 0.62  # a name scoring less than this isn't the device they meant
@@ -213,6 +214,7 @@ class SmartHome(Skill):
         self._states: list[dict[str, Any]] | None = None
         self._states_at = 0.0
         self._fetching: asyncio.Lock | None = None
+        self._names_task: asyncio.Task[Any] | None = None
         self._client: httpx.AsyncClient | None = None
         self._client_key: tuple[Any, ...] | None = None
 
@@ -275,6 +277,25 @@ class SmartHome(Skill):
                 "0-100, set_temperature, open, close, lock, unlock, activate a scene or script, set_color). Use the "
                 "names it knows; when it asks which one, ask the user. Locking, unlocking and opening a garage door "
                 "need the user's clear yes: ask, then call again with confirmed true. Confirm in a few words.")
+
+    def hearing_words(self) -> list[str]:
+        """The devices' names for speech-to-text ("Kitchen Lamp"), from the last list Home Assistant gave (fetched in
+        the background the first time: asking never waits on it)."""
+        if self._states is None:
+            if self._names_task is None or self._names_task.done():
+                try:
+                    self._names_task = asyncio.get_running_loop().create_task(self._quiet_states())
+                except RuntimeError:  # no loop (a test calling it bare)
+                    pass
+            return []
+        names = [friendly(s) for s in self._states if str(s.get("entity_id") or "").split(".", 1)[0] in DOMAINS]
+        return list(dict.fromkeys(n for n in names if n))[:HEARING_MAX]
+
+    async def _quiet_states(self) -> None:
+        try:
+            await self.states()
+        except Exception:  # noqa: BLE001 - HomeError, the network: no names this time
+            log.debug("smart home: listing the devices for their names failed", exc_info=True)
 
     def status(self) -> dict[str, Any]:
         reason = self.blocked_reason()

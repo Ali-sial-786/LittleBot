@@ -283,8 +283,14 @@ class AssistantService(Service):
         if self._stt is None or self._stt.missing():  # kept between sessions: it remembers which ones failed lately
             from littlebot.assistant.stt import build_stt  # noqa: PLC0415
 
-            self._stt = build_stt(self.ctx)
+            self._stt = build_stt(self.ctx, keyterms=self.keyterms)
         return self._stt
+
+    def keyterms(self) -> list[str]:
+        """The words speech-to-text should listen harder for now (assistant/keyterms.py), with the recent turns'."""
+        from littlebot.assistant.keyterms import hearing_terms  # noqa: PLC0415
+
+        return hearing_terms(self.ctx, self.history.messages())
 
     # ------------------------------------------------------------ sessions
     def blocked_reason(self, parent_present: bool = True) -> str | None:

@@ -425,6 +425,9 @@ class AssistantConfig(_Section):
     # Words Flux listens harder for (its keyterm prompting), with the robot's own name added: "A little louder,
     # please." came as "A little leopard, please." and started a leopard video (the robot, 2026-10-31).
     deepgram_keyterms: list[str] = Field(default_factory=lambda: ["louder", "quieter", "volume"])
+    # Also the family's names, Spotify playlists and artists, smart-home devices and names from the last few turns,
+    # fresh for each chat and after every turn (littlebot/assistant/keyterms.py). False: only the words above.
+    personal_keyterms: bool = True
     # Flux's "probably done" signal: the brain starts then, and its first sentence is made into voice (heard, and its
     # tools run, only once the turn really ended; if they go on talking it is dropped). On the robot's clips
     # (2026-10-31): 0.3 came a median 0.01 s after their speech ended (0.4: 0.16 s), the turn's end 0.29 s after it,
