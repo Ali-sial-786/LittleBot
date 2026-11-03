@@ -101,9 +101,9 @@ Each plate is a single STL with several separate bodies. Most slicers can split 
 | `09_main_A1.3mf` | **A1** | screen clamp, camera pod, camera bracket (5 mm brim), servo frame | main colour |
 
 - **P2S:** the floor is the biggest and tallest part (57 mm), so it goes on the printer whose bed doesn't move.
-- **A1:** the visor first, then plate 09. **Test the fits first:** print just the **servo frame** and the **camera bracket** from plate 09 (delete the others in Bambu Studio, about 30 min) and try them: a collar slides over one of the torso's servo pillars and its pinch screw tightens it; the camera board slides down into the bracket and its two hooks click over the board's top edge. Then print the P2S plate and the rest.
+- **A1:** the visor first, then plate 09. **Test the fits first:** print just the **servo frame** and the **camera bracket** from plate 09 (delete the others in Bambu Studio, about 35 min) and try them: a collar slides over one of the torso's servo pillars and its pinch screw tightens it; the camera board slides down into the bracket and its two hooks click over the board's top edge. Then print the P2S plate and the rest.
 - **Bambu Studio projects:** `plates_256/project/LittleBot_reprint_P2S.3mf` (plate 07, set up for the P2S) and `LittleBot_reprint_A1.3mf` (plates 08 and 09, for the A1): 0.4 nozzle, 0.20mm Standard, Bambu PLA Basic, Textured PEI Plate; Bambu Studio uses your own installed presets of those names. In the A1 project the visor is filament 1 (black) and plate 09 filament 2 (main colour): with an AMS lite map them to its slots, without one load black for the visor plate and your main colour for plate 09. Only the camera bracket gets a brim (5 mm; it stands 36 mm tall on a narrow footprint); nothing needs supports.
-- **About 120 g of PLA** for the three plates. Bambu Studio shows each plate's time once it has sliced it.
+- **About 180 g of PLA** for the three plates. Sliced with Bambu's 0.20mm Standard speeds and accelerations (in PrusaSlicer; Bambu Studio's own figure will differ a little): plate 07 about **3 h** (102 g), plate 08 about **45 min** (20 g), plate 09 about **2 h 20 min** (57 g), plus a few minutes of warm-up and bed levelling each. The P2S plate and the two A1 plates take about the same time, so on both printers at once it's done in about 3¼ hours.
 - Remake the projects with `python3 bambu_project.py plates_256/project/LittleBot_reprint_P2S.3mf plates_256/07_main_P2S.3mf` and `python3 bambu_project.py --printer A1 plates_256/project/LittleBot_reprint_A1.3mf plates_256/08_black_A1.3mf plates_256/09_main_A1.3mf`; `python3 bambu_project.py --fetch P2S` (or `A1`) refreshes their settings (`bambu_p2s_pla.json`, `bambu_a1_pla.json`) from Bambu's published profiles.
 
 **Already printed** (kept exactly as they were, `PRINTED` in `pack_plates.py`):
@@ -307,7 +307,7 @@ These values come from drawings, listings or estimates. Check each with calipers
 
 ## Test-print these first
 
-1. **`servo_frame` + `camera`** (from plate 09, about 30 min on the A1): slide a collar over one of the torso's two servo pillars and tighten its pinch screw (M3 × 10): it should grip; slide the camera board down into the bracket: both hooks should click over its top edge and the board shouldn't rattle.
+1. **`servo_frame` + `camera`** (from plate 09, about 35 min on the A1): slide a collar over one of the torso's two servo pillars and tighten its pinch screw (M3 × 10): it should grip; slide the camera board down into the bracket: both hooks should click over its top edge and the board shouldn't rattle.
 2. **`visor` + `screen_clamp`** (plates 08 and 09) – the most important fit:
    - put the visor into the head's face, the screen into the visor's ribs on the foam, and screw the clamp onto the posts;
    - check its four feet reach the head's visor tabs and tightening pulls the visor snugly into its seat;
