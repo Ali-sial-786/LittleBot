@@ -27,7 +27,8 @@ The address looks like this (yours is on the dashboard):
 
     http://192.168.1.20:8765/hooks/doorbell/Xy3...43 random letters...q9
 
-Only **events** come in: what happened and which camera. No video and no pictures.
+Only **events** come in: what happened and which camera. No video and no pictures. (For the video itself, the
+Aosu app could run in Android on the robot: docs/ANDROID_ON_PI.md. Not tried yet.)
 
 ## 0. First: let the phone reach LittleBot
 
