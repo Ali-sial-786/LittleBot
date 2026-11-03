@@ -111,8 +111,10 @@ systemctl --user restart littlebot
 
 | Setting | Default | What it does |
 |---|---|---|
-| `wake.oww_mode` | `off` | `off`, `shadow` (log only) or `confirm` (see below). The robot has `shadow`. |
+| `wake.oww_mode` | `off` | `off`, `shadow` (log only), `confirm` or `rescue` (see below). The robot has `rescue` (since 2026-11-02). |
 | `wake.oww_threshold` | `0.5` | confirm: the score Vosk's wake needs |
+| `wake.oww_rescue_threshold` | `0.7` | rescue: the model's score that wakes it when Vosk wasn't sure |
+| `wake.oww_rescue_seconds` | `5.0` | rescue: how far back the model's score is looked at (Vosk's result comes after the sentence) |
 | `wake.oww_peak_threshold` | `0.5` | a score this high with no Vosk wake is logged |
 | `wake.oww_window_seconds` | `2.0` | how far back before Vosk's wake the model's score is looked at |
 | `wake.oww_confirm_wait_seconds` | `0.3` | confirm: how long to wait for the model to catch up |
@@ -152,6 +154,15 @@ systemctl --user restart littlebot
 ```
 
 To go back: `scripts/set_config.py wake.oww_mode shadow` (or `off`) and restart.
+
+### Rescue mode (on the robot)
+
+The other way round: Vosk still wakes LittleBot on its own, and when Vosk heard a wake phrase but wasn't sure of it
+(an unsure "hey bot", "... bot" with "bot" not the first word, a word below `wake.min_confidence`), a model score of
+at least `wake.oww_rescue_threshold` in the last `wake.oww_rescue_seconds` wakes it all the same. Not while music
+plays. The log says `Vosk wasn't sure of 'hey bot', but the wake model's score is 0.90 ...: waking`. On the robot's
+log of 2026-11-02 seven first tries that needed a second or third go had both (an unsure Vosk phrase and a model
+peak); the model alone was not used, as it also peaked about four times an hour with nobody waking it.
 
 ## Memory: run it with the limit
 

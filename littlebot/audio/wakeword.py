@@ -415,6 +415,7 @@ class WakeWordService(Service):
         self.last_heard: dict[str, Any] | None = None
         self.video_ignored = 0  # phrases heard while a video played that didn't count (stricter rules)
         self.short_ignored = 0  # "hey bot" heard but not sure enough, with nobody in front of the camera
+        self.rescued = 0  # Vosk wasn't sure, the trained model was (wake.oww_mode rescue)
         self.follow_ups = 0
         self._follow_up_until = 0.0  # monotonic: a follow-up (no wake word) counts until then
         self.ducks = 0
@@ -917,7 +918,7 @@ class WakeWordService(Service):
                 if phrase is None and not video and not early:
                     phrase = FOLLOW_UP if self._follow_up(result) else None
                 if phrase is None and not video:
-                    self._note_unsure(result)
+                    phrase = self._rescue(self._note_unsure(result))
                 if phrase is not None and not self._audio_busy and not self._stop.is_set():
                     wake_ok, wake_id = self._model_allows(result, phrase, early=early, video=video)
                     if not wake_ok:  # wake.oww_mode confirm, and the trained model doesn't agree
@@ -1061,17 +1062,33 @@ class WakeWordService(Service):
         except Exception:  # noqa: BLE001 - only for the log
             return "the speaker is busy"
 
-    def _note_unsure(self, result: dict[str, Any]) -> None:
-        """A wake phrase heard, but a word of it below ``wake.min_confidence``: say so in the log (else silent)."""
+    def _note_unsure(self, result: dict[str, Any]) -> str | None:
+        """A wake phrase heard, but not sure enough of it (a word below ``wake.min_confidence``, an unsure "hey bot",
+        "bot" not first): say so in the log (else silent). The phrase heard, or None."""
         heard = match_wake_phrase(result, self._phrases, 0.0)
         if heard is None:
             _note_near_miss(result)
-            return
+            return None
         self._model("vosk_unsure")
         words = [w for w in result.get("result") or [] if isinstance(w, dict)]
         confs = [float(w.get("conf", 1.0)) for w in words if str(w.get("word", "")).lower() in heard.split()]
         log.info("wake word: heard '%s' but not sure enough (word confidence %.2f, wake.min_confidence %.2f)",
                  heard, min(confs, default=0.0), self.cfg.min_confidence)
+        return heard
+
+    def _rescue(self, heard: str | None) -> str | None:
+        """``wake.oww_mode: rescue``: Vosk heard ``heard`` but wasn't sure of it; a high enough score of the trained
+        model just before wakes it all the same ("hey little bot" heard as an unsure "hey bot" while the model
+        scored 0.79; the robot, 2026-11-02). Not while music plays (songs say "but" a lot)."""
+        if heard is None or getattr(self.cfg, "oww_mode", "off") != "rescue" or self._music_on():
+            return None
+        score = self._model("score_now", self.cfg.oww_confirm_wait_seconds, self.cfg.oww_rescue_seconds)
+        if score is None or score < self.cfg.oww_rescue_threshold:
+            return None
+        self.rescued += 1
+        log.info("wake word: Vosk wasn't sure of '%s', but the wake model's score is %.2f (wake.oww_rescue_threshold "
+                 "%.2f): waking", heard, score, self.cfg.oww_rescue_threshold)
+        return heard
 
     def _maybe_duck(self, rec: KeywordRecognizer) -> None:
         """``wake.video_duck``: the words so far end in "hey": turn the video down while the rest is said."""

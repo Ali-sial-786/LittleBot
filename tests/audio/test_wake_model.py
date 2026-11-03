@@ -255,6 +255,30 @@ async def test_confirm_mode_lets_a_high_score_through(rig, tmp_path):
     assert r.wake.triggers == 1
 
 
+async def test_rescue_mode_wakes_on_an_unsure_phrase_the_model_is_sure_of(rig, tmp_path, caplog):
+    # "hey little bot" heard as "hey bot" at 0.55 while the model scored 0.79 (the robot, 2026-11-02)
+    caplog.set_level(logging.INFO, logger="littlebot.wake")
+    r = await _rig_with_model(rig, tmp_path, 0.9, "rescue")
+    await asyncio.sleep(0.3)
+    r.rec.say("hey bot", conf=0.55)  # below wake.short_min_confidence, nobody in front of the camera
+    await until(lambda: r.live.calls, what="live voice started")
+    assert r.wake.rescued == 1 and r.wake.triggers == 1
+    assert ("wake word: Vosk wasn't sure of 'hey bot', but the wake model's score is 0.90 "
+            "(wake.oww_rescue_threshold 0.70): waking") in caplog.text
+
+
+async def test_rescue_mode_needs_the_model_to_be_sure_too(rig, tmp_path, caplog):
+    caplog.set_level(logging.INFO, logger="littlebot.wake")
+    r = await _rig_with_model(rig, tmp_path, 0.3, "rescue")
+    await asyncio.sleep(0.3)
+    r.rec.say("hey bot", conf=0.55)
+    await until(lambda: "heard 'hey bot' but not sure enough" in caplog.text, what="the near miss")
+    await asyncio.sleep(0.3)
+    assert r.live.calls == [] and r.wake.rescued == 0
+    r.rec.say("hey little bot", conf=0.9)  # a sure Vosk wake needs nothing from the model (as in shadow)
+    await until(lambda: r.live.calls, what="live voice started")
+
+
 async def test_a_broken_model_switches_off_and_waking_goes_on(rig, tmp_path, caplog):
     caplog.set_level(logging.INFO, logger="littlebot.wake")
     r = await _rig_with_model(rig, tmp_path, 0.9, "confirm")

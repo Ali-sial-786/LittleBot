@@ -15,7 +15,8 @@ and ``openwakeword.Model.predict``:
 it over without waiting). In ``wake.oww_mode: shadow`` it changes nothing: for each Vosk wake it logs the model's
 best score around it, and it logs its own peaks over ``wake.oww_peak_threshold`` that Vosk didn't wake on; both
 also go to ``data/wake/shadow.jsonl`` (numbers only: no sound, no words), with how the chat went after each wake.
-``scripts/wake_shadow_report.py`` sums that file up. In ``confirm`` the wake word asks ``score_now`` before waking.
+``scripts/wake_shadow_report.py`` sums that file up. In ``confirm`` the wake word asks ``score_now`` before waking;
+in ``rescue`` it asks when Vosk heard a wake phrase but wasn't sure of it, and wakes on a high enough score.
 
 Anything wrong (a missing file, no onnxruntime, an error while scoring) switches it off with one warning; the wake
 word then goes on exactly as without it.
@@ -272,9 +273,10 @@ class WakeModelCheck:
             with self._cv:
                 self._unsure.append(self._fed)
 
-    def score_now(self, wait: float = 0.3) -> float | None:
-        """The model's best score in the last window, once it has scored the sound handed over so far (at most
-        ``wait`` seconds); None when it can't say (not loaded, switched off): then Vosk alone decides."""
+    def score_now(self, wait: float = 0.3, seconds: float | None = None) -> float | None:
+        """The model's best score in the last window (or ``seconds``), once it has scored the sound handed over so
+        far (at most ``wait`` seconds); None when it can't say (not loaded, switched off): then Vosk alone
+        decides."""
         if not self.working or not self.ready:
             return None
         deadline = self._clock() + max(0.0, wait)
@@ -287,7 +289,8 @@ class WakeModelCheck:
                 self._cv.wait(left)
             if not self.working:
                 return None
-            return self._best(target - self.window, target)
+            span = self.window if seconds is None else int(float(seconds) * RATE)
+            return self._best(target - span, target)
 
     def vosk_wake(self, vosk_conf: float, *, early: bool = False, video: bool = False,
                   blocked: bool = False, score: float | None = None) -> int | None:

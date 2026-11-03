@@ -255,8 +255,13 @@ class WakeConfig(_Section):
     # A second check next to Vosk. off: not loaded. shadow: it scores the same microphone sound and logs its score
     # for every Vosk wake (and its own peaks) in data/wake/shadow.jsonl, changing nothing about waking. confirm:
     # Vosk only wakes LittleBot when the model's best score in the last oww_window_seconds is at least
-    # oww_threshold. Anything wrong with it (files, onnxruntime) switches it off with one warning.
-    oww_mode: Literal["off", "shadow", "confirm"] = "off"
+    # oww_threshold. rescue: as shadow, and when Vosk heard a wake phrase but wasn't sure of it ("hey bot" at 0.55,
+    # "... bot" not first), a model score of at least oww_rescue_threshold in the last oww_rescue_seconds wakes it
+    # (7 first tries missed on the robot, 2026-11-02, had both). Anything wrong with it (files, onnxruntime)
+    # switches it off with one warning.
+    oww_mode: Literal["off", "shadow", "confirm", "rescue"] = "off"
+    oww_rescue_threshold: float = Field(default=0.7, ge=0.0, le=1.0)
+    oww_rescue_seconds: float = Field(default=5.0, gt=0.0, le=9.0)  # a Vosk result comes after their sentence
     oww_threshold: float = Field(default=0.5, ge=0.0, le=1.0)  # confirm: Vosk's wake counts at this score or more
     oww_peak_threshold: float = Field(default=0.5, ge=0.0, le=1.0)  # a score this high with no Vosk wake is logged
     oww_window_seconds: float = Field(default=2.0, gt=0.0, le=5.0)  # the sound before Vosk's wake that is looked at
