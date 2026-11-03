@@ -17,7 +17,7 @@ Take-overs (a video, an activity, sleep) asked for in a turn start once the answ
 handed the speaker, microphone and screen back (``AssistantService`` runs ``run_pending``).
 
 Nothing is recorded: audio passes through in-memory buffers only; the words are kept in RAM for the follow-ups
-(``AssistantService.history``) and never written anywhere.
+(``AssistantService.history``) and never written anywhere (only LittleBot's own jokes are kept, jokes.py).
 """
 
 from __future__ import annotations
@@ -89,6 +89,12 @@ CUT_IN_HOLD_MAX_S = 4.0
 # A turn speech-to-text ended mid-sentence on its quiet limit (STTEvent.cut_off: "So then what did they"): the same,
 # this long. It was answered with 'Probably "So then what did they use it for?"' (the robot, 2026-11-02).
 CUT_OFF_HOLD_S = 0.8
+# ... and a turn ending on a word that can't end a sentence ("the difference between Kublai Khan and"): they are
+# thinking of the next word. 0.8 s answered "between Kublai Khan and" with a card about Kublai Khan alone (the robot,
+# 2026-11-02); at most CUT_IN_HOLD_MAX_S in all.
+DANGLING_HOLD_S = 2.5
+DANGLING_WORDS = frozenset("and or but nor between versus vs than the a an my your his her their our um uh er because "
+                           "if".split())  # (not "of", "to", "is", "on": "what's it made of", "turn it on" are done)
 CARRY_OVERLAP_S = 0.02  # the call keeps this much from before the wake word's carry ended (a few ms twice, not lost)
 # What was said with the wake word goes to speech-to-text at once, which works through it at about real time: its
 # pauses (after "hey little bot,") are shortened to CARRY_PAUSE_S so the end of their turn isn't later for them
@@ -310,8 +316,23 @@ class VoiceSession:
         log.info("assistant: microphone %s, speaker %s, volume %d%%%s", names[0] or "?", names[1] or "?",
                  round(volume * 100), " (TOO LOW TO HEAR: say 'volume 60')" if 0 <= volume < 0.08 else "")
 
+    def _jokes_note(self, text: str) -> str:
+        """The jokes it told lately, for a turn asking for one (jokes.py), or ""."""
+        jokes = getattr(self.svc, "jokes", None)
+        try:
+            return jokes.note(text) if jokes is not None else ""
+        except Exception:  # noqa: BLE001 - a note is optional
+            return ""
+
     async def _warm(self) -> None:
-        jobs = [self.svc.brain.warm()]
+        from littlebot.chatgpt.tools import RobotToolbox  # noqa: PLC0415
+
+        try:  # the brain's prompt is cached for the first question too, as a turn sends it (Agent.warm)
+            brain = self.svc.brain.warm(toolbox=RobotToolbox(self.ctx, mode="chat", defer=True),
+                                        extra_tools=self._session_tools())
+        except TypeError:  # a brain that only opens its connection
+            brain = self.svc.brain.warm()
+        jobs = [brain]
         warm_tts = getattr(self.svc.tts(), "warm", None)
         if warm_tts is not None:
             jobs.append(warm_tts())
@@ -460,8 +481,8 @@ class VoiceSession:
                 echo = self._echo_of_me(event.text, short=True)
                 if self.cfg.log_words:
                     log.info("assistant: heard over the voice %r%s", event.text[:120], " (its own echo)" if echo else "")
-                if not echo:
-                    audio.barge_in_heard(event.text, False)  # their words: the held voice is dropped
+                if not echo:  # their words: the held voice is dropped (only "yeah" so far: it waits)
+                    audio.barge_in_heard(event.text, False, aside=self._aside_over_voice(event.text))
             if self._hearing_since is None:
                 self._hearing_since = self._now()
             if event.text.strip():
@@ -504,8 +525,6 @@ class VoiceSession:
                              f" (unsure of: {', '.join(self._unsure)})" if self._unsure else "")
             self._eager_at = None
             if text and self._aside(text):
-                log.info("assistant: %d words like 'okay' in a pause of its answer, nobody cutting in: it talks on",
-                         len(_words(text)))
                 return
             if getattr(audio, "interrupted", False) and text:
                 audio.barge_in_heard(text, True)
@@ -517,7 +536,10 @@ class VoiceSession:
                 self._cut_in_turn, self._held = False, None
                 if not self._end_after and self._speculable(text):
                     short = cut_in and len(_words(text)) <= CUT_IN_HOLD_WORDS
-                    hold = CUT_IN_HOLD_S if short else CUT_OFF_HOLD_S if event.cut_off else 0.0
+                    words = _words(text)
+                    dangling = len(words) >= 3 and words[-1] in DANGLING_WORDS
+                    hold = DANGLING_HOLD_S if dangling else CUT_IN_HOLD_S if short else \
+                        CUT_OFF_HOLD_S if event.cut_off else 0.0
                     self._held_cut_in = short
             elif self._held is not None:
                 return  # a noise: the held turn still waits for more (_release_hold)
@@ -546,10 +568,24 @@ class VoiceSession:
 
     def _aside(self, text: str) -> bool:
         """Only "yes", "okay", "mm" (ASIDE_WORDS), while its answer is being said with a sentence still to come and
-        no barge-in: not a new question. On its last sentence "yes" may answer it, so it counts there."""
+        no barge-in decided yet: not a new question. On its last sentence "yes" may answer it, so it counts there.
+        Said over the voice (it is held): the voice plays on where it stopped."""
+        audio = self.audio
+        held = bool(getattr(audio, "voice_held", False))
+        if getattr(audio, "interrupted", False) and not held:
+            return False
+        if not self._aside_over_voice(text):
+            return False
+        if held:
+            audio.barge_in_heard(text, True, aside=True)
+        log.info("assistant: %d words like 'okay' %s: it talks on", len(_words(text)),
+                 "said over its voice" if held else "in a pause of its answer, nobody cutting in")
+        return True
+
+    def _aside_over_voice(self, text: str) -> bool:
+        """``text`` is only ASIDE_WORDS and its answer has more to say."""
         voice = self._voice
-        if voice is None or voice.first_audio_at is None or not voice.more_to_say or not self._answering() or \
-                getattr(self.audio, "interrupted", False):
+        if voice is None or voice.first_audio_at is None or not voice.more_to_say or not self._answering():
             return False
         words = _words(text)
         return 0 < len(words) <= ASIDE_MAX_WORDS and all(w in ASIDE_WORDS for w in words)
@@ -743,7 +779,7 @@ class VoiceSession:
                 result = await self.svc.brain.respond(text, history=self.svc.history.messages(), toolbox=tools,
                                                       on_sentence=say, on_tool=self._tool_started, mark_day=False,
                                                       extra=[*self.who_notes(), *self._turn_notes(gate),
-                                                             self.svc.history.done_note()],
+                                                             self.svc.history.done_note(), self._jokes_note(text)],
                                                       extra_tools=self._session_tools(), done=done,
                                                       first_words=True)
                 if result.error and not result.sentences:
@@ -773,6 +809,10 @@ class VoiceSession:
                 self.svc.brain.talked_today()
         if heard and said_by != "stop":
             self.svc.history.add(text, heard, list(getattr(result, "done", None) or []))
+            jokes = getattr(self.svc, "jokes", None)
+            if jokes is not None and said_by == "brain":
+                with contextlib.suppress(Exception):
+                    jokes.told(text, heard)
             self._publish(ev.CAPTION, {"who": "robot", "text": heard})
             if self.cfg.log_words:
                 log.info("assistant: said %r", heard[:400])
@@ -1467,18 +1507,19 @@ def _words(text: str) -> list[str]:
 
 # The wake phrase at the start of what speech-to-text heard ("Hey, little bot. Who was Kublai Khan?"): the wake
 # word's carry sends it first so the sentence is heard whole; LittleBot's name is no part of the question. After
-# "hey", also as speech-to-text mishears it ("Hey, little bug." was answered "Hey there!", the robot, 2026-10-31).
-_WAKE_LEAD = re.compile(r"^\s*(?:(?:hey|hi|hay|a|okay|ok)[\s,.!]+)?(?:(?:little|lil|li'l)[\s-]*)?bot\b[\s,.!?]*|"
-                        r"^\s*(?:(?:hey|hi|hay|a|okay|ok)[\s,.!]+)?littlebot\b[\s,.!?]*|"
-                        r"^\s*(?:hey|hi|hay|okay|ok)[\s,.!]+(?:little|lil|li'l)[\s-]*(?:bought|boat|bug|bud|robot)\b"
+# "hey", also as speech-to-text mishears it ("Hey, little bug." was answered "Hey there!", the robot, 2026-10-31;
+# "Hello, bot." went to the brain as a whole turn, 2026-11-02).
+_WAKE_LEAD = re.compile(r"^\s*(?:(?:hey|hi|hay|hello|a|okay|ok)[\s,.!]+)?(?:(?:little|lil|li'l)[\s-]*)?bot\b[\s,.!?]*|"
+                        r"^\s*(?:(?:hey|hi|hay|hello|a|okay|ok)[\s,.!]+)?littlebot\b[\s,.!?]*|"
+                        r"^\s*(?:hey|hi|hay|hello|okay|ok)[\s,.!]+(?:little|lil|li'l)[\s-]*(?:bought|boat|bug|bud|robot)\b"
                         r"[\s,.!?]*|"
-                        r"^\s*(?:(?:hey|hi|hay|a|okay|ok)[\s,.!]+)?(?:little|lil|li'l|middle|liddle)[\s-]*butt\b"
+                        r"^\s*(?:(?:hey|hi|hay|hello|a|okay|ok)[\s,.!]+)?(?:little|lil|li'l|middle|liddle)[\s-]*butt\b"
                         r"[\s,.!?]*|"
-                        r"^\s*(?:(?:hey|hi|hay|a|okay|ok)[\s,.!]+)?(?:middle|liddle)[\s-]*(?:bot|bought|boat)\b"
+                        r"^\s*(?:(?:hey|hi|hay|hello|a|okay|ok)[\s,.!]+)?(?:middle|liddle)[\s-]*(?:bot|bought|boat)\b"
                         r"[\s,.!?]*", re.IGNORECASE)
 # The wake phrase's own sound went first (their first turn), so their words start with it however it was heard
 # ("little dots.", "middle butt,": the robot, 2026-10-31): a looser likeness, ending in a stop before more words.
-_WAKE_LEAD_SENT = re.compile(r"^\s*(?:(?:hey|hi|hay|a|okay|ok)[\s,.!]+)?(?:little|lil|li'l|middle|liddle|lidl)"
+_WAKE_LEAD_SENT = re.compile(r"^\s*(?:(?:hey|hi|hay|hello|a|okay|ok)[\s,.!]+)?(?:little|lil|li'l|middle|liddle|lidl)"
                              r"[\s-]*[bdp][oua][a-z]{0,4}[,.!?]+\s*(?=\S)", re.IGNORECASE)
 
 

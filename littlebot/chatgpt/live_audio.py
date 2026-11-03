@@ -672,6 +672,11 @@ class LiveAudio:
         return self._bstate != _WATCH
 
     @property
+    def voice_held(self) -> bool:
+        """Someone cut in and it isn't decided yet: the voice is held, not dropped (it may still play on)."""
+        return self._bstate == _HELD
+
+    @property
     def mouth(self) -> tuple[float, str]:
         """``(level 0..1, viseme)`` of the voice heard right now, for the face's lip-sync.
 
@@ -999,13 +1004,22 @@ class LiveAudio:
         log.info("live voice: false alarm (%s), the voice carried on", reason)
         self._notify("carried_on", {"reason": reason})
 
-    def barge_in_heard(self, text: str, final: bool) -> str | None:
+    def barge_in_heard(self, text: str, final: bool, *, aside: bool = False) -> str | None:
         """ChatGPT's caption of what they say (littlebot/chatgpt/live.py passes every one). Their words while the
         voice is held: it was them, the held voice is dropped. Returns "go ahead" when their first final words
-        after cutting in say only that ("oops, go ahead"): the voice should carry on where it stopped."""
+        after cutting in say only that ("oops, go ahead"): the voice should carry on where it stopped.
+
+        ``aside``: the words are only "yeah", "okay", "mm" (the assistant decides): the voice stays held, and once
+        they are the whole turn (``final``) it plays on where it stopped ("aside"). A "Yeah." said over it dropped
+        the answer about Alexander the Great (the robot, 2026-11-03)."""
         if not self.barge_in_on or not text.strip():
             return None
         if self._bstate == _HELD:
+            if aside:
+                if final:
+                    self._carry_on(f"only {text.strip()!r} said over it")
+                    return "aside"
+                return None
             self._confirm()
         if final and self._await_final:
             self._await_final = False

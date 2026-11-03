@@ -57,6 +57,7 @@ QUIET_TOOLS = frozenset({"stop_everything", "stop_video", "pause_video", "resume
 _LOOKUP_PREFIXES = ("get_", "search", "read_", "list_", "look", "recall", "whats_", "describe", "who_", "home_devices",
                     "battery", "browser")
 MAX_TOOL_ROUNDS = 6
+PRIME_AFTER_S = 240.0  # Anthropic keeps a cached prompt 5 minutes after its last use: older than this, it is primed
 FACE_TAGS = ("[happy] [excited] [curious] [surprised] [thinking] [confused] [sad] [playful] [affectionate] "
              "[celebrating] [neutral]")
 EFFECT_TAGS = "[hearts] [sparkle] [confetti] [nod] [wiggle] [bounce]"
@@ -247,6 +248,7 @@ class Brain:
         self._deep = deep
         self._given = (provider is not None, deep is not None)  # given ones (tests) are never forgotten
         self._now = now
+        self._asked_at = -1e9  # the brain's last request (its prompt stays cached PRIME_AFTER_S + a minute after)
 
     # ------------------------------------------------------------ the models
     def provider(self) -> Any:
@@ -294,14 +296,40 @@ class Brain:
                                         allowed=lambda: cloud_block(self.ctx))
         return self._deep
 
-    async def warm(self) -> None:
-        """Open the brain's connection before the first question (best effort)."""
-        warm = getattr(self.provider(), "warm", None)
+    async def warm(self, toolbox: Any = None,
+                   extra_tools: dict[str, tuple[dict[str, Any], Callable[[dict[str, Any]], Any]]] | None = None) -> None:
+        """Open the brain's connection before the first question (best effort). With ``toolbox`` (a voice session
+        starting) and no request for PRIME_AFTER_S, its prompt is cached now too (the provider's ``prime``): the
+        first question of a chat waited 1.3 s for its first word, the next ones 0.6 s (the robot, 2026-11-03)."""
+        provider = self.provider()
+        prime = getattr(provider, "prime", None)
+        if toolbox is not None and prime is not None and self._now() - self._asked_at > PRIME_AFTER_S:
+            self._asked_at = self._now()
+            tools, _, system = self._request_parts(toolbox, extra_tools)
+            try:
+                await prime(system=system, tools=tools)
+            except Exception:  # noqa: BLE001
+                log.debug("assistant: priming the brain failed", exc_info=True)
+            return
+        warm = getattr(provider, "warm", None)
         if warm is not None:
             try:
                 await warm(3.0)
             except Exception:  # noqa: BLE001
                 log.debug("assistant: warming the brain failed", exc_info=True)
+
+    def _request_parts(self, toolbox: Any,
+                       extra_tools: dict[str, Any] | None) -> tuple[list[dict[str, Any]], set[str], str]:
+        """The tools, the ones that run beside a finished answer, and the system prompt of a request."""
+        tools = _tool_specs(toolbox)
+        if self.deep_provider() is not None and getattr(self.deep_provider(), "configured", lambda: False)():
+            tools.append(_deep_spec())
+        tools += [{k: v for k, v in spec.items() if k != "final"} for spec, _ in (extra_tools or {}).values()]
+        final = FINAL_TOOLS | {name for name, (spec, _) in (extra_tools or {}).items() if spec.get("final")}
+        system = self.system_prompt()
+        if toolbox is not None and hasattr(toolbox, "instructions"):
+            system += "\n" + toolbox.instructions().strip()
+        return tools, final, system
 
     def forget_models(self) -> list[Any]:
         """The models made from the config, let go (claude.model or assistant.deep_model changed): the next
@@ -546,14 +574,7 @@ class Brain:
             return await toolbox.run(name, arguments)
 
         provider = self.provider()
-        tools = _tool_specs(toolbox)
-        if self.deep_provider() is not None and getattr(self.deep_provider(), "configured", lambda: False)():
-            tools.append(_deep_spec())
-        tools += [{k: v for k, v in spec.items() if k != "final"} for spec, _ in (extra_tools or {}).values()]
-        final = FINAL_TOOLS | {name for name, (spec, _) in (extra_tools or {}).items() if spec.get("final")}
-        system = self.system_prompt()
-        if toolbox is not None and hasattr(toolbox, "instructions"):
-            system += "\n" + toolbox.instructions().strip()
+        tools, final, system = self._request_parts(toolbox, extra_tools)
         result.prefix = _fingerprint(tools, system)
         worked = _worked_out(text)
         if worked:  # a sum said in words: worked out here, not by a model with thinking off (spoken_sums.py)
@@ -573,6 +594,7 @@ class Brain:
             pass
         result.provider = str(getattr(provider, "name", "") or "")
         result.model = str(getattr(provider, "model", "") or "")
+        self._asked_at = self._now()
         try:
             reply = await provider.reply(messages, system=system, max_tokens=self.cfg.max_reply_tokens,
                                          timeout=self.cfg.reply_timeout_seconds, **kwargs)

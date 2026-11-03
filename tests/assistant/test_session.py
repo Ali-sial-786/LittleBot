@@ -1219,6 +1219,77 @@ async def test_a_yes_in_a_pause_of_its_answer_does_not_cut_it_off() -> None:
     await svc.stop_session("test")
 
 
+async def test_a_yeah_said_over_its_voice_lets_it_talk_on() -> None:
+    """A "Yeah." said over the voice dropped the answer about Alexander the Great (the robot, 2026-11-03): the
+    voice is held when someone cuts in, and words like that let it play on where it stopped."""
+    brain = Scripted(["One. ", "Two. ", "Three."], ["Five."])
+    svc, stt, _, audio = _service(brain, follow_up_seconds=5)
+    svc._tts = SlowTTS()
+    await svc.start()
+    await svc.start_session()
+    await _wait(lambda: stt.stream is not None)
+    stt.say("count to three")
+    session = svc._session
+    await _wait(lambda: session._voice is not None and bool(session._voice.heard))
+    voice = session._voice
+    audio.interrupted = audio.voice_held = True
+    audio.on_change("interrupted", {})
+    stt.event("start_of_turn")
+    stt.event("partial", "Yeah.")
+    await asyncio.sleep(0.1)
+    assert audio.heard_words == [] and audio.voice_held  # not confirmed: the voice waits
+    stt.event("end_of_turn", "Yeah.")
+    await _wait(lambda: audio.asides == ["Yeah."])
+    assert not audio.interrupted and len(brain.questions) == 1 and session._voice is voice and voice.more_to_say
+    audio.interrupted = audio.voice_held = True  # a real cut-in still drops it
+    audio.on_change("interrupted", {})
+    stt.event("partial", "Yeah, count")
+    await _wait(lambda: audio.heard_words == [("Yeah, count", False)])
+    await svc.stop_session("test")
+
+
+async def test_a_question_that_stops_on_and_waits_for_the_rest() -> None:
+    """ "Can you tell me the difference between Kublai Khan and" was answered after 0.8 s with a card about Kublai
+    Khan alone (the robot, 2026-11-02): a turn ending on a word like "and" waits for them longer."""
+    brain = Scripted(["Just Kublai."], ["Both Khans."])
+    svc, stt, _, _ = _service(brain, follow_up_seconds=5)
+    await svc.start()
+    await svc.start_session()
+    await _wait(lambda: stt.stream is not None)
+    stt.say("tell me the difference between Kublai Khan and")
+    await asyncio.sleep(1.3)  # thinking of the name
+    stt.say("Genghis Khan")
+    await _wait(lambda: len(svc.history) == 1)
+    assert brain.questions[-1] == "tell me the difference between Kublai Khan and Genghis Khan"
+    assert svc.history.messages() == [{"role": "user", "content": brain.questions[-1]},
+                                      {"role": "assistant", "content": "Both Khans."}]
+    await svc.stop_session("test")
+
+
+async def test_a_joke_told_before_is_named_when_they_ask_for_another() -> None:
+    brain = Scripted(["Why did the robot go on a diet? It had too many bytes!"], ["A new one."])
+    svc, stt, _, _ = _service(brain, follow_up_seconds=5)
+    await svc.start()
+    await svc.start_session()
+    await _wait(lambda: stt.stream is not None)
+    stt.say("tell me a joke")
+    await _wait(lambda: svc.jokes._items)
+    stt.say("what's the capital of France")
+    await _wait(lambda: len(brain.asked) == 2)
+    assert "jokes you already told" not in brain.asked[-1]  # only for a joke
+    stt.say("tell me another joke")
+    await _wait(lambda: len(brain.asked) == 3)
+    assert "too many bytes" in brain.asked[-1] and "jokes you already told" in brain.asked[-1]
+    await svc.stop_session("test")
+
+
+def test_hello_bot_is_the_wake_phrase_not_a_question() -> None:
+    from littlebot.assistant.session import _heard
+
+    assert _heard("Hello, bot.") == ""
+    assert _heard("Hello, little bot. What time is it?").lower().startswith("what time")
+
+
 async def test_a_noise_does_not_keep_the_answer_waiting() -> None:
     brain = Scripted(["Sunny all day."], delay=0.1)
     svc, stt, _, _ = _service(brain, follow_up_seconds=5)

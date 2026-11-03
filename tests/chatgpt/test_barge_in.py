@@ -432,6 +432,27 @@ async def test_oops_go_ahead_asks_the_voice_to_carry_on(call):
         audio.close()
 
 
+async def test_a_yeah_over_the_voice_keeps_it_held_then_it_plays_on(call):
+    # "Yeah." said over the voice dropped the answer about Alexander the Great (the robot, 2026-11-03)
+    audio, c = call()
+    try:
+        await c.warm_up()
+        await c.talk_over(0.5)
+        assert audio.voice_held and audio._out_queued > 0
+        assert audio.barge_in_heard("Yeah", False, aside=True) is None
+        assert audio.voice_held and c.events == ["interrupted"]  # still deciding: nothing dropped
+        assert audio.barge_in_heard("Yeah.", True, aside=True) == "aside"
+        assert c.events == ["interrupted", "carried_on"] and not audio.interrupted and audio._out_queued > 0
+        for _ in range(6):
+            await c.tick()
+        assert all(p.any() for p in c.played[-3:])  # it plays on
+        await c.talk_over(0.5)
+        assert audio.barge_in_heard("Yeah, but", False) is None  # more than that: dropped as before
+        assert c.events[-1] == "heard" and audio._out_queued == 0 and not audio.voice_held
+    finally:
+        audio.close()
+
+
 async def test_drop_voice_empties_what_was_held_and_listens(call):
     audio, c = call()
     try:

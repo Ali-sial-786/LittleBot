@@ -188,7 +188,9 @@ When you talk over LittleBot, a short turn right after it ("No," "Wait," four wo
 you have been quiet for 1.2 s (`CUT_IN_HOLD_S` in session.py); whatever you go on to say joins it, so "No, ... I
 meant the other one" is one question, not "Okay." and then another. The same for a turn AssemblyAI ended mid-sentence
 on its quiet limit (its words end without a full stop or question mark: "So then what did they"), after 0.8 s
-(`CUT_OFF_HOLD_S`). Either way the answer is worked out meanwhile, so it starts as soon as the wait is over.
+(`CUT_OFF_HOLD_S`). A turn ending on a word no sentence ends with ("and", "or", "between", "the", "my", "um",
+`DANGLING_WORDS`: "the difference between Kublai Khan and") waits 2.5 s (`DANGLING_HOLD_S`): you are thinking of
+the next word. Either way the answer is worked out meanwhile, so it starts as soon as the wait is over.
 
 An answer never starts while you are talking again. While its voice plays, the microphone sends speech-to-text
 silence, so the rest of your sentence would be lost. The turn that ended on that silence would then cut the answer
@@ -198,7 +200,16 @@ to stop talking" when a wait ended without a new turn.
 
 In a pause between its sentences the microphone is open again. A turn there of only "yes", "okay", "mm" and the like
 (`ASIDE_WORDS`, three words at most) doesn't stop the answer when another sentence is still to come and nobody cut
-in. On its last sentence it counts, as it may answer a question. Anything else still cuts in as before.
+in. Said over its voice, the voice is held (as for any cut-in) but not dropped: once those words are the whole turn
+it plays on where it stopped ("live voice: false alarm (only 'Yeah.' said over it)" in the log). On its last
+sentence it counts, as it may answer a question. Anything else still cuts in as before.
+
+The first question of a chat used to wait about 1.3 s for its first word against 0.6 s later on: Anthropic keeps
+the brain's long prompt cached only 5 minutes. When a chat starts and the brain hasn't been asked anything for 4
+minutes, the prompt is cached while you speak (one token of answer; "purpose=prime" in the log).
+
+"Tell me a joke" gets a note with the jokes it told lately (the last 15 of up to 40, kept 30 days in
+`data/jokes_told.json`; only LittleBot's own answers are kept), so a new chat doesn't tell the same one again.
 
 Cartesia gets one steady emotion: `cartesia_emotion` (calm) for most sentences, content for happy ones,
 sympathetic for sad ones; never "happy", "curious" or none at all, which made the voice suddenly loud and excited.

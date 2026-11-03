@@ -183,6 +183,18 @@ safe to unplug. The Pi 5's power button also works: a short press starts a clean
 shutdown (on the desktop it may first show the shutdown menu - press again; the app then
 receives SIGTERM from systemd); holding it down forces power off - emergencies only.
 
+**Telling a power cut afterwards.** The Pi keeps no journal across a restart, so a cut leaves
+no trace of its own. LittleBot writes its last sign of life to `data/power_last.json` every
+10 s (the time, the battery's percent, the pack's and each cell's volts, the charger) and
+marks it clean when it stops. At the next start, if the last run never stopped and the Pi
+started after it, the log says `power: the power was cut at about ...` with that last reading
+(`littlebot/power/last_seen.py`). Each cold start also shows up as `the Pi reports
+under-voltage since boot` and the echo canceller being moved back to the speaker. On
+2026-11-02 the robot cut out six times in a day when it was picked up or bumped, full and on
+the UPS HAT (E), with nothing in the log before: the HAT powers the Pi through spring pogo
+pins underneath, so check that all four standoffs are screwed tight and the Pi can't shift on
+the pins, and that the cells sit firmly in their holders.
+
 ## 7. Battery and child safety
 
 - Use a branded power bank with over-current/over-temperature protection; never a

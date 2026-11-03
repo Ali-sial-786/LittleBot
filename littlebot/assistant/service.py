@@ -131,6 +131,9 @@ class AssistantService(Service):
             brain = Brain(ctx, now=now)
         self.brain = brain
         self.history = History(turns=self.cfg.history_turns, minutes=self.cfg.history_minutes, now=now)
+        from littlebot.assistant.jokes import JokesTold  # noqa: PLC0415
+
+        self.jokes = JokesTold.for_context(ctx)
         self._session: Any = None
         self._task: asyncio.Task[Any] | None = None
         self._loop: asyncio.AbstractEventLoop | None = None

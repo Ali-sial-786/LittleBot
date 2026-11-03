@@ -330,6 +330,72 @@ async def test_no_backup_card_when_none_is_needed_or_it_is_too_late() -> None:
     assert await Brain(ctx, provider=failed).card_after("q", BREAKER, box) is None
 
 
+async def test_a_chat_starting_after_a_while_caches_the_prompt_first() -> None:
+    """The first question of a chat waited 1.3 s for its first word, the next ones 0.6 s: its prompt wasn't cached
+    any more (the robot, 2026-11-03). A session's warm-up caches the same tools and system prompt a turn sends."""
+    now = [1000.0]
+
+    class Priming(ScriptedProvider):
+        def __init__(self) -> None:
+            super().__init__(["Hi."])
+            self.primed: list[tuple[str, list[str]]] = []
+            self.warmed = 0
+
+        async def prime(self, *, system: str, tools: Any = None) -> bool:
+            self.primed.append((system, [t.get("name") for t in tools or []]))
+            return True
+
+        async def warm(self, timeout: float = 5.0) -> bool:
+            self.warmed += 1
+            return True
+
+    ctx = make_test_context()
+    p = Priming()
+    brain = Brain(ctx, provider=p, now=lambda: now[0])
+    await brain.warm(toolbox=RobotToolbox(ctx, mode="chat"))
+    await brain.respond("hi", history=[], toolbox=RobotToolbox(ctx, mode="chat"), on_sentence=lambda s: None)
+    assert p.primed == [(p.calls[0]["system"], p.calls[0]["tools"])]  # what the turn sent
+    now[0] += 60
+    await brain.warm(toolbox=RobotToolbox(ctx, mode="chat"))  # still cached: only the connection
+    assert len(p.primed) == 1 and p.warmed == 1
+    now[0] += 300
+    await brain.warm(toolbox=RobotToolbox(ctx, mode="chat"))
+    assert len(p.primed) == 2
+    await brain.warm()  # no toolbox (a typed chat): never primed
+    assert len(p.primed) == 2 and p.warmed == 2
+
+
+async def test_claude_primes_with_one_token_and_the_turns_prompt() -> None:
+    from littlebot.brain.providers.claude import ClaudeProvider
+
+    sent: list[dict[str, Any]] = []
+
+    class Messages:
+        async def create(self, **kwargs: Any) -> Any:
+            sent.append(kwargs)
+
+            class Usage:
+                input_tokens, cache_creation_input_tokens, cache_read_input_tokens, output_tokens = 5, 19000, 0, 1
+
+            class Msg:
+                usage = Usage()
+                content: list[Any] = []
+
+            return Msg()
+
+    class Client:
+        messages = Messages()
+
+    p = ClaudeProvider(api_key="test-key", model="claude-haiku-5-5", client=Client())
+    tools = [{"type": "function", "name": "get_volume", "description": "the volume",
+              "parameters": {"type": "object", "properties": {}}}]
+    assert await p.prime(system="You are LittleBot.", tools=tools)
+    turn = p.build_request([{"role": "user", "content": "hi"}], system="You are LittleBot.", tools=tools,
+                           effort="minimal")
+    assert sent[0]["max_tokens"] == 1
+    assert sent[0]["system"] == turn["system"] and sent[0]["tools"] == turn["tools"]
+
+
 async def test_first_conversation_of_the_day_offers_a_greeting_once() -> None:
     ctx = make_test_context()
     p = ScriptedProvider(["Good morning!"])

@@ -150,6 +150,32 @@ class ClaudeProvider(BaseProvider):
         except Exception:  # noqa: BLE001 - best effort
             return False
 
+    async def prime(self, *, system: str, tools: list[dict[str, Any]] | None = None, timeout: float = 6.0) -> bool:
+        """Cache the prompt (tools and system, as ``reply`` sends them with ``effort="minimal"``) before the first
+        question: one token of answer, so it costs about what that question's own cache write would have. A cold
+        prompt (19k tokens) took 1.3 s to its first word, a cached one 0.6 s (Haiku, the robot, 2026-11-03)."""
+        if self.missing() or self._blocked():
+            return False
+        timer = CallTimer(self.name, "prime")
+        kwargs = self.build_request([{"role": "user", "content": "(getting ready)"}], system=system, tools=tools,
+                                    effort="minimal")
+        kwargs["max_tokens"] = 1
+        try:
+            msg = await asyncio.wait_for(self._get_client().messages.create(**kwargs), timeout)
+        except asyncio.TimeoutError:
+            timer.done(self.model, result="timeout")
+            return False
+        except Exception as e:  # noqa: BLE001 - best effort
+            timer.done(self.model, result=_mapped(e).kind)
+            return False
+        timer.first_at = timer.first_at or time.monotonic()
+        usage = getattr(msg, "usage", None)
+        timer.done(self.model, tokens_in=sum(_int(getattr(usage, k, 0)) for k in (
+            "input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens")),
+                   tokens_out=_int(getattr(usage, "output_tokens", 0)),
+                   cache_read=_int(getattr(usage, "cache_read_input_tokens", 0)))
+        return True
+
     async def aclose(self) -> None:
         client, self._client = self._client, None
         close = getattr(client, "close", None)

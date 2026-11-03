@@ -466,6 +466,12 @@ def make_test_context(*, fakes: bool = True, **config_overrides: Any) -> RobotCo
         "doorbell_hook_token"
     # ... nor the real Nanit bridge's folder (littlebot/nanit: the camera list, whether a sign-in exists)
     ctx.extras["nanit_dir"] = Path(tempfile.gettempdir()) / f"littlebot-test-{uuid.uuid4().hex}" / "nanit"
+    # ... nor the real last sign of life (littlebot/power/last_seen.py)
+    ctx.extras["power_last_file"] = Path(tempfile.gettempdir()) / f"littlebot-test-{uuid.uuid4().hex}" / \
+        "power_last.json"
+    # ... nor the real list of jokes told (littlebot/assistant/jokes.py)
+    ctx.extras["jokes_told_file"] = Path(tempfile.gettempdir()) / f"littlebot-test-{uuid.uuid4().hex}" / \
+        "jokes_told.json"
     if fakes:
         ctx.face = FakeFace(ctx.bus)
         ctx.audio = FakeAudio(ctx.bus)
@@ -495,6 +501,8 @@ class FakeCallAudio:
         self.muted = False
         self.dropped = 0
         self.interrupted = False
+        self.voice_held = False  # (interrupted, and not decided yet)
+        self.asides: list[str] = []  # "yeah"s said over the held voice that let it play on
         self.speaking = False
         self.queued_s = 0.0
         self.mouth = (0.0, "closed")
@@ -530,7 +538,15 @@ class FakeCallAudio:
     def setup_barge_in(self, **hooks: Any) -> None:
         self.on_change = hooks.get("on_change")
 
-    def barge_in_heard(self, text: str, final: bool) -> str | None:
+    def barge_in_heard(self, text: str, final: bool, *, aside: bool = False) -> str | None:
+        if aside and self.voice_held:  # LiveAudio: the held voice waits, then plays on
+            if final:
+                self.voice_held = self.interrupted = False
+                self.asides.append(text)
+                if self.on_change is not None:
+                    self.on_change("carried_on", {"reason": "aside"})
+                return "aside"
+            return None
         self.heard_words.append((text, final))
         return None
 
