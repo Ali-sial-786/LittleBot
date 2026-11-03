@@ -46,8 +46,9 @@ class Who:
     def note(self) -> str:
         """For the brain's context."""
         if self.sure:
+            # (once known mid-chat, "Hi Ali!" began the next answer; the robot, 2026-11-02)
             return (f"the person talking is {self.label} (recognised by {self.how}; use their name now and then, "
-                    "and their own memories)")
+                    "never as a greeting in the middle of a chat, and their own memories)")
         return (f"the person talking is probably {self.label} (by {self.how}, not certain: don't insist on it, "
                 "and never say it unprompted)")
 
