@@ -1,6 +1,6 @@
 // Assistant: type to LittleBot (the same brain as its voice), intercom, notes to its screen, which voice pipeline
-// is on and why, Spotify (connect, what plays, where music plays from), and what its skills hold right now (lists,
-// reminders, memories, games ...).
+// is on and why, its voices and models (voice_setup_panel.js), Spotify (connect, what plays, where music plays
+// from), and what its skills hold right now (lists, reminders, memories, games ...).
 
 import { get, post } from '../api.js';
 import { append, banner, button, clear, h, icon, pageHead, setText, switchRow, toast } from '../ui.js';
@@ -8,6 +8,7 @@ import { calendarPanel } from './calendar_panel.js';
 import { doorbellPanel } from './doorbell_panel.js';
 import { mirrorPanel } from './mirror_panel.js';
 import { nanitPanel } from './nanit_panel.js';
+import { voiceSetupPanel } from './voice_setup_panel.js';
 
 const SPEAK_KEY = 'littlebot.assistant.speak';
 const KEY_HELP = {
@@ -195,6 +196,7 @@ export default {
     const stopBtn = button('Stop', { kind: 'soft', iconName: 'stop', onClick: () => app.act(() => post('/assistant/session/stop'), 'Stopped.') });
 
     // ---------- Spotify
+    const setup = voiceSetupPanel(app); // what listens, compares, thinks and speaks; the Cartesia voice
     const spotify = spotifySection(app);
     const doorbell = doorbellPanel(app); // doorbell and camera alerts (doorbell_panel.js)
     const calendars = calendarPanel(app); // each person's calendar and phone (calendar_panel.js)
@@ -259,6 +261,7 @@ export default {
         h('section', { class: 'card' },
           h('div', { class: 'card-head' }, h('h2', {}, icon('mic'), 'Voice'), h('div', { class: 'btn-row' }, talkBtn, stopBtn)),
           pipeBody),
+        setup.el,
         spotify.el,
         calendars.el,
         doorbell.el,
@@ -303,6 +306,6 @@ export default {
     }
     refresh();
     timer = setInterval(refresh, 4000);
-    return { destroy() { clearInterval(timer); doorbell.destroy(); calendars.destroy(); mirror.destroy(); nanit.destroy(); } };
+    return { destroy() { clearInterval(timer); setup.destroy(); doorbell.destroy(); calendars.destroy(); mirror.destroy(); nanit.destroy(); } };
   },
 };

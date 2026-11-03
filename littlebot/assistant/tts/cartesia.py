@@ -15,17 +15,28 @@ still counts for a moment. So by default LittleBot has one open at a time (``ass
 a sentence is made several times faster than it is said, so the next one is ready before it is needed.
 
 The key: ``CARTESIA_API_KEY`` in .env, or data/cartesia_api_key (chmod 600).
+
+``list_voices`` / ``get_voice``: Cartesia's voice library for the dashboard's voice picker (``GET /voices``, read
+2026-11-02: https://docs.cartesia.ai/api-reference/voices/list; ``q`` searches names and descriptions, ``limit`` up
+to 100, the next page from ``starting_after``), as plain dicts without the key.
 """
 
 from __future__ import annotations
 
+import re
 from typing import Any, Callable
 
-from littlebot.assistant.speech import MOOD, CloudOk
+import httpx
+
+from littlebot.assistant.speech import MOOD, CloudOk, SpeechError
+from littlebot.assistant.speech_http import http_error, status_kind
 from littlebot.assistant.tts.base import HttpPcmTTS, Request
 
 URL = "https://api.cartesia.ai/tts/bytes"
+VOICES_URL = "https://api.cartesia.ai/voices"
 API_VERSION = "2026-08-14"
+VOICE_ID = re.compile(r"^[A-Za-z0-9_-]{6,64}$")
+voices_transport: Any = None  # tests: an httpx transport for list_voices / get_voice
 RATE = 48000  # one of 8000, 16000, 22050, 24000, 44100, 48000
 # assistant.cartesia_speed -> generation_config.speed (the API takes 0.6-1.5); a number is used as it is
 SPEEDS = {"slowest": 0.7, "slow": 0.85, "normal": 1.0, "fast": 1.15, "fastest": 1.3}
@@ -87,4 +98,60 @@ def _speed(value: str | float) -> float:
         return 1.0
 
 
-__all__ = ["CartesiaTTS", "EMOTIONS"]
+# ---------------------------------------------------------------- the voice library (the dashboard's picker)
+def _voice(v: dict[str, Any]) -> dict[str, Any]:
+    accents = [a for a in v.get("accents") or () if isinstance(a, dict)]
+    return {"id": str(v.get("id") or ""), "name": str(v.get("name") or "")[:80],
+            "tagline": str(v.get("tagline") or "")[:80], "description": str(v.get("description") or "")[:300],
+            "gender": v.get("gender") or None, "accent": str(accents[0].get("accent") or "") if accents else "",
+            "language": str(v.get("language") or ""), "mine": bool(v.get("is_owner"))}
+
+
+async def _get(key: str, url: str, params: dict[str, Any] | None = None, timeout: float = 8.0) -> Any:
+    headers = {"Cartesia-Version": API_VERSION, "Authorization": f"Bearer {key}"}
+    try:
+        async with httpx.AsyncClient(transport=voices_transport, timeout=timeout) as client:
+            resp = await client.get(url, params=params, headers=headers)
+    except httpx.HTTPError as e:
+        raise http_error(e) from None
+    if resp.status_code != 200:
+        raise SpeechError(status_kind(resp.status_code), f"HTTP {resp.status_code}")
+    try:
+        return resp.json()
+    except ValueError:
+        raise SpeechError("server_error", "not JSON") from None
+
+
+async def list_voices(key: str, *, query: str = "", gender: str | None = None, language: str | None = "en",
+                      mine: bool = False, after: str | None = None, limit: int = 30) -> dict[str, Any]:
+    """One page of Cartesia's voices: ``{voices: [{id, name, tagline, description, gender, accent, language,
+    mine}], next: <id for ``after``> or None}``. Raises SpeechError (auth, network ...)."""
+    params: dict[str, Any] = {"limit": max(1, min(100, int(limit)))}
+    if query.strip():
+        params["q"] = query.strip()[:80]
+    if gender in ("masculine", "feminine", "gender_neutral"):
+        params["gender"] = gender
+    if language:
+        params["language"] = language
+    if mine:
+        params["is_owner"] = "true"
+    if after and VOICE_ID.match(after):
+        params["starting_after"] = after
+    data = await _get(key, VOICES_URL, params)
+    items = data.get("data") if isinstance(data, dict) else None
+    voices = [_voice(v) for v in items or () if isinstance(v, dict) and v.get("id")]
+    nxt = data.get("next_page") if isinstance(data, dict) and data.get("has_more") else None
+    return {"voices": voices, "next": str(nxt) if nxt else None}
+
+
+async def get_voice(key: str, voice_id: str) -> dict[str, Any]:
+    """One voice by its ID (as in ``list_voices``). Raises SpeechError (``bad_request`` for an unknown ID)."""
+    if not VOICE_ID.match(voice_id):
+        raise SpeechError("bad_request", "not a voice ID")
+    data = await _get(key, f"{VOICES_URL}/{voice_id}")
+    if not isinstance(data, dict) or not data.get("id"):
+        raise SpeechError("server_error", "no voice")
+    return _voice(data)
+
+
+__all__ = ["CartesiaTTS", "EMOTIONS", "VOICE_ID", "get_voice", "list_voices"]

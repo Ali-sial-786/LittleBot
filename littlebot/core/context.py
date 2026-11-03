@@ -21,7 +21,7 @@ from littlebot.core.interfaces import (
     ActivityAPI, AudioAPI, BrainAPI, FaceAPI, MediaAPI, MotionAPI, SystemMonitorAPI, VisionAPI,
 )
 from littlebot.core.runtime import AsyncRuntime
-from littlebot.core.settings import Settings, build_defaults
+from littlebot.core.settings import Settings, build_defaults, link_config
 from littlebot.core.state import StateManager
 from littlebot.core.storage import Database
 from littlebot.safety.policy import AgePolicy
@@ -81,6 +81,7 @@ def build_core_context(
         db_path = cfg.data_path / "littlebot.db"
     db = Database(db_path)
     settings = Settings(db, bus, build_defaults(cfg))
+    link_config(settings, cfg, bus)  # the voice and its models chosen on the dashboard
     if monitor is None:
         from littlebot.hardware.system import SystemMonitor
 

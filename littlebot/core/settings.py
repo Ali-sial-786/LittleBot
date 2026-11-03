@@ -7,6 +7,12 @@ dashboard is stored here and survives restarts. Every change publishes
 Keys are dotted strings. Known keys and their defaults are registered in
 ``DEFAULTS``; unknown keys are rejected so typos cannot silently create
 settings.
+
+A few settings stand in for a config value (``CONFIG_OVERRIDES``: the voice
+pipeline's services and models, chosen on the Assistant page): the config
+file's value is their default, and ``link_config`` copies the dashboard's
+choice into the config at start-up and whenever it changes, so every reader of
+the config uses it. ``reset`` puts the config file's value back.
 """
 
 from __future__ import annotations
@@ -17,17 +23,34 @@ import logging
 import threading
 from typing import Any, Callable
 
+from pydantic import ValidationError
+
 from littlebot.core.config import LittleBotConfig
-from littlebot.core.events import EventBus, Topics
+from littlebot.core.events import Event, EventBus, Topics
 from littlebot.core.storage import Database
 
 log = logging.getLogger(__name__)
 
 _PREFIX = "setting:"
 
+# setting -> (config section, field): what listens, compares, thinks and speaks (docs/ASSISTANT_SPEECH.md)
+CONFIG_OVERRIDES: dict[str, tuple[str, str]] = {
+    "assistant.pipeline": ("assistant", "pipeline"),
+    "assistant.stt": ("assistant", "stt"),
+    "assistant.stt_shadow": ("assistant", "stt_shadow"),
+    "assistant.log_words": ("assistant", "log_words"),
+    "assistant.tts": ("assistant", "tts"),
+    "assistant.cartesia_voice": ("assistant", "cartesia_voice"),
+    "assistant.deep_model": ("assistant", "deep_model"),
+    "claude.model": ("claude", "model"),
+}
+
 
 def build_defaults(cfg: LittleBotConfig) -> dict[str, Any]:
     return {
+        # the voice pipeline's services and models: the config file's, until changed on the dashboard
+        **{key: copy.deepcopy(getattr(getattr(cfg, section), name))
+           for key, (section, name) in CONFIG_OVERRIDES.items()},
         # privacy
         "privacy.camera_enabled": cfg.privacy.camera_enabled,
         "privacy.microphone_enabled": cfg.privacy.microphone_enabled,
@@ -181,7 +204,7 @@ class Settings:
                 return copy.deepcopy(self._values[key])
         return default
 
-    def set(self, key: str, value: Any, *, source: str = "") -> Any:
+    def set(self, key: str, value: Any, *, source: str = "", store: bool = True) -> Any:
         if key not in self._defaults:
             raise KeyError(f"unknown setting {key!r}")
         if key in self._validators:
@@ -191,7 +214,7 @@ class Settings:
         with self._lock:
             old = self._values.get(key)
             self._values[key] = copy.deepcopy(value)
-        if key not in _NON_PERSISTENT:
+        if store and key not in _NON_PERSISTENT:
             self._db.kv_set(_PREFIX + key, value)
         if old != value:
             self._bus.publish(Topics.SETTINGS_CHANGED, {"key": key, "value": value, "old": old}, source=source or "settings")
@@ -200,9 +223,15 @@ class Settings:
     def update(self, values: dict[str, Any], *, source: str = "") -> dict[str, Any]:
         return {k: self.set(k, v, source=source) for k, v in values.items()}
 
-    def reset(self, key: str) -> Any:
+    def reset(self, key: str, *, source: str = "") -> Any:
+        """Back to the default, and nothing kept: a later start uses the config's value again."""
         self._db.kv_delete(_PREFIX + key)
-        return self.set(key, copy.deepcopy(self._defaults[key]))
+        return self.set(key, copy.deepcopy(self._defaults[key]), source=source, store=False)
+
+    def is_stored(self, key: str) -> bool:
+        """Whether ``key`` was changed (and kept) rather than left at its default."""
+        missing = object()
+        return self._db.kv_get(_PREFIX + key, missing) is not missing
 
     def all(self) -> dict[str, Any]:
         with self._lock:
@@ -214,6 +243,50 @@ class Settings:
     # -- convenience --------------------------------------------------------
     def child_age_months(self, today: _dt.date | None = None) -> int | None:
         return age_months_from_profile(self.get("profile") or {}, today)
+
+
+def link_config(settings: Settings, cfg: LittleBotConfig, bus: EventBus) -> list[str]:
+    """``CONFIG_OVERRIDES`` into ``cfg``: each is checked as the config checks it (an "assistant.stt" of
+    ["siri"] is refused like the YAML would be), the kept choices are copied in now and every change later.
+    Returns the keys whose kept choice is used instead of the config file's (for the start-up log)."""
+
+    def checker(section: str, name: str) -> Callable[[Any], Any]:
+        def check(value: Any) -> Any:
+            trial = getattr(cfg, section).model_copy()
+            try:
+                setattr(trial, name, value)
+            except ValidationError as e:
+                errs = e.errors(include_input=False, include_url=False)
+                raise ValueError(f"{section}.{name}: {errs[0]['msg'] if errs else 'invalid value'}") from None
+            return copy.deepcopy(getattr(trial, name))
+        return check
+
+    def apply(key: str, value: Any) -> bool:
+        section, name = CONFIG_OVERRIDES[key]
+        try:
+            setattr(getattr(cfg, section), name, copy.deepcopy(value))
+        except ValidationError:  # a choice kept by an older LittleBot that this one no longer has
+            log.warning("settings: the dashboard's %s no longer fits; the config file's is used", key)
+            return False
+        return True
+
+    def on_change(event: Event) -> None:
+        key = event.get("key")
+        if key in CONFIG_OVERRIDES:
+            apply(key, event.get("value"))
+
+    used: list[str] = []
+    for key, (section, name) in CONFIG_OVERRIDES.items():
+        settings.register_validator(key, checker(section, name))
+        if settings.is_stored(key) and settings.get(key) != getattr(getattr(cfg, section), name):
+            if apply(key, settings.get(key)):
+                used.append(key)
+            else:
+                settings.reset(key)
+    bus.subscribe(Topics.SETTINGS_CHANGED, on_change)
+    if used:
+        log.info("settings: the dashboard's choices are used instead of the config file's: %s", ", ".join(used))
+    return used
 
 
 def age_months_from_profile(profile: dict[str, Any], today: _dt.date | None = None) -> int | None:

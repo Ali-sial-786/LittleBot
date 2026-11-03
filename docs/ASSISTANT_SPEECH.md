@@ -60,6 +60,16 @@ Ink: `assistant.stt: [cartesia, deepgram, openai, vosk]` (AssemblyAI: `[assembly
 Turn the comparison off with `assistant.stt_shadow: ""`. Each costs for every second of a chat, silence
 included: Cartesia 3 credits a second (about 11,000 for an hour of chats), AssemblyAI about $0.45 an hour.
 
+**From the dashboard.** The Assistant page's "Voices and models" card changes the same things without
+editing a file: what the wake word starts (`pipeline`), what listens first (`stt`: the others stay behind it
+as backups), what also listens to compare (`stt_shadow`, with `log_words`), the brain (`claude.model`) and the
+hard-question model (`deep_model`), what speaks first (`tts`) and the Cartesia voice. Voices are searched in
+Cartesia's library from the robot (its key never leaves it) and "Hear it" has LittleBot say a line in a voice
+before you choose it (a few credits). A change is used at once, or when the conversation going on ends. It is
+kept on the robot (its database, `core/settings.py` `CONFIG_OVERRIDES`) and used instead of
+`config/local.yaml`'s value, even when the file changes later, until "Back to the config file"; the start-up
+log names any it uses ("settings: the dashboard's choices are used instead of the config file's: ...").
+
 ## 2. Putting the keys on the robot
 
 The keys are read **on the robot only**, exactly like the Anthropic key. They never go to the dashboard's
@@ -147,7 +157,9 @@ minutes). Less talking (a few questions a day) fits in Cartesia's or ElevenLabs'
 
 ## 5. Settings (config `assistant:` section)
 
-Change them in `config/local.yaml` (or with `scripts/set_config.py`):
+Change them in `config/local.yaml` (or with `scripts/set_config.py`). `pipeline`, `stt`, `stt_shadow`,
+`log_words`, `tts`, `cartesia_voice` and `deep_model` (and `claude.model`) can also be chosen on the dashboard
+(above), and a choice made there wins over the file until "Back to the config file":
 
 | Setting | Default | What it does |
 |---|---|---|
@@ -160,7 +172,7 @@ Change them in `config/local.yaml` (or with `scripts/set_config.py`):
 | `cartesia_stt_model`, `assemblyai_stt_model` | ink-2, universal-3-6-pro | the Ink and AssemblyAI models |
 | `deepgram_keyterms` | `[louder, quieter, volume]` | words Flux listens harder for; the robot's name is always added |
 | `personal_keyterms` | true | also listen harder for the family's names, Spotify playlists and artists, smart-home devices and baby cameras, and names said in the last few turns (see below); false: only the words above |
-| `cartesia_voice`, `cartesia_speed` | Katie, normal | the Cartesia voice id and speed (slowest ... fastest) |
+| `cartesia_voice`, `cartesia_speed` | Tessa, 1.0 | the Cartesia voice id and speed (0.6-1.5, or slowest ... fastest) |
 | `elevenlabs_voice` | Jessica | the ElevenLabs voice id |
 | `openai_tts_voice` | coral | alloy, ash, ballad, coral, echo, fable, onyx, nova, sage, shimmer, verse, marin, cedar |
 | `tts_first_audio_timeout_seconds` | 2.5 | how long a voice may take to start before the next one is asked |

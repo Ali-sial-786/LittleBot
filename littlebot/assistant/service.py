@@ -12,6 +12,9 @@
   said in the session if one is on, else passed to GPT-Live's call as news, else spoken through the speaker.
 * ``history``: the last exchanges, in RAM only (``assistant.history_minutes`` / ``history_turns``), so "and
   tomorrow?" works across follow-ups and the next wake word.
+* The dashboard's choices (core/settings.py ``CONFIG_OVERRIDES``: what listens, compares, thinks and speaks, the
+  Cartesia voice): the services are made again from them at once, or when the conversation going on ends.
+  ``try_voice(id, text)`` says a line in another Cartesia voice, to choose one.
 """
 
 from __future__ import annotations
@@ -134,6 +137,7 @@ class AssistantService(Service):
         self._subs: list[Subscription] = []
         self.last_call: dict[str, Any] | None = None
         self._told_pipeline: str | None = None
+        self._remake = False  # the dashboard changed a choice: the services are made again when no session is on
 
     # ------------------------------------------------------------ lifecycle
     async def start(self) -> None:
@@ -147,6 +151,7 @@ class AssistantService(Service):
             bus.subscribe(ANNOUNCE, self._on_announce),
             bus.subscribe("game.news", self._on_game_news),
             bus.subscribe("screen.news", self._on_screen_news),
+            bus.subscribe(Topics.SETTINGS_CHANGED, self._on_setting),
         ]
         why = self.pipeline_reason()
         log.info("assistant: voice pipeline %s (%s)", "assistant" if self.use_cascade() else "GPT-Live", why)
@@ -325,6 +330,8 @@ class AssistantService(Service):
             "active": session is not None,
             "history_turns": len(self.history),
             "last_call": self.last_call,
+            "choices": self.choices(),
+            "choices_waiting": bool(self._remake and session is not None),  # until the conversation ends
         }
         for name, chain in (("tts", self._tts), ("stt", self._stt)):
             if chain is not None:
@@ -369,6 +376,8 @@ class AssistantService(Service):
             if self._session is session:
                 self._session = None
             self.last_call = session.summary()
+            if self._remake and self._session is None:
+                self._remake_services()
         done = await session.run_handover()
         if done and self.last_call is not None:
             self.last_call["handed_over"] = done
@@ -432,6 +441,69 @@ class AssistantService(Service):
         p = self.ctx.privacy
         if not (p.cloud_enabled and p.microphone_enabled):
             self._end_threadsafe("stopped (privacy settings changed)")
+
+    # ------------------------------------------------------------ the dashboard's choices
+    def choices(self) -> dict[str, Any]:
+        """What listens, compares, thinks and speaks now (the config, with the dashboard's choices in it)."""
+        a = self.cfg
+        return {"pipeline": a.pipeline, "stt": list(a.stt), "stt_shadow": list(a.stt_shadow),
+                "log_words": bool(a.log_words), "tts": list(a.tts), "cartesia_voice": a.cartesia_voice,
+                "brain": self.ctx.config.claude.model, "deep_model": a.deep_model}
+
+    def _on_setting(self, event: Event) -> None:
+        from littlebot.core.settings import CONFIG_OVERRIDES  # noqa: PLC0415
+
+        if event.get("key") not in CONFIG_OVERRIDES:
+            return
+        self._remake = True  # at once, so a status asked right after the change shows it
+        loop = self._loop
+        if loop is not None and not loop.is_closed():
+            with contextlib.suppress(RuntimeError):
+                loop.call_soon_threadsafe(self._choices_changed)
+
+    def _choices_changed(self) -> None:
+        if self._remake and self._session is None:
+            self._remake_services()
+        elif self._remake:
+            log.info("assistant: the new choices are used when this conversation ends")
+
+    def _remake_services(self) -> None:
+        """Speech-to-text, the voice and the brain made again from the changed choices (the old ones closed),
+        and made ready in the background so the next "Hey LittleBot" is as quick as ever."""
+        self._remake = False
+        old = [c for c in (self._tts, self._stt) if c is not None] + self.brain.forget_models()
+        self._tts = self._stt = None
+        if old:
+            self._background(_close_all(old))
+        c = self.choices()
+        log.info("assistant: new choices: listens with %s%s, thinks with %s, speaks with %s (Cartesia voice %s)",
+                 ", ".join(c["stt"]), f" ({' and '.join(c['stt_shadow'])} to compare)" if c["stt_shadow"] else "",
+                 c["brain"] or "ChatGPT", ", ".join(c["tts"]), c["cartesia_voice"])
+        if self.use_cascade() and self._loop is not None:
+            self._preloading = self._background(self.preload())
+
+    async def try_voice(self, voice_id: str, text: str) -> dict[str, Any]:
+        """Say ``text`` in Cartesia voice ``voice_id`` through the speaker, to choose a voice: ``{ok, error}``
+        (busy: a conversation is on; no_audio; or Cartesia's kind: no_key, cloud_off, auth, quota ...)."""
+        if self._session is not None:
+            return {"ok": False, "error": "busy"}
+        play = getattr(self.ctx.audio, "play_speech", None)
+        if play is None:
+            return {"ok": False, "error": "no_audio"}
+        from littlebot.assistant.tts import cartesia_tts  # noqa: PLC0415
+
+        tts = cartesia_tts(self.ctx, voice=voice_id)
+        try:
+            chunks = [np.asarray(c, dtype=np.float32) async for c in tts.stream(text)]
+        except Exception as e:  # noqa: BLE001 - SpeechError: its kind only
+            return {"ok": False, "error": str(getattr(e, "kind", "") or "server_error")}
+        finally:
+            with contextlib.suppress(Exception):
+                await tts.aclose()
+        if not chunks:
+            return {"ok": False, "error": "bad_audio"}
+        await play(np.concatenate(chunks), int(tts.sample_rate), text)
+        return {"ok": True, "error": None}
 
     # ------------------------------------------------------------ typed chat
     async def handle_text(self, text: str, *, speak: bool = False, source: str = "dashboard") -> dict[str, Any]:
@@ -552,6 +624,14 @@ def _active(svc: Any) -> bool:
         return bool(svc.status().get("active"))
     except Exception:  # noqa: BLE001
         return False
+
+
+async def _close_all(things: list[Any]) -> None:
+    for thing in things:
+        close = getattr(thing, "aclose", None)
+        if close is not None:
+            with contextlib.suppress(Exception):
+                await close()
 
 
 __all__ = ["AssistantService", "ERRORS", "History"]

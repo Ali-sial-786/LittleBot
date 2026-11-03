@@ -29,9 +29,10 @@ from littlebot.dashboard.routes.robot_routes import router as robot
 from littlebot.dashboard.routes.screens_routes import router as screens
 from littlebot.dashboard.routes.sim_routes import router as sim
 from littlebot.dashboard.routes.voice_routes import router as voice_lines
+from littlebot.dashboard.routes.voice_setup_routes import router as voice_setup
 
-ROUTERS = (auth, robot, assistant, face, camera, activities, games, screens, browser, media, profile, people, ai, chatgpt, decide,
-           info, privacy, devices, motion, sim, voice_lines, power, doorbell, keys, calendar,
+ROUTERS = (auth, robot, assistant, voice_setup, face, camera, activities, games, screens, browser, media, profile, people,
+           ai, chatgpt, decide, info, privacy, devices, motion, sim, voice_lines, power, doorbell, keys, calendar,
            mirror, nanit)
 
 __all__ = ["ROUTERS"]

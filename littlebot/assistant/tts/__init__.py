@@ -270,11 +270,7 @@ def build_tts_chain(ctx: Any, *, transport: Any = None, cloud_ok: CloudOk | None
     providers: list[StreamingTTS] = []
     for name in dict.fromkeys(a.tts):
         if name == "cartesia":
-            providers.append(CartesiaTTS(key=key_reader(ctx, "cartesia_api_key"), cloud_ok=ok, model=a.cartesia_model,
-                                         voice=a.cartesia_voice, speed=a.cartesia_speed,
-                                         emotion=getattr(a, "cartesia_emotion", None), language=a.language,
-                                         max_concurrent=getattr(a, "cartesia_concurrency", 1),
-                                         transport=transport))
+            providers.append(cartesia_tts(ctx, transport=transport, cloud_ok=ok))
         elif name == "elevenlabs":
             providers.append(ElevenLabsTTS(key=key_reader(ctx, "elevenlabs_api_key"), cloud_ok=ok,
                                            model=a.elevenlabs_model, voice=a.elevenlabs_voice, language=a.language,
@@ -293,4 +289,14 @@ def build_tts_chain(ctx: Any, *, transport: Any = None, cloud_ok: CloudOk | None
     return chain
 
 
-__all__ = ["OUTPUT_RATE", "TTSChain", "build_tts_chain"]
+def cartesia_tts(ctx: Any, *, voice: str | None = None, transport: Any = None,
+                 cloud_ok: CloudOk | None = None) -> CartesiaTTS:
+    """Cartesia as ``assistant.cartesia_*`` sets it; ``voice``: another voice (the dashboard's "Try it")."""
+    a = ctx.config.assistant
+    return CartesiaTTS(key=key_reader(ctx, "cartesia_api_key"), cloud_ok=cloud_ok or cloud_ok_for(ctx),
+                       model=a.cartesia_model, voice=voice or a.cartesia_voice, speed=a.cartesia_speed,
+                       emotion=getattr(a, "cartesia_emotion", None), language=a.language,
+                       max_concurrent=getattr(a, "cartesia_concurrency", 1), transport=transport)
+
+
+__all__ = ["OUTPUT_RATE", "TTSChain", "build_tts_chain", "cartesia_tts"]

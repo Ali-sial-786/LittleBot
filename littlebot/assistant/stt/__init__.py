@@ -210,7 +210,8 @@ class STTChain:
                  "missing": self._why_not(p)} for p in self.providers]
         return {"order": [r["name"] for r in rows],
                 "first": next((r["name"] for r in rows if r["missing"] is None), None),
-                "last": self.last_provider, "last_error": self.last_error, "providers": rows}
+                "last": self.last_provider, "last_error": self.last_error, "providers": rows,
+                "shadows": [{"name": s.name, "missing": self._why_not(s)} for s in self.shadows]}
 
 
 def _eager(a: Any) -> float | None:

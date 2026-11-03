@@ -212,6 +212,7 @@ class Brain:
         self.cfg = ctx.config.assistant
         self._provider = provider
         self._deep = deep
+        self._given = (provider is not None, deep is not None)  # given ones (tests) are never forgotten
         self._now = now
 
     # ------------------------------------------------------------ the models
@@ -268,6 +269,18 @@ class Brain:
                 await warm(3.0)
             except Exception:  # noqa: BLE001
                 log.debug("assistant: warming the brain failed", exc_info=True)
+
+    def forget_models(self) -> list[Any]:
+        """The models made from the config, let go (claude.model or assistant.deep_model changed): the next
+        question makes them again. Returns them, to be closed."""
+        old = []
+        if not self._given[0] and self._provider is not None:
+            old.append(self._provider)
+            self._provider = None
+        if not self._given[1] and self._deep is not None:
+            old.append(self._deep)
+            self._deep = None
+        return old
 
     async def aclose(self) -> None:
         for p in (self._provider, self._deep):
