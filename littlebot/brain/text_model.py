@@ -108,6 +108,15 @@ class FallbackProvider(BaseProvider):
                 ok = bool(await warm(timeout)) or ok
         return ok
 
+    async def prime(self, *, system: str, tools: list[dict[str, Any]] | None = None, timeout: float = 6.0) -> bool:
+        """Claude's prompt cached before the first question (``ClaudeProvider.prime``). Without this the robot's
+        brain (always one of these) never primed: the warm-up looks for ``prime`` on it (2026-11-03). The backups
+        answer only when Claude fails, so they aren't primed."""
+        prime = getattr(self.primary, "prime", None)
+        if prime is None or self.primary.missing():
+            return False
+        return bool(await prime(system=system, tools=tools, timeout=timeout))
+
     async def aclose(self) -> None:
         await self.primary.aclose()
         if isinstance(self.backup, FallbackProvider):  # a backup Claude model made here; ChatGPT is its maker's

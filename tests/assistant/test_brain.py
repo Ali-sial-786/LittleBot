@@ -396,6 +396,37 @@ async def test_claude_primes_with_one_token_and_the_turns_prompt() -> None:
     assert sent[0]["system"] == turn["system"] and sent[0]["tools"] == turn["tools"]
 
 
+async def test_the_robots_brain_primes_through_its_fallback_wrapper() -> None:
+    """On the robot the brain is a FallbackProvider (Claude, then backups): it had no ``prime``, so a chat's first
+    question still found its prompt cold (2:26 pm, the robot, 2026-11-03)."""
+    from littlebot.brain.providers.claude import ClaudeProvider
+    from littlebot.brain.text_model import FallbackProvider
+
+    sent: list[dict[str, Any]] = []
+
+    class Messages:
+        async def create(self, **kwargs: Any) -> Any:
+            sent.append(kwargs)
+
+            class Msg:
+                usage = None
+                content: list[Any] = []
+
+            return Msg()
+
+    class Client:
+        messages = Messages()
+
+    backup = ScriptedProvider(["Hi."])
+    ctx = make_test_context()
+    claude = ClaudeProvider(api_key="test-key", model="claude-haiku-5-5", client=Client())
+    brain = Brain(ctx, provider=FallbackProvider(claude, backup), now=lambda: 1000.0)
+    await brain.warm(toolbox=RobotToolbox(ctx, mode="chat"))
+    assert len(sent) == 1 and sent[0]["max_tokens"] == 1 and sent[0]["tools"]
+    no_key = FallbackProvider(ClaudeProvider(api_key="", model="claude-haiku-5-5", client=Client()), backup)
+    assert await no_key.prime(system="You are LittleBot.") is False and len(sent) == 1
+
+
 async def test_first_conversation_of_the_day_offers_a_greeting_once() -> None:
     ctx = make_test_context()
     p = ScriptedProvider(["Good morning!"])
