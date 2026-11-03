@@ -14,6 +14,8 @@ The stationary build only; the wheel-phase parts stay in plates/.
 
 Plates already printed (PRINTED) are kept exactly as they are: their files aren't rewritten and their
 parts aren't packed again, so a design change only ever adds or changes the plates still to print.
+Once every plate is printed, a change that needs parts again lists them in REPRINT: each entry is one plate
+(name, printer, parts), packed the same way and numbered on from the printed ones.
 """
 from __future__ import annotations
 
@@ -38,14 +40,21 @@ TALL_EDGE = 20.0          # ... at least this far from every bed edge
 BRIM = 8.0                # ... and this much more room all round than other parts get
 
 GROUPS = [
-    ("main", "main colour", ["base", "torso", "head", "camera_pod", "base_floor", "well_cover", "well_cover",
-                             "head_back", "torso_back", "arm_left", "arm_right", "coupler", "ring_gear",
+    ("main", "main colour", ["base", "torso", "head", "camera_pod", "base_floor", "stack_keeper", "pca_clamp", "pca_clamp",
+                             "well_cover", "well_cover", "head_back", "torso_back", "arm_left", "arm_right", "coupler", "ring_gear",
                              "pinion", "servo_frame", "camera", "rear_usb", "screen_clamp"]),
     ("black", "black", ["visor"]),
     ("glow", "white / natural / translucent", ["ear_left", "ear_right", "front_blank"]),
 ]
-# Printed on 2026-10-29, before the Pi and the UPS moved into the base (their Pi carrier is no longer used).
-PRINTED = {256: ["01_main", "02_main", "03_main"]}
+COLOUR = {g: c for g, c, _ in GROUPS}
+# 01-03 printed on 2026-10-29 (before the Pi and the UPS moved into the base: their Pi carrier is no longer used),
+# 04-06 by 2026-11-03.
+PRINTED = {256: ["01_main", "02_main", "03_main", "04_main", "05_black", "06_glow"]}
+# 2026-11-03: one M3 kit for everything (no M2 / M2.5 screws, nothing drilled or forced). These parts change and
+# are printed again; the printed ones they replace are simply not used. One plate per printer job.
+REPRINT = {256: [("main", "P2S", ["base_floor", "stack_keeper", "pca_clamp", "pca_clamp", "coupler", "ring_gear"]),
+                 ("black", "A1", ["visor"]),
+                 ("main", "A1", ["screen_clamp", "camera_pod", "camera", "servo_frame"])]}
 
 
 def load(name: str) -> np.ndarray:
@@ -238,6 +247,18 @@ def main(argv: list[str]) -> int:
         printed += [n for n, _ in parts]
         done.append((name, name.split("_", 1)[1], parts)); k += 1
         print(f"{name:<14}{len(parts):>6}  {'(printed, kept as it is)':<32}{', '.join(n for n, _ in parts)}")
+    for group, printer, names in REPRINT.get(int(bed), []):
+        plates = pack(names, bed - 2 * MARGIN)
+        assert len(plates) == 1, f"reprint plate {names} needs {len(plates)} plates"
+        k += 1
+        name = f"{k:02d}_{group}_{printer}"
+        parts = placed(plates[0], bed)
+        bad += [f"{name}: {b}" for b in check(parts, bed)]
+        write_3mf(out / f"{name}.3mf", parts, COLOUR[group].split(" /")[0])
+        done.append((name, group, parts))
+        print(f"{name:<14}{len(parts):>6}  {COLOUR[group] + ', ' + printer:<32}{', '.join(n for n, _ in parts)}")
+    if REPRINT.get(int(bed)):
+        printed = [n for g, c, names in GROUPS for n in names]      # everything else is printed
     for group, colour, names in GROUPS:
         names = list(names)
         for n in printed:

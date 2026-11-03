@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Combine plate files (pack_plates.py) into ONE Bambu Studio project: one plate per file, set up for a
-Bambu Lab P2S (0.4 nozzle, 0.20mm Standard, Bambu PLA Basic, Textured PEI Plate).
+Bambu Lab P2S or A1 (0.4 nozzle, 0.20mm Standard, Bambu PLA Basic, Textured PEI Plate).
 
-    python3 bambu_project.py OUT.3mf plates_256/04_main.3mf plates_256/05_black.3mf plates_256/06_glow.3mf
-    python3 bambu_project.py --fetch      # re-make bambu_p2s_pla.json from Bambu's own profiles (GitHub)
+    python3 bambu_project.py OUT.3mf plates_256/07_main_P2S.3mf               # P2S (default)
+    python3 bambu_project.py --printer A1 OUT.3mf plates_256/08_black_A1.3mf plates_256/09_main_A1.3mf
+    python3 bambu_project.py --fetch [P2S|A1]   # re-make bambu_<printer>_pla.json from Bambu's own profiles (GitHub)
 
 Each plate file becomes a plate; each colour gets its own filament slot (main, black, white...), so the parts
 show in their colours; when printing, Bambu Studio maps each slot to an AMS slot. Brims follow pack_plates.py:
@@ -11,8 +12,8 @@ an 8 mm outer brim on tall parts only, none on the others. The head gets support
 
 Bambu Studio only keeps a project's plates if the project carries its printer settings. It selects its
 own installed presets by name ("Bambu Lab P2S 0.4 nozzle" ...) and takes every value from them, so the
-settings stored here (bambu_p2s_pla.json, Bambu's P2S profiles merged along their "inherits" and
-"include" chains, one value per nozzle variant) only matter if those presets are missing.
+settings stored here (bambu_p2s_pla.json / bambu_a1_pla.json, Bambu's profiles merged along their
+"inherits" and "include" chains, one value per nozzle variant) only matter if those presets are missing.
 """
 from __future__ import annotations
 
@@ -30,21 +31,24 @@ from pack_plates import BRIM, read_3mf, tall
 from stl_tools import vertex_ids
 
 HERE = Path(__file__).resolve().parent
-SETTINGS = HERE / "bambu_p2s_pla.json"
-BED = 256.0                                  # P2S
+BED = 256.0                                  # P2S and A1
 STRIDE = BED * 1.2                           # Bambu Studio lays plates out 20 % apart (PartPlate.cpp)
 APP = "BambuStudio-02.02.00.00"              # 2.0 or later: no old-file conversions; older than current releases
-PRINTER, PROCESS, FILAMENT = "Bambu Lab P2S 0.4 nozzle", "0.20mm Standard @BBL P2S", "Bambu PLA Basic @BBL P2S"
+PRESETS = {"P2S": ("Bambu Lab P2S 0.4 nozzle", "0.20mm Standard @BBL P2S", "Bambu PLA Basic @BBL P2S"),
+           "A1": ("Bambu Lab A1 0.4 nozzle", "0.20mm Standard @BBL A1", "Bambu PLA Basic @BBL A1")}
+settings_file = lambda printer: HERE / f"bambu_{printer.lower()}_pla.json"
 COLOURS = {"main": "#F5F0E6", "black": "#161616", "glow": "#FFFFFF"}
 NAMES = {"main": "main colour", "black": "black", "glow": "white / translucent"}
 BRIMMED = {"base", "head", "torso"}         # the README's tall parts (the base is wide, but 72 mm tall; 20 mm from the edges)
+SMALL_BRIM = {"camera": 5.0}                 # the camera bracket stands 36 mm tall on a 38 x 5 mm footprint
 # the head prints face down: its visor seat needs supports, from the bed only (README, Material and settings)
 SUPPORT = {"head": '    <metadata key="enable_support" value="1"/>\n    <metadata key="support_on_build_plate_only" value="1"/>\n'}
 PROFILES = "https://raw.githubusercontent.com/bambulab/BambuStudio/master/resources/profiles/"
 
 
-def fetch() -> None:
-    """Merge Bambu's P2S printer, process and filament profiles into bambu_p2s_pla.json."""
+def fetch(printer: str = "P2S") -> None:
+    """Merge Bambu's printer, process and filament profiles into bambu_<printer>_pla.json."""
+    PRINTER, PROCESS, FILAMENT = PRESETS[printer]; SETTINGS = settings_file(printer)
     get = lambda path: json.loads(urllib.request.urlopen(PROFILES + urllib.parse.quote(path)).read())
     index = get("BBL.json")
     paths = {e["name"]: e["sub_path"] for sec in ("machine_list", "process_list", "filament_list") for e in index[sec]}
@@ -77,8 +81,9 @@ def fetch() -> None:
     print(f"{SETTINGS.name}: printer {len(printer)}, process {len(process)}, filament {len(filament)} settings (profiles {index['version']})")
 
 
-def project_settings(groups: list[str]) -> dict:
-    s = json.loads(SETTINGS.read_text())
+def project_settings(groups: list[str], printer: str) -> dict:
+    PRINTER, PROCESS, FILAMENT = PRESETS[printer]
+    s = json.loads(settings_file(printer).read_text())
     n = len(groups)
     cfg = {**s["process"], **s["printer"]}
     for k, v in s["filament"].items():                        # filament settings: one value per filament slot
@@ -86,14 +91,14 @@ def project_settings(groups: list[str]) -> dict:
     cfg.update({"printer_settings_id": PRINTER, "print_settings_id": PROCESS, "filament_settings_id": [FILAMENT] * n,
                 "filament_colour": [COLOURS[g] for g in groups], "filament_ids": [s["filament_id"]] * n,
                 "inherits_group": [""] * (n + 2), "different_settings_to_system": [""] * (n + 2),
-                "curr_bed_type": "Textured PEI Plate",        # the P2S's plate; the default (Cool Plate) isn't supported
+                "curr_bed_type": "Textured PEI Plate",        # the P2S's and A1's plate; the default (Cool Plate) isn't supported
                 "from": "project", "name": "project_settings", "version": APP.split("-", 1)[1]})
     return cfg
 
 
-def build(out: Path, plate_files: list[Path]) -> None:
+def build(out: Path, plate_files: list[Path], printer: str = "P2S") -> None:
     r = np.sqrt(len(plate_files)); cols = int(round(r)) + (1 if r > round(r) else 0)    # compute_colum_count() in PartPlate.hpp
-    groups = [f.stem.split("_", 1)[1] for f in plate_files]
+    groups = [f.stem.split("_")[1] for f in plate_files]                                # NN_group[_printer]
     colours = list(dict.fromkeys(groups))                    # one filament slot per colour
     objects, items, obj_cfg, plates, assemble = [], [], [], [], []
     k = 0
@@ -113,7 +118,8 @@ def build(out: Path, plate_files: list[Path]) -> None:
             p = centre + origin
             tf = f"1 0 0 0 1 0 0 0 1 {p[0]:.4f} {p[1]:.4f} {p[2]:.4f}"
             items.append(f'<item objectid="{k}" transform="{tf}" printable="1"/>')
-            brim = (f'    <metadata key="brim_type" value="outer_only"/>\n    <metadata key="brim_width" value="{BRIM:g}"/>\n' if tall(hi - lo) or name in BRIMMED
+            width = BRIM if tall(hi - lo) or name in BRIMMED else SMALL_BRIM.get(name)
+            brim = (f'    <metadata key="brim_type" value="outer_only"/>\n    <metadata key="brim_width" value="{width:g}"/>\n' if width
                     else '    <metadata key="brim_type" value="no_brim"/>\n')        # as pack_plates.py: a brim near the edge lifts the part
             obj_cfg.append(f'  <object id="{k}">\n    <metadata key="name" value="{label}"/>\n    <metadata key="extruder" value="{colours.index(groups[i]) + 1}"/>\n{brim}{SUPPORT.get(name, "")}'
                            f'    <part id="{k}" subtype="normal_part">\n      <metadata key="name" value="{label}"/>\n'
@@ -130,6 +136,7 @@ def build(out: Path, plate_files: list[Path]) -> None:
              f' <resources>{"".join(objects)}</resources>\n <build>{"".join(items)}</build>\n</model>\n')
     config = ('<?xml version="1.0" encoding="UTF-8"?>\n<config>\n' + "".join(obj_cfg) + "".join(plates)
               + "  <assemble>\n" + "".join(assemble) + "  </assemble>\n</config>\n")
+    out.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
         z.writestr("[Content_Types].xml",
                    '<?xml version="1.0" encoding="UTF-8"?>\n<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
@@ -142,12 +149,16 @@ def build(out: Path, plate_files: list[Path]) -> None:
                    '</Relationships>')
         z.writestr("3D/3dmodel.model", model)
         z.writestr("Metadata/model_settings.config", config)
-        z.writestr("Metadata/project_settings.config", json.dumps(project_settings(colours), indent=4))
-    print(f"{out}: {len(plate_files)} plates, {k} parts ({', '.join(f.stem for f in plate_files)})")
+        z.writestr("Metadata/project_settings.config", json.dumps(project_settings(colours, printer), indent=4))
+    print(f"{out}: {printer}, {len(plate_files)} plates, {k} parts ({', '.join(f.stem for f in plate_files)})")
 
 
 if __name__ == "__main__":
-    if sys.argv[1:] == ["--fetch"]:
-        fetch()
+    args = sys.argv[1:]
+    if args[:1] == ["--fetch"]:
+        fetch(*(args[1:2] or ["P2S"]))
     else:
-        build(Path(sys.argv[1]), [Path(a) for a in sys.argv[2:]])
+        printer = "P2S"
+        if args[:1] == ["--printer"]:
+            printer, args = args[1], args[2:]
+        build(Path(args[0]), [Path(a) for a in args[1:]], printer)

@@ -21,10 +21,14 @@ one() {
 export -f one; export tmp
 {
     if (($#)); then printf '%s\n' "$@"; else
-    for c in electronics_vs_torso electronics_overlap torso_parts_vs_electronics frame_vs_servo pinion_vs_torso \
+    for c in electronics_vs_torso electronics_overlap torso_parts_vs_electronics frame_vs_servo frame_vs_torso pinion_vs_torso \
              gears_mesh_clear back_cover_vs_torso screen_vs_head ups_internal camera_vs_head bracket_vs_pod \
              head_parts_overlap torso_vs_base base_parts_overlap electronics_vs_base charge_cable_clear cables_body cables_head sonar_vs_base \
-             wheels_vs_mobile_base; do echo "$c"; done
+             wheels_vs_mobile_base stack_mount screws_forced screw_heads; do echo "$c"; done
+    # the Pi + UPS stack's clear plate: thin and short, thick and tall (the floor and the keeper take both); and its
+    # standoffs (Waveshare doesn't publish them; the model has 46 + 10): long ones 2 mm shorter, and the whole stack 4 mm deeper
+    for v in "-D ups_plate_t=1.4 -D ups_plate=[86,55]" "-D ups_plate_t=3.2 -D ups_plate=[90,58]" "-D ups_body=44" "-D ups_body=50" "-D ups_pi_gap=14" "-D ups_body=48 -D ups_pi_gap=12"; do
+        for c in stack_mount electronics_vs_base ups_internal charge_cable_clear cables_body screws_forced screw_heads; do echo "$c $v"; done; done
     for a in -60 -30 0 30 60; do echo "neck_vs_torso -D head_angle=$a"; echo "head_vs_torso -D head_angle=$a"; done
     # arm range -90..+100 degrees (+ = forwards/up): the arm never touches the torso and stays
     # >= 12 mm from the head and the base (no closing finger gap). 110 is expected to fail.
@@ -39,5 +43,9 @@ if (($# == 0)); then
     # The self-test must find an overlap, otherwise the checks above prove nothing.
     openscad -o "$tmp/selftest.stl" -D 'check="selftest_must_fail"' checks.scad > "$tmp/selftest.log" 2>&1
     if grep -q "facet" "$tmp/selftest.stl" 2>/dev/null; then echo "PASS  selftest_must_fail (an overlap is detected)"; else echo "FAIL  selftest_must_fail"; status=1; fi
+    # every screw cuts enough thread (and screws_forced above: none runs into plastic past its pilot hole)
+    for v in "" "-D ups_plate_t=1.4 -D ups_plate=[86,55]" "-D ups_plate_t=3.2 -D ups_plate=[90,58]"; do   # the keeper's screws, either plate
+        if python3 screw_check.py $v > "$tmp/screws.txt"; then echo "PASS  screw_thread $v ($(tail -1 "$tmp/screws.txt"))"; else cat "$tmp/screws.txt"; echo "FAIL  screw_thread $v"; status=1; fi
+    done
 fi
 exit $status

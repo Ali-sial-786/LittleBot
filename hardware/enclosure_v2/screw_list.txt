@@ -1,7 +1,4 @@
-M3 x 12 pan head
-M3 x 20 pan head
-M3 x 30 pan head (or M3 x 25, or countersunk)
-M2.5 x 6 pan head
-M2.5 x 12 pan head
-M2 x 8 pan head
-M2 nut
+M3 x 10 button head
+M3 x 12 button head
+M3 x 20 button head
+M3 x 30 button head
