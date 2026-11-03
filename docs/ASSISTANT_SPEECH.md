@@ -168,7 +168,7 @@ Change them in `config/local.yaml` (or with `scripts/set_config.py`). `pipeline`
 | `deepgram_eot_threshold` | 0.6 | how sure Flux must be that you finished (higher: fewer interruptions, a little slower) |
 | `deepgram_eager_eot_threshold` | 0.3 | when the brain (and the voice of its first sentence) starts on "probably done" (null: off) |
 | `deepgram_eot_timeout_ms` | 3000 | Flux ends the turn after this much silence, however unsure it is (Ink uses it too) |
-| `assemblyai_max_turn_silence_ms` | 560 | AssemblyAI's own: the turn ends after this much silence when the words don't read as finished (about 0.8 s after you stop; higher if it cuts you off mid-sentence) |
+| `assemblyai_max_turn_silence_ms` | 750 | AssemblyAI's own: the turn ends after this much silence when the words don't read as finished (about 1 s after you stop; higher if it cuts you off mid-sentence) |
 | `assemblyai_interruption_delay_ms` | 0 | AssemblyAI's first words come this long after speech starts (0: soonest, so talking over LittleBot is confirmed sooner; raise it if "um"s or noise stop it too often) |
 | `assemblyai_continuous_partials` | true | AssemblyAI also sends the words every second or so while you talk on without a pause |
 | `stt_shadow` | `""` | services that also listen, to compare (one name or a list; needs `log_words: true`) |
