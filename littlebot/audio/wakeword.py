@@ -811,6 +811,10 @@ class WakeWordService(Service):
         except Exception:  # noqa: BLE001
             return False
 
+    def _earcon_on(self) -> bool:
+        """``assistant.earcon``: the "listen" sound when the wake word is heard (wake.sound)."""
+        return bool(getattr(getattr(self.ctx.config, "assistant", None), "earcon", True))
+
     def _listen(self, inp: Any, rec: KeywordRecognizer) -> bool:
         """Read and recognise until a wake phrase (True) or until something needs the mic (False)."""
         if isinstance(inp, SoundDeviceInput) and inp.status in (dev.STATUS_DISCONNECTED, dev.STATUS_UNAVAILABLE):
@@ -1248,7 +1252,8 @@ class WakeWordService(Service):
 
             live = voice_front(ctx)  # the assistant (assistant.pipeline) or GPT-Live
             earcon_volume: float | None = None
-            deciding = carry is not None and early and not carry.kept_talking
+            sound = self.cfg.sound if self._earcon_on() else ""
+            deciding = carry is not None and early and not carry.kept_talking and bool(sound)
             # EARLY_START: the assistant listens at once, while it is not known yet whether they go on talking, and
             # plays the earcon itself if they wait for it (_earcon_in_call)
             later = (deciding and video is None and live is not None and self._echo_cancelled()
@@ -1260,6 +1265,8 @@ class WakeWordService(Service):
                 earcon_volume = EARCON_OVER_SPEECH_VOLUME if ec else None  # they may start as it plays
             if later:
                 carry.levels_wanted = True  # the call's microphone says how loud they are once it took over
+            elif not sound:
+                pass  # no earcon at all (assistant.earcon off): the face shows it is listening
             elif carry is not None and carry.kept_talking:
                 # They asked in the same breath and wait for the answer, not for a sound; a sound now would also
                 # hide what they say next (half-duplex). The face shows it is listening.
@@ -1267,7 +1274,7 @@ class WakeWordService(Service):
             else:
                 if video is not None:
                     await self._speaker_free()
-                await self._play(self.cfg.sound, volume=earcon_volume)
+                await self._play(sound, volume=earcon_volume)
             if live is None:
                 res: dict[str, Any] = {"ok": False, "error": "unavailable",
                                        "detail": "Live voice isn't available on this robot."}

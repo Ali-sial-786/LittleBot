@@ -820,6 +820,28 @@ async def test_the_assistant_listens_at_once_and_plays_no_earcon_when_they_go_on
     assert "no earcon, they kept talking (the assistant was listening already)" in caplog.text
 
 
+async def test_with_the_earcon_off_no_sound_is_played_and_nothing_waits_for_it(rig, monkeypatch, caplog):
+    caplog.set_level(logging.INFO, logger="littlebot.wake")
+    r = await _early(rig, monkeypatch)
+    r.ctx.config.assistant.earcon = False
+    await _listening(r)
+    _finish_early(r)
+    r.rec.partial_text = "hey little bot"  # and quiet: they would have waited for the sound
+    await until(lambda: r.live.calls, what="the assistant started")
+    await asyncio.sleep(wakeword.EARCON_QUIET_SECONDS + 0.2)
+    assert r.live.earcons == [] and "sound:listen" not in _sounds(r.out)
+    assert not r.live.carries[0].levels_wanted and "earcon played" not in caplog.text
+
+
+async def test_with_the_earcon_off_the_wake_phrase_alone_plays_nothing(rig):
+    r = await rig()
+    r.ctx.config.assistant.earcon = False
+    await _listening(r)
+    r.rec.say("hey little bot")
+    await until(lambda: r.live.calls, what="live voice started")
+    assert "sound:listen" not in _sounds(r.out)
+
+
 async def test_without_echo_cancelling_the_earcon_is_decided_before_the_assistant_starts(rig, monkeypatch):
     r = await rig()
     r.live = r.ctx.live = EarlyLive(r.ctx, r.mic)  # no echo cancelling: the microphone can't hear over the sound

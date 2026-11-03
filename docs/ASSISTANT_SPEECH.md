@@ -168,7 +168,7 @@ Change them in `config/local.yaml` (or with `scripts/set_config.py`). `pipeline`
 | `deepgram_eot_threshold` | 0.6 | how sure Flux must be that you finished (higher: fewer interruptions, a little slower) |
 | `deepgram_eager_eot_threshold` | 0.3 | when the brain (and the voice of its first sentence) starts on "probably done" (null: off) |
 | `deepgram_eot_timeout_ms` | 3000 | Flux ends the turn after this much silence, however unsure it is (Ink uses it too) |
-| `assemblyai_max_turn_silence_ms` | 1280 | AssemblyAI's own: the turn ends after this much silence when the words don't read as finished |
+| `assemblyai_max_turn_silence_ms` | 560 | AssemblyAI's own: the turn ends after this much silence when the words don't read as finished (about 0.8 s after you stop; higher if it cuts you off mid-sentence) |
 | `assemblyai_interruption_delay_ms` | 0 | AssemblyAI's first words come this long after speech starts (0: soonest, so talking over LittleBot is confirmed sooner; raise it if "um"s or noise stop it too often) |
 | `assemblyai_continuous_partials` | true | AssemblyAI also sends the words every second or so while you talk on without a pause |
 | `stt_shadow` | `""` | services that also listen, to compare (one name or a list; needs `log_words: true`) |
@@ -181,6 +181,12 @@ Change them in `config/local.yaml` (or with `scripts/set_config.py`). `pipeline`
 | `tts_first_audio_timeout_seconds` | 2.5 | how long a voice may take to start before the next one is asked |
 | `end_of_turn_ms` | 650 | for OpenAI and Vosk listening: how long a pause ends your turn |
 | `max_turn_seconds` | 30 | a turn ends after this long whatever happens |
+| `earcon` | true | the soft "listening" sound when the wake word is heard (`wake.sound`; skipped when you keep talking) |
+| `thinking_sound` | true | a soft sound while a slow tool (a web search, the weather) runs and nothing is said |
+
+When you talk over LittleBot, a short turn right after it ("No," "Wait," four words or fewer) is answered only once
+you have been quiet for 1.2 s (`CUT_IN_HOLD_S` in session.py); whatever you go on to say joins it, so "No, ... I
+meant the other one" is one question, not "Okay." and then another.
 
 **How LittleBot decides you finished** (for OpenAI and Vosk; Deepgram decides by itself): it listens to the
 loudness of the microphone. You start a turn once it hears about a tenth of a second of voice (louder than

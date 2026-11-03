@@ -74,6 +74,12 @@ THEIR_WORDS = frozenset("stop wait no nope yes yeah yep shh quiet pause cancel e
 PAUSE_WORDS = frozenset({"wait", "wait a second", "wait a minute", "hold on", "hang on", "pause"})
 NO_WORDS_TURN_S = 4.0  # a turn with no words at all after this long was a noise: listening goes on as before
 CUT_IN_NOTE_S = 15.0  # a turn this soon after they talked over the voice is for LittleBot (_turn_notes)
+# A short turn just after they cut in ("No," "Wait," "No, stop"): they mostly go on after a breath, but the turn had
+# ended and "No." got "Understood." (the robot, 2026-11-02). Its answer is made at once but said only after
+# CUT_IN_HOLD_S with no new words and nothing loud (CUT_IN_HOLD_MAX_S at most); what they say meanwhile joins the turn.
+CUT_IN_HOLD_WORDS = 4
+CUT_IN_HOLD_S = 1.2
+CUT_IN_HOLD_MAX_S = 4.0
 CARRY_OVERLAP_S = 0.02  # the call keeps this much from before the wake word's carry ended (a few ms twice, not lost)
 # What was said with the wake word goes to speech-to-text at once, which works through it at about real time: its
 # pauses (after "hey little bot,") are shortened to CARRY_PAUSE_S so the end of their turn isn't later for them
@@ -121,6 +127,9 @@ class VoiceSession:
         self.turns = 0
         self.barge_ins = 0
         self._cut_in_at: float | None = None  # when they last talked over the voice (their next turn is for it)
+        self._cut_in_turn = False  # the turn being heard began by talking over the voice (or "wait")
+        self._held: str | None = None  # a short cut-in turn whose answer waits for more (CUT_IN_HOLD_S)
+        self._held_at = 0.0
         self._now = svc.now
         self._started = self._now()
         self._ended = asyncio.Event()
@@ -401,7 +410,7 @@ class VoiceSession:
 
     def _check_time(self) -> None:
         now = self._now()
-        if self._speculating() and now - self._spec_at > SPECULATION_MAX_S:
+        if self._speculating() and self._held is None and now - self._spec_at > SPECULATION_MAX_S:
             self._cut_answer()  # neither confirmed nor dropped by speech-to-text: never said
         if self._hearing_since is not None and self._words_at is None and \
                 now - self._hearing_since > NO_WORDS_TURN_S:
@@ -485,8 +494,18 @@ class VoiceSession:
             self._eager_at = None
             if getattr(audio, "interrupted", False) and text:
                 audio.barge_in_heard(text, True)
+            hold = False
+            if text:
+                if self._held is not None:
+                    text = f"{self._held} {text}"  # they went on after cutting in: one turn
+                cut_in, self._cut_in_turn = self._cut_in_turn or self._held is not None, False
+                self._held = None
+                hold = (cut_in and len(_words(text)) <= CUT_IN_HOLD_WORDS and not self._end_after
+                        and self._speculable(text))
+            elif self._held is not None:
+                return  # a noise: the short cut-in turn still waits for more (_release_hold)
             if self._speculating():
-                if text and _same_words(text, self._answer_text):
+                if text and not hold and _same_words(text, self._answer_text):
                     self._confirmed_at = self._now()
                     self._gate.set()  # the early answer was right: it is said now
                     self._publish(ev.HEARD, {"words": len(text.split()), "ms": spoke_ms})
@@ -501,7 +520,7 @@ class VoiceSession:
             self._publish(ev.HEARD, {"words": len(text.split()), "ms": spoke_ms})
             self._publish(ev.CAPTION, {"who": "user", "text": text})
             self._identify_turn(spoke_ms, text)
-            self._start_answer(text)
+            self._start_answer(text, hold=hold)
         elif event.kind == "error":
             await self._stt_failed(event.detail or "error")
 
@@ -557,10 +576,14 @@ class VoiceSession:
             return
         if self._answering() and not self._speculating():
             return  # an answer they are waiting for is on its way
+        held = self._held
+        if held is not None:
+            text = f"{held} {text}"  # what they said after cutting in, and now more
         if not self._speculable(text):
             return
         if self._speculating():
             self._cut_answer()
+        self._held = held  # (their turn's end still adds it)
         self._gate = asyncio.Event()
         self._spec_at = self._now()
         self._voice = None
@@ -591,7 +614,7 @@ class VoiceSession:
         rem = hub.get("reminders") if hub is not None and hasattr(hub, "get") else None
         return not (rem is not None and _safe(rem.ringing))
 
-    def _start_answer(self, text: str) -> None:
+    def _start_answer(self, text: str, *, hold: bool = False) -> None:
         if self._end_after and self._answering():
             if len(_words(text)) <= SAYING_BYE_IGNORES:
                 # "Thanks, bye" came as "Thanks." and "bought.": the second cut the goodbye off and went to the brain
@@ -608,9 +631,36 @@ class VoiceSession:
                 self._record_cut()
             self._cut_answer(silence=voice is not None and voice.first_audio_at is not None)
         self._answer_text = text
-        self._gate = None
         self._voice = None  # until the new answer runs: more words now are added to this question
+        if hold:  # a short turn just after cutting in: made now, said once they stay quiet (_release_hold)
+            self._held = text
+            self._held_at = self._spec_at = self._now()
+            self._gate = gate = asyncio.Event()
+            self._answer = self._spawn(self._respond(text, gate=gate))
+            log.info("assistant: %d words just after cutting in; answering once they stay quiet %.1f s",
+                     len(_words(text)), CUT_IN_HOLD_S)
+            if self._loop is not None:
+                self._loop.call_later(CUT_IN_HOLD_S, self._release_hold, gate)
+            return
+        self._gate = None
         self._answer = self._spawn(self._respond(text))
+
+    def _release_hold(self, gate: asyncio.Event) -> None:
+        """The answer to a short cut-in turn is said once they stayed quiet CUT_IN_HOLD_S (nothing loud either; at
+        most CUT_IN_HOLD_MAX_S of that). Never while they are talking again: their turn's end adds to it."""
+        if gate is not self._gate or gate.is_set() or self._ended.is_set() or self._loop is None:
+            return
+        now = self._now()
+        wait = 4 * POLL_S
+        if self._hearing_since is None:
+            quiet_from = max(self._held_at, self._loud_at or 0.0)
+            wait = min(quiet_from + CUT_IN_HOLD_S, self._held_at + CUT_IN_HOLD_MAX_S) - now
+            if wait <= 0.01:
+                self._held = None
+                self._confirmed_at = now
+                gate.set()
+                return
+        self._loop.call_later(max(wait, 0.05), self._release_hold, gate)
 
     # ------------------------------------------------------------ one answer
     async def _respond(self, text: str, *, gate: asyncio.Event | None = None) -> None:
@@ -952,8 +1002,10 @@ class VoiceSession:
                          + ". Work out what they most likely said from how it sounds and the conversation, and answer "
                            "that; don't mention the mishearing")
         if self._cut_in_at is not None and self._now() - self._cut_in_at < CUT_IN_NOTE_S:
+            # ("No." after cutting in got "Understood.", and they were only starting; the robot, 2026-11-02)
             return [*notes, "they just talked over you to say this: it is for you; answer it (if it's a new "
-                            "question, answer that one)"]
+                            "question, answer that one). If it is only a word like \"no\", \"wait\" or \"hold on\", "
+                            "with nothing to answer yet, answer with exactly [silent]: they are still going on"]
         if first:
             return [*notes, "they woke you with your name to say this: it is for you; answer it"]
         return notes
@@ -1165,6 +1217,7 @@ class VoiceSession:
             self._answer.cancel()
         self._answer = None
         self._gate = None
+        self._held = None
 
     # ------------------------------------------------------------ barge-in
     def _setup_barge_in(self) -> None:
@@ -1200,6 +1253,7 @@ class VoiceSession:
                 return  # over the thinking sound, before any answer: their words join the question (_start_answer)
             self.barge_ins += 1
             self._cut_in_at = self._now()
+            self._cut_in_turn = True
             self._record_cut()
             self._cut_answer()
             self._publish(ev.INTERRUPTED, {})
@@ -1216,6 +1270,7 @@ class VoiceSession:
                 self.audio.drop_voice()
             self._publish(ev.INTERRUPTED, {"stop": True})
             if said in PAUSE_WORDS:  # "wait", "hold on": quiet, and listening for what they say next
+                self._cut_in_turn = True
                 self._deadline = self._now() + max(2.0, float(self.cfg.follow_up_seconds))
                 self._set_phase("listening")
                 log.info("assistant: '%s': quiet now, listening", said)

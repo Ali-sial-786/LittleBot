@@ -127,7 +127,7 @@ def test_the_config_gives_assemblyai_its_own_settings():
 
         ctx.config.assemblyai_api_key = SecretStr(KEY)
         aai = build_stt(ctx, ws_connect=Connector()).providers[0]
-        assert (aai.max_turn_silence_ms, aai.interruption_delay_ms, aai.continuous_partials) == (1280, 0, True)
+        assert (aai.max_turn_silence_ms, aai.interruption_delay_ms, aai.continuous_partials) == (560, 0, True)
     finally:
         ctx.db.close()
 

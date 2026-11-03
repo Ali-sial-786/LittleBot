@@ -1106,6 +1106,59 @@ async def test_the_brain_is_told_the_first_turn_and_a_cut_in_are_for_it() -> Non
     await svc.stop_session("test")
 
 
+async def test_a_short_cut_in_waits_for_the_rest_of_what_they_say() -> None:
+    """"No." just after cutting in got "Understood." while they were only starting (the robot, 2026-11-02): its
+    answer is made but not said, and what they say next joins it as one turn."""
+    brain = Scripted(["One. ", "Two. ", "Three."], ["Understood."], ["The other one is blue."])
+    svc, stt, _, audio = _service(brain, follow_up_seconds=5)
+    svc._tts = SlowTTS()
+    await svc.start()
+    await svc.start_session()
+    await _wait(lambda: stt.stream is not None)
+    stt.say("count to three")
+    session = svc._session
+    await _wait(lambda: session._voice is not None and bool(session._voice.heard))
+    audio.on_change("heard", {})  # they talked over it
+    stt.say("no")
+    await _wait(lambda: len(brain.questions) == 2)  # its answer is made at once ...
+    await asyncio.sleep(0.4)
+    assert not session._voice.heard  # ... but not said
+    stt.say("I meant the other one")
+    await _wait(lambda: len(brain.questions) == 3)
+    assert brain.questions[-1] == "no I meant the other one"
+    await _wait(lambda: session._voice is not None and bool(session._voice.heard))
+    said = " ".join(m["content"] for m in svc.history.messages() if m["role"] == "assistant")
+    assert "Understood" not in said and session._voice.heard[0].startswith("The other one")
+    await svc.stop_session("test")
+
+
+async def test_a_short_cut_in_is_answered_once_they_stay_quiet(monkeypatch: pytest.MonkeyPatch) -> None:
+    from littlebot.assistant import session as session_mod
+
+    monkeypatch.setattr(session_mod, "CUT_IN_HOLD_S", 0.4)
+    brain = Scripted(["One. ", "Two. ", "Three."], ["The red one."])
+    svc, stt, _, audio = _service(brain, follow_up_seconds=5)
+    svc._tts = SlowTTS()
+    await svc.start()
+    await svc.start_session()
+    await _wait(lambda: stt.stream is not None)
+    stt.say("count to three")
+    session = svc._session
+    await _wait(lambda: session._voice is not None and bool(session._voice.heard))
+    audio.on_change("heard", {})
+    stt.say("which one")
+    await _wait(lambda: len(brain.questions) == 2)
+    await asyncio.sleep(0.2)
+    assert not session._voice.heard
+    stt.event("end_of_turn", "")  # a noise: still waiting
+    await _wait(lambda: bool(session._voice.heard), timeout=2.0)
+    assert session._voice.heard == ["The red one."] and len(brain.questions) == 2
+    stt.say("and the blue one")  # not just after cutting in: answered at once
+    await _wait(lambda: len(brain.questions) == 3)
+    assert session._held is None and session._gate is None
+    await svc.stop_session("test")
+
+
 async def test_told_to_stop_in_its_own_words_the_brain_ends_the_call_without_a_word() -> None:
     """"Please don't talk anymore" isn't an instant intent: the brain calls end_conversation, and whatever it
     writes after that is never said (asked for on the robot, 2026-10-31)."""

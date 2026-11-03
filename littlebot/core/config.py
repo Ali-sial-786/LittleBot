@@ -424,9 +424,10 @@ class AssistantConfig(_Section):
     stt_shadow: list[Literal["deepgram", "cartesia", "assemblyai"]] = Field(default_factory=list)
     cartesia_stt_model: str = "ink-2"
     assemblyai_stt_model: str = "universal-3-6-pro"
-    # AssemblyAI ends a turn after this much quiet even when the words don't read as finished (its own default for
-    # voice agents; Deepgram's 3000 ms made three of twenty turns end 3-4 s late on the robot, 2026-11-02)
-    assemblyai_max_turn_silence_ms: int = Field(default=1280, ge=200, le=10000)
+    # AssemblyAI ends a turn after this much quiet even when the words don't read as finished (Deepgram's 3000 ms
+    # made three of twenty turns end 3-4 s late on the robot, 2026-11-02; its own 1280 still ended them ~1.5 s after
+    # the voice stopped: this ends them ~0.8 s after, and more words before the answer starts still join the turn)
+    assemblyai_max_turn_silence_ms: int = Field(default=560, ge=200, le=10000)
     # Its first words come this long after speech starts (its default 500): 0 confirms a barge-in soonest; raise it
     # if fillers or noise stop LittleBot too often
     assemblyai_interruption_delay_ms: int = Field(default=0, ge=0, le=2000)
