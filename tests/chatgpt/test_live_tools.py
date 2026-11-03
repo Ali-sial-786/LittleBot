@@ -495,3 +495,55 @@ async def test_time_and_news_hand_offs_get_the_tools(ctx, make_live, caplog):
         assert "kind=quick:time" in caplog.text and "kind=info" in caplog.text and "kind=control" in caplog.text
     finally:
         await close(svc, server)
+
+
+# ---------------------------------------------------------------- the family's calendars (littlebot/info/calendar.py)
+def _fake_calendars(ctx: Any) -> Any:
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "info"))
+    from calendar_fakes import FakeGoogle, calendar_service
+
+    ctx.config.info.timezone = "America/Toronto"
+    web = FakeGoogle()
+    return web, calendar_service(ctx, web)
+
+
+async def test_without_calendars_the_voice_hears_nothing_about_them(ctx, make_live):
+    web, _ = _fake_calendars(ctx)
+    svc, server, _audio = await make_live(ToolProvider())
+    try:
+        assert "calendars" not in server.requests[0]["body"]["session"]["instructions"]
+        await asyncio.sleep(0.1)
+        assert web.count() == 0
+    finally:
+        await close(svc, server)
+
+
+async def test_calendar_hand_offs_get_the_calendar_tool_and_the_calendars_are_read_ahead(ctx, make_live, caplog):
+    import logging
+
+    from calendar_fakes import add_family
+
+    from littlebot.chatgpt.live import CALENDAR_INSTRUCTION
+
+    caplog.set_level(logging.INFO, logger="littlebot.chatgpt.live")
+    web, calendars = _fake_calendars(ctx)
+    add_family(calendars)
+    provider = ToolProvider([("get_calendar", {"person": "Ali", "calendar": "work"})],
+                            text="You have the standup at half past nine.")
+    svc, server, _audio = await make_live(provider)
+    try:
+        assert CALENDAR_INSTRUCTION.strip() in server.requests[0]["body"]["session"]["instructions"]
+        await wait_for(lambda: web.count() == 3)  # read while the call connected
+        delegate(server, "c1", "What's on Ali's work calendar today?")
+        await wait_for(lambda: answers(server, "c1"))
+        assert answers(server, "c1") == ["You have the standup at half past nine."]
+        call = provider.calls[0]
+        assert "get_calendar" in call["tools"] and "call get_calendar" in call["system"]
+        assert json.loads(provider.results[0])["events"][0]["title"] == "Standup (long)"
+        assert "hand-off received (kind=info)" in caplog.text and "kind=look" not in caplog.text
+        assert web.count() == 3  # answered from what was read ahead
+    finally:
+        await close(svc, server)

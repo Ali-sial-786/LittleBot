@@ -91,7 +91,7 @@ on your home network through your own browser.)
 | **Motion** | A live drawing of LittleBot's head and arms, gestures, joint sliders, the **EMERGENCY STOP** (and its reset). Real servos stay in **simulation only** until they are enabled in the configuration *and* you arm them here by typing `ARM MOTORS` - see [MOTION_SAFETY.md](MOTION_SAFETY.md). |
 | **Audio & devices** | Speaker, microphone and camera status; volume (capped for little ears) and speaking speed; test the speaker and microphone; make LittleBot say a sentence or play a sound effect; follow faces on/off; list audio devices. |
 | **Simulator** | Try LittleBot without a child or devices: type what a child might say, tap the camera box to place a pretend face, "person left", and answer caregiver questions. |
-| **Settings** | Change the password, log out (here or everywhere), see how to reach the dashboard, system details, recent events, the configuration (secrets are never shown), restart or shut down. |
+| **Settings** | Change the password, log out (here or everywhere), see how to reach the dashboard, where the weather is for, the family's **Calendars** (add each person's Google calendars, as many as they like: Work, Personal...; see [CALENDAR.md](CALENDAR.md)), system details, recent events, the configuration (secrets are never shown), restart or shut down. |
 
 If LittleBot hears something worrying (for example "I'm hurt"), a red **"Your child may need
 you"** notice appears on every page until you tap OK. Only a category is shown - never the

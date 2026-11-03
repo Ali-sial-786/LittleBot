@@ -339,6 +339,59 @@ def test_settings_show_where_the_weather_is_for_and_let_the_parent_change_it(pho
     assert phone.bot.ctx.settings.get("info.location") == {} and phone.bot.ctx.settings.get("info.units") == "auto"
 
 
+def test_settings_add_a_persons_work_and_personal_calendars(phone):
+    import sys
+    from pathlib import Path
+
+    import httpx
+
+    from littlebot.info.calendar import CalendarService
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent / "info"))
+    from calendar_fakes import ALI_HOME, ALI_WORK, NOW, FakeGoogle
+
+    ctx = phone.bot.ctx
+    calendars = ctx.extras["calendars"] = CalendarService(ctx, transport=httpx.MockTransport(FakeGoogle()),
+                                                          clock=lambda: NOW)  # no real Google
+    old_tz, ctx.config.info.timezone = ctx.config.info.timezone, "America/Toronto"
+    ctx.privacy.set(cloud_enabled=True)
+    try:
+        page = phone.open("settings")
+        card = page.locator("section.card", has=page.get_by_role("heading", name="Calendars"))
+        card.scroll_into_view_if_needed()
+        expect(card.get_by_text("No calendars yet.")).to_be_visible()
+        card.get_by_role("button", name="Add a calendar").click()
+        card.get_by_label("Whose calendar").fill("Ali")
+        card.get_by_label("Which calendar").fill("Work")
+        card.get_by_label("Secret address in iCal format").fill(ALI_WORK)
+        card.get_by_role("button", name="Add calendar").click()
+        expect(card.get_by_text("Added Ali’s Work calendar: 5 events in the next two weeks")).to_be_visible()
+        # The form stays open with Ali's name, for the next one of Ali's calendars.
+        expect(card.get_by_label("Whose calendar")).to_have_value("Ali")
+        expect(card.get_by_label("Which calendar")).to_have_value("")
+        card.get_by_label("Which calendar").fill("Personal")
+        card.get_by_label("Secret address in iCal format").fill(ALI_HOME)
+        card.get_by_role("button", name="Add calendar").click()
+        expect(card.get_by_text("Added Ali’s Personal calendar")).to_be_visible()
+        expect(card.locator(".media-item")).to_have_count(2)
+        expect(card.get_by_text("calendar.google.com, secret address").first).to_be_visible()
+        assert "private-" not in card.inner_text() and card.get_by_label("Secret address in iCal format").input_value() == ""
+        card.get_by_role("button", name="What’s on today?").click()
+        expect(card.get_by_text("09:30-10:30 Standup (long) (Ali, Work)")).to_be_visible()
+        assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")  # no sideways scroll
+        card.get_by_role("button", name="Remove Ali’s Work calendar").click()
+        page.get_by_role("button", name="Remove", exact=True).click()
+        expect(card.locator(".media-item")).to_have_count(1)
+        assert [c["label"] for c in calendars.status()["calendars"]] == ["Personal"]
+        assert not phone.errors, phone.errors
+    finally:
+        for c in calendars.store.all():  # leave the shared robot as it was
+            calendars.remove(c["id"])
+        ctx.privacy.set(cloud_enabled=False)
+        ctx.config.info.timezone = old_tz
+        ctx.extras.pop("calendars", None)
+
+
 def _wait(pred: Any, timeout: float = 5.0) -> bool:
     import time
 

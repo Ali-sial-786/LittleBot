@@ -326,7 +326,8 @@ CONTROL_WORDS = re.compile(r"\b(?:activit(?:y|ies)|games?|videos?|youtube|cartoo
 INFO_WORDS = re.compile(r"\b(?:weather|forecasts?|hourly|rain(?:ing|y)?|snow(?:ing|y)?|sunny|umbrella|windy|"
                         r"humid(?:ity)?|degrees|(?:hot|cold|warm|chilly) (?:outside|out there)|"
                         r"what time|what(?:'s| is) the time|time is it|what day|what date|(?:the|today'?s) date|"
-                        r"news|headlines?|scores?)\b", re.I)
+                        r"news|headlines?|scores?|calendars?|appointments?|meetings?|agenda|schedule|"
+                        r"what(?:'s| is) on (?:today|tomorrow|this|next|for|my|our|on))\b", re.I)
 CHECK_WINDOW = 320  # characters of a reply in progress checked at a time
 # The voice sometimes says the person's part ("Hi LittleBot, it's Ali, can you look up the weather?"): a line that
 # greets LittleBot by name gets this note (not "LittleBot here!").
@@ -448,6 +449,12 @@ delegate it to the client as "show on the screen: <what, with the details>" (for
 2 = 4" or "show on the screen: why New York is called the Big Apple"), wait, then carry on. Never say you can't \
 show things on your screen. If they ask to change or close what is on the screen ("next step", "tomorrow", "by \
 the hour", "zoom in", "make the picture bigger", "close it"), just say okay in a few words: LittleBot does it."""
+# Added to the instructions once a grown-up has added a calendar (littlebot/info/calendar.py).
+CALENDAR_INSTRUCTION = ("\nThe client also knows the family's calendars: what is on today, tomorrow or this week, "
+                        "appointments, meetings, and whether someone is free. Delegate those questions in plain "
+                        "words, with whose calendar and which one when they say it (for example \"what's on Ali's "
+                        "work calendar tomorrow\"). If someone says \"my calendar\" and you know who is talking, "
+                        "use their name.")
 SCREEN_NEWS = "screen.news"  # {text}: a card wants the voice to say something ("the egg timer is done")
 POWER_NOTE = Topics.POWER_NOTE  # {text, goodbye}: the battery is low (a note) or empty / too hot (goodbye, then end)
 # Published by live voice for whoever needs to know a call is on (the screen service: a card's presenter talks).
@@ -990,6 +997,7 @@ class LiveCall:
             self._spawn(self._director.warm())  # the screen's first decision doesn't wait for a connection
         self._spawn(self._warm_text_model())  # nor the first hand-off
         self._spawn(self._warm_forecast())  # nor "what's the weather like?"
+        self._spawn(self._warm_calendars())  # nor "what's on today?"
 
     def _make_director(self) -> Any:
         """The screen director for this call, when there is a screen service and its cards are switched on."""
@@ -1045,6 +1053,7 @@ class LiveCall:
             text += "\n" + heard
         text += self._browser_instructions()
         text += self._power_instructions()
+        text += self._calendar_instructions()
         now = _dt.datetime.now()
         return f"{text}\nAt the start of this call it is {now:%A}, {now:%H:%M} local time."
 
@@ -1903,6 +1912,33 @@ class LiveCall:
             await weather.report(None, days=2)
         except Exception:  # noqa: BLE001 - best effort: the question fetches it otherwise
             log.debug("live voice: fetching the forecast ahead failed", exc_info=True)
+
+    def _calendars(self) -> Any:
+        """The family's calendars, when a grown-up has added one and the tools may read them; else None."""
+        if not self._tools_on():
+            return None
+        try:
+            from littlebot.info.calendar import get_calendars  # noqa: PLC0415
+
+            calendars = get_calendars(self.ctx)
+            return calendars if calendars.has_calendars() else None
+        except Exception:  # noqa: BLE001 - no calendars rather than no call
+            log.debug("live voice: calendars unavailable", exc_info=True)
+            return None
+
+    def _calendar_instructions(self) -> str:
+        return CALENDAR_INSTRUCTION if self._calendars() is not None else ""
+
+    async def _warm_calendars(self) -> None:
+        """Read the family's calendars while the call connects (kept 10 minutes, ``calendar.cache_minutes``): a
+        calendar question is then answered at once. Only once a calendar is added (and cloud is on, tools on)."""
+        calendars = self._calendars()
+        if calendars is None or calendars.blocked_reason():
+            return
+        try:
+            await calendars.warm()
+        except Exception:  # noqa: BLE001 - best effort: the question reads them otherwise
+            log.debug("live voice: reading the calendars ahead failed", exc_info=True)
 
     async def _quick_answer(self, delegation_id: str, question: str) -> bool:
         """The weather, the time, the volume, a timer: LittleBot answers itself, with no text model in between

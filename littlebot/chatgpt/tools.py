@@ -11,8 +11,9 @@ Used by typed / push-to-talk chat (``brain.conversation``, ``mode="chat"``) and 
 hand-offs (``chatgpt.live``, ``mode="live"``). Everything runs on the asyncio loop; blocking reads
 (system monitor, Wi-Fi) go to a worker thread.
 
-Live information: ``get_weather`` (Open-Meteo, littlebot/info/weather.py) and ``get_time``
-(littlebot/info/clock.py), plus OpenAI's own web search (``WEB_SEARCH``, a hosted tool the endpoint
+Live information: ``get_weather`` (Open-Meteo, littlebot/info/weather.py), ``get_time``
+(littlebot/info/clock.py) and ``get_calendar`` (the family's Google calendars, littlebot/info/calendar.py; offered
+only once a grown-up has added one), plus OpenAI's own web search (``WEB_SEARCH``, a hosted tool the endpoint
 runs itself; ``chatgpt.web_search``) for news, scores, opening hours and other facts that change.
 ``instructions()`` is the note callers add to the system prompt so the model uses them rather than
 guessing.
@@ -161,6 +162,21 @@ TOOLS: tuple[_Tool, ...] = (
           "for 'what time is it?', 'what day is it?', 'what's the date?' or how long until something, instead of "
           "guessing.", _obj({"place": {**_STR, "description": "a city, for the time somewhere else; leave out for "
                                                             "here"}})),
+    _Tool("get_calendar", "The family's calendars (Google Calendar, read-only): each person's events (title, day, "
+          "time, place) on a day or over the next days, from one of their calendars (for example 'work' or "
+          "'personal') or all of them. Call it for EVERY question about plans, appointments, meetings, events, "
+          "someone's day, week or schedule, or whether someone is free or busy, instead of guessing. For 'my "
+          "calendar' give the name of the person talking if you know it. If it says whose calendars there are, ask "
+          "whose they mean.",
+          _obj({"person": {**_STR, "description": "whose calendar, by name (e.g. 'Ali'); leave out for everyone's"},
+                "calendar": {**_STR, "description": "which of their calendars, e.g. 'work' or 'personal'; leave out "
+                                                    "for all"},
+                "day": {**_STR, "description": "the first day: today (default), tomorrow, a weekday like 'friday', "
+                                               "'this week', 'next week', 'this weekend', or a date like 2026-11-20"},
+                "days": {"type": "integer", "minimum": 1, "maximum": 31,
+                         "description": "how many days from that day (default 1; a week is 7)"},
+                "search": {**_STR, "description": "words to find in the events, e.g. 'dentist' for 'when is the "
+                                                  "dentist?' (looks a month ahead unless days is given)"}})),
     _Tool("show_on_screen", "Show an info card on LittleBot's screen while your answer is said: the gist (a forecast, "
           "a word's meaning, key points, a recipe, a timer, a sum, a list), not the words. A timer card is a real "
           "timer: it counts down, chimes and tells them when it is done, so \"set a timer\" is this card (never say "
@@ -199,6 +215,7 @@ SCREEN_TOOL = "show_on_screen"  # offered only while the screen can show cards (
 CARD_TOOL = "change_card"  # offered only while a card is on the screen
 BROWSER_TOOLS = frozenset({"search_in_browser", "browser"})  # offered only while ctx.browser can open
 BATTERY_TOOL = "battery"  # offered only while a battery monitor is fitted (littlebot/power)
+CALENDAR_TOOL = "get_calendar"  # offered only once a grown-up has added a calendar (littlebot/info/calendar.py)
 
 # OpenAI's own web search, run on OpenAI's side (a hosted tool, not a function: RobotToolbox never runs
 # it). ``responses.ChatGPTProvider`` sends it as {"type": "web_search"}; "name" is for logs and fakes.
@@ -210,6 +227,8 @@ Live information: never guess, and never say you can't know or can't check. For 
 anywhere) call get_weather; for the time, the day or the date call get_time.{search} Then answer in one or two \
 short, plain sentences with the key facts (for the weather: what it is like, the temperature and whether to expect \
 rain), rounded numbers, no links, no website names and no list."""
+CALENDAR_NOTE = (" For the family's calendars (plans, appointments, meetings, someone's day or week, who is free) "
+                 "call get_calendar, then say what is on simply: the times and what it is, not every detail.")
 SEARCH_NOTE = (" For anything else that changes or that you are not sure of (news, sports scores, opening hours, "
                "events, prices, who someone is now, recent facts), use web search first.")
 
@@ -270,6 +289,8 @@ class RobotToolbox:
                 continue
             if t.name == BATTERY_TOOL and self._power() is None:
                 continue
+            if t.name == CALENDAR_TOOL and not self._calendars_set_up():
+                continue
             out.append({"name": t.name, "description": t.description, "parameters": t.parameters})
         if self.web_search:
             out.append(dict(WEB_SEARCH))
@@ -281,7 +302,18 @@ class RobotToolbox:
 
     def instructions(self) -> str:
         """What to add to the system prompt with these tools: use them for live information."""
-        return INFO_NOTE.format(search=SEARCH_NOTE if self.web_search else "")
+        return INFO_NOTE.format(search=(CALENDAR_NOTE if self._calendars_set_up() else "")
+                                + (SEARCH_NOTE if self.web_search else ""))
+
+    def _calendars_set_up(self) -> bool:
+        """A grown-up has added at least one calendar (Settings, Calendars)."""
+        try:
+            from littlebot.info.calendar import get_calendars  # noqa: PLC0415
+
+            return get_calendars(self.ctx).has_calendars()
+        except Exception:  # noqa: BLE001 - no calendar tool rather than no tools
+            log.debug("calendars unavailable", exc_info=True)
+            return False
 
     async def run(self, name: str, arguments: str | dict[str, Any] | None = None) -> str:
         """Run one tool call; returns what to tell the model. Never raises (except cancellation)."""
@@ -512,6 +544,8 @@ class RobotToolbox:
             "I can tell you the weather here or anywhere, today or in the next days, and the time and date"
             + (", and find out things that change, like news, sports scores or opening hours." if self.web_search
                else "."),
+            *(["I can read the family's calendars and tell you what's on: today, this week, or when something is."]
+              if self._calendars_set_up() else []),
             *(["When a grown-up asks me to google something, I show Google (SafeSearch on) on my screen."]
               if self._browser_view() is not None else []),
             *(["I run on a battery and can tell you how much is left."] if self._power() is not None else []),
@@ -1061,6 +1095,25 @@ class RobotToolbox:
             log.warning("info.timezone %r is not a known time zone; using the robot's own", str(tz)[:60])
             out = now_info(None)
         return _json({**({"place": where} if where else {}), **out})
+
+    async def _get_calendar(self, args: dict[str, Any]) -> str:
+        from littlebot.info.calendar import CalendarError, get_calendars  # noqa: PLC0415
+
+        def text(key: str, n: int = 60) -> str | None:
+            return " ".join(str(args.get(key) or "").split())[:n] or None
+
+        try:
+            days = int(args["days"]) if args.get("days") not in (None, "") else None
+        except (TypeError, ValueError):
+            days = None
+        try:
+            agenda = await get_calendars(self.ctx).agenda(person=text("person"), calendar=text("calendar"),
+                                                          day=text("day"), days=days, search=text("search", 80))
+        except CalendarError as e:
+            if e.kind in ("whose", "unknown_person", "unknown_calendar", "bad_date"):
+                return _err(f"{e}. Ask them, briefly.")
+            return _err(f"{e}. Say so briefly; don't guess what is on the calendar.")
+        return _json(agenda)
 
     # ------------------------------------------------------------ the screen's info cards (littlebot/screens)
     def _screens(self) -> Any:

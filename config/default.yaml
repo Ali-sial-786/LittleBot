@@ -100,6 +100,13 @@ ai:
   # price_per_mtok:          # optional overrides of the built-in price estimates (USD per 1M tokens)
   #   claude-haiku-5-5: [0.10, 0.50]
 
+calendar:
+  # The family's Google calendars (docs/CALENDAR.md). Each person can have several (Work, Personal...):
+  # add them on the dashboard, Settings, Calendars, with each calendar's "Secret address in iCal format".
+  timeout_seconds: 5       # an answer waits at most this long for the calendars (a slower one is left out)
+  cache_minutes: 10        # a calendar is read again after this long, when someone asks
+  max_stale_hours: 6       # an older copy answers at once while a fresh one is read
+
 screens:
   # Info cards on LittleBot's screen while it talks (weather, a word, a recipe step, a timer).
   # The parent can switch them, and pictures from the internet, off on the dashboard's Privacy page.

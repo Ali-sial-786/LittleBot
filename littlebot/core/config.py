@@ -391,6 +391,17 @@ class InfoConfig(_Section):
     cache_minutes: float = Field(default=10.0, ge=0)  # a forecast is reused this long
 
 
+class CalendarConfig(_Section):
+    """The family's calendars (littlebot/info/calendar.py, docs/CALENDAR.md): each person's Google calendars
+    (Work, Personal...), added on the dashboard (Settings, "Calendars") with their secret iCal links.
+
+    Read-only, and only while cloud communication is on (never in offline mode)."""
+
+    timeout_seconds: float = Field(default=5.0, gt=0, le=30)  # an answer waits at most this for calendars to arrive
+    cache_minutes: float = Field(default=10.0, ge=0)  # a calendar is read again after this long, when asked
+    max_stale_hours: float = Field(default=6.0, ge=0)  # an older copy answers at once (while it is read again)
+
+
 class ScreensConfig(_Section):
     """Info cards on the face screen during voice chats (littlebot/screens, docs/SCREENS.md).
 
@@ -651,6 +662,7 @@ class LittleBotConfig(BaseModel):
     text: TextConfig = Field(default_factory=TextConfig)
     claude: ClaudeConfig = Field(default_factory=ClaudeConfig)
     info: InfoConfig = Field(default_factory=InfoConfig)
+    calendar: CalendarConfig = Field(default_factory=CalendarConfig)
     screens: ScreensConfig = Field(default_factory=ScreensConfig)
     browser: BrowserConfig = Field(default_factory=BrowserConfig)
     decide: DecideConfig = Field(default_factory=DecideConfig)

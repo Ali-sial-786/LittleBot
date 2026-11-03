@@ -1,7 +1,9 @@
-// Settings: password, sessions, dashboard access (LAN opt-in), weather & time, system info, events, config, power.
+// Settings: password, sessions, dashboard access (LAN opt-in), weather & time, calendars, system info, events, config,
+// power.
 
 import { get, post, put } from '../api.js';
 import { banner, button, clear, confirmDialog, fmtDuration, h, icon, pageHead, setText, titleCase, toast } from '../ui.js';
+import { calendarsPanel } from './calendars_panel.js';
 
 export default {
   mount(view, app) {
@@ -65,6 +67,8 @@ export default {
         wxBanner, h('div', { class: 'btn-row', style: { alignItems: 'center' } }, wxWhere, wxChange), wxForm, wxKv,
         h('div', { class: 'btn-row' }, button('Check the weather now', { kind: 'soft', iconName: 'cloud', onClick: checkWeather })), wxResult));
 
+    const calendars = calendarsPanel(app);
+
     view.append(
       pageHead('Settings', 'Your parent account, how to reach the dashboard, and system details.'),
       h('div', { class: 'grid two' },
@@ -80,6 +84,7 @@ export default {
               } })))),
         h('section', { class: 'card span-2' }, h('div', { class: 'card-head' }, h('h2', {}, icon('wifi'), 'Dashboard access')), accessBox),
         weatherCard,
+        calendars.el,
         h('section', { class: 'card' }, h('div', { class: 'card-head' }, h('h2', {}, icon('cpu'), 'System')), h('div', { class: 'stack' }, sysKv, services)),
         h('section', { class: 'card' }, h('div', { class: 'card-head' }, h('h2', {}, icon('power'), 'Restart or shut down')),
           h('p', { class: 'muted', text: 'Stops LittleBot safely (motors off first). On the Raspberry Pi the system service starts it again after a restart.' }),

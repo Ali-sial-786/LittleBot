@@ -89,6 +89,7 @@ const ICONS = {
   memory: [['rect', { x: 3, y: 7, width: 18, height: 10, rx: 2 }], ['path', { d: 'M7 10.5v3 M11 10.5v3 M15 10.5v3 M6 17v2.5 M18 17v2.5' }]],
   thermo: [['path', { d: 'M14 14.6V5a2 2 0 0 0-4 0v9.6a4 4 0 1 0 4 0z' }], ['path', { d: 'M12 9v7' }]],
   clock: [['circle', { cx: 12, cy: 12, r: 9 }], ['path', { d: 'M12 7v5l3.5 2' }]],
+  calendar: [['rect', { x: 3.5, y: 5, width: 17, height: 15.5, rx: 2.5 }], ['path', { d: 'M3.5 10h17 M8 3v4 M16 3v4 M8 14h2 M14 14h2 M8 17h2' }]],
   heart: [['path', { d: 'M12 20s-7.5-4.6-7.5-10.2A4.3 4.3 0 0 1 12 7a4.3 4.3 0 0 1 7.5 2.8C19.5 15.4 12 20 12 20z' }]],
   lock: [['rect', { x: 5, y: 10.5, width: 14, height: 10, rx: 2.5 }], ['path', { d: 'M8 10.5V8a4 4 0 0 1 8 0v2.5' }]],
   send: [['path', { d: 'M4 12 20.5 4l-5.5 16.5-3.5-7z' }]],

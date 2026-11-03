@@ -22,6 +22,10 @@ dependencies = [
     # wheel with no required dependencies (fine on the Pi's aarch64). YouTube changes often: if search
     # stops working, update it with .venv/bin/python -m pip install -U yt-dlp
     "yt-dlp>=2025.1",
+    # The family's calendars (littlebot/info/calendar.py, docs/CALENDAR.md): reads Google Calendar's iCal feeds,
+    # repeating events included. Pure-Python wheels (with python-dateutil, tzdata, x-wr-timezone), ~1 MB.
+    "icalendar>=6.1,<8",
+    "recurring-ical-events>=3.3,<4",
 ]
 
 [project.optional-dependencies]
