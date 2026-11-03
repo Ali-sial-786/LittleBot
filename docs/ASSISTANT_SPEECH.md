@@ -128,6 +128,16 @@ On top of the model's time comes the trip over the internet (usually 50-150 ms e
 keeps the connection to each voice open between sentences (and opens it before the first one), so the slow
 part of connecting (~0.1-0.4 s on Wi-Fi) is paid once, not per sentence.
 
+**Cartesia over its websocket** (`assistant.cartesia_websocket`, on by default). Measured on the robot on
+2026-11-03, the same sentences: over the websocket the first bytes came in 145-160 ms every time and the first
+loud sound at about 200 ms; over HTTP 155-305 ms and about 335 ms. So each answer's first word comes about
+0.1 s sooner, and later sentences are steadier. One connection is kept open (opened when it wakes; a kept one
+that doesn't answer a ping then is opened again), each sentence is its own "context" on it, and a sentence cut
+off by a barge-in is cancelled there so Cartesia stops making it. If the websocket fails, or sends nothing within
+1 s, the sentence is said over HTTP instead and the websocket rests 5 minutes (the log says
+`cartesia's websocket failed (<why>); the HTTP stream for 5 minutes`). To switch it off:
+`.venv/bin/python scripts/set_config.py assistant.cartesia_websocket false`, then restart LittleBot.
+
 **Note:** OpenAI says the gpt-4o-mini-tts models shut down on **2027-01-06**. Before then, set
 `assistant.openai_tts_model` to its successor (or rely on Cartesia / ElevenLabs).
 

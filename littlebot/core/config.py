@@ -478,6 +478,9 @@ class AssistantConfig(_Section):
     # Cartesia requests open at once (the free plan allows 2; one is left for a sentence just cut off, which
     # Cartesia still counts for a moment). Raise it on a paid plan only if sentences ever wait for each other.
     cartesia_concurrency: int = Field(default=1, ge=1, le=20)
+    # Cartesia over its websocket (one kept-open connection; the HTTP stream if it fails): on the robot
+    # (2026-11-03) its first sound came at about 200 ms against 335 ms over HTTP.
+    cartesia_websocket: bool = True
     elevenlabs_model: str = "eleven_flash_v2_5"
     elevenlabs_voice: str = "cgSgspJ2msm6clMCkdW9"  # "Jessica": warm, conversational
     openai_tts_model: str = "gpt-4o-mini-tts"

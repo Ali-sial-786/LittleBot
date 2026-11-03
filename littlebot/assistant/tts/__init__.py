@@ -296,7 +296,8 @@ def cartesia_tts(ctx: Any, *, voice: str | None = None, transport: Any = None,
     return CartesiaTTS(key=key_reader(ctx, "cartesia_api_key"), cloud_ok=cloud_ok or cloud_ok_for(ctx),
                        model=a.cartesia_model, voice=voice or a.cartesia_voice, speed=a.cartesia_speed,
                        emotion=getattr(a, "cartesia_emotion", None), language=a.language,
-                       max_concurrent=getattr(a, "cartesia_concurrency", 1), transport=transport)
+                       max_concurrent=getattr(a, "cartesia_concurrency", 1), transport=transport,
+                       websocket=bool(getattr(a, "cartesia_websocket", True)) and transport is None)
 
 
 __all__ = ["OUTPUT_RATE", "TTSChain", "build_tts_chain", "cartesia_tts"]
