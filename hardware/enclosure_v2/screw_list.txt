@@ -1,18 +1,11 @@
-LittleBot v2 - screws to buy (74 screws + 4 nuts)
-Pan head = button head or socket cap is fine too.
-
-M3 x 12  pan head          12
-M3 x 10  pan head          11
-M3 x 20  pan head           4
-M3 x 10  countersunk       12   (button head also fine)
-M3 x 30  countersunk        4   (M3 x 25 also fine)
-M2.5 x 6   pan head         8
-M2.5 x 8   pan head         4
-M2.5 x 12  pan head         3
-M2 x 8   pan head           2
-M2 x 6   pan head           4
-M2 nuts                     4
-
-Not needed (included):
-- servo screws: in the servo bags
-- Pi to UPS screws: in the UPS HAT (E) kit
+M3 x 10 pan head
+M3 x 12 pan head
+M3 x 20 pan head
+M3 x 10 countersunk
+M3 x 30 countersunk
+M2.5 x 6 pan head
+M2.5 x 8 pan head
+M2.5 x 12 pan head
+M2 x 6 pan head
+M2 x 8 pan head
+M2 nut
