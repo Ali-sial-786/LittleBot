@@ -537,6 +537,8 @@ class SkillsConfig(_Section):
     reminder_snooze_minutes: int = Field(default=9, ge=1, le=60)
     alarm_ring_seconds: int = Field(default=60, ge=5, le=600)
     lists: bool = True  # shopping, to-do and any named list
+    messages: bool = True  # "tell Amara her lunch is in the fridge": given when she next talks to LittleBot
+    baby_log: bool = True  # feeds, diapers, sleep and medicine by voice ("when did she last eat?")
     persona: str = "warm"  # warm | witty | calm | concise | playful (or changed by voice: "be more concise")
     briefing: bool = True  # "good morning": weather, reminders, lists, headlines
     news_feeds: list[str] = Field(default_factory=lambda: [  # RSS or Atom; a briefing takes their top stories in turns

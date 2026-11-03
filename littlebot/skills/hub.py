@@ -24,6 +24,8 @@ SKILLS: tuple[tuple[str, str], ...] = (
     ("littlebot.skills.reminders", "Reminders"),
     ("littlebot.skills.agenda", "Calendar"),
     ("littlebot.skills.lists", "Lists"),
+    ("littlebot.skills.messages", "Messages"),
+    ("littlebot.skills.baby_log", "BabyLog"),
     ("littlebot.skills.persona", "Persona"),
     ("littlebot.skills.briefing", "Briefing"),
     ("littlebot.skills.home", "SmartHome"),
