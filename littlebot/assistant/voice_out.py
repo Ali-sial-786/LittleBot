@@ -101,6 +101,11 @@ class VoiceOut:
     def busy(self) -> bool:
         return bool(self._queue) or (self._worker is not None and not self._worker.done())
 
+    @property
+    def more_to_say(self) -> bool:
+        """A sentence after the one playing now is still to come (more words from the brain, or queued)."""
+        return not self._cancelled and (not self._closed or bool(self._queue) or bool(self._fetching))
+
     async def done(self) -> bool:
         """Wait until every sentence was played and heard (False: cancelled). A story takes as long as it takes:
         only a sentence whose voice stalls is given up (``CHUNK_STALL_S``). The caller's own cancellation is never

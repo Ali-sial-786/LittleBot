@@ -180,6 +180,21 @@ async def test_an_answer_said_without_a_card_gets_one_made_while_it_is_said(back
     await svc.stop()
 
 
+def test_a_card_change_that_failed_still_gets_a_backup_card() -> None:
+    """"Show me a picture of butter chicken" over a recipe: change_card failed unheard, and as a card change it got
+    no backup card either (the robot, 2026-11-03)."""
+    from types import SimpleNamespace
+
+    from littlebot.assistant.session import VoiceSession
+
+    me = SimpleNamespace(ctx=SimpleNamespace(screens=SimpleNamespace(current="the recipe")),
+                         cfg=SimpleNamespace(card_backup=True), _quiet_end=False,
+                         svc=SimpleNamespace(brain=SimpleNamespace(card_after=None)))
+    result = SimpleNamespace(tools=["change_card"], silent=False, error=None)
+    assert VoiceSession._card_missing(me, result, SimpleNamespace(failed=["change_card"], pending=[]), "the recipe")
+    assert not VoiceSession._card_missing(me, result, SimpleNamespace(failed=[], pending=[]), "the recipe")
+
+
 def test_the_tools_note_covers_the_recent_turns_and_goes_with_them() -> None:
     from littlebot.assistant.service import DONE_TURNS, History
 
@@ -1179,6 +1194,28 @@ async def test_an_answer_waits_while_they_are_still_talking() -> None:
     assert session._voice.heard[0].startswith("Google makes")
     said = " ".join(m["content"] for m in svc.history.messages() if m["role"] == "assistant")
     assert "Hi Ali" not in said
+    await svc.stop_session("test")
+
+
+async def test_a_yes_in_a_pause_of_its_answer_does_not_cut_it_off() -> None:
+    """A "Yes." nobody said, heard in a pause between its sentences, cut the answer about Kublai Khan off (the
+    robot, 2026-11-02): words like that, with more still to say and nobody cutting in, are no new turn."""
+    brain = Scripted(["One. ", "Two. ", "Three."], ["Five."])
+    svc, stt, _, _ = _service(brain, follow_up_seconds=5)
+    svc._tts = SlowTTS()
+    await svc.start()
+    await svc.start_session()
+    await _wait(lambda: stt.stream is not None)
+    stt.say("count to three")
+    session = svc._session
+    await _wait(lambda: session._voice is not None and bool(session._voice.heard))
+    voice = session._voice
+    stt.say("yes")
+    await asyncio.sleep(0.3)
+    assert len(brain.questions) == 1 and session._voice is voice and voice.more_to_say  # it talks on
+    stt.say("no, count to five")  # a real turn still cuts in
+    await _wait(lambda: len(brain.questions) == 2)
+    assert brain.questions[-1] == "no, count to five"
     await svc.stop_session("test")
 
 

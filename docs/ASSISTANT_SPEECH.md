@@ -196,6 +196,10 @@ off. So its first words wait until your new turn ends, and that turn joins the o
 you tell me the difference between Google and Apple?" is one question. The log says "its answer waited ... for them
 to stop talking" when a wait ended without a new turn.
 
+In a pause between its sentences the microphone is open again. A turn there of only "yes", "okay", "mm" and the like
+(`ASIDE_WORDS`, three words at most) doesn't stop the answer when another sentence is still to come and nobody cut
+in. On its last sentence it counts, as it may answer a question. Anything else still cuts in as before.
+
 Cartesia gets one steady emotion: `cartesia_emotion` (calm) for most sentences, content for happy ones,
 sympathetic for sad ones; never "happy", "curious" or none at all, which made the voice suddenly loud and excited.
 An exclamation mark is sent as a full stop for the same reason (the caption keeps it).

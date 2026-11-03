@@ -235,6 +235,26 @@ async def test_failed_picture_reflows_the_ingredients_and_keeps_the_place() -> N
     assert card2.steps_showing() == [1]
 
 
+async def test_a_picture_asked_for_later_comes_beside_the_ingredients() -> None:
+    """"Show me a picture of butter chicken" over a recipe made without one changed nothing (the robot,
+    2026-11-03)."""
+    pic = Pic(None, ready=False)
+    host = base.RecordingHost(pictures={"Butter chicken": pic})
+    card = await make({"title": "Butter chicken", "ingredients": ["Chicken", "Butter"], "steps": STEPS}, host)
+    assert not card.slot.wanted and host.asked_pictures == []
+    card.command("step", {"n": 2})
+    assert card.command(base.ADD_PICTURE_ACTION, {"query": ""})
+    assert host.asked_pictures == [("Butter chicken", "")] and card.slot.wanted
+    card.update(0.1)
+    assert card.view == "ingredients"  # only the ingredients have the picture
+    pic.surface, pic.ready = pygame.Surface((300, 200)), True
+    card.update(0.1)
+    assert card.slot.shown and preview.surface(card, seconds=0.5).get_size() == (base.W, base.H)
+    assert card.command(base.ADD_PICTURE_ACTION, {}) and len(host.asked_pictures) == 1  # it has one already
+    stew = await make({"title": "Mystery stew", "steps": STEPS}, base.RecordingHost())
+    assert not stew.command(base.ADD_PICTURE_ACTION, {"query": "mystery stew"})  # no picture to be had
+
+
 async def test_ingredient_pages_fit() -> None:
     card = await make(PANCAKES, base.RecordingHost(pictures={"pancakes": Pic(pygame.Surface((300, 200)))}))
     for scr in card.screens():

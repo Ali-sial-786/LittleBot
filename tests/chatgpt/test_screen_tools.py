@@ -268,6 +268,33 @@ async def test_change_card_says_when_it_cant(ctx, cards):
     assert out == "error: the explain card can't do that; it can: next, prev, point, all, close"
 
 
+class RecipeScreens(PictureScreens):
+    """A recipe made without a picture (the robot, 2026-11-03: "show me a picture of butter chicken" called
+    change_card picture, which failed unheard: nothing came)."""
+
+    def __init__(self, loading: bool = False) -> None:
+        super().__init__(picture=False)
+        from types import SimpleNamespace
+
+        self.current = SimpleNamespace(kind="recipe", title="Butter Chicken", add_picture=lambda query="": True,
+                                       slot=SimpleNamespace(shown=False, loading=loading),
+                                       describe=lambda: "Ingredients for Butter Chicken")
+
+
+async def test_change_card_adds_a_picture_to_a_recipe_made_without_one(ctx, cards):
+    ctx.screens = RecipeScreens()
+    box = RobotToolbox(ctx, mode="chat")
+    out = await run(box, "change_card", action="picture", args={"view": "fill"})
+    assert out.startswith("ok: a picture of Butter Chicken is coming up on the recipe card")
+    assert ctx.screens.commands == [("add_picture", {"query": "Butter Chicken"})] and box.failed == []
+    ctx.screens = RecipeScreens(loading=True)
+    assert (await run(box, "change_card", action="picture")).startswith("ok: its picture is still coming")
+    assert ctx.screens.commands == []
+    ctx.screens = PictureScreens(picture=False)  # a card with no room for one: as before, and the failure is kept
+    assert (await run(box, "change_card", action="picture")).startswith("error: the card on the screen has no")
+    assert box.failed == ["change_card"]
+
+
 async def test_show_the_picture_full_screen_needs_no_text_model(ctx, cards):
     from littlebot.chatgpt import quick
 

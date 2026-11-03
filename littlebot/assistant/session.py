@@ -72,6 +72,12 @@ SPOKEN_CPS = 14.0  # characters a second, about, as Cartesia speaks: when a sent
 THEIR_WORDS = frozenset("stop wait no nope yes yeah yep shh quiet pause cancel enough next skip okay ok hold hang "
                         "hey bye thanks".split())
 PAUSE_WORDS = frozenset({"wait", "wait a second", "wait a minute", "hold on", "hang on", "pause"})
+# A turn of only these, heard in a pause of an answer with more still to say and nobody cutting in, is no new turn:
+# a "Yes." nobody said (in a pause between its sentences: the microphone opens then) cut the answer about Kublai
+# Khan off (the robot, 2026-11-02), and a "yeah" said while listening would have done the same.
+ASIDE_WORDS = frozenset("yes yeah yep yup ya okay ok mm mhm mmhmm hmm hm uh huh um oh ah aha right sure cool nice wow "
+                        "alright".split())
+ASIDE_MAX_WORDS = 3
 NO_WORDS_TURN_S = 4.0  # a turn with no words at all after this long was a noise: listening goes on as before
 CUT_IN_NOTE_S = 15.0  # a turn this soon after they talked over the voice is for LittleBot (_turn_notes)
 # A short turn just after they cut in ("No," "Wait," "No, stop"): they mostly go on after a breath, but the turn had
@@ -497,6 +503,10 @@ class VoiceSession:
                     log.info("assistant: heard %r%s", text[:300],
                              f" (unsure of: {', '.join(self._unsure)})" if self._unsure else "")
             self._eager_at = None
+            if text and self._aside(text):
+                log.info("assistant: %d words like 'okay' in a pause of its answer, nobody cutting in: it talks on",
+                         len(_words(text)))
+                return
             if getattr(audio, "interrupted", False) and text:
                 audio.barge_in_heard(text, True)
             hold = 0.0
@@ -533,6 +543,16 @@ class VoiceSession:
 
     def _answering(self) -> bool:
         return self._answer is not None and not self._answer.done()
+
+    def _aside(self, text: str) -> bool:
+        """Only "yes", "okay", "mm" (ASIDE_WORDS), while its answer is being said with a sentence still to come and
+        no barge-in: not a new question. On its last sentence "yes" may answer it, so it counts there."""
+        voice = self._voice
+        if voice is None or voice.first_audio_at is None or not voice.more_to_say or not self._answering() or \
+                getattr(self.audio, "interrupted", False):
+            return False
+        words = _words(text)
+        return 0 < len(words) <= ASIDE_MAX_WORDS and all(w in ASIDE_WORDS for w in words)
 
     def _still_talking(self) -> bool:
         """They are saying more: a turn with words (or loud) that hasn't ended. An answer not heard yet waits for it.
@@ -793,12 +813,15 @@ class VoiceSession:
     def _card_missing(self, result: Any, box: Any, card_before: Any) -> bool:
         """An answer said while no card went up (the brain skipped it, or a tool's answer like the time in Tokyo
         had none): one is made from it while it is being said (``Brain.card_after``). Not after stopping or
-        pausing something, a take-over (a video, a game) or a change to the card on the screen."""
+        pausing something, a take-over (a video, a game) or a change to the card on the screen. A change that
+        failed changed nothing ("show me a picture of butter chicken" over a recipe; the robot, 2026-11-03)."""
         screens = getattr(self.ctx, "screens", None)
         if not (getattr(self.cfg, "card_backup", False) and result is not None and screens is not None
                 and hasattr(self.svc.brain, "card_after")):
             return False
         tools = set(result.tools)
+        if "change_card" in tools and "change_card" in (getattr(box, "failed", None) or ()):
+            tools.discard("change_card")
         return (not result.silent and not result.error and not self._quiet_end
                 and not tools & (QUIET_TOOLS | {"change_card", "end_conversation"})
                 and not getattr(box, "pending", None) and getattr(screens, "current", None) is card_before)

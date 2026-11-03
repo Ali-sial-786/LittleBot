@@ -191,7 +191,8 @@ TOOLS: tuple[_Tool, ...] = (
     _Tool("change_card", "Change the card that is on LittleBot's screen now, instead of making a new one, when they "
           "ask: its picture full screen or zoomed (action picture, args {\"view\": \"fill\" | \"in\" | \"out\" | "
           "\"back\"}: fill for \"show the picture full screen\" or \"make it bigger\", back for the whole card "
-          "again), the next or previous step or point (next, prev), or close it (close); also a timer running off "
+          "again; on a recipe with no picture yet, picture adds the dish's: args {\"query\": \"the dish\"}), the "
+          "next or previous step or point (next, prev), or close it (close); also a timer running off "
           "the screen (add, pause, resume, cancel). Only what they ask for: \"how long is left?\" changes nothing "
           "(LittleBot's note says what the timers are). Card on the screen:",
           _obj({"action": {**_STR, "description": "picture, next, prev, close, or another of the card's actions"},
@@ -293,6 +294,7 @@ class RobotToolbox:
         self.defer = bool(defer)
         self.calls: list[str] = []  # tool names in the order they ran (never their arguments)
         self.done: list[str] = []  # short confirmations of what was done or queued
+        self.failed: list[str] = []  # the tools whose call said error (a final tool's error is never seen)
         self.pending: list[Pending] = []
         self._found: list[dict[str, Any]] = []  # the last search results (titles for play_youtube)
         self._opened_browser = False  # search_in_browser ran in this turn: a card doesn't take its place
@@ -380,6 +382,8 @@ class RobotToolbox:
             log.warning("tool %s crashed", tool.name, exc_info=True)
             result = _err("the action failed")
         log.info("tool %s (%s) -> %s", tool.name, self.mode, result.split(":", 1)[0] if result else "")
+        if result.startswith("error"):
+            self.failed.append(tool.name)
         return result
 
     # ------------------------------------------------------------ after the turn
@@ -1234,7 +1238,7 @@ class RobotToolbox:
         return ". ".join(parts)
 
     async def _change_card(self, args: dict[str, Any]) -> str:
-        from littlebot.screens.base import PICTURE_ACTION  # noqa: PLC0415
+        from littlebot.screens.base import ADD_PICTURE_ACTION, PICTURE_ACTION  # noqa: PLC0415
 
         screens, card = self._card_up()
         action = str(args.get("action") or "").strip().lower()
@@ -1261,6 +1265,16 @@ class RobotToolbox:
                            "stop the timer, use change_card with cancel")
             return _ok("the card is off the screen; the face is back")
         if action == PICTURE_ACTION and PICTURE_ACTION not in acts:
+            if getattr(getattr(card, "slot", None), "loading", False):
+                self.done.append("the card's picture is on its way")
+                return _ok("its picture is still coming; it shows in a moment")
+            what = " ".join(str(given.get("query") or "").split())[:80] or str(getattr(card, "title", "") or "")
+            # a card made without a picture it has room for (a recipe) gets one: they asked for it, and as a final
+            # tool an error here was never heard ("Let me find a picture of butter chicken", then nothing; the
+            # robot, 2026-11-03)
+            if callable(getattr(card, "add_picture", None)) and screens.command(ADD_PICTURE_ACTION, {"query": what}):
+                self.done.append(f"the {card.kind} card shows a picture of {what}")
+                return _ok(f"a picture of {what} is coming up on the {card.kind} card. Say so in a few words.")
             return _err("the card on the screen has no picture showing; just say so")
         if action == PICTURE_ACTION:
             given = {"view": str(given.get("view") or "fill")}

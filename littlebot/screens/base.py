@@ -47,6 +47,8 @@ PICTURE_ACTION = "picture"
 PICTURE_ACTION_HELP = ("the picture full screen or zoomed: {\"view\": \"fill\" | \"in\" | \"out\" | \"back\"} (back: "
                        "the whole card again)")
 PICTURE_ZOOMS = (1.0, 1.5, 2.25, 3.0)  # fill the screen, then "in" steps (the picture's middle)
+# A card with room for a picture it was made without (a recipe: ``add_picture``) gets one: {"query": "the dish"}
+ADD_PICTURE_ACTION = "add_picture"
 # Where the presenter's eyes sit by default: top-left, (x, y, w, h) on the canvas. A card may move it
 # (presenter_box) but keeps it on screen: the eyes are what make it LittleBot presenting.
 PRESENTER_BOX = (12, 10, 150, 86)
