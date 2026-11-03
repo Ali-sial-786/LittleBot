@@ -8,6 +8,9 @@ nods). ``cancel()`` stops everything at once; ``done()`` waits until the last wo
 
 ``gate`` (an early answer, started before their turn really ended): the voice is made at once, but nothing is handed
 to the speaker until the gate is set, so the first words are ready the moment the answer is confirmed.
+
+``wait_while`` (they are still talking): the answer's first words wait until it says no. Once the voice plays, the
+microphone sends speech-to-text silence, so whatever they said over it would be lost.
 """
 
 from __future__ import annotations
@@ -48,12 +51,14 @@ def spoken(s: Sentence) -> str:
 
 class VoiceOut:
     def __init__(self, tts: Any, output: Any, *, on_start: Callable[[Sentence], Any] | None = None,
-                 now: Callable[[], float] = time.monotonic, gate: asyncio.Event | None = None) -> None:
+                 now: Callable[[], float] = time.monotonic, gate: asyncio.Event | None = None,
+                 wait_while: Callable[[], bool] | None = None) -> None:
         self.tts = tts
         self.output = output
         self.on_start = on_start
         self._now = now
         self._gate = gate
+        self._wait_while = wait_while
         self._queue: collections.deque[Sentence] = collections.deque()
         self._wake = asyncio.Event()
         self._closed = False
@@ -201,6 +206,13 @@ class VoiceOut:
         False: cancelled."""
         if self._gate is not None and not self._gate.is_set():
             await self._gate.wait()  # (cancel() cancels this wait with the worker)
+        if self.first_audio_at is None and self._talking():
+            t0 = self._now()
+            while self._talking():  # never over them: the end of their turn usually replaces this answer
+                await asyncio.sleep(PACE_STEP_S)
+                if self._cancelled:
+                    return False
+            log.info("assistant: its answer waited %.1f s for them to stop talking", self._now() - t0)
         while float(getattr(self.output, "queued_s", 0.0) or 0.0) > AHEAD_S:
             await asyncio.sleep(PACE_STEP_S)
             if self._cancelled:
@@ -209,6 +221,14 @@ class VoiceOut:
             self._started(s, float(getattr(self.output, "queued_s", 0.0) or 0.0))
         self.output.play_pcm(pcm, rate)
         return True
+
+    def _talking(self) -> bool:
+        if self._wait_while is None:
+            return False
+        try:
+            return bool(self._wait_while())
+        except Exception:  # noqa: BLE001 - optional: it talks
+            return False
 
     def _started(self, s: Sentence, delay: float) -> None:
         if self.first_audio_at is None:

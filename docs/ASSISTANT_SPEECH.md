@@ -190,6 +190,12 @@ meant the other one" is one question, not "Okay." and then another. The same for
 on its quiet limit (its words end without a full stop or question mark: "So then what did they"), after 0.8 s
 (`CUT_OFF_HOLD_S`). Either way the answer is worked out meanwhile, so it starts as soon as the wait is over.
 
+An answer never starts while you are talking again. While its voice plays, the microphone sends speech-to-text
+silence, so the rest of your sentence would be lost. The turn that ended on that silence would then cut the answer
+off. So its first words wait until your new turn ends, and that turn joins the one before it: "Hello, bot. ... Can
+you tell me the difference between Google and Apple?" is one question. The log says "its answer waited ... for them
+to stop talking" when a wait ended without a new turn.
+
 Cartesia gets one steady emotion: `cartesia_emotion` (calm) for most sentences, content for happy ones,
 sympathetic for sad ones; never "happy", "curious" or none at all, which made the voice suddenly loud and excited.
 An exclamation mark is sent as a full stop for the same reason (the caption keeps it).

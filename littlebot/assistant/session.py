@@ -534,6 +534,14 @@ class VoiceSession:
     def _answering(self) -> bool:
         return self._answer is not None and not self._answer.done()
 
+    def _still_talking(self) -> bool:
+        """They are saying more: a turn with words (or loud) that hasn't ended. An answer not heard yet waits for it.
+        Its voice would shut the microphone on the rest of their sentence, and the turn that ended on that silence
+        then cut the answer off. On the robot, 2026-11-02: "Hello, bot." was answered over "Can you tell me the
+        difference between Google ...". Their turn's end joins both into one question (_start_answer)."""
+        began = self._hearing_since
+        return began is not None and (self._words_at is not None or (self._loud_at or 0.0) >= began)
+
     def _echo_of_me(self, text: str, *, short: bool = False, since: float | None = None) -> bool:
         """``text`` is mostly LittleBot's own recent words (its voice leaking back into the microphone), not theirs.
         Only for 3 words or more ("and tomorrow" may well be theirs); with ``short`` (words heard as it was cut off)
@@ -1148,7 +1156,8 @@ class VoiceSession:
         if old and self.audio is not None and not getattr(self.audio, "interrupted", False):
             with contextlib.suppress(Exception):
                 self.audio.drop_voice()
-        voice = VoiceOut(self.svc.tts(), self.audio, on_start=self._sentence_started, now=self._now, gate=gate)
+        voice = VoiceOut(self.svc.tts(), self.audio, on_start=self._sentence_started, now=self._now, gate=gate,
+                         wait_while=self._still_talking)
         self._mouths = [v for v in self._mouths if v.busy] + [voice]
         with contextlib.suppress(Exception):
             self.audio.unmute()

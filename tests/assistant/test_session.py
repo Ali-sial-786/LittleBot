@@ -1156,6 +1156,45 @@ async def test_a_turn_cut_off_mid_sentence_waits_for_the_rest() -> None:
     await svc.stop_session("test")
 
 
+async def test_an_answer_waits_while_they_are_still_talking() -> None:
+    """"Hello, bot." was answered over "Can you tell me the difference between Google and ...": its voice shut the
+    microphone on the rest, and the fragment's turn then cut the answer off (the robot, 2026-11-02). Their new words
+    keep it quiet; the end of their turn joins both into one question."""
+    brain = Scripted(["Hi Ali."], ["Google makes Android, Apple the iPhone."], delay=0.1)
+    svc, stt, _, _ = _service(brain, follow_up_seconds=5)
+    await svc.start()
+    await svc.start_session()
+    await _wait(lambda: stt.stream is not None)
+    session = svc._session
+    stt.say("so I was wondering")
+    stt.event("start_of_turn")
+    stt.event("partial", "can you tell me")  # they go on before its answer is heard
+    await _wait(lambda: len(brain.questions) == 1)
+    await asyncio.sleep(0.4)
+    assert session._voice is not None and not session._voice.heard  # quiet while they talk
+    stt.event("end_of_turn", "can you tell me the difference between Google and Apple?")
+    await _wait(lambda: len(brain.questions) == 2)
+    assert brain.questions[-1] == "so I was wondering can you tell me the difference between Google and Apple?"
+    await _wait(lambda: session._voice is not None and bool(session._voice.heard))
+    assert session._voice.heard[0].startswith("Google makes")
+    said = " ".join(m["content"] for m in svc.history.messages() if m["role"] == "assistant")
+    assert "Hi Ali" not in said
+    await svc.stop_session("test")
+
+
+async def test_a_noise_does_not_keep_the_answer_waiting() -> None:
+    brain = Scripted(["Sunny all day."], delay=0.1)
+    svc, stt, _, _ = _service(brain, follow_up_seconds=5)
+    await svc.start()
+    await svc.start_session()
+    await _wait(lambda: stt.stream is not None)
+    session = svc._session
+    stt.say("what is the weather like")
+    stt.event("start_of_turn")  # a sound, but no words and nothing loud
+    await _wait(lambda: session._voice is not None and session._voice.heard == ["Sunny all day."])
+    await svc.stop_session("test")
+
+
 async def test_a_short_cut_in_is_answered_once_they_stay_quiet(monkeypatch: pytest.MonkeyPatch) -> None:
     from littlebot.assistant import session as session_mod
 
