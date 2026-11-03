@@ -195,8 +195,18 @@ All public, for research and training:
 | Background sound (AudioSet, 2 parts) | 1.4 GB | huggingface.co/datasets/agkphysics/AudioSet |
 | The voice generator (LibriTTS-R) | 200 MB | github.com/rhasspy/piper-sample-generator |
 
-Nothing recorded in the house is used: every voice is made up. To make room again afterwards, delete
+Runs 1 and 2 used nothing recorded in the house: every voice was made up. To make room again afterwards, delete
 `~/wwtrain/data` (the 17 GB file is only needed for training).
+
+## The family's own clips
+
+The Assistant page's "Wake word: your voices" card takes a recording made on a phone or PC (any format PyAV reads,
+up to 15 minutes / 50 MB) of someone saying "hey little bot" over and over, with or without breaks. On the robot,
+Vosk held to the wake phrases marks each word, and every "hey little bot" is cut out as a 16 kHz WAV in
+`data/wake_clips/<name>/` (littlebot/audio/wake_clips.py). Only the clips are kept, never the recording, and nothing
+leaves the robot. About 100 clips per person is enough. Run together, a free Vosk found none of 20 phrases and the
+held one found all 20 (espeak, 2026-11-03). The next training run adds them to the made-up positives
+(not wired into `~/wwtrain/train.py` yet).
 
 Code: `scripts/wake_training/setup.sh`, `download.sh`, `train.py`, `run_all.sh`; on LittleBot `littlebot/audio/oww.py`
 and `scripts/wake_shadow_report.py`.

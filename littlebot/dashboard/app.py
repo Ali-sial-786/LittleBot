@@ -4,7 +4,8 @@ Security layers applied here (details in docs/modules/dashboard.md):
 
 * an outermost ASGI guard (:class:`RequestGuard`) that runs before routing and
   before any body byte is read: ``Host`` allowlist (400, DNS-rebinding defence),
-  request-body caps (413: 64 KB, 16 KB under ``/player``; ``Content-Length`` is
+  request-body caps (413: 64 KB, 16 KB under ``/player``, 50 MB for a wake word recording's upload;
+  ``Content-Length`` is
   checked up front and chunked bodies are cut off while streaming) and the
   client address for the auth failure accounting;
 * an HTTP middleware that, for every ``/api/*`` request except the public
@@ -35,6 +36,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from littlebot.core.context import RobotContext
 from littlebot.dashboard.auth import CSRF_HEADER, SESSION_COOKIE, AuthManager, current_client
 from littlebot.dashboard.deps import DashState
+from littlebot.dashboard.routes.wake_clip_routes import MAX_UPLOAD_BYTES, UPLOAD_PATH
 
 log = logging.getLogger("littlebot.dashboard")
 
@@ -84,6 +86,8 @@ SETUP_CODE_PATHS = frozenset({"/api/session", "/api/setup"})
 # /player uses the media module's own, smaller cap (littlebot.media.player_routes.MAX_BODY_BYTES).
 MAX_BODY_BYTES = 64 * 1024
 DEFAULT_PLAYER_MAX_BODY_BYTES = 16 * 1024
+# The one exception: UPLOAD_PATH, a recording of the family saying the wake phrase (MAX_UPLOAD_BYTES;
+# littlebot/dashboard/routes/wake_clip_routes.py)
 UNKNOWN_HOST_MESSAGE = ("Unknown host name. Open the dashboard at the address LittleBot shows in its "
                         "console (or add this name to dashboard.allowed_hosts).\n")
 SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
@@ -277,6 +281,8 @@ class RequestGuard:
             await _unknown_host(path)(scope, receive, send)
             return
         limit = self.player_max_body if path == "/player" or path.startswith("/player/") else self.max_body
+        if path == UPLOAD_PATH:  # a wake word recording (only there, and only once logged in: the app checks that)
+            limit = MAX_UPLOAD_BYTES
         if length is not None:
             try:
                 declared = int(length)
