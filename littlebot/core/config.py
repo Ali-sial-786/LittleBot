@@ -257,9 +257,11 @@ class WakeConfig(_Section):
     # Vosk only wakes LittleBot when the model's best score in the last oww_window_seconds is at least
     # oww_threshold. rescue: as shadow, and when Vosk heard a wake phrase but wasn't sure of it ("hey bot" at 0.55,
     # "... bot" not first), a model score of at least oww_rescue_threshold in the last oww_rescue_seconds wakes it
-    # (7 first tries missed on the robot, 2026-11-02, had both). Anything wrong with it (files, onnxruntime)
-    # switches it off with one warning.
-    oww_mode: Literal["off", "shadow", "confirm", "rescue"] = "off"
+    # (7 first tries missed on the robot, 2026-11-02, had both). primary: the model's own score of at least
+    # oww_primary_threshold wakes it, with Vosk (min_confidence) as the backup (the owner's choice, 2026-11-02).
+    # Anything wrong with it (files, onnxruntime) switches it off with one warning: then Vosk alone, as before.
+    oww_mode: Literal["off", "shadow", "confirm", "rescue", "primary"] = "off"
+    oww_primary_threshold: float = Field(default=0.45, ge=0.05, le=1.0)
     oww_rescue_threshold: float = Field(default=0.7, ge=0.0, le=1.0)
     oww_rescue_seconds: float = Field(default=5.0, gt=0.0, le=9.0)  # a Vosk result comes after their sentence
     oww_threshold: float = Field(default=0.5, ge=0.0, le=1.0)  # confirm: Vosk's wake counts at this score or more

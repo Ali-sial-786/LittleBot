@@ -279,6 +279,33 @@ async def test_rescue_mode_needs_the_model_to_be_sure_too(rig, tmp_path, caplog)
     await until(lambda: r.live.calls, what="live voice started")
 
 
+async def test_primary_mode_the_model_wakes_it_on_its_own(rig, tmp_path, caplog):
+    # the owner's choice (2026-11-02): the trained model first at 0.45, Vosk as the backup
+    caplog.set_level(logging.INFO, logger="littlebot.wake")
+    r = await _rig_with_model(rig, tmp_path, 0.3, "primary")
+    await asyncio.sleep(0.4)
+    assert r.live.calls == []  # under 0.45: nothing
+    r.scorer.level = 0.6  # "hey little bot" that Vosk didn't make out at all
+    await until(lambda: r.live.calls, what="live voice started")
+    assert r.wake.triggers == 1 and r.live.carries[0].phrase == "hey little bot"
+    assert "wake model: it woke LittleBot (score 0.60, wake.oww_primary_threshold 0.45)" in caplog.text
+    assert "wake word heard (phrase=hey little bot, before the sentence ended)" in caplog.text
+    await until(lambda: any(x["kind"] == "model_wake" for x in _journal(r.journal)), what="the wake noted")
+    wake = next(x for x in _journal(r.journal) if x["kind"] == "model_wake")
+    await r.live.end()
+    await until(lambda: any(x["kind"] == "outcome" for x in _journal(r.journal)), what="the outcome")
+    assert next(x for x in _journal(r.journal) if x["kind"] == "outcome")["id"] == wake["id"]
+    assert not any(x["kind"] == "model_only" for x in _journal(r.journal))  # its own wake, not a stray peak
+
+
+async def test_primary_mode_vosk_is_the_backup(rig, tmp_path):
+    r = await _rig_with_model(rig, tmp_path, 0.1, "primary")
+    await asyncio.sleep(0.3)
+    r.rec.say("hey little bot", conf=0.9)
+    await until(lambda: r.live.calls, what="live voice started")
+    assert r.wake.triggers == 1
+
+
 async def test_a_broken_model_switches_off_and_waking_goes_on(rig, tmp_path, caplog):
     caplog.set_level(logging.INFO, logger="littlebot.wake")
     r = await _rig_with_model(rig, tmp_path, 0.9, "confirm")

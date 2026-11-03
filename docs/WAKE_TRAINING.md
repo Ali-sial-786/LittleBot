@@ -111,7 +111,8 @@ systemctl --user restart littlebot
 
 | Setting | Default | What it does |
 |---|---|---|
-| `wake.oww_mode` | `off` | `off`, `shadow` (log only), `confirm` or `rescue` (see below). The robot has `rescue` (since 2026-11-02). |
+| `wake.oww_mode` | `off` | `off`, `shadow` (log only), `confirm`, `rescue` or `primary` (see below). The robot has `primary` (since 2026-11-02). |
+| `wake.oww_primary_threshold` | `0.45` | primary: the model's score that wakes LittleBot by itself |
 | `wake.oww_threshold` | `0.5` | confirm: the score Vosk's wake needs |
 | `wake.oww_rescue_threshold` | `0.7` | rescue: the model's score that wakes it when Vosk wasn't sure |
 | `wake.oww_rescue_seconds` | `5.0` | rescue: how far back the model's score is looked at (Vosk's result comes after the sentence) |
@@ -163,6 +164,17 @@ at least `wake.oww_rescue_threshold` in the last `wake.oww_rescue_seconds` wakes
 plays. The log says `Vosk wasn't sure of 'hey bot', but the wake model's score is 0.90 ...: waking`. On the robot's
 log of 2026-11-02 seven first tries that needed a second or third go had both (an unsure Vosk phrase and a model
 peak); the model alone was not used, as it also peaked about four times an hour with nobody waking it.
+
+### Primary mode (on the robot, the owner's choice)
+
+The model first: its score reaching `wake.oww_primary_threshold` (0.45) wakes LittleBot by itself, at once, with
+what was said after it carried to the chat as for Vosk's early wake. Vosk stays the backup, with the robot's
+`wake.min_confidence` raised to 0.6 (an unsure "hey bot" still needs `wake.short_min_confidence`, 0.7). Not while a
+video plays: then only Vosk's stricter video rules wake it. The log says `wake model: it woke LittleBot (score
+0.62, ...)`, and the journal has a `model_wake` line with how the chat went after it ("nobody said anything" is a
+false wake). On 2026-11-02 the model scored 0.5 or more about four times an hour with nobody waking LittleBot, so
+expect some wakes on their own; each listens for a few seconds and closes. Back to Vosk first:
+`scripts/set_config.py wake.oww_mode rescue` (or `shadow`) and restart.
 
 ## Memory: run it with the limit
 

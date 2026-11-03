@@ -93,6 +93,7 @@ log = logging.getLogger("littlebot.wake")
 WAKE_TOPIC = "audio.wake_word"  # {phrase} published when a wake phrase was heard
 CALL_ENDED_TOPIC = "live.call_ended"  # littlebot/chatgpt/live.py CALL_ENDED: {reason}
 FOLLOW_UP = "follow-up"  # the "phrase" of a chat started by a follow-up (no wake word)
+MODEL_PHRASE = "hey little bot"  # the phrase of a wake by the trained model (wake.oww_mode primary): all it knows
 # Calls that ended by themselves (live.py end reasons): a follow-up may come. Not "goodbye", "asked to stop",
 # a safety rule or a hand-over to a video: they meant it to end.
 FOLLOW_UP_AFTER = ("time limit reached", "hung up after", "connection lost")
@@ -495,7 +496,8 @@ class WakeWordService(Service):
                     folder = Path(self.ctx.config.data_path) / folder
                 oww = WakeModelCheck(folder, journal=folder / SHADOW_FILE, mode=mode,
                                      peak_threshold=self.cfg.oww_peak_threshold,
-                                     window_seconds=self.cfg.oww_window_seconds)
+                                     window_seconds=self.cfg.oww_window_seconds,
+                                     wake_threshold=self.cfg.oww_primary_threshold)
             oww.start()
             self._oww = oww
         except Exception as e:  # noqa: BLE001 - the wake word goes on with Vosk alone
@@ -905,6 +907,8 @@ class WakeWordService(Service):
                 self._fed += len(block)
                 del block
                 video = self._video_on()
+                if not video and self._model_woke(inp, heard, rec.sample_rate):
+                    return True
                 early = False
                 if not result and not video and self.cfg.early:
                     result = self._early_result(rec)
@@ -934,6 +938,8 @@ class WakeWordService(Service):
                     if carry is not None:
                         self._carry_on(inp, rec.sample_rate, carry)
                     return True
+                if not video and self._model_woke(inp, heard, rec.sample_rate, sync=True):
+                    return True  # Vosk missed it, the model didn't (asked before the sentence is forgotten)
                 heard.decided()  # no wake phrase in that sentence: it is forgotten
             return False
         finally:
@@ -1076,6 +1082,23 @@ class WakeWordService(Service):
                  heard, min(confs, default=0.0), self.cfg.min_confidence)
         return heard
 
+    def _model_woke(self, inp: Any, heard: PreRoll, rate: int, *, sync: bool = False) -> bool:
+        """``wake.oww_mode: primary``: the trained model's score went over ``wake.oww_primary_threshold``: the call
+        starts as for Vosk's early wake, with what was said from where the phrase ended (Vosk is the backup).
+        ``sync``: first let the model score the sound so far (Vosk is about to forget that sentence)."""
+        if getattr(self.cfg, "oww_mode", "off") != "primary" or self._audio_busy or self._stop.is_set():
+            return False
+        if sync:
+            self._model("score_now", self.cfg.oww_confirm_wait_seconds)
+        hit = self._model("take_wake")
+        if hit is None:
+            return False
+        ago, _score, wake_id = hit
+        carry = self._carry_at(heard, max(0, self._fed - int(ago)), rate, MODEL_PHRASE)
+        self._detected(MODEL_PHRASE, carry, early=True, wake_id=wake_id)
+        self._carry_on(inp, rate, carry)
+        return True
+
     def _rescue(self, heard: str | None) -> str | None:
         """``wake.oww_mode: rescue``: Vosk heard ``heard`` but wasn't sure of it; a high enough score of the trained
         model just before wakes it all the same ("hey little bot" heard as an unsure "hey bot" while the model
@@ -1130,8 +1153,13 @@ class WakeWordService(Service):
         words = dict(self._phrases).get(phrase) or tuple(phrase.split())
         end, after = wake_phrase_end(result, words, self.cfg.min_confidence)
         cut = None if end is None else max(0, int((end - WAKE_CUT_MARGIN) * rate))
+        return self._carry_at(heard, cut, rate, phrase, kept_talking=after > 0 or phrase == FOLLOW_UP)
+
+    def _carry_at(self, heard: PreRoll, cut: int | None, rate: int, phrase: str, *,
+                  kept_talking: bool = False) -> SpeechCarry:
+        """The carry: what was heard before sample ``cut`` is the wake phrase, the rest is what they said after."""
         carry = SpeechCarry(rate, phrase=phrase, quiet_level=self._quiet_level(),
-                            kept_talking=after > 0 or phrase == FOLLOW_UP, keep_voice=self._voices_on())
+                            kept_talking=kept_talking, keep_voice=self._voices_on())
         before = heard.before(cut)
         carry.keep_wake_phrase(before)  # who said it (littlebot/voices/call.py); only with keep_voice
         carry.keep_phrase(before)  # the assistant's speech-to-text hears it whole, then takes it off the words

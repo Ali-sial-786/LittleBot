@@ -16,7 +16,8 @@ it over without waiting). In ``wake.oww_mode: shadow`` it changes nothing: for e
 best score around it, and it logs its own peaks over ``wake.oww_peak_threshold`` that Vosk didn't wake on; both
 also go to ``data/wake/shadow.jsonl`` (numbers only: no sound, no words), with how the chat went after each wake.
 ``scripts/wake_shadow_report.py`` sums that file up. In ``confirm`` the wake word asks ``score_now`` before waking;
-in ``rescue`` it asks when Vosk heard a wake phrase but wasn't sure of it, and wakes on a high enough score.
+in ``rescue`` it asks when Vosk heard a wake phrase but wasn't sure of it, and wakes on a high enough score; in
+``primary`` the model's own score over ``wake_threshold`` wakes LittleBot (``take_wake``), Vosk as the backup.
 
 Anything wrong (a missing file, no onnxruntime, an error while scoring) switches it off with one warning; the wake
 word then goes on exactly as without it.
@@ -61,6 +62,7 @@ AFTER_SECONDS = 0.6  # the model's score is also measured this long after Vosk's
 RESOLVE_TIMEOUT = 2.0  # ...or at most this long after it, if the sound stops (the call took the microphone)
 CLAIM_SECONDS = 3.0  # a model peak with no Vosk wake this long after it is a model-only peak
 UNSURE_SECONDS = 3.0  # Vosk heard a wake phrase, not sure enough, this close to a peak
+PRIMARY_FRESH_SECONDS = 1.5  # primary: a model wake the wake word thread takes later than this is dropped
 CPU_NOTE_SECONDS = 60.0  # seconds of sound: then one line with the CPU it took
 SUMMARY_SECONDS = 3600.0  # one summary line this often (while it hears sound)
 
@@ -182,13 +184,17 @@ class WakeModelCheck:
     """The trained model on its own thread: ``feed`` it the wake word's sound, ask it about Vosk's wakes."""
 
     def __init__(self, folder: Path, *, journal: Path | None = None, mode: str = "shadow",
-                 peak_threshold: float = 0.5, window_seconds: float = 2.0,
+                 peak_threshold: float = 0.5, window_seconds: float = 2.0, wake_threshold: float = 0.45,
                  load: Callable[[Path], WakeScorer] = load_scorer, clock: Callable[[], float] = time.monotonic,
                  wall: Callable[[], float] = time.time) -> None:
         self.folder = Path(folder)
         self.journal = journal
         self.mode = mode
         self.peak_threshold = float(peak_threshold)
+        self.wake_threshold = float(wake_threshold)  # primary: a score this high wakes LittleBot (take_wake)
+        self._above = False  # primary: the score is over wake_threshold now (one wake per stretch)
+        self._wake_at: tuple[int, float] | None = None  # primary: (sample, score) of a wake not taken yet
+        self._claimed_to = -1  # primary: peaks starting up to this sample were the model's own wake
         self.window = int(float(window_seconds) * RATE)
         self._load = load
         self._clock, self._wall = clock, wall
@@ -213,7 +219,7 @@ class WakeModelCheck:
         self._load_ms = 0
         self._mem_mb: float | None = None
         self._hour = {"since": clock(), "sound": 0, "cpu": 0.0, "best": 0.0, "peaks": 0, "wakes": 0}
-        self.counts = {"vosk_wakes": 0, "agreed": 0, "model_only": 0, "blocked": 0}
+        self.counts = {"vosk_wakes": 0, "agreed": 0, "model_only": 0, "blocked": 0, "model_wakes": 0}
 
     # ------------------------------------------------------------ lifecycle
     def start(self) -> None:
@@ -292,6 +298,30 @@ class WakeModelCheck:
             span = self.window if seconds is None else int(float(seconds) * RATE)
             return self._best(target - span, target)
 
+    def take_wake(self, fresh_seconds: float = PRIMARY_FRESH_SECONDS) -> tuple[int, float, int] | None:
+        """``primary``: the model's own wake since the last call, as (samples ago, score, the wake's id for
+        ``outcome``), or None. One per stretch over ``wake_threshold``; an old one (``fresh_seconds``) is dropped."""
+        if not self.working or self.mode != "primary":
+            return None
+        with self._cv:
+            hit, self._wake_at = self._wake_at, None
+            fed = self._fed
+            if hit is None or fed - hit[0] > fresh_seconds * RATE:
+                return None
+            # the stretch is this wake (not a model-only peak), also as it goes on rising after it
+            if self._peak is not None:
+                self._peak["claimed"] = True
+            self._peaks = [p for p in self._peaks if p["end"] < hit[0] - self.window]
+            self._claimed_to = hit[0] + self.window
+        wid = int(self._wall() * 1000)
+        self.counts["model_wakes"] += 1
+        self._hour["wakes"] += 1
+        log.info("wake model: it woke LittleBot (score %.2f, wake.oww_primary_threshold %.2f)", hit[1],
+                 self.wake_threshold)
+        self._write({"t": _iso(self._wall()), "kind": "model_wake", "id": wid, "model_score": round(hit[1], 3),
+                     "mode": self.mode})
+        return fed - hit[0], hit[1], wid
+
     def vosk_wake(self, vosk_conf: float, *, early: bool = False, video: bool = False,
                   blocked: bool = False, score: float | None = None) -> int | None:
         """Vosk woke (or, ``blocked``, would have but confirm stopped it): measured and logged once the model has
@@ -356,6 +386,7 @@ class WakeModelCheck:
                     scorer.reset()
                     with self._cv:
                         self._scores.clear()
+                        self._wake_at, self._above = None, False
                         self._done = max(self._done, int(item[1]))
                         self._cv.notify_all()
                 else:
@@ -373,9 +404,15 @@ class WakeModelCheck:
         scores = scorer.process(pcm)
         cpu = time.thread_time() - t0
         end = start + len(pcm)
+        rest = len(getattr(scorer, "_remainder", ()))  # sound waiting for a whole chunk
         with self._cv:
-            for s in scores:
+            for i, s in enumerate(scores):
                 self._scores.append((end, s))
+                if self.mode == "primary":
+                    if s >= self.wake_threshold and not self._above:
+                        # where the chunk that crossed it ended: the wake phrase ends about there
+                        self._wake_at = (end - rest - (len(scores) - 1 - i) * CHUNK, s)
+                    self._above = s >= self.wake_threshold
             self._done = max(self._done, end)
             self._cv.notify_all()
         for s in scores:
@@ -457,7 +494,7 @@ class WakeModelCheck:
                      "video": w["video"], "mode": self.mode, "blocked": w["blocked"]})
 
     def _log_peak(self, p: dict[str, Any]) -> None:
-        if p.get("claimed"):
+        if p.get("claimed") or p["start"] <= self._claimed_to:
             return
         with self._cv:
             unsure = any(p["start"] - UNSURE_SECONDS * RATE <= u <= p["end"] + UNSURE_SECONDS * RATE
