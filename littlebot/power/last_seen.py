@@ -18,7 +18,7 @@ from typing import Any, Callable
 
 log = logging.getLogger("littlebot.power")
 
-LAST_EVERY_S = 10.0
+LAST_EVERY_S = 60.0  # "cut at about" to the minute is enough, and the SD card isn't written every few seconds
 BOOT_SLACK_S = 5.0  # the clock and the uptime disagree by a little
 
 

@@ -184,8 +184,8 @@ shutdown (on the desktop it may first show the shutdown menu - press again; the 
 receives SIGTERM from systemd); holding it down forces power off - emergencies only.
 
 **Telling a power cut afterwards.** The Pi keeps no journal across a restart, so a cut leaves
-no trace of its own. LittleBot writes its last sign of life to `data/power_last.json` every
-10 s (the time, the battery's percent, the pack's and each cell's volts, the charger) and
+no trace of its own. LittleBot writes its last sign of life to `data/power_last.json` once a
+minute (the time, the battery's percent, the pack's and each cell's volts, the charger) and
 marks it clean when it stops. At the next start, if the last run never stopped and the Pi
 started after it, the log says `power: the power was cut at about ...` with that last reading
 (`littlebot/power/last_seen.py`). Each cold start also shows up as `the Pi reports
