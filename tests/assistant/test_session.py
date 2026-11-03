@@ -1132,6 +1132,30 @@ async def test_a_short_cut_in_waits_for_the_rest_of_what_they_say() -> None:
     await svc.stop_session("test")
 
 
+async def test_a_turn_cut_off_mid_sentence_waits_for_the_rest() -> None:
+    """"So then what did they" ended on the quiet limit and got 'Probably "So then what did they use it for?"'
+    (the robot, 2026-11-02): its answer waits CUT_OFF_HOLD_S, and the rest joins it."""
+    from littlebot.assistant.speech import STTEvent
+
+    brain = Scripted(["Half an answer."], ["For laundry."], ["Sure."])
+    svc, stt, _, _ = _service(brain, follow_up_seconds=5)
+    await svc.start()
+    await svc.start_session()
+    await _wait(lambda: stt.stream is not None)
+    session = svc._session
+    stt.event("start_of_turn")
+    stt.stream.on_event(STTEvent("end_of_turn", "so then what did they", cut_off=True))
+    await _wait(lambda: len(brain.questions) == 1)
+    await asyncio.sleep(0.3)
+    assert session._voice is not None and not session._voice.heard  # not said yet
+    stt.say("use it for")
+    await _wait(lambda: len(brain.questions) == 2)
+    assert brain.questions[-1] == "so then what did they use it for"
+    await _wait(lambda: session._voice is not None and session._voice.heard == ["For laundry."])
+    assert session._held is None
+    await svc.stop_session("test")
+
+
 async def test_a_short_cut_in_is_answered_once_they_stay_quiet(monkeypatch: pytest.MonkeyPatch) -> None:
     from littlebot.assistant import session as session_mod
 

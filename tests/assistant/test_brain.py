@@ -237,6 +237,23 @@ async def test_its_own_reasoning_is_never_said() -> None:
         assert said == [], line
 
 
+async def test_its_guess_of_their_words_is_never_said() -> None:
+    # 'Probably "So then what did they use it for?"' (the robot, 2026-11-02)
+    p = ScriptedProvider(['Probably "So then what did they use it for?" ',
+                          "Romans also used urine in tanning leather."])
+    _, said, _ = await _turn(p, "So then what did they")
+    assert [s.text for s in said] == ["Romans also used urine in tanning leather."]
+    assert "Never say your guess of their words aloud" in p.calls[0]["system"]
+    for line in ("I think he means the Roman roads.", "You probably meant Kublai Khan.",
+                 "Sounds like you're asking about the Yuan dynasty.", "Maybe “what time is it”?"):
+        _, said, _ = await _turn(ScriptedProvider([line]))
+        assert said == [], line
+    for line in ("Probably about fifty thousand miles.", "I think you'll like this one.",
+                 "They probably used it for laundry.", "Maybe next time."):
+        _, said, _ = await _turn(ScriptedProvider([line]))  # answers, not guesses of their words
+        assert len(said) == 1, line
+
+
 async def test_a_sum_said_in_words_comes_with_its_exact_result(caplog) -> None:
     # "The square root of seventeen sixty four is about forty-one point nine." (the robot, 2026-10-31)
     p = ScriptedProvider(["It's 42."])

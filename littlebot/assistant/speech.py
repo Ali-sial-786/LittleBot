@@ -66,6 +66,7 @@ class STTEvent:
     confidence: float = 1.0
     detail: str = ""  # error: SpeechError.kind
     unsure: tuple[str, ...] = ()  # (eager_)end_of_turn: words the recogniser wasn't sure of (may be misheard)
+    cut_off: bool = False  # end_of_turn: ended by the quiet limit mid-sentence (they may well go on)
 
 
 OnEvent = Callable[[STTEvent], Any]

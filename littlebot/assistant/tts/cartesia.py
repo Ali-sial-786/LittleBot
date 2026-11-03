@@ -42,10 +42,12 @@ RATE = 48000  # one of 8000, 16000, 22050, 24000, 44100, 48000
 SPEEDS = {"slowest": 0.7, "slow": 0.85, "normal": 1.0, "fast": 1.15, "fastest": 1.3}
 # The sentence's mood (the brain's face tag, speech.MOOD) -> generation_config.emotion
 # (https://docs.cartesia.ai/build-with-cartesia/sonic-3/volume-speed-emotion: calm and content are among the
-# best-supported). Gentle on purpose: no "excited" or "angry", which make the voice pushy.
-EMOTIONS = {"happy": "content", "affectionate": "affectionate", "playful": "content", "celebrating": "happy",
-            "excited": "happy", "curious": "curious", "surprised": "curious", "thinking": "contemplative",
-            "confused": "contemplative", "sad": "sympathetic", "sleepy": "calm", "neutral": None}
+# best-supported). Only those two (and sympathetic): "happy" and "curious" made the voice suddenly loud and excited
+# mid-chat (the owner, 2026-11-02), and a sentence sent with no emotion has Sonic pick one from its words.
+EMOTIONS = {"happy": "content", "affectionate": "content", "playful": "content", "celebrating": "content",
+            "excited": "content", "curious": "calm", "surprised": "calm", "thinking": "calm",
+            "confused": "calm", "sad": "sympathetic", "sleepy": "calm", "neutral": None}
+_BANG = re.compile(r"!+")  # Sonic reads "!" with a burst of energy: said as a full stop ("?!" as "?")
 
 
 class CartesiaTTS(HttpPcmTTS):
@@ -69,7 +71,7 @@ class CartesiaTTS(HttpPcmTTS):
     def request(self, text: str, key: str) -> Request:
         body: dict[str, Any] = {
             "model_id": self.model,
-            "transcript": text,
+            "transcript": _BANG.sub(".", text).replace("?.", "?"),
             "voice": {"id": self.voice},
             "output_format": {"container": "raw", "encoding": "pcm_s16le", "sample_rate": RATE},
         }
@@ -80,7 +82,7 @@ class CartesiaTTS(HttpPcmTTS):
         if speed != 1.0:
             config["speed"] = speed
         mood = MOOD.get()
-        emotion = EMOTIONS.get(mood, self.emotion) if mood else self.emotion
+        emotion = EMOTIONS.get(mood or "") or self.emotion  # neutral or no tag: the steady default (calm)
         if emotion:
             config["emotion"] = emotion
         if config:

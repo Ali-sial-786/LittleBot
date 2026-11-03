@@ -168,6 +168,19 @@ async def test_turn_messages_as_flux_gives_them():
     await stream.aclose()
 
 
+async def test_words_ended_mid_sentence_are_marked_cut_off():
+    # "So then what did they" (max_turn_silence ended it: no full stop; the robot, 2026-11-02)
+    conn, events = Connector(), Events()
+    stream = await _aai(conn).open(events)
+    for order, text in enumerate(["So then what did they", "What the fuck? I asked you to", "Use it for?",
+                                  'He said "go."', "Okay."]):
+        conn.ws.turn(order, text, end=True)
+    await settle()
+    ends = [e for e in events if e.kind == "end_of_turn"]
+    assert [e.cut_off for e in ends] == [True, True, False, False, False]
+    await stream.aclose()
+
+
 async def test_finish_forces_the_end_and_reset_forgets_the_turn():
     conn, events = Connector(), Events()
     stream = await _aai(conn).open(events)

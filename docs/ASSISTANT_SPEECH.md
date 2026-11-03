@@ -186,7 +186,13 @@ Change them in `config/local.yaml` (or with `scripts/set_config.py`). `pipeline`
 
 When you talk over LittleBot, a short turn right after it ("No," "Wait," four words or fewer) is answered only once
 you have been quiet for 1.2 s (`CUT_IN_HOLD_S` in session.py); whatever you go on to say joins it, so "No, ... I
-meant the other one" is one question, not "Okay." and then another.
+meant the other one" is one question, not "Okay." and then another. The same for a turn AssemblyAI ended mid-sentence
+on its quiet limit (its words end without a full stop or question mark: "So then what did they"), after 0.8 s
+(`CUT_OFF_HOLD_S`). Either way the answer is worked out meanwhile, so it starts as soon as the wait is over.
+
+Cartesia gets one steady emotion: `cartesia_emotion` (calm) for most sentences, content for happy ones,
+sympathetic for sad ones; never "happy", "curious" or none at all, which made the voice suddenly loud and excited.
+An exclamation mark is sent as a full stop for the same reason (the caption keeps it).
 
 **How LittleBot decides you finished** (for OpenAI and Vosk; Deepgram decides by itself): it listens to the
 loudness of the microphone. You start a turn once it hears about a tenth of a second of voice (louder than

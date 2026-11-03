@@ -230,9 +230,12 @@ class UniversalStream:
         if m.get("end_of_turn"):
             self._turn, self._old, self._partial = None, max(self._old, order), ""
             words = _words(m)
-            # no words (a cough): an empty end, so the session stops waiting for them
+            # no words (a cough): an empty end, so the session stops waiting for them. Its formatted words end
+            # without a full stop or question mark when only max_turn_silence ended them ("So then what did they",
+            # "I asked you to"; the robot, 2026-11-02): cut off
+            cut = bool(text) and not text.rstrip("\"'”’) ").endswith((".", "?", "!", "…"))
             await emit(self._on_event, STTEvent("end_of_turn", text=text, confidence=_confidence(words),
-                                                unsure=_unsure(words)))
+                                                unsure=_unsure(words), cut_off=cut))
             return
         if text and text != self._partial:
             self._partial = text

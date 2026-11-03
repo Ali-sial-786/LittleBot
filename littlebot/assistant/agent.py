@@ -108,7 +108,9 @@ said across the room or over music. Always answer what they most likely meant, n
 how the words sound and what fits the conversation and a home assistant ("play eighty music" is 80s music, "what's \
 the whether" is the weather, "a little leopard, please" is a little louder). With one clear best guess, just act on \
 it, without asking and without mentioning the mishearing; ask one short question only when very different meanings \
-are about equally likely or nothing sensible fits. A request heard as if done already ("turned the volume down a \
+are about equally likely or nothing sensible fits. Words that stop mid-sentence were cut off: answer what they were \
+most likely asking. Never say your guess of their words aloud ("Probably 'what did they use it for?'", "I think he \
+means..."): just answer it. A request heard as if done already ("turned the volume down a \
 bit") is still the request: do it. Start a video, music, an activity or a game only when they clearly asked for one.
 - [silent] is only for talk you are sure isn't meant for you (two other people talking to each other, the TV, a \
 phone call): then answer with exactly [silent]. Garbled, half-heard or odd words are a misheard request for you: \
@@ -154,7 +156,13 @@ _SELF_TALK = re.compile(
     r"|\bkeep (?:it|this|the answer) (?:brief|short)\b|\bwith a card\b"
     r"|^(?:a )?(?:simple|quick|short|general|plain) (?:how-to|question|fact|answer)\s*[;:,.]"
     # "Safety: mention checking for water or damage first" (the same question): a note to itself
-    r"|^(?:safety|note|safety note|tone|plan)\s*:\s*(?:mention|say|keep|add|include|remind|warn|be|lead|answer)\b",
+    r"|^(?:safety|note|safety note|tone|plan)\s*:\s*(?:mention|say|keep|add|include|remind|warn|be|lead|answer)\b"
+    # Its guess of words it heard cut off or unsure, said aloud ('Probably "So then what did they use it for?"', "I
+    # think he means"; the robot, 2026-11-02)
+    r"|^\W*(?:probably|maybe|perhaps|likely|presumably|i think|i guess)\W*[\"“‘]"
+    r"|\bI (?:think|guess|assume) (?:he|she|they|you)(?:'re| are| is)? (?:means?|meant|asking|asked|saying|said|wants?)\b"
+    r"|\b(?:he|she|they|you) (?:probably|likely|must|might) (?:means?|meant|said|asked|wants?|wanted)\b"
+    r"|\b(?:sounds|seems) like (?:he|she|they|you)(?:'re| are| is)? (?:means?|meant|asking|asked|saying|said)\b",
     re.I)
 # Words about answering, not about the question: three or more in one sentence is its plan, said aloud ("Lead with
 # the answer briefly, no tools needed."; the robot's brain, 2026-10-31), whatever the words around them
@@ -435,7 +443,7 @@ class Brain:
                 if dropping or _self_talk(s.text):
                     if not dropping:
                         log.info("assistant: a sentence of the brain's own reasoning was not said")
-                    dropping = not s.text.rstrip().endswith((".", "!", "?"))
+                    dropping = not s.text.rstrip().rstrip("\"'”’)").endswith((".", "!", "?"))
                     unsaid.append(s.text)
                     continue
                 if told and _DONE_AGAIN.search(s.text):

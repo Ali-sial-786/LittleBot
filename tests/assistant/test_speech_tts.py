@@ -107,7 +107,7 @@ async def test_cartesia_request_and_48k_stream_without_resampling():
     assert req.headers["Authorization"] == "Bearer " + KEYS["cartesia_api_key"]
     body = json.loads(req.content)
     assert body["model_id"] == ctx.config.assistant.cartesia_model
-    assert body["transcript"] == "Hello there, friend!"
+    assert body["transcript"] == "Hello there, friend."  # "!" made the voice suddenly excited (2026-11-02)
     assert body["voice"] == {"id": ctx.config.assistant.cartesia_voice}
     assert body["output_format"] == {"container": "raw", "encoding": "pcm_s16le", "sample_rate": 48000}
     assert body["language"] == "en"
@@ -126,12 +126,17 @@ async def test_cartesia_mood_becomes_a_gentle_emotion_and_speed_may_be_a_number(
     MOOD.set("happy")
     await _collect(p.stream("That's lovely."))
     MOOD.set("excited")
-    await _collect(p.stream("You won."))
+    await _collect(p.stream("You won!!"))
+    MOOD.set("curious")
+    await _collect(p.stream("Really?!"))
+    MOOD.set("neutral")
+    await _collect(p.stream("Fine."))
     MOOD.set(None)
     await _collect(p.stream("Okay."))
-    configs = [json.loads(r.content)["generation_config"] for r in rec.requests]
-    assert configs == [{"speed": 0.92, "emotion": "content"}, {"speed": 0.92, "emotion": "happy"},
-                       {"speed": 0.92, "emotion": "calm"}]
+    bodies = [json.loads(r.content) for r in rec.requests]
+    # never "happy" or "curious" (suddenly loud and excited mid-chat, 2026-11-02), and never none at all
+    assert [b["generation_config"]["emotion"] for b in bodies] == ["content", "content", "calm", "calm", "calm"]
+    assert [b["transcript"] for b in bodies][1:3] == ["You won.", "Really?"]
     await p.aclose()
 
 
