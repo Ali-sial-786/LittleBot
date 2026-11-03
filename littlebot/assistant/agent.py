@@ -705,6 +705,9 @@ def _checked(ctx: Any, text: str) -> tuple[str, bool]:
         return text, True
     ok = bool(getattr(res, "ok", True))
     safe = str(getattr(res, "text", "") or text)
+    if not ok:
+        log.info("assistant: a sentence failed the safety check (%s); its safe line is said instead",
+                 ", ".join(getattr(res, "reasons", None) or []) or "?")
     return (text, True) if ok else (safe or "Let's talk about something else.", False)
 
 
