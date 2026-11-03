@@ -241,7 +241,10 @@ def build_stt(ctx: Any, *, transport: Any = None, ws_connect: WsConnect | None =
                                turn_end_timeout_ms=a.deepgram_eot_timeout_ms, keyterms=keyterms, ws_connect=ws_connect)
         if name == "assemblyai":
             return AssemblyAIUniversal(key=key_reader(ctx, "assemblyai_api_key"), cloud_ok=ok,
-                                       model=a.assemblyai_stt_model, max_turn_silence_ms=a.deepgram_eot_timeout_ms,
+                                       model=a.assemblyai_stt_model,
+                                       max_turn_silence_ms=a.assemblyai_max_turn_silence_ms,
+                                       interruption_delay_ms=a.assemblyai_interruption_delay_ms,
+                                       continuous_partials=a.assemblyai_continuous_partials,
                                        keyterms=keyterms, ws_connect=ws_connect)
         return DeepgramFlux(key=key_reader(ctx, "deepgram_api_key"), cloud_ok=ok, model=a.deepgram_model,
                             eot_threshold=a.deepgram_eot_threshold, eot_timeout_ms=a.deepgram_eot_timeout_ms,

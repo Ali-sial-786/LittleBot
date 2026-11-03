@@ -108,6 +108,46 @@ async def test_url_header_keyterms_and_100ms_packets():
     assert "keyterms_prompt" not in _aai(conn).stream_url([])  # none: not sent at all
 
 
+def test_its_own_turn_wait_early_words_and_words_while_talking():
+    url = _aai(Connector(), max_turn_silence_ms=1280, interruption_delay_ms=0, continuous_partials=True).stream_url([])
+    q = {k: v[0] for k, v in parse_qs(urlsplit(url).query).items()}
+    assert q["max_turn_silence"] == "1280" and q["interruption_delay"] == "0" and q["continuous_partials"] == "true"
+    q = {k: v[0] for k, v in parse_qs(urlsplit(_aai(Connector()).stream_url([])).query).items()}
+    assert not {"max_turn_silence", "interruption_delay", "continuous_partials"} & set(q)  # AssemblyAI's defaults
+
+
+def test_the_config_gives_assemblyai_its_own_settings():
+    from littlebot.assistant.stt import build_stt
+    from littlebot.testing import make_test_context
+
+    ctx = make_test_context(assistant={"stt": ["assemblyai", "vosk"], "deepgram_eot_timeout_ms": 3000})
+    try:
+        ctx.privacy.set(cloud_enabled=True)
+        from pydantic import SecretStr
+
+        ctx.config.assemblyai_api_key = SecretStr(KEY)
+        aai = build_stt(ctx, ws_connect=Connector()).providers[0]
+        assert (aai.max_turn_silence_ms, aai.interruption_delay_ms, aai.continuous_partials) == (1280, 0, True)
+    finally:
+        ctx.db.close()
+
+
+async def test_speech_started_starts_the_turn_once():
+    conn, events = Connector(), Events()
+    stream = await _aai(conn).open(events)
+    ws = conn.ws
+    ws.inbox.put_nowait(json.dumps({"type": "SpeechStarted", "timestamp": 120, "confidence": 0.9}))
+    ws.turn(0, "tell")
+    ws.turn(0, "Tell me.", end=True)
+    ws.turn(1, "and")  # no SpeechStarted this time: the first Turn starts it
+    await settle()
+    assert [e.kind for e in events] == ["start_of_turn", "partial", "end_of_turn", "start_of_turn", "partial"]
+    ws.inbox.put_nowait(json.dumps({"type": "SpeechStarted", "timestamp": 900}))  # mid-turn: nothing new
+    await settle()
+    assert len(events) == 5
+    await stream.aclose()
+
+
 async def test_turn_messages_as_flux_gives_them():
     conn, events = Connector(), Events()
     stream = await _aai(conn).open(events)

@@ -13,14 +13,20 @@ each replaces the last), ``end_of_turn``, ``turn_is_formatted`` and ``words`` (`
 ``Termination``; ``Error`` (``error_code``, ``error``) just before it closes. Client messages: ``{"type":
 "ForceEndpoint"}`` ends the turn now, ``{"type": "UpdateConfiguration", "keyterms_prompt": [...]}`` replaces the
 keyterms mid-stream, ``{"type": "Terminate"}`` before closing (the last words come first, then Termination).
-Universal-3.6 Pro ends a turn when a short quiet follows a sentence's full stop or question mark, else after
-``max_turn_silence``; its in-between ``Turn`` messages come in quiet moments, not word by word.
+Universal-3.6 Pro ends a turn when a short quiet (``min_turn_silence``, 128 ms in its default "balanced" mode) follows
+words that read as finished, else after ``max_turn_silence`` of quiet (its own default 1280 ms; LittleBot used
+Deepgram's 3000 ms at first, which made three of twenty turns end 3-4 s after Deepgram's on the robot, 2026-11-02).
+Its in-between ``Turn`` messages (https://www.assemblyai.com/docs/streaming/universal-3-pro/turn-detection-and-
+partials, read 2026-11-02) come shortly after speech begins (``interruption_delay`` later: 500 ms by default, 0 here,
+so a barge-in is confirmed by words sooner), at each pause where the turn reads unfinished, and with
+``continuous_partials=true`` also every second or few while they talk on without pausing. ``SpeechStarted`` comes
+only once it has made out words (not for a cough): an early ``start_of_turn``.
 
-Here, as for Flux (stt/deepgram.py): a turn's first ``Turn`` -> ``start_of_turn``; the next ones -> ``partial``
-with the words so far; the one with ``end_of_turn`` -> ``end_of_turn`` (confidence: the words' average; ``unsure``:
-the words it was less sure of). There is no "probably done" signal, so no ``eager_end_of_turn``. ``finish()`` sends
-ForceEndpoint; ``reset()`` forgets the turn in progress (ForceEndpoint, and that turn's late events are ignored). A
-failure is one ``error`` event with its kind.
+Here, as for Flux (stt/deepgram.py): ``SpeechStarted`` or a turn's first ``Turn`` -> ``start_of_turn``; the next ones
+-> ``partial`` with the words so far; the one with ``end_of_turn`` -> ``end_of_turn`` (confidence: the words'
+average; ``unsure``: the words it was less sure of). There is no "probably done" signal, so no ``eager_end_of_turn``.
+``finish()`` sends ForceEndpoint; ``reset()`` forgets the turn in progress (ForceEndpoint, and that turn's late events
+are ignored). A failure is one ``error`` event with its kind.
 
 The key: ``ASSEMBLYAI_API_KEY`` in .env, data/assemblyai_api_key (chmod 600, scripts/set_key.py assemblyai) or the
 dashboard's Keys page. It goes only into the handshake header (the websocket's logger never logs at DEBUG, see
@@ -93,6 +99,7 @@ class UniversalStream:
         self.keyterms = list(keyterms)  # what it listens for now
         self._buf = bytearray()
         self._turn: int | None = None  # the turn in progress (its turn_order), None between turns
+        self._started = False  # SpeechStarted already said start_of_turn for the next turn
         self._old = -1  # events of turns up to this one are ignored (ended, or forgotten by reset)
         self._partial = ""
         self._closed = False
@@ -194,6 +201,10 @@ class UniversalStream:
         kind = m.get("type")
         if kind == "Turn":
             await self._turn_message(m)
+        elif kind == "SpeechStarted":
+            if self._turn is None and not self._started:
+                self._started = True
+                await emit(self._on_event, STTEvent("start_of_turn"))
         elif kind == "Error":
             code, text = m.get("error_code"), str(m.get("error") or "")
             log.warning("assemblyai: error %s %s", code if isinstance(code, int) else "?", text[:80] or "?")
@@ -213,7 +224,9 @@ class UniversalStream:
         text = str(m.get("transcript") or "").strip()
         if self._turn != order:
             self._turn, self._partial = order, ""
-            await emit(self._on_event, STTEvent("start_of_turn"))
+            if not self._started:
+                await emit(self._on_event, STTEvent("start_of_turn"))
+            self._started = False
         if m.get("end_of_turn"):
             self._turn, self._old, self._partial = None, max(self._old, order), ""
             words = _words(m)
@@ -241,13 +254,16 @@ class AssemblyAIUniversal:
     is_cloud = True
 
     def __init__(self, *, key: Callable[[], str], cloud_ok: CloudOk, model: str = "universal-3-6-pro",
-                 max_turn_silence_ms: int | None = None,
+                 max_turn_silence_ms: int | None = None, interruption_delay_ms: int | None = None,
+                 continuous_partials: bool = False,
                  keyterms: Sequence[str] | Callable[[], Sequence[str]] = (), url: str = URL,
                  ws_connect: WsConnect | None = None, open_timeout: float = OPEN_TIMEOUT_S) -> None:
         self._key = key
         self._cloud_ok = cloud_ok
         self.model = model
-        self.max_turn_silence_ms = max_turn_silence_ms
+        self.max_turn_silence_ms = max_turn_silence_ms  # None: AssemblyAI's own default
+        self.interruption_delay_ms = interruption_delay_ms  # the first words this long after speech starts
+        self.continuous_partials = continuous_partials  # words every second or so while they talk on
         self._keyterms = keyterms
         self.url = url
         self._ws_connect = ws_connect
@@ -286,6 +302,10 @@ class AssemblyAIUniversal:
         params: dict[str, Any] = {"speech_model": self.model, "encoding": "pcm_s16le", "sample_rate": STT_RATE}
         if self.max_turn_silence_ms is not None:
             params["max_turn_silence"] = int(min(10000, max(50, self.max_turn_silence_ms)))
+        if self.interruption_delay_ms is not None:
+            params["interruption_delay"] = int(max(0, self.interruption_delay_ms))
+        if self.continuous_partials:
+            params["continuous_partials"] = "true"
         terms = self.keyterms if keyterms is None else list(keyterms)
         if terms:
             params["keyterms_prompt"] = json.dumps(terms)
