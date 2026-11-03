@@ -157,6 +157,20 @@ async def test_an_action_told_before_its_tool_is_not_told_again() -> None:
     assert all("already heard" not in r for r in p.calls[0]["results"])
 
 
+async def test_what_was_said_before_a_tool_is_not_said_again_after_it() -> None:
+    # "Good idea, I'll remember that. Next time I'll pick a fresh joke for you." before the remember tool and the
+    # same two sentences after it (the robot, 2026-11-03)
+    first = "Good idea, I'll remember that. Next time I'll pick a fresh joke for you."
+    res, order, _ = await _voice_turn([first, ("tool", "set_volume", '{"percent": 60}'),
+                                       " Good idea, I'll remember that! Next time I'll pick a fresh joke for you.",
+                                       " It's at 60 now."], first_words=True)
+    assert [o for o in order if o.startswith("say:")] == [
+        "say:Good idea, I'll remember that.", "say:Next time I'll pick a fresh joke for you.", "say:It's at 60 now."]
+    assert res.text == f"{first} It's at 60 now."
+    _, order, _ = await _voice_turn(["Hip hip hooray! Hip hip hooray!"])  # with no tool, a repeat is meant
+    assert [o for o in order if o.startswith("say:")] == ["say:Hip hip hooray!", "say:Hip hip hooray!"]
+
+
 async def test_on_the_first_chat_of_the_day_that_word_is_the_greeting(monkeypatch) -> None:
     # "One sec. Good morning! No, it looks dry tomorrow." (the robot's brain, 2026-10-31)
     import littlebot.assistant.agent as agent

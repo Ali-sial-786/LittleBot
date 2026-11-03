@@ -30,6 +30,7 @@ answer is dropped.
 from __future__ import annotations
 
 import asyncio
+import collections
 import contextlib
 import dataclasses
 import inspect
@@ -191,6 +192,25 @@ _CLAIMED = re.compile(r"\b(?:I've|I have) (?:forgotten|saved|cancell?ed|set|turn
 _DONE_AGAIN = re.compile(r"^(?:(?:done|all done|all set|okay|ok)\b[,.!]?\s*)?(?:I've|I have|it's|that's) (?:been |now )?"
                          r"(?:forgotten|saved|remembered|set|cancell?ed|deleted|removed|added|stopped|turned|done)\b"
                          r"|^(?:done|all done|all set)[.!]?$", re.I)
+
+
+def _plain(sentence: str) -> str:
+    """A sentence's words only (lower case, no punctuation): the same sentence said twice compares equal."""
+    return " ".join(re.sub(r"[^a-z0-9' ]+", " ", sentence.lower()).split())
+
+
+def _kept(said: list[str], unsaid: list[str]) -> list[str]:
+    """The sentences that were said: ``said`` without ``unsaid``, a repeat taken out as the later one (the first
+    time it was said)."""
+    drop = collections.Counter(unsaid)
+    kept = []
+    for t in reversed(said):
+        if drop[t] > 0:
+            drop[t] -= 1
+        else:
+            kept.append(t)
+    return kept[::-1]
+
 
 CONTEXT = "[Context for this turn, not said by them: {items}]"
 LAST_DAY_KEY = "assistant.last_day"  # the day of the last conversation (a greeting and a briefing offer once a day)
@@ -451,6 +471,12 @@ class Brain:
                     log.info("assistant: a second \"done\" for an action it had told already was not said")
                     unsaid.append(s.text)
                     continue
+                if _plain(s.text) in before_tools:
+                    # "Good idea, I'll remember that. Next time I'll pick a fresh joke for you." before the remember
+                    # tool and again after it, though told it had been heard (the robot, 2026-11-03)
+                    log.info("assistant: a sentence said before a tool came again after it; not said twice")
+                    unsaid.append(s.text)
+                    continue
                 safe, ok = _checked(self.ctx, s.text)
                 if not ok:
                     stopped = True
@@ -482,6 +508,7 @@ class Brain:
 
         heard = 0  # the sentences said up to the last tool (what came after it was said before the next one)
         told = False  # an action was told before its tool ran: a "Done, I've ..." after it is not said
+        before_tools: set[str] = set()  # the sentences said before a tool ran: never said again after it
 
         async def run_tool(name: str, arguments: Any = None) -> str:
             nonlocal heard, told
@@ -489,6 +516,7 @@ class Brain:
             said = say_first(str(name))
             before = " ".join(t for t in splitter.said[heard:] if t not in unsaid)
             heard = len(splitter.said)
+            before_tools.update(p for p in map(_plain, splitter.said) if p)
             told = told or bool(before and _is_action(str(name)))
             result.tools.append(str(name))
             if on_tool is not None:
@@ -564,7 +592,7 @@ class Brain:
             result.silent = True
         else:
             emit(splitter.flush())
-        result.text = " ".join(t for t in splitter.said if t not in unsaid)
+        result.text = " ".join(_kept(splitter.said, unsaid))
         result.model = str(getattr(reply, "model", "") or result.model)
         result.total_ms = int((self._now() - t0) * 1000)
         if result.sentences and mark_day:  # (a voice session marks it itself, once the answer was heard)
