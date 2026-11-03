@@ -1,11 +1,7 @@
-M3 x 10 pan head
 M3 x 12 pan head
 M3 x 20 pan head
-M3 x 10 countersunk
-M3 x 30 countersunk
+M3 x 30 pan head (or M3 x 25, or countersunk)
 M2.5 x 6 pan head
-M2.5 x 8 pan head
 M2.5 x 12 pan head
-M2 x 6 pan head
 M2 x 8 pan head
 M2 nut
