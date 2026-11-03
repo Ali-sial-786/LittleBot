@@ -38,7 +38,11 @@ def test_not_instant(text: str) -> None:
     assert intents.match(text) is None
 
 
-@pytest.mark.parametrize("text", ["stop talking", "end the call", "that's all", "you can stop now", "hang up"])
+@pytest.mark.parametrize("text", ["stop talking", "end the call", "that's all", "you can stop now", "hang up",
+                                  # the robot, 2026-11-03: "stop talking means stop listening as well"
+                                  "Can you stop talking to him?", "stop talking to her", "Hello, stop talking.",
+                                  "I told you to stop talking.", "Stop talking and stop listening.",
+                                  "No, I said stop talking.", "Wait. Stop talking to the kids."])
 def test_told_to_stop_ends_without_a_word(text: str) -> None:
     hit = intents.match(text)
     assert hit is not None and hit.end and hit.say == ""
@@ -46,7 +50,8 @@ def test_told_to_stop_ends_without_a_word(text: str) -> None:
 
 @pytest.mark.parametrize("text", ["no", "hey", "stop the music and play jazz", "no, I meant tomorrow",
                                   "can you stop by the store", "what stops the rain", "talking about dinosaurs",
-                                  "who was talking"])
+                                  "who was talking", "stop talking about dinosaurs", "wait", "hello",
+                                  "can you stop talking to him about the game", "stop talking to him and tell me a joke"])
 def test_not_a_stop(text: str) -> None:
     hit = intents.match(text)
     assert hit is None or hit.name != "stop"

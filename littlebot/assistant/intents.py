@@ -21,7 +21,11 @@ def _whole(pattern: str) -> re.Pattern[str]:
     return re.compile(rf"^\s*{_POLITE}(?:{pattern})[\s,.!]*{_POLITE}[.!?]*\s*$", re.IGNORECASE)
 
 
-_STOP_CORE = (r"stop(?: it| that| talking| now)?|cancel(?: that)?|never ?mind|forget it|be quiet|quiet|shush|shh+|"
+# "Can you stop talking to him?" (to a child it was talking with) got "Okay, I'll stop talking now." and it went on
+# listening; the owner: "stop talking, which means stop listening as well" (the robot, 2026-11-03)
+_STOP_CORE = (r"stop(?: it| that| now| talking(?: to (?:him|her|them|us|me|everyone|everybody|"
+              r"the (?:kids?|baby|children|boys?|girls?)))?)?|cancel(?: that)?|never ?mind|forget it|be quiet|quiet|"
+              r"shush|shh+|"
               r"hush|shut up|that'?s enough|enough|no(?:thing)? never ?mind|"
               # telling it to stop ends the call, without a word (asked for on the robot, 2026-10-31)
               r"(?:end|stop|close|finish) (?:the |this )?(?:call|chat|conversation|session)|end it|hang up|"
@@ -30,8 +34,10 @@ _STOP_CORE = (r"stop(?: it| that| talking| now)?|cancel(?: that)?|never ?mind|fo
               # the end of "stop talking", its "stop" said under the voice's last words (the robot, 2026-10-31:
               # "Talking." was answered with "Looks like you're still there")
               r"(?:no )?talking")
-_STOP_LEAD = r"hey|no|oh|ok(?:ay)?|alright|all right|just|i said|(?:can|could|would|will) you(?: please)?"
-STOP = _whole(rf"(?:(?:{_STOP_LEAD})[\s,]+)?(?:{_STOP_CORE})(?:[\s,.!]+(?:{_STOP_CORE}))*|nothing")
+# ("hello" / "hi": a child's word over the voice joined to the turn that followed it)
+_STOP_LEAD = (r"hey|hello|hi|no|oh|ok(?:ay)?|alright|all right|just|wait|i said|i told you(?: to)?|"
+              r"(?:can|could|would|will) you(?: please)?")
+STOP = _whole(rf"(?:(?:{_STOP_LEAD})[\s,.!]+)*(?:{_STOP_CORE})(?:[\s,.!]+(?:and[\s,]+)?(?:{_STOP_CORE}))*|nothing")
 THANKS = _whole(r"thanks?(?: you)?(?: so much| very much| a lot)?|cheers|perfect|great(?:,? thanks?)?|awesome|"
                 r"got it|cool|nice|good job|well done|appreciate it")
 BYE = _whole(r"(?:good)?bye(?: bye)?|see you(?: later)?|talk (?:to you )?later|good ?night|go to sleep|"

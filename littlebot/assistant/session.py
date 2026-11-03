@@ -1081,9 +1081,12 @@ class VoiceSession:
                            "that; don't mention the mishearing or say what you think they said")
         if self._cut_in_at is not None and self._now() - self._cut_in_at < CUT_IN_NOTE_S:
             # ("No." after cutting in got "Understood.", and they were only starting; the robot, 2026-11-02)
+            # ("Stop talking." after cutting in was taken for a "wait" and got [silent]: the chat went on; the
+            # robot, 2026-11-03)
             return [*notes, "they just talked over you to say this: it is for you; answer it (if it's a new "
-                            "question, answer that one). If it is only a word like \"no\", \"wait\" or \"hold on\", "
-                            "with nothing to answer yet, answer with exactly [silent]: they are still going on"]
+                            "question, answer that one). If they tell you to stop (stop, stop talking, be quiet, "
+                            "enough), call end_conversation. If it is only a word like \"no\", \"wait\" or \"hold "
+                            "on\", with nothing to answer yet, answer with exactly [silent]: they are still going on"]
         if first:
             return [*notes, "they woke you with your name to say this: it is for you; answer it"]
         return notes
