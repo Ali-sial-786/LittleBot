@@ -14,7 +14,8 @@ The steps, each safe to run again (it carries on where it stopped):
   sound close but aren't it ("hey little boat", "a little bit", "hey Bob", "little bot" without the "hey"...), with the
   LibriTTS-R voice generator (904 speakers, mixed two at a time, at different speeds);
 * ``features``: each clip put in a real-sounding room (room echoes), under everyday background sound (AudioSet: talk,
-  TV, music, kitchens), at a random loudness, then turned into openWakeWord's features (what the model looks at);
+  TV, music, kitchens), at a random loudness, then turned into openWakeWord's features (what the model looks at). The
+  family's own clips (~/LittleBot/data/wake_clips, cut on the dashboard) too, in many more rooms each, a few held back;
 * ``train``: openWakeWord's own training (``Model.auto_train``): a small network learns to say yes to the clips of the
   wake word and no to the near misses and to ~2,000 hours of everyday sound; the version with the fewest false
   alarms per hour on 11 more hours (that it never trained on) and the most wake words caught is kept;
@@ -57,8 +58,15 @@ RATE = 16000
 # How many clips of each kind. On the Pi 5 the generator makes about 2 a second (3 threads). The first run (10,000
 # and 8,000, a 32-wide network, 50,000 steps) caught only 68% of the test clips: the second run has more of all three.
 COUNTS = {"positive_train": 40000, "positive_test": 1500, "negative_train": 24000, "negative_test": 1500}
-# Each training clip is put in a room and under background sound this many times, differently each time.
-ROUNDS = {"positive_train": 2, "negative_train": 2}
+# Each training clip is put in a room and under background sound this many times, differently each time. The
+# family's own clips are few (about 100 a person) next to 40,000 made-up ones, so each goes in many more rooms.
+ROUNDS = {"positive_train": 2, "negative_train": 2, "family_train": 100, "family_test": 4}
+
+# The family's own "hey little bot" clips, cut from their recordings by the dashboard (littlebot/audio/wake_clips.py):
+# one folder a person. Every FAMILY_TEST_EVERY-th clip of each person is held back for the check, never trained on.
+FAMILY = Path(os.environ.get("WAKE_CLIPS", Path.home() / "LittleBot" / "data" / "wake_clips"))
+FAMILY_TEST_EVERY = 5
+FAMILY_PER_BATCH = 8  # of the family's clips in every training batch (next to 50 made-up ones)
 
 # What the wake word is. Repeats weigh the usual way of saying it more.
 POSITIVE = ["hey little bot", "hey little bot", "hey little bot", "hey little bot.", "hey, little bot",
@@ -124,6 +132,15 @@ def to_16k(x: np.ndarray, rate: int) -> np.ndarray:
 
 def manifest_path(kind: str) -> Path:
     return OUT / f"{kind}.jsonl"
+
+
+def family_clips() -> tuple[list[Path], list[Path]]:
+    """The family's clips: (to train on, held back for the check)."""
+    train, test = [], []
+    for person in sorted(p for p in FAMILY.glob("*") if p.is_dir()):
+        for n, f in enumerate(sorted(person.glob("*.wav")), 1):
+            (test if n % FAMILY_TEST_EVERY == 0 else train).append(f)
+    return train, test
 
 
 # ---------------------------------------------------------------- 1. voices
@@ -281,11 +298,17 @@ def step_features(threads: int) -> None:
     feats = AudioFeatures(melspec_model_path=str(FEATURE_MODELS / "melspectrogram.onnx"),
                           embedding_model_path=str(FEATURE_MODELS / "embedding_model.onnx"), inference_framework="onnx",
                           device="cpu", ncpu=threads)
-    for kind in COUNTS:
+    sets = {kind: sorted((OUT / kind).glob("*.wav")) for kind in COUNTS}
+    sets["family_train"], sets["family_test"] = family_clips()
+    log.info("features: the family's own clips: %d to train on, %d held back (%s)", len(sets["family_train"]),
+             len(sets["family_test"]), FAMILY)
+    for kind, files in sets.items():
         dst = OUT / f"{kind}_features.npy"
-        files = sorted((OUT / kind).glob("*.wav"))
         rounds = ROUNDS.get(kind, 1)
         rows = len(files) * rounds
+        if not files and kind.startswith("family"):  # none (any more): none of theirs is trained on or checked
+            dst.unlink(missing_ok=True)
+            continue
         if dst.exists() and np.load(dst, mmap_mode="r").shape[0] == rows:
             log.info("features: %s already", kind)
             continue
@@ -303,7 +326,7 @@ def step_features(threads: int) -> None:
         arr.flush()
         del arr
         tmp.replace(dst)
-        names = [f.name for f in files] * rounds
+        names = [f"{f.parent.name}/{f.name}" if kind.startswith("family") else f.name for f in files] * rounds
         (OUT / f"{kind}_features.files.json").write_text(json.dumps(names), encoding="utf-8")
         log.info("features: %s done (%d clips x %d, %.0f s)", kind, len(files), rounds, time.monotonic() - t0)
 
@@ -355,11 +378,18 @@ def step_train(threads: int, steps: int, layer_dim: int) -> None:
     files = {"ACAV100M_sample": str(EVERYDAY),
              "positive": str(OUT / "positive_train_features.npy"),
              "adversarial_negative": str(OUT / "negative_train_features.npy")}
-    batches = mmap_batch_generator(
-        files, n_per_class={"ACAV100M_sample": 1024, "adversarial_negative": 50, "positive": 50},
-        data_transform_funcs={"ACAV100M_sample": fit},
-        label_transform_funcs={"positive": lambda x: [1 for _ in x], "ACAV100M_sample": lambda x: [0 for _ in x],
-                               "adversarial_negative": lambda x: [0 for _ in x]})
+    n_per_class = {"ACAV100M_sample": 1024, "adversarial_negative": 50, "positive": 50}
+    labels_of = {"positive": lambda x: [1 for _ in x], "ACAV100M_sample": lambda x: [0 for _ in x],
+                 "adversarial_negative": lambda x: [0 for _ in x]}
+    family = OUT / "family_train_features.npy"
+    if family.exists():  # the family's own voices, a few in every batch
+        files["family"] = str(family)
+        n_per_class["family"] = FAMILY_PER_BATCH
+        labels_of["family"] = lambda x: [1 for _ in x]
+        log.info("train: with the family's own clips (%d rows, %d a batch)", np.load(family, mmap_mode="r").shape[0],
+                 FAMILY_PER_BATCH)
+    batches = mmap_batch_generator(files, n_per_class=n_per_class, data_transform_funcs={"ACAV100M_sample": fit},
+                                   label_transform_funcs=labels_of)
 
     class Batches(torch.utils.data.IterableDataset):
         def __iter__(self):
@@ -422,8 +452,10 @@ def step_check() -> None:
         idx = np.arange(s, min(s + 20000, data.shape[0] - frames))[:, None] + np.arange(frames)[None, :]
         fa_scores.append(scores(np.asarray(data[idx], dtype=np.float32)))
     fa = np.concatenate(fa_scores)
+    family_path = OUT / "family_test_features.npy"
+    family = scores(np.load(family_path)) if family_path.exists() else np.zeros(0)
     report = {"model": f"{MODEL_NAME}.onnx", "positive_clips": int(len(pos)), "near_miss_clips": int(len(neg)),
-              "false_alarm_hours": 11.3, "thresholds": {}}
+              "family_clips": int(len(family)), "false_alarm_hours": 11.3, "thresholds": {}}
     for th in (0.3, 0.5, 0.7, 0.9):
         over = fa >= th  # a false alarm: a stretch over the threshold, counted once (the robot waits 4 s anyway)
         alarms = int(np.sum(over[1:] & ~over[:-1]) + (1 if len(over) and over[0] else 0))
@@ -436,10 +468,13 @@ def step_check() -> None:
             "near_misses_fooled": round(float(np.mean(neg >= th)), 3),
             "false_alarms_per_hour": round(alarms / 11.3, 2),
             "fooled_most_by": sorted(fooled.items(), key=lambda kv: -kv[1])[:12]}
+        if len(family):  # the family's held-back clips, each in a few rooms: how well it knows their own voices
+            report["thresholds"][str(th)]["family_caught"] = round(float(np.mean(family >= th)), 3)
     (OUT / "check.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
     for th, r in report["thresholds"].items():
-        log.info("check at %s: caught %.1f%%, near misses fooled %.1f%%, %.2f false alarms an hour", th,
-                 100 * r["caught"], 100 * r["near_misses_fooled"], r["false_alarms_per_hour"])
+        log.info("check at %s: caught %.1f%%, near misses fooled %.1f%%, %.2f false alarms an hour%s", th,
+                 100 * r["caught"], 100 * r["near_misses_fooled"], r["false_alarms_per_hour"],
+                 f", the family's own clips caught {100 * r['family_caught']:.1f}%" if "family_caught" in r else "")
 
 
 def main() -> int:
