@@ -178,6 +178,10 @@ def test_which_questions_are_simple(question, light):
     ("What time is it in Tokyo?", None, None),
     ("What time does the zoo open?", None, None),
     ("How long until bedtime?", None, None),
+    ("What day is it?", "time", {}),
+    ("What day is the dentist?", None, None),  # the day of something: the calendar or the text model
+    ("What date is Christmas?", None, None),
+    ("Do I have any meetings today?", None, None),
     ("Turn the volume up", "volume", {"action": "up", "step": 10}),
     ("Turn it up a lot", "volume", {"action": "up", "step": 20}),
     ("can you turn the video down", "volume", {"action": "down", "step": 10}),

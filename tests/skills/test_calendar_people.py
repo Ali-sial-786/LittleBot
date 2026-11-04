@@ -35,13 +35,14 @@ def google_for(email: str, events: list[dict[str, Any]], family: bool = True) ->
 class Router:
     """One fake Google per signed-in person, told apart by their access token."""
 
-    def __init__(self, fakes: dict[str, FakeGoogle], ics: str = "") -> None:
+    def __init__(self, fakes: dict[str, FakeGoogle], ics: str | dict[str, str] = "") -> None:
         self.fakes = fakes
-        self.ics = ics
+        self.ics = ics  # one feed for every address, or {path: feed}
 
     async def __call__(self, request: httpx.Request) -> httpx.Response:
         if request.url.host == "ics.example.com":
-            return httpx.Response(200, text=self.ics) if self.ics else httpx.Response(404)
+            text = self.ics.get(request.url.path, "") if isinstance(self.ics, dict) else self.ics
+            return httpx.Response(200, text=text) if text else httpx.Response(404)
         token = request.headers.get("Authorization", "").removeprefix("Bearer ")
         fake = self.fakes.get(token) or next(iter(self.fakes.values()))
         return await fake(request)
@@ -286,3 +287,73 @@ async def test_one_persons_calendar_alone_says_nothing_about_whose(family):
     assert "Dentist" in note and "Ali's" not in note and "not sure who" not in note
     assert "person" not in cal.tools()[0]["parameters"]["properties"]
     assert "to the Ali" not in await cal.run("add_calendar_event", {"title": "Run", "start": "2026-11-04T07:00"})
+
+
+def _feed(name: str, uid: str, title: str, hour: int) -> str:
+    return (f"BEGIN:VCALENDAR\nX-WR-CALNAME:{name}\nBEGIN:VEVENT\nUID:{uid}\n"
+            f"DTSTART;TZID=America/Toronto:20261102T{hour:02d}0000\nDTEND;TZID=America/Toronto:20261102T{hour:02d}3000\n"
+            f"SUMMARY:{title}\nEND:VEVENT\nEND:VCALENDAR\n")
+
+
+async def test_a_person_has_a_work_and_a_personal_calendar(family):
+    """Ali adds two iCal addresses, one at a time, each with its name: both are kept, and "Ali's work calendar"
+    is only the Work one."""
+    from littlebot.skills.agenda import AgendaError  # noqa: PLC0415
+
+    ctx, cal, clock, assistant, ali, sara, *_ = family
+    cal._transport.handler.ics = {  # type: ignore[attr-defined]
+        "/ali-work.ics": _feed("ali.work@corp.example.com", "w1", "Standup", 13),
+        "/ali-home.ics": _feed("ali@gmail.com", "h1", "Gym", 17),
+        "/sara-home.ics": _feed("Sara", "s1", "Book club", 19),
+    }
+    work = await cal.add_ics(ali["id"], "webcal://ics.example.com/ali-work.ics", "Work")
+    assert work == {"id": "ics0", "name": "Work", "events": 1}
+    home = await cal.add_ics(ali["id"], "https://ics.example.com/ali-home.ics", " Personal ")
+    assert home["id"] == "ics1" and home["name"] == "Personal"
+    assert cal.ics_entries(cal.account(ali["id"])) == [("https://ics.example.com/ali-work.ics", "Work"),
+                                                       ("https://ics.example.com/ali-home.ics", "Personal")]
+    assert cal._ics_path(ali["id"]).read_text().strip() == \
+        "https://ics.example.com/ali-work.ics Work https://ics.example.com/ali-home.ics Personal"
+    assert [c["name"] for c in cal.ics_view(ali["id"])] == ["Work", "Personal"]
+    await cal.add_ics(sara["id"], "https://ics.example.com/sara-home.ics", "Personal")  # Sara's own "Personal"
+    for bad, why in ((("https://ics.example.com/ali-home.ics", "Home"), "already saved"),
+                     (("https://ics.example.com/sara-home.ics", "work"), "already a calendar called"),
+                     (("https://ics.example.com/a.ics https://ics.example.com/b.ics", ""), "one iCal address at a time"),
+                     (("https://ics.example.com/c.ics", "<b>"), "can only have letters")):
+        with pytest.raises(AgendaError, match=why):
+            await cal.add_ics(ali["id"], *bad)
+
+    def titles(result: str) -> list[str]:
+        return [e["title"] for e in json.loads(result)["events"]]
+
+    assert titles(await cal.run("calendar_events", {"person": "Ali", "calendar": "work"})) == ["Standup"]
+    assert titles(await cal.run("calendar_events", {"person": "Ali", "calendar": "Ali's personal calendar"})) == \
+        ["Gym"]
+    assert "Dentist" in titles(await cal.run("calendar_events", {"person": "Ali"}))  # all of Ali's: Google's too
+    out = await cal.run("calendar_events", {"person": "Ali", "calendar": "school"})
+    assert out.startswith("error: there's no calendar called 'school'") and "Work" in out and "Personal" in out
+    events = json.loads(await cal.run("calendar_events", {"person": "everyone", "calendar": "personal"}))["events"]
+    assert {e["title"] for e in events} == {"Gym", "Book club"}
+
+    # Removing one keeps the other, and a whose-calendar choice stays with its calendar.
+    cal.set_owner(f"p{ali['id']}:ics1", 0)  # Ali's Personal is the family's
+    assert cal.remove_ics(ali["id"], "ics0") is True
+    assert cal.ics_entries(cal.account(ali["id"])) == [("https://ics.example.com/ali-home.ics", "Personal")]
+    assert ctx.settings.get("calendar.owners")[f"p{ali['id']}:ics0"] == 0
+    await cal.refresh()
+    owners = {e.title: e.owner for e in cal._cache}
+    assert "Standup" not in owners and owners["Gym"] is None and owners["Book club"] == sara["id"]
+    assert cal.remove_ics(ali["id"], "ics5") is False
+    assert cal.remove_ics(ali["id"], "ics0") is True and not cal._ics_path(ali["id"]).exists()
+
+
+async def test_the_old_way_of_saving_several_addresses_still_reads(family):
+    ctx, cal, clock, assistant, ali, sara, *_ = family
+    cal._transport.handler.ics = {"/a.ics": _feed("A", "a1", "Thing A", 9),  # type: ignore[attr-defined]
+                                  "/b.ics": _feed("B", "b1", "Thing B", 10)}
+    path = cal._ics_path(ali["id"])
+    path.write_text("https://ics.example.com/a.ics https://ics.example.com/b.ics\n")
+    path.chmod(0o600)
+    await cal.refresh()
+    assert {e.calendar for e in cal._cache if e.source == "ics"} == {"A", "B"}  # their own names
+    assert [c["name"] for c in cal.ics_view(ali["id"])] == ["A", "B"]

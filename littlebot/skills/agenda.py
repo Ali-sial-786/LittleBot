@@ -7,7 +7,10 @@ Where the events come from (either or both, docs/CALENDAR.md):
   calendar ticked in Google Calendar's own list is read, and events can be added, moved, renamed and cancelled.
 * **iCal addresses** (``CALENDAR_ICS_URL`` in .env or ``data/calendar_ics_url``, several separated by spaces):
   Google's, Outlook's or iCloud's "secret address", read only (littlebot/skills/ics.py). The address is a secret: it
-  is never logged or shown.
+  is never logged or shown. Each can have a name after it ("https://... Work https://... Personal",
+  ``ics_entries``): a person's "Work" and "Personal" calendars, so "what's on Ali's work calendar?" can say which
+  (``calendar`` in calendar_events). The dashboard adds them one at a time (``add_ics``) and removes one at a time
+  (``remove_ics``).
 
 The next ``AHEAD_DAYS`` days are fetched in the background every ``REFRESH_S`` (while cloud communication is allowed)
 and kept in memory only: the turn's context (what's on today and tomorrow, so "what's next?" needs no tool), the
@@ -67,7 +70,10 @@ STALE_S = 1800.0  # an older copy isn't used for the context, the briefing or he
 AHEAD_DAYS = 8
 ICS_TTL_S = 900.0  # an iCal feed is downloaded again after this long
 ICS_TIMEOUT_S = 10.0
-ICS_MAX_BYTES = 5_000_000
+ICS_MAX_BYTES = 15_000_000  # years of a busy calendar are ~5 MB
+ICS_PAST_DAYS = 31  # one-off events that ended longer ago than this aren't read (ics.parse ``since``)
+MAX_ICS = 8  # iCal addresses per account
+ICS_NAME_MAX = 40
 SEARCH_DAYS = 180  # "when is the dentist?" looks this far ahead
 MAX_DAYS = 31
 MAX_LISTED = 25  # events in one answer
@@ -161,13 +167,17 @@ class Calendar(Skill):
 
     def ics_urls(self, account: Account | None = None) -> list[str]:
         """An account's iCal addresses (default: the household's)."""
+        return [url for url, _ in self.ics_entries(account)]
+
+    def ics_entries(self, account: Account | None = None) -> list[tuple[str, str]]:
+        """An account's iCal addresses with the names given to them ("" = the calendar's own name)."""
         if account is None or account.person_id is None:
             raw = str(self.ctx.config.secret("calendar_ics_url") or "")
         else:
             from littlebot.core.keys import read_private  # noqa: PLC0415
 
             raw = read_private(self._ics_path(account.person_id)) or ""
-        return ics_list(raw)
+        return ics_entries(raw)
 
     # ------------------------------------------------------------ whose: people and their accounts
     def _make_account(self, key: str, person_id: int | None, token_file: Path) -> Account:
@@ -245,13 +255,13 @@ class Calendar(Skill):
                 out.append(acc)
         return out
 
-    def _sources(self) -> list[tuple[Account, bool, list[str]]]:
-        """(account, Google connected, iCal addresses) for every account with something to read."""
+    def _sources(self) -> list[tuple[Account, bool, list[tuple[str, str]]]]:
+        """(account, Google connected, iCal addresses and their names) for every account with something to read."""
         out = []
         for acc in self.accounts():
-            urls = self.ics_urls(acc)
-            if acc.auth.connected or urls:
-                out.append((acc, acc.auth.connected, urls))
+            entries = self.ics_entries(acc)
+            if acc.auth.connected or entries:
+                out.append((acc, acc.auth.connected, entries))
         return out
 
     def owner_of(self, acc: Account, calendar_id: str, calendar_name: str) -> int | None:
@@ -366,11 +376,11 @@ class Calendar(Skill):
         if why:
             raise AgendaError(why)
         jobs: list[Any] = []
-        for acc, google, urls in self._sources():
+        for acc, google, entries in self._sources():
             if google:
                 jobs.append(self._google_events(acc, start, end, query))
-            for i, url in enumerate(urls):
-                jobs.append(self._ics_events(acc, i, url, start, end, query))
+            for i, (url, label) in enumerate(entries):
+                jobs.append(self._ics_events(acc, i, url, start, end, query, label))
         if not jobs:
             raise AgendaError("the calendar isn't set up (docs/CALENDAR.md)")
         results = await asyncio.gather(*jobs, return_exceptions=True)
@@ -402,7 +412,7 @@ class Calendar(Skill):
         return self._remember(ev)
 
     async def _ics_events(self, acc: Account, index: int, url: str, start: _dt.datetime, end: _dt.datetime,
-                          query: str | None) -> list[Event]:
+                          query: str | None, label: str = "") -> list[Event]:
         from littlebot.skills import ics  # noqa: PLC0415
 
         feed = await self._ics_feed(index, url)
@@ -411,7 +421,7 @@ class Calendar(Skill):
             if query and not _matches(query, f"{occ.title} {occ.location}"):
                 continue
             ev = Event(source="ics", account=acc.key, id=f"{occ.uid}@{occ.start.isoformat()}",
-                       calendar_id=f"ics{index}", calendar=occ.calendar or "Calendar",
+                       calendar_id=f"ics{index}", calendar=label or occ.calendar or "Calendar",
                        title=" ".join(occ.title.split())[:MAX_TITLE] or "(no title)", start=occ.start, end=occ.end,
                        all_day=occ.all_day, location=occ.location)
             ev.owner = self.owner_of(acc, ev.calendar_id, ev.calendar)
@@ -437,7 +447,8 @@ class Calendar(Skill):
             raise AgendaError("the iCal calendar's address didn't work (it may have been reset)")
         if len(resp.content) > ICS_MAX_BYTES:
             raise AgendaError("the iCal calendar is too big to read")
-        feed = await asyncio.to_thread(ics.parse, resp.content.decode("utf-8", errors="replace"))
+        since = self.local().date() - _dt.timedelta(days=ICS_PAST_DAYS)  # old one-offs: never asked about
+        feed = await asyncio.to_thread(ics.parse, resp.content.decode("utf-8", errors="replace"), since)
         self._ics[url] = (self.now(), feed)
         return feed
 
@@ -781,38 +792,102 @@ class Calendar(Skill):
         return self._dir / "calendar_ics_url" if person_id is None else self._ics_path(person_id)
 
     async def set_ics(self, person_id: int | None, text: str) -> int:
-        """Save the household's or a person's iCal address(es) once each one has been read: how many events they
-        have in the next days. Raises AgendaError (not an address, it didn't work)."""
-        from littlebot.core.keys import write_private  # noqa: PLC0415
+        """Save the household's or a person's iCal address(es), in place of the ones they had, once each one has
+        been read: how many events they have in the next days. Raises AgendaError (not an address, it didn't work).
+        The dashboard adds one at a time instead (``add_ics``)."""
         from littlebot.skills import ics  # noqa: PLC0415
 
         self._check_person(person_id)
-        urls = ics_list(text)
-        if not urls:
+        entries = ics_entries(text)
+        if not entries:
             raise AgendaError("that isn't an iCal address (it starts with https:// or webcal://)")
+        entries = [(url, clean_calendar_name(label)) for url, label in entries]
         why = self.blocked_reason()
         if why:
             raise AgendaError(why)
         today = self.local().date()
         start, end = self._day_start(today), self._day_start(today + _dt.timedelta(days=AHEAD_DAYS))
         found = 0
-        for i, url in enumerate(urls):
+        for i, (url, _) in enumerate(entries):
             self._ics.pop(url, None)
             found += len(ics.occurrences(await self._ics_feed(i, url), start, end, self.zone(), limit=500))
-        path = self._ics_file(person_id)
-        write_private(path.parent, path.name, " ".join(urls))
-        if person_id is None:
-            from pydantic import SecretStr  # noqa: PLC0415
-
-            self.ctx.config.calendar_ics_url = SecretStr(" ".join(urls))
-        else:
-            self.account(person_id, create=True)
+        self._write_ics(person_id, entries)
         log.info("calendar: an iCal address was saved (%d event(s) in the next days)", found)
         self._cache_t = -1e9
         await self.refresh()
         return found
 
-    def remove_ics(self, person_id: int | None) -> bool:
+    async def add_ics(self, person_id: int | None, url: str, name: str = "") -> dict[str, Any]:
+        """Add one iCal address to the household's or a person's, under ``name`` ("Work"; "" = the calendar's own
+        name), once it has been read: {"id", "name", "events"} (events in the next days). Their other addresses
+        are kept. Raises AgendaError (not an address, it didn't work, already there, a name taken, too many)."""
+        from littlebot.skills import ics  # noqa: PLC0415
+
+        self._check_person(person_id)
+        urls = ics_list(url)
+        if len(urls) != 1:
+            raise AgendaError("that isn't an iCal address (it starts with https:// or webcal://)" if not urls else
+                              "paste one iCal address at a time")
+        url = urls[0]
+        label = clean_calendar_name(name)
+        acc = self.account(person_id)
+        entries = self.ics_entries(acc) if acc is not None else []
+        if any(u == url for u, _ in entries):
+            raise AgendaError("that iCal address is already saved")
+        if len(entries) >= MAX_ICS:
+            raise AgendaError(f"at most {MAX_ICS} iCal addresses each: remove one first")
+        why = self.blocked_reason()
+        if why:
+            raise AgendaError(why)
+        self._ics.pop(url, None)
+        feed = await self._ics_feed(len(entries), url)
+        shown = label or feed.name or ""
+        taken = {_calendar_words(lab or self._own_name(u)) for u, lab in entries}
+        if shown and _calendar_words(shown) in taken:
+            raise AgendaError(f"there is already a calendar called {shown} here: give this one another name")
+        today = self.local().date()
+        start, end = self._day_start(today), self._day_start(today + _dt.timedelta(days=AHEAD_DAYS))
+        found = len(ics.occurrences(feed, start, end, self.zone(), limit=500))
+        self._write_ics(person_id, entries + [(url, label)])
+        log.info("calendar: an iCal address was added (%d of the account's; %d event(s) in the next days)",
+                 len(entries) + 1, found)
+        self._cache_t = -1e9
+        await self.refresh()
+        return {"id": f"ics{len(entries)}", "name": shown or f"iCal calendar {len(entries) + 1}", "events": found}
+
+    def _own_name(self, url: str) -> str:
+        hit = self._ics.get(url)
+        return getattr(hit[1], "name", "") if hit else ""
+
+    def _write_ics(self, person_id: int | None, entries: list[tuple[str, str]]) -> None:
+        """Keep an account's iCal addresses (0600): one line (key files are read a line), each address followed by
+        its name ("https://... Work https://... Personal"); older LittleBots read the addresses alone the same."""
+        from littlebot.core.keys import write_private  # noqa: PLC0415
+
+        path = self._ics_file(person_id)
+        text = " ".join(f"{u} {lab}".strip() for u, lab in entries)
+        if not entries:
+            with contextlib.suppress(FileNotFoundError):
+                path.unlink()
+        else:
+            write_private(path.parent, path.name, text + "\n")
+        if person_id is None:
+            from pydantic import SecretStr  # noqa: PLC0415
+
+            if entries:
+                self.ctx.config.calendar_ics_url = SecretStr(text)
+            else:
+                from littlebot.core.keys import current_env  # noqa: PLC0415
+
+                left = current_env().get("CALENDAR_ICS_URL", "").strip()  # the .env one, if any, is used again
+                self.ctx.config.calendar_ics_url = SecretStr(left) if left else None
+        else:
+            self.account(person_id, create=True)
+
+    def remove_ics(self, person_id: int | None, cal_id: str | None = None) -> bool:
+        """Forget the household's or a person's iCal addresses: all of them, or one (``cal_id``, "ics1")."""
+        if cal_id is not None:
+            return self._remove_one_ics(person_id, str(cal_id))
         path = self._ics_file(person_id)
         had = path.exists()
         with contextlib.suppress(FileNotFoundError):
@@ -826,6 +901,33 @@ class Calendar(Skill):
             self.ctx.config.calendar_ics_url = SecretStr(left) if left else None
         self._drop_account(f"p{int(person_id)}" if person_id is not None else HOME, source="ics")
         return had
+
+    def _remove_one_ics(self, person_id: int | None, cal_id: str) -> bool:
+        acc = self.account(person_id)
+        entries = self.ics_entries(acc) if acc is not None else []
+        m = re.fullmatch(r"ics(\d+)", cal_id.strip())
+        index = int(m.group(1)) if m else -1
+        if not 0 <= index < len(entries):
+            return False
+        self._write_ics(person_id, entries[:index] + entries[index + 1:])
+        key = acc.key if acc is not None else HOME
+        with contextlib.suppress(Exception):  # whose-calendar choices follow their calendar (the ids move up)
+            owners = dict(self.ctx.settings.get("calendar.owners") or {})
+            moved = {}
+            for k, v in owners.items():
+                m2 = re.fullmatch(rf"{re.escape(key)}:ics(\d+)", k)
+                if m2 is None:
+                    moved[k] = v
+                elif int(m2.group(1)) > index:
+                    moved[f"{key}:ics{int(m2.group(1)) - 1}"] = v
+                elif int(m2.group(1)) < index:
+                    moved[k] = v
+            if moved != owners:
+                self.ctx.settings.set("calendar.owners", moved, source="dashboard")
+        self._drop_account(key, source="ics")
+        self._cache_t = -1e9
+        log.info("calendar: an iCal address was removed (%d left on the account)", len(entries) - 1)
+        return True
 
     def forget_person(self, person_id: int) -> None:
         """Someone was taken off Who's who: their sign-in, addresses and calendar owners go too."""
@@ -865,7 +967,7 @@ class Calendar(Skill):
     async def calendars_view(self) -> list[dict[str, Any]]:
         """Every calendar read, with whose it is (for the dashboard). Never an address or a token."""
         out: list[dict[str, Any]] = []
-        for acc, google, urls in self._sources():
+        for acc, google, entries in self._sources():
             if google:
                 try:
                     cals = await acc.google.calendars()
@@ -873,11 +975,23 @@ class Calendar(Skill):
                     cals = []
                 out += [{"account": acc.key, "id": c["id"], "name": c["name"], "can_edit": bool(c.get("can_edit")),
                          "owner": self.owner_of(acc, c["id"], c["name"]), "source": "google"} for c in cals]
-            for i, url in enumerate(urls):
+            for i, (url, label) in enumerate(entries):
                 hit = self._ics.get(url)
-                name = getattr(hit[1], "name", "") if hit else ""
+                name = label or (getattr(hit[1], "name", "") if hit else "")
                 out.append({"account": acc.key, "id": f"ics{i}", "name": name or f"iCal calendar {i + 1}",
                             "can_edit": False, "owner": self.owner_of(acc, f"ics{i}", name), "source": "ics"})
+        return out
+
+    def ics_view(self, person_id: int | None) -> list[dict[str, Any]]:
+        """An account's iCal calendars for the dashboard: their id and name, never the address."""
+        acc = self.account(person_id)
+        if acc is None:
+            return []
+        out = []
+        for i, (url, label) in enumerate(self.ics_entries(acc)):
+            hit = self._ics.get(url)
+            own = getattr(hit[1], "name", "") if hit else ""
+            out.append({"id": f"ics{i}", "name": label or own or f"iCal calendar {i + 1}", "own_name": own})
         return out
 
     # ------------------------------------------------------------ tools
@@ -892,7 +1006,9 @@ class Calendar(Skill):
                      "days": {**INT, "minimum": 1, "maximum": MAX_DAYS,
                               "description": "how many days from 'from' (default 1, or the week's days)"},
                      "search": {**STR, "description": "optional: a few words to find ('dentist'); alone, looks "
-                                                      f"{SEARCH_DAYS} days ahead"}})]
+                                                      f"{SEARCH_DAYS} days ahead"},
+                     "calendar": {**STR, "description": "optional: which of the calendars, by its name ('work', "
+                                                        "'personal'), for 'Ali's work calendar'; default all"}})]
         people = self.several_owners()
         if people:
             out[0]["parameters"]["properties"]["person"] = {
@@ -1019,6 +1135,10 @@ class Calendar(Skill):
         start, end = self._day_start(first), self._day_start(first + _dt.timedelta(days=count))
         events = await self.events_in(start, end, search or None)
         events, whose, label, left_out, name = self._whose_list(events, args.get("person"))
+        which = await self._which_calendar(events, args.get("calendar"), args.get("person"))
+        if which is not None:
+            events = [e for e in events if _calendar_words(e.calendar) in which]
+            name = f"{name} {next(iter(which)).title()}".strip() if len(which) == 1 else name
         span = self.range_words(first, count) if not (search and not args.get("from")) else \
             f"the next {SEARCH_DAYS} days"
         title = (search.capitalize() if search else
@@ -1045,6 +1165,25 @@ class Calendar(Skill):
         if not self.can_write:
             out["read_only"] = True
         return as_json(out)
+
+    async def _which_calendar(self, events: list[Event], wanted: Any, person: Any) -> set[str] | None:
+        """The calendars ``wanted`` names ("work", "Ali's personal calendar") as their name words, or None for all.
+        Raises AgendaError, listing the calendars there are, when none is called that."""
+        want = _calendar_words(wanted)
+        if not want or want in ("all", "every", "both", "everything", "all of them", "any"):
+            return None
+        names = {_calendar_words(c["name"]): c["name"] for c in await self.calendars_view()}
+        names.update({_calendar_words(e.calendar): e.calendar for e in events})
+        names.pop("", None)
+        hits = {k for k in names if k == want} or {k for k in names if want in k.split() or k in want.split()
+                                                  or want in k}
+        if not hits:
+            close = difflib.get_close_matches(want, list(names), n=1, cutoff=0.75)
+            hits = set(close)
+        if not hits:
+            listed = ", ".join(sorted(set(names.values()))) or "none yet"
+            raise AgendaError(f"there's no calendar called '{str(wanted)[:30]}' (these are: {listed})")
+        return hits
 
     def _whose_list(self, events: list[Event], person: Any) -> tuple[list[Event], str, bool, str, str]:
         """For calendar_events: (the events, whose they are in words, whether each says whose, what was left out,
@@ -1328,14 +1467,50 @@ def _dedupe(events: list[Event]) -> list[Event]:
 
 
 def ics_list(raw: str) -> list[str]:
-    """iCal addresses from text (several separated by spaces or commas; webcal:// is https://), at most 5."""
-    out = []
+    """iCal addresses from text (several separated by spaces or commas; webcal:// is https://), at most MAX_ICS."""
+    return [url for url, _ in ics_entries(raw)]
+
+
+def ics_entries(raw: str) -> list[tuple[str, str]]:
+    """(address, name) pairs from text: addresses separated by spaces, commas or lines, each optionally followed by
+    its name ("https://.../basic.ics Work"); webcal:// is https://. At most MAX_ICS."""
+    out: list[list[str]] = []
     for part in str(raw or "").replace(",", " ").split():
-        if part.lower().startswith("webcal://"):
-            part = "https://" + part[len("webcal://"):]
-        if part.lower().startswith(("https://", "http://")):
-            out.append(part)
-    return out[:5]
+        low = part.lower()
+        if low.startswith(("webcal://", "webcals://")):
+            part = "https://" + part.split("://", 1)[1]
+            low = part.lower()
+        if low.startswith(("https://", "http://")):
+            out.append([part, ""])
+        elif out:
+            out[-1][1] = f"{out[-1][1]} {part}".strip()
+    seen: set[str] = set()
+    pairs = []
+    for url, label in out:
+        if url not in seen:
+            seen.add(url)
+            pairs.append((url, label[:ICS_NAME_MAX]))
+    return pairs[:MAX_ICS]
+
+
+def clean_calendar_name(value: Any) -> str:
+    """A name a parent gives a calendar ("Work", "Ali's personal"): letters, digits, spaces, ' - & ( ). Raises
+    AgendaError."""
+    text = " ".join("".join(ch for ch in str(value or "") if ch.isprintable()).split())
+    if not text:
+        return ""
+    if len(text) > ICS_NAME_MAX:
+        raise AgendaError(f"a calendar's name can be at most {ICS_NAME_MAX} characters")
+    if not re.fullmatch(r"[\w '’&().\-]+", text) or not any(ch.isalpha() for ch in text) or \
+            text.lower().startswith(("http", "webcal")):
+        raise AgendaError("a calendar's name can only have letters, numbers, spaces and ' - &")
+    return text
+
+
+def _calendar_words(text: Any) -> str:
+    """ "Ali's Work calendar" -> "ali work"; "the personal" -> "personal" (for matching calendar names)."""
+    words = re.findall(r"[a-z0-9]+", re.sub(r"['’]s\b", "", str(text or "").lower()))
+    return " ".join(w for w in words if w not in ("the", "my", "calendar", "calendars", "cal", "a", "our"))
 
 
 def _matches(query: str, text: str) -> bool:

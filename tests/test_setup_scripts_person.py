@@ -39,6 +39,26 @@ def test_a_persons_own_calendar_files(data, monkeypatch, capsys) -> None:
     assert not (data / "calendar_ics_url_p2").exists()
 
 
+def test_a_persons_work_and_personal_ical_addresses(data, monkeypatch, capsys) -> None:
+    import httpx
+
+    feed = ("BEGIN:VCALENDAR\nX-WR-CALNAME:ali@gmail.com\nBEGIN:VEVENT\nUID:a\nDTSTART:20991102T130000Z\n"
+            "SUMMARY:Thing\nEND:VEVENT\nEND:VCALENDAR\n")
+    monkeypatch.setattr(setup_calendar, "data_dir", lambda: data)
+    monkeypatch.setattr(httpx, "get", lambda *a, **k: httpx.Response(200, text=feed, request=httpx.Request("GET", a[0])))
+    answers = iter(["https://example.com/work.ics", "Work", "webcal://example.com/home.ics", "<bad>", "Personal"])
+    monkeypatch.setattr(setup_calendar, "ask", lambda *a, **k: next(answers))
+    assert setup_calendar.main(["--person", "Ali", "--ics"]) == 0
+    assert setup_calendar.main(["--person", "Ali", "--ics"]) == 0  # the second one is added, the first kept
+    path = data / "calendar_ics_url_p1"
+    assert path.read_text().strip() == "https://example.com/work.ics Work https://example.com/home.ics Personal"
+    assert oct(path.stat().st_mode & 0o777) == "0o600"
+    out = capsys.readouterr().out
+    assert "can only have letters" in out and "2 addresses" in out
+    assert setup_calendar.main(["--person", "Ali", "--check"]) == 0
+    assert "iCal addresses: 2 (Work, Personal)" in capsys.readouterr().out
+
+
 def test_a_persons_own_phone(data, monkeypatch, capsys) -> None:
     cfg = SimpleNamespace(data_path=data, skills=SimpleNamespace(ntfy_server=""))
     monkeypatch.setattr(setup_phone, "config", lambda: cfg)

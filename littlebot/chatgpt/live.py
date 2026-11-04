@@ -326,7 +326,7 @@ CONTROL_WORDS = re.compile(r"\b(?:activit(?:y|ies)|games?|videos?|youtube|cartoo
 INFO_WORDS = re.compile(r"\b(?:weather|forecasts?|hourly|rain(?:ing|y)?|snow(?:ing|y)?|sunny|umbrella|windy|"
                         r"humid(?:ity)?|degrees|(?:hot|cold|warm|chilly) (?:outside|out there)|"
                         r"what time|what(?:'s| is) the time|time is it|what day|what date|(?:the|today'?s) date|"
-                        r"news|headlines?|scores?)\b", re.I)
+                        r"news|headlines?|scores?|calendars?|appointments?|meetings?|agenda|schedule)\b", re.I)
 CHECK_WINDOW = 320  # characters of a reply in progress checked at a time
 # The voice sometimes says the person's part ("Hi LittleBot, it's Ali, can you look up the weather?"): a line that
 # greets LittleBot by name gets this note (not "LittleBot here!").
