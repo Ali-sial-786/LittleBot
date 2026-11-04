@@ -123,6 +123,9 @@ def build_defaults(cfg: LittleBotConfig) -> dict[str, Any]:
         "face.doze_enabled": True,
         "face.doze_after_seconds": 30,
         "face.awake_on_arrival_seconds": 20,
+        # ... and after a longer quiet spell the screen goes dark to save the battery (the wake word, a touch or
+        # someone walking in lights it again); 0 = never
+        "face.screen_off_after_seconds": 180,
         # system
         "system.sleep_after_idle_minutes": cfg.system.sleep_after_idle_minutes,
         # live information (littlebot/info): the weather's home place as the parent chose it on the

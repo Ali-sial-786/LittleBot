@@ -27,6 +27,13 @@ sounds, cards, games, activities, videos, a busy robot state, someone walking
 in or moving) and by the face's own commands (an expression, animation or look
 someone asked for). ``update()`` applies its decision. Settings:
 ``face.doze_enabled``, ``face.doze_after_seconds``, ``face.awake_on_arrival_seconds``.
+
+Screen off
+----------
+After ``face.screen_off_after_seconds`` (180; 0 = never) with nothing happening, also while SLEEPING, the
+same timer says the screen may go dark: ``screen_off`` turns True, ``face.screen`` is published and the
+display loop (littlebot/face/display.py) switches the robot screen's signal off and stops drawing. Anything
+that wakes the face lights it again; the wake word keeps listening throughout.
 """
 
 from __future__ import annotations
@@ -46,7 +53,9 @@ from littlebot.face.doze import (
     DOZE_AFTER_S,
     MAX_SECONDS,
     MIN_DOZE_AFTER_S,
+    SCREEN_OFF_AFTER_S,
     DozeTimer,
+    screen_seconds,
 )
 from littlebot.face.expressions import EXPRESSION_PARAMS
 from littlebot.face.frame import FaceFrame
@@ -64,6 +73,7 @@ if TYPE_CHECKING:  # pragma: no cover
 TICK_HZ = 10.0  # headless update rate
 HIDDEN_FPS = 5  # frame rate while a video owns the screen
 DOZE_FPS = 10  # frame rate while dozing (the lids and the "zzz" move slowly)
+SCREEN_OFF_FPS = 4  # loop rate while the screen is dark: nothing is drawn, a touch is still noticed within 0.25 s
 MAX_COMMANDS = 512
 
 _BUS_TOPICS = (
@@ -75,7 +85,8 @@ _BUS_TOPICS = (
 )
 
 # ---- dozing: what keeps the face awake (topics owned by other subsystems are named as they publish them)
-DOZE_SETTINGS = ("face.doze_enabled", "face.doze_after_seconds", "face.awake_on_arrival_seconds")
+DOZE_SETTINGS = ("face.doze_enabled", "face.doze_after_seconds", "face.awake_on_arrival_seconds",
+                 "face.screen_off_after_seconds")
 GLANCE_S = 5.0  # an expression / animation / look someone asked for keeps the face awake at least this long
 QUIET_EXPRESSIONS = frozenset({"neutral", "sleepy"})  # a calm reset (STOP ALL) or a yawn doesn't wake it
 MOVE_THRESHOLD = 0.15  # the tracked face moved this far (0..1 of the view): someone moved
@@ -143,6 +154,13 @@ def _seconds_validator(key: str, lo: int, hi: int) -> Callable[[Any], int]:
     return check
 
 
+def _screen_validator(value: Any) -> int:
+    """``face.screen_off_after_seconds``: whole seconds, 0 = never, else at least 30 (doze.screen_seconds)."""
+    if isinstance(value, bool) or not _finite(value):
+        raise ValueError("face.screen_off_after_seconds: expected a number of seconds (0 = never)")
+    return round(screen_seconds(value))
+
+
 class FaceController(Service):
     """Animated face service. See module docstring for the threading model."""
 
@@ -179,6 +197,7 @@ class FaceController(Service):
         self._face_anchor: tuple[float, float] | None = None  # where the tracked face was (movement)
         self._faces_seen = 0
         self._faces_seen_at: dict[int, float] = {}  # number of faces -> when last seen (someone new)
+        self._asleep = False  # the robot is SLEEPING: its state's hold doesn't keep the screen on
         self._load_doze_settings(first=True)
         state = getattr(ctx, "state", None)
         if state is not None and getattr(state, "state", None) is not None:
@@ -257,6 +276,7 @@ class FaceController(Service):
                 "listening": a.listening_active or a.state == "listening",
                 "animations": a.active_animations(),
                 "display": self._display_attached,
+                "screen_on": not self.screen_off,
             }
             events = a.pop_events()
         self._publish(events)
@@ -302,7 +322,9 @@ class FaceController(Service):
             return self.animator.is_animating()
 
     def target_fps(self) -> int:
-        """Frame rate the display should use right now (drops when calm / hidden / dozing)."""
+        """Frame rate the display should use right now (drops when calm / hidden / dozing / the screen is dark)."""
+        if self.screen_off:
+            return SCREEN_OFF_FPS
         with self._lock:
             a = self.animator
             if a.state == "hidden" and a.hidden_amount >= 1.0:
@@ -319,6 +341,16 @@ class FaceController(Service):
     def dozing(self) -> bool:
         """True while the idle face dozes (a look only: the robot is still IDLE and listening)."""
         return bool(self.animator.dozing)
+
+    @property
+    def screen_off(self) -> bool:
+        """True while the screen may be dark (a long quiet spell; the wake word still listens)."""
+        return bool(self.doze.screen_dark)
+
+    def activity(self, reason: str) -> None:
+        """Something happened that the bus doesn't carry (a touch on the screen): awake, the quiet waits restart."""
+        with self._doze_lock:
+            self.doze.activity(self._clock(), reason)
 
     @property
     def fps(self) -> float:
@@ -467,9 +499,15 @@ class FaceController(Service):
 
     # ================================================================ dozing
     def _check_doze(self) -> None:
-        """Apply the doze timer's decision (called after every update)."""
+        """Apply the doze timer's decisions (called after every update)."""
         with self._doze_lock:
-            change = self.doze.update(self._clock())
+            now = self._clock()
+            change = self.doze.update(now)
+            screen = self.doze.update_screen(now, asleep=self._asleep)
+        if screen is not None:
+            what, why = screen
+            self._publish([(Topics.FACE_SCREEN, {"on": what == "on", "reason": why})])
+            self.log.info("face: screen %s (%s)", what, why)
         if change is None:
             return
         what, why = change
@@ -498,21 +536,25 @@ class FaceController(Service):
                 for key, lo in (("face.doze_after_seconds", int(MIN_DOZE_AFTER_S)),
                                 ("face.awake_on_arrival_seconds", 0)):
                     settings.register_validator(key, _seconds_validator(key, lo, int(MAX_SECONDS)))
+                settings.register_validator("face.screen_off_after_seconds", _screen_validator)
             enabled = settings.get("face.doze_enabled", True)
             after = settings.get("face.doze_after_seconds", DOZE_AFTER_S)
             arrival = settings.get("face.awake_on_arrival_seconds", AWAKE_ON_ARRIVAL_S)
+            screen = settings.get("face.screen_off_after_seconds", SCREEN_OFF_AFTER_S)
         except Exception:  # noqa: BLE001 - settings trouble must never break the face
             self.log.debug("reading the doze settings failed", exc_info=True)
             return
         with self._doze_lock:
-            self.doze.configure(enabled=enabled is not False, doze_after=after, awake_on_arrival=arrival)
+            self.doze.configure(enabled=enabled is not False, doze_after=after, awake_on_arrival=arrival,
+                                screen_off_after=SCREEN_OFF_AFTER_S if screen is None else screen)
 
     def _doze_state(self, new: str, now: float) -> None:
         why = _BUSY_STATES.get(new)
+        self._asleep = new == "SLEEPING"
         if why is None:  # IDLE: the quiet wait starts now
             self.doze.end("state", now)
-        else:
-            self.doze.begin("state", now, why)
+        else:  # going to sleep is not "something happening": a dark screen stays dark
+            self.doze.begin("state", now, why, poke=not self._asleep)
 
     def _on_doze_event(self, event: Event) -> None:
         """Bus events that keep the face awake (tiny: runs in the publisher's thread)."""

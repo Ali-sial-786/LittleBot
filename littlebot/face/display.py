@@ -11,6 +11,11 @@ If no display can be opened (no X / Wayland / KMS, missing SDL video driver)
 the error is logged clearly and the function falls back to waiting on
 ``robot.shutdown_event`` - the robot keeps running headless.
 
+After a long quiet spell the face says the screen may go dark (``face.screen_off``, littlebot/face/doze.py):
+on the robot's own screen the loop switches its HDMI signal off with ``wlopm`` (about 0.4 W less, measured
+on the robot 2026-11-03) and draws nothing until it lights again; the first touch on the dark screen only
+wakes it. The screen is always switched back on when the window closes or opens.
+
 ``robot`` is ``app.robot.LittleBot`` (or any object with ``ctx``, ``runtime``,
 ``shutdown_event``, ``status()``, ``stop_all(source)`` and
 ``request_shutdown(reason)``). Every ``ctx.<subsystem>`` may be ``None``.
@@ -66,6 +71,8 @@ LIVE_BADGE_DOT = (146, 40, 82, 210)  # raspberry "on" dot
 LIVE_BADGE_DOT_DARK = (255, 120, 146, 220)
 STATUS_POLL_SECONDS = 0.5
 MOTION_POLL_SECONDS = 1 / 15
+SCREEN_RETRY_SECONDS = 5.0  # a wlopm call that failed is tried again after this long
+SCREEN_TOUCH = "someone touched the screen"
 MAX_CONSECUTIVE_ERRORS = 30
 TEST_PHRASE = "Hello! I'm LittleBot. Shall we play?"
 
@@ -160,6 +167,88 @@ def apply_output_mode(output: str, mode: str, *, run: Callable[..., Any] = subpr
     if settle_s > 0:
         time.sleep(settle_s)  # let the compositor (and Xwayland) settle before SDL reads the screen size
     return True
+
+
+def set_output_power(output: str, on: bool, *, run: Callable[..., Any] = subprocess.run, env: Any = None) -> bool:
+    """Switch the screen's signal on or off with ``wlopm`` (the compositor's output power, DPMS). True when it
+    worked. The MPI3508 keeps its backlight lit (only the button on its back turns that off), but the HDMI
+    output and the panel's scaler still draw about 0.4 W less (the robot, 2026-11-03). Never fatal."""
+    env = os.environ if env is None else env
+    try:
+        res = run(["wlopm", "--on" if on else "--off", output], capture_output=True, text=True, timeout=5, env=env)
+    except (OSError, subprocess.SubprocessError) as e:
+        log.warning("could not switch screen %s %s: %s", output, "on" if on else "off", e)
+        return False
+    if res.returncode != 0:
+        log.warning("could not switch screen %s %s: %s", output, "on" if on else "off",
+                    (res.stderr or res.stdout or "").strip() or f"wlopm exit {res.returncode}")
+        return False
+    return True
+
+
+class ScreenPower:
+    """The robot screen's signal, switched off the display thread so a slow compositor never stalls the face.
+
+    ``want(on, now)`` asks for a state; one worker thread makes the ``wlopm`` call, always for the newest wish.
+    ``dark`` is True only once the screen really went off (the loop stops drawing then). A failed call is
+    retried after SCREEN_RETRY_SECONDS."""
+
+    def __init__(self, output: str, *, switch: Callable[[str, bool], bool] = set_output_power,
+                 start: Callable[[Callable[[], None]], None] | None = None,
+                 clock: Callable[[], float] = time.monotonic) -> None:
+        self.output = output
+        self.dark = False
+        self._switch = switch
+        self._clock = clock  # the same clock as want()'s ``now``
+        self._start = start or (lambda fn: threading.Thread(target=fn, name="screen-power", daemon=True).start())
+        self._lock = threading.Lock()
+        self._target_on = True
+        self._busy = False
+        self._failed_at = float("-inf")
+
+    def want(self, on: bool, now: float) -> None:
+        with self._lock:
+            self._target_on = on
+            if self._busy or on != self.dark:  # running (it picks the wish up), or already as wanted
+                return
+            if now - self._failed_at < SCREEN_RETRY_SECONDS:
+                return
+            self._busy = True
+        self._start(self._work)
+
+    def _work(self) -> None:
+        while True:
+            with self._lock:
+                on = self._target_on
+            ok = self._switch(self.output, on)
+            with self._lock:
+                if ok:
+                    self.dark = not on
+                else:
+                    self._failed_at = self._clock()
+                if not ok or self._target_on == (not self.dark):
+                    self._busy = False
+                    return
+
+    def restore(self) -> None:
+        """Back on, now, on this thread (the window is closing or opening: never leave the robot dark)."""
+        if self._switch(self.output, True):
+            with self._lock:
+                self.dark, self._target_on = False, True
+
+
+def make_screen_power(output: str, *, fullscreen: bool, sim_mode: bool, env: Any = None,
+                      which: Callable[[str], str | None] = shutil.which) -> ScreenPower | None:
+    """A ScreenPower for the robot's own screen only (fullscreen, not the desktop simulator), in a Wayland session
+    with ``wlopm``; else None (logged once: the face still dozes, the screen just stays on)."""
+    env = os.environ if env is None else env
+    if not fullscreen or sim_mode:
+        return None
+    if not env.get("WAYLAND_DISPLAY") or which("wlopm") is None:
+        log.info("screen off after a quiet spell: not available (needs a Wayland session with wlopm)")
+        return None
+    log.info("screen off after a quiet spell: wlopm on %s", output)
+    return ScreenPower(output)
 
 
 def init_video(pg: Any, driver: str | None, env: Any = None) -> None:
@@ -275,6 +364,10 @@ class DisplayLoop:
         self.battery = BatteryBadge()
         self._power_sub: Any = None
         self._battery_sub: Any = None
+        # The screen's signal off after a quiet spell (the robot's own screen only; made in open()).
+        self.screen_power: ScreenPower | None = None
+        self._waking_touch = False  # the finger that woke the dark screen: its press does nothing else
+        self._woke_lift = float("-inf")  # when that finger lifted (a flicker right after is still it)
 
     # ------------------------------------------------------------------ setup
     def open(self) -> None:
@@ -301,6 +394,10 @@ class DisplayLoop:
         self._watch_live_view()
         self._watch_levels()
         self._watch_power()
+        self.screen_power = make_screen_power(self.cfg.output_name, fullscreen=self.fullscreen,
+                                              sim_mode=self.sim_mode)
+        if self.screen_power is not None:
+            self.screen_power.restore()  # a crash may have left it dark
         self._opened = True
         log.info("face display open: %dx%d%s (driver %s)", *self.window.get_size(),
                  " fullscreen" if self.fullscreen else "", pygame.display.get_driver())
@@ -326,6 +423,8 @@ class DisplayLoop:
                 detach()
             except Exception:  # noqa: BLE001
                 log.debug("detach_display failed", exc_info=True)
+        if self.screen_power is not None:
+            self.screen_power.restore()  # never leave the robot with a dark screen
         pg = self._pg
         if pg is not None:
             try:
@@ -434,10 +533,12 @@ class DisplayLoop:
                 if self.demo is not None:
                     self.demo.update(dt)
                 self.face.update(dt)
-                self._draw(now)
-                self._work_ms.append((time.perf_counter() - t0) * 1000.0)
-                pg.display.flip()
-                self._frame_stamps.append(time.monotonic())
+                self._sync_screen(now)
+                if not self.screen_dark:  # dark: nothing to draw (and no flip a sleeping output might hold up)
+                    self._draw(now)
+                    self._work_ms.append((time.perf_counter() - t0) * 1000.0)
+                    pg.display.flip()
+                    self._frame_stamps.append(time.monotonic())
                 self._errors = 0
             except pg.error as e:
                 if "not initialized" in str(e) or "video system" in str(e).lower():
@@ -459,8 +560,20 @@ class DisplayLoop:
             log.exception("display frame failed")
         return self._errors >= MAX_CONSECUTIVE_ERRORS
 
+    @property
+    def screen_dark(self) -> bool:
+        """The robot's screen is really off (its signal switched off after a quiet spell)."""
+        return self.screen_power is not None and self.screen_power.dark
+
+    def _sync_screen(self, now: float) -> None:
+        """Per frame: the screen's signal follows the face's screen-off decision (switched off this thread)."""
+        if self.screen_power is not None:
+            self.screen_power.want(not getattr(self.face, "screen_off", False), now)
+
     def target_fps(self) -> int:
         fn = getattr(self.face, "target_fps", None)
+        if self.screen_dark:  # nothing is drawn: only the events (a touch) and the face's timers run
+            return max(1, int(fn()) if callable(fn) else 1)
         fps = int(fn()) if callable(fn) else int(self.cfg.fps)
         if self.demo is not None or self.show_help:
             fps = max(fps, int(self.cfg.idle_fps))
@@ -1013,6 +1126,8 @@ class DisplayLoop:
             if ev.type == pg.QUIT:
                 self.robot.request_shutdown("window closed")
                 return False
+            if ev.type in (pg.MOUSEBUTTONDOWN, pg.MOUSEMOTION, pg.MOUSEBUTTONUP) and self._wake_touch(ev, pg):
+                continue
             if ev.type == pg.KEYDOWN:
                 if not self.handle_key(ev.key, getattr(ev, "mod", 0)):
                     return False
@@ -1036,6 +1151,28 @@ class DisplayLoop:
                 else:
                     self._press = None
         self._flush_lift()
+        return True
+
+    def _wake_touch(self, ev: Any, pg: Any) -> bool:
+        """A touch on the dark screen only lights it (no giggle, game or swipe from a finger that can't see);
+        the rest of that touch is used up too. True = the event is used up."""
+        if ev.type == pg.MOUSEBUTTONDOWN and not self._waking_touch:
+            if time.monotonic() - self._woke_lift < self.touch_bounce_s:
+                self._waking_touch = True  # the touch screen flickered: still the finger that woke it
+                return True
+            if not self.screen_dark:
+                return False
+            self._waking_touch = True
+            self._press, self._lift = None, None
+            log.info("touch on the dark screen: lighting it")
+            activity = getattr(self.face, "activity", None)
+            if callable(activity):
+                activity(SCREEN_TOUCH)
+            return True
+        if not self._waking_touch:
+            return False
+        if ev.type == pg.MOUSEBUTTONUP:
+            self._waking_touch, self._woke_lift = False, time.monotonic()
         return True
 
     def _bounced(self, pos: tuple[int, int]) -> bool:

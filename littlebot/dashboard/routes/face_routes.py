@@ -1,4 +1,5 @@
-"""Face controls: expressions, blinks, gaze, animations, a short demo sequence, and dozing / sleep settings."""
+"""Face controls: expressions, blinks, gaze, animations, a short demo sequence, and dozing / screen-off / sleep
+settings."""
 
 from __future__ import annotations
 
@@ -26,6 +27,7 @@ SLEEP_SETTINGS = {
     "doze_enabled": "face.doze_enabled",
     "doze_after_seconds": "face.doze_after_seconds",
     "awake_on_arrival_seconds": "face.awake_on_arrival_seconds",
+    "screen_off_after_seconds": "face.screen_off_after_seconds",
     "sleep_after_idle_minutes": "system.sleep_after_idle_minutes",
 }
 
@@ -35,6 +37,7 @@ def _sleep_view(dash: DashState) -> dict[str, Any]:
     out: dict[str, Any] = {field: settings.get(key) for field, key in SLEEP_SETTINGS.items()}
     face = dash.ctx.face
     out["dozing"] = bool(getattr(face, "dozing", False) is True)
+    out["screen_off"] = bool(getattr(face, "screen_off", False) is True)
     return out
 
 # (seconds to wait after the step, action, args). Kept short and gentle (~15 s at normal speed).
@@ -94,13 +97,14 @@ async def face_info(dash: DashState = Depends(get_dash)) -> dict[str, Any]:
 
 @router.put("/sleep")
 async def sleep_settings(body: FaceSleepBody, dash: DashState = Depends(get_dash)) -> dict[str, Any]:
-    """Dozing when nothing is happening (a look only) and the deeper sleep after a long quiet spell."""
+    """Dozing when nothing is happening (a look only), the screen going dark, and the deeper sleep after a long
+    quiet spell."""
     changes = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
     if not changes:
         raise HTTPException(status_code=422, detail="Nothing to change.")
     for field, value in changes.items():
         dash.ctx.settings.set(SLEEP_SETTINGS[field], value, source="dashboard")
-    log.info("doze / sleep settings changed from dashboard: %s", changes)
+    log.info("doze / screen / sleep settings changed from dashboard: %s", changes)
     return {"ok": True, "sleep": _sleep_view(dash)}
 
 

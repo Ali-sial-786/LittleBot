@@ -309,6 +309,17 @@ battery is said out loud and whether it shuts down when empty, in the Battery ca
 `power.shutdown_when_empty`); they apply at once. Everything else is in the `power:` section
 of the config (`littlebot/core/config.py`, `PowerConfig`).
 
+**The screen goes dark after 3 minutes of nothing happening** (`face.screen_off_after_seconds`,
+180; 0 = never; dashboard: Face page, "Dozing and sleep"), in IDLE and while asleep. LittleBot
+switches the screen's HDMI signal off (`wlopm --off HDMI-A-1`) and stops drawing the face; the
+wake word keeps listening. "Hey LittleBot", a chat, a card, a video, a game, someone walking in
+or moving in front of the camera, or a touch lights it again at once (the first touch on the
+dark screen only lights it: no giggle). The log says `face: screen off (...)` / `face: screen on
+(...)`. Measured on the robot (2026-11-03, UPS HAT readings, three rounds of 15 s): about
+**0.4 W less** (6.95 W on, 6.56 W off). The MPI3508's backlight itself stays lit: the only way to
+switch that off is the button on the back of the screen (long press 3 s, per LCDwiki), which
+LittleBot can't press. The screen is switched back on whenever LittleBot starts or stops.
+
 ### 8.5 The power-off
 
 There was no power-off in LittleBot before (the dashboard's Shutdown only stops the app, and

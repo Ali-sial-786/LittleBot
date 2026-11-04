@@ -99,6 +99,7 @@ class FaceSleepBody(Body):
     doze_enabled: bool | None = None
     doze_after_seconds: int | None = Field(default=None, ge=5, le=3600)
     awake_on_arrival_seconds: int | None = Field(default=None, ge=0, le=3600)
+    screen_off_after_seconds: int | None = Field(default=None, ge=0, le=3600)  # 0: never (1-29 become 30)
     sleep_after_idle_minutes: float | None = Field(default=None, ge=0, le=720)  # 0: never
 
 
