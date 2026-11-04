@@ -5,6 +5,7 @@ from __future__ import annotations
 from littlebot.dashboard.routes.activity_routes import router as activities
 from littlebot.dashboard.routes.assistant_routes import router as assistant
 from littlebot.dashboard.routes.ai_routes import router as ai
+from littlebot.dashboard.routes.android_routes import router as android
 from littlebot.dashboard.routes.auth_routes import router as auth
 from littlebot.dashboard.routes.browser_routes import router as browser
 from littlebot.dashboard.routes.calendar_routes import router as calendar
@@ -34,6 +35,6 @@ from littlebot.dashboard.routes.wake_clip_routes import router as wake_clips
 
 ROUTERS = (auth, robot, assistant, voice_setup, face, camera, activities, games, screens, browser, media, profile, people,
            ai, chatgpt, decide, info, privacy, devices, motion, sim, voice_lines, power, doorbell, keys, calendar,
-           mirror, nanit, wake_clips)
+           mirror, nanit, android, wake_clips)
 
 __all__ = ["ROUTERS"]

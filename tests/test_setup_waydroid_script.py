@@ -28,6 +28,8 @@ def test_step_one_is_backed_up_marked_and_undone() -> None:
     assert "kernel=kernel8.img" in text and "psi=1" in text and "BACKUP_SUFFIX=.littlebot-16k" in text
     assert text.count("$MARK_START") >= 3 and "$MARK_END" in text  # added between the marks, removed by them
     assert "trixie-backports waydroid" in text and "waydroid init -s GAPPS" in text
+    # the container service runs at every boot, so LittleBot starts Android without a password (littlebot/android)
+    assert "sudo systemctl enable --now waydroid-container" in text
 
 
 @pytest.mark.skipif(BASH is None, reason="bash not installed")

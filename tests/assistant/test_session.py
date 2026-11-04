@@ -1361,3 +1361,15 @@ async def test_told_to_stop_while_a_video_is_on_it_stays_awake() -> None:
     await _wait(lambda: not svc.status()["active"])
     assert svc.last_call["ended_reason"] == "said stop" and len(audio.cues) == 1
     assert svc.ctx.state.state == RobotState.IDLE
+
+
+async def test_told_to_stop_while_android_is_on_it_stays_awake() -> None:
+    """Android shuts down when LittleBot sleeps: "stop" ended the chat, not what they are using."""
+    svc, stt, _, audio = _service(Scripted(), follow_up_seconds=5)
+    svc.ctx.android = type("A", (), {"active": True})()
+    await svc.start()
+    await svc.start_session()
+    await _wait(lambda: stt.stream is not None)
+    stt.say("stop talking")
+    await _wait(lambda: not svc.status()["active"])
+    assert len(audio.cues) == 1 and svc.ctx.state.state == RobotState.IDLE

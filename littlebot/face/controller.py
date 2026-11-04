@@ -126,6 +126,9 @@ _DOZE_POKES: dict[str, str] = {
     Topics.BRAIN_REPLY: "a reply",
     Topics.CAREGIVER_RESPONSE: "a grown-up answered",
     Topics.ACTIVITY_STEP: "an activity",
+    "android.started": "Android is starting",  # littlebot/android/service.py
+    "android.showing": "Android is on the screen",
+    "android.used": "Android is being used",  # a touch while Android is in front (the face doesn't get those)
 }
 # robot state -> why it keeps the face awake (IDLE is the only state the face can doze in)
 _BUSY_STATES = {

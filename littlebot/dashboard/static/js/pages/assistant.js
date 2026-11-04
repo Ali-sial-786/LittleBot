@@ -4,6 +4,7 @@
 
 import { get, post } from '../api.js';
 import { append, banner, button, clear, h, icon, pageHead, setText, switchRow, toast } from '../ui.js';
+import { androidPanel } from './android_panel.js';
 import { calendarPanel } from './calendar_panel.js';
 import { doorbellPanel } from './doorbell_panel.js';
 import { mirrorPanel } from './mirror_panel.js';
@@ -203,6 +204,7 @@ export default {
     const calendars = calendarPanel(app); // each person's calendar and phone (calendar_panel.js)
     const mirror = mirrorPanel(app); // a phone's screen on LittleBot's screen (mirror_panel.js)
     const nanit = nanitPanel(app); // the Nanit baby camera on LittleBot's screen (nanit_panel.js)
+    const android = androidPanel(app); // Android on LittleBot's screen, only while it's on it (android_panel.js)
     const wakeClips = wakeClipsPanel(app); // the family's own "hey little bot" clips (wake_clips_panel.js)
     let spotifyTick = 0;
 
@@ -270,6 +272,7 @@ export default {
         doorbell.el,
         mirror.el,
         nanit.el,
+        android.el,
         h('section', { class: 'card' }, h('div', { class: 'card-head' }, h('h2', {}, icon('star'), 'Lists')), listsBody),
         h('section', { class: 'card' }, h('div', { class: 'card-head' }, h('h2', {}, icon('sun'), 'Reminders and alarms')), remindersBody),
         h('section', { class: 'card' }, h('div', { class: 'card-head' }, h('h2', {}, icon('sparkles'), 'What LittleBot remembers')), memoriesBody),
@@ -309,6 +312,6 @@ export default {
     }
     refresh();
     timer = setInterval(refresh, 4000);
-    return { destroy() { clearInterval(timer); setup.destroy(); doorbell.destroy(); calendars.destroy(); mirror.destroy(); nanit.destroy(); wakeClips.destroy(); } };
+    return { destroy() { clearInterval(timer); setup.destroy(); doorbell.destroy(); calendars.destroy(); mirror.destroy(); nanit.destroy(); android.destroy(); wakeClips.destroy(); } };
   },
 };

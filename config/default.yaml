@@ -177,6 +177,18 @@ nanit:
   max_minutes: 30          # the view closes by itself after this long; 0 = never
   start_timeout_seconds: 20  # the picture must start by then, else it closes and says why
 
+android:
+  # Android (Waydroid, with Google Play) on LittleBot's screen when asked (docs/ANDROID_ON_PI.md), and only while it
+  # is on the screen: as soon as it isn't, it is shut down and its 1 to 1.5 GB of memory comes back.
+  # Set up once on the robot: scripts/setup_waydroid.sh kernel (then reboot), then scripts/setup_waydroid.sh install.
+  enabled: true
+  off_screen_seconds: 10   # its window closed or behind another window this long: Android is shut down
+  start_timeout_seconds: 180  # its window must be in front by then (the first start takes a minute or two)
+  min_free_mb: 1200        # it starts only with this much memory free
+  min_free_mb_running: 250 # ... and is shut down if free memory falls under this while it runs
+  apps:                    # "open <name>" opens that app in Android: the name -> the Android package
+    aosu: com.glazero.android
+
 power:
   # The battery (docs/POWER.md section 8): an RP2040-Zero battery monitor on a USB port. Without one
   # LittleBot behaves exactly as on mains power. Low / shutdown levels are dashboard settings.

@@ -5,7 +5,7 @@
 #   scripts/setup_waydroid.sh               # = check: what is there and what is missing (changes nothing)
 #   scripts/setup_waydroid.sh kernel        # step 1: the Pi's 4K-page kernel and psi=1 (both files backed up), reboot
 #   scripts/setup_waydroid.sh install       # step 2: Waydroid (trixie-backports) + Android with Google Play (~1 GB)
-#   scripts/setup_waydroid.sh start         # step 3: Android on the robot's screen
+#   scripts/setup_waydroid.sh start         # step 3: Android on the robot's screen (or "Hey LittleBot, open Android")
 #   scripts/setup_waydroid.sh play-id       # step 4: the number to register at google.com/android/uncertified
 #   scripts/setup_waydroid.sh aosu          # step 5: open the Aosu app (installed from Play in Android)
 #   scripts/setup_waydroid.sh stop          # Android off again (its memory back for LittleBot)
@@ -14,6 +14,8 @@
 #
 # Run it as the desktop user. Each step that changes something is printed first and only run after you answer y
 # on the terminal (sudo then asks for your password itself); not on a terminal, it only prints. play-id only reads.
+# Once set up, LittleBot starts Android when asked and shuts it down (its memory back) as soon as it isn't on the
+# screen, also when it was started here (littlebot/android).
 set -euo pipefail
 
 CONFIG=/boot/firmware/config.txt
@@ -122,11 +124,13 @@ cmd_install() {
   have_cmd waydroid || steps+=("sudo apt install -y -t trixie-backports waydroid")
   # the system and vendor images from Waydroid's own download server (its default), with Google Play (GAPPS)
   steps+=("sudo waydroid init -s GAPPS")
+  # the container service at every boot: LittleBot then starts Android without a password (it idles at ~40 MB)
+  steps+=("sudo systemctl enable --now waydroid-container")
   local line
   line=$(printf ' && %s' "${steps[@]}")
-  if ask_and_run "Step 2 installs Waydroid and downloads Android (LineageOS with Google Play, about 1 GB, from Waydroid's own server)" "${line:4}"; then
+  if ask_and_run "Step 2 installs Waydroid, downloads Android (LineageOS with Google Play, about 1 GB, from Waydroid's own server) and starts Android's container service at every boot" "${line:4}"; then
     echo
-    echo "Done. Next: $0 start"
+    echo "Done. Next: $0 start   (or say \"Hey LittleBot, open Android\")"
   fi
 }
 
@@ -148,7 +152,8 @@ cmd_start() {
   fi
   nohup waydroid show-full-ui >/dev/null 2>&1 &
   echo "Android is on the screen. Sign in to Google Play there, then: $0 play-id"
-  echo "Off again: $0 stop"
+  echo "LittleBot shuts it down as soon as it isn't on the screen (its window closed, or nobody touching it for the"
+  echo "screen's quiet minutes). Off now: $0 stop"
 }
 
 cmd_play_id() {
@@ -213,6 +218,6 @@ case "${1:-check}" in
   aosu) cmd_aosu ;;
   stop) cmd_stop ;;
   undo) cmd_undo "$@" ;;
-  -h|--help|help) sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//' ;;
+  -h|--help|help) sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//' ;;
   *) echo "unknown step: $1 (try --help)" >&2; exit 2 ;;
 esac

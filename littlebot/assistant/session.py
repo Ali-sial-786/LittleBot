@@ -1495,11 +1495,13 @@ class VoiceSession:
             await asyncio.sleep(STOP_SOUND_S)
 
     def _sleep_now(self) -> None:
-        """Told to stop: asleep at once (the wake word still wakes it). Not while a video or music is on: "stop"
-        ended the chat, not what they are watching or listening to."""
+        """Told to stop: asleep at once (the wake word still wakes it). Not while a video, music or Android is on:
+        "stop" ended the chat, not what they are watching, listening to or using."""
         video_on, spotify = self._media_on()
+        android = getattr(self.ctx, "android", None)
+        android_on = android is not None and getattr(android, "active", False) is True
         sm = self.ctx.state
-        if video_on or spotify is not None or sm.state != RobotState.IDLE:
+        if video_on or spotify is not None or android_on or sm.state != RobotState.IDLE:
             return
         if sm.transition(RobotState.SLEEPING, "told to stop"):
             log.info("assistant: told to stop; asleep now")

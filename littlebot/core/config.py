@@ -757,6 +757,31 @@ class NanitConfig(_Section):
     extra_ffplay_args: list[str] = Field(default_factory=list)
 
 
+class AndroidConfig(_Section):
+    """Android (Waydroid) on LittleBot's screen (littlebot/android, docs/ANDROID_ON_PI.md), only while it is on the
+    screen: as soon as it isn't, it is shut down and its 1 to 1.5 GB of memory comes back. Set up with
+    scripts/setup_waydroid.sh.
+
+    The parent's switch (dashboard Assistant page: ``android.enabled``) can turn it off; ``enabled: false`` here
+    switches it off whatever the parent chose."""
+
+    enabled: bool = True
+    waydroid_command: str = "waydroid"  # a name on PATH or an absolute path
+    systemctl_command: str = "systemctl"
+    # Its window not in front (closed, or another window over it) for this long: Android is shut down.
+    off_screen_seconds: float = Field(default=10.0, ge=2.0, le=600.0)
+    # Its window must be in front by then (the first start takes a minute or two), else Android is shut down.
+    start_timeout_seconds: float = Field(default=180.0, ge=30.0, le=900.0)
+    # It starts only with this much memory free (MemAvailable, MB; it takes 1 to 1.5 GB) ...
+    min_free_mb: int = Field(default=1200, ge=0, le=4096)
+    # ... and is shut down if free memory falls under this while it runs (LittleBot comes first).
+    min_free_mb_running: int = Field(default=250, ge=0, le=2048)
+    # Android's window: the desktop window whose app id or title has this in it (any case).
+    window_match: str = Field(default="waydroid", min_length=1, max_length=40)
+    # Apps that "open <name>" opens in Android: the name -> the Android package. aosu: the doorbell cameras' app.
+    apps: dict[str, str] = Field(default_factory=lambda: {"aosu": "com.glazero.android"})
+
+
 class PowerConfig(_Section):
     """Running on the battery (littlebot/power, docs/POWER.md "Running on the battery").
 
@@ -993,6 +1018,7 @@ class LittleBotConfig(BaseModel):
     browser: BrowserConfig = Field(default_factory=BrowserConfig)
     mirror: MirrorConfig = Field(default_factory=MirrorConfig)
     nanit: NanitConfig = Field(default_factory=NanitConfig)
+    android: AndroidConfig = Field(default_factory=AndroidConfig)
     decide: DecideConfig = Field(default_factory=DecideConfig)
     power: PowerConfig = Field(default_factory=PowerConfig)
     media: MediaConfig = Field(default_factory=MediaConfig)
