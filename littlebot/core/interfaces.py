@@ -48,6 +48,7 @@ SOUND_NAMES: tuple[str, ...] = (
     "chime", "pop", "boop", "boing", "peekaboo", "tada", "clap", "whoosh", "sparkle", "drum",
     "bell", "giggle", "uhoh", "yay", "blip", "notes", "sleep", "wake", "click", "success",
     "listen",  # the wake word was heard ("Hey LittleBot"): LittleBot is listening
+    "listen_end",  # told to stop: LittleBot stopped listening (and goes to sleep)
 )
 
 # Approximate developmental age groups (flexible recommendations, never diagnostic).

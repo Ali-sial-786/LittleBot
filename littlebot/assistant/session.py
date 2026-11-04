@@ -101,6 +101,11 @@ CARRY_OVERLAP_S = 0.02  # the call keeps this much from before the wake word's c
 # (on the robot's clips, 2026-10-31, 0.1 s instead of 0.25 s ended turns another 0.1-0.4 s sooner).
 CARRY_PAUSE_S = 0.15
 CARRY_QUIET_RMS = 0.015  # a 20 ms frame quieter than this is a pause (the echo-cancelled microphone's floor: ~0.002)
+# Told to stop (a stop intent, a stop word over the voice, the brain's end_conversation): this short sound, and
+# LittleBot goes to sleep at once instead of waiting idle for system.sleep_after_idle_minutes (the owner's ask,
+# 2026-11-03). The wake word still wakes it.
+STOP_SOUND = "listen_end"
+STOP_SOUND_S = 0.35  # it is 0.3 s; the speaker stream's latency on top
 VOICE_RMS = 0.01  # a 16 kHz chunk this loud is someone talking (the log says how long after it a turn ended)
 # After Flux's "probably done" with an early answer ready: this long with no new words and nothing louder than
 # LOUD_RMS (the echo-cancelled microphone's noise after speech reaches ~0.035) and their turn is ended at once.
@@ -169,6 +174,7 @@ class VoiceSession:
         self._music_after = False  # music started under this answer: end once it was heard (the music comes up)
         self._unsure: tuple[str, ...] = ()  # the words speech-to-text wasn't sure of in their last turn
         self._quiet_end = False  # the brain called end_conversation: nothing more is said, and the session ends
+        self._told_to_stop = False  # STOP_SOUND as it ends, then sleep (_cleanup)
         self._handover: list[Any] = []  # take-overs to run after the session (a video, an activity ...)
         self._suspended = False
         self._our_state: RobotState | None = None
@@ -830,9 +836,11 @@ class VoiceSession:
                      f" error={result.error}" if result is not None and result.error else "")
         self.mouth_frames = 0
         if self._quiet_end:
+            self._told_to_stop = True
             self.end("asked to stop")
             return
         if self._end_after:
+            self._told_to_stop = self._end_after == "stop"
             self.end(f"said {self._end_after}")
             return
         if self._music_after:
@@ -1088,7 +1096,13 @@ class VoiceSession:
                             "enough), call end_conversation. If it is only a word like \"no\", \"wait\" or \"hold "
                             "on\", with nothing to answer yet, answer with exactly [silent]: they are still going on"]
         if first:
-            return [*notes, "they woke you with your name to say this: it is for you; answer it"]
+            # The wake word went off on election night's TV coverage and the chats went on answering the newsreaders
+            # (the robot, 2026-11-03): "it is for you" alone made every first turn an answer.
+            return [*notes, "the first thing heard after your wake word: it is almost always for you, so answer it. "
+                            "But the wake word sometimes goes off by mistake on the TV, a video, a game or people "
+                            "talking nearby: if this is clearly that (a newsreader, sports or game commentary, a show, "
+                            "people talking to each other, nothing said to you), call end_conversation and say "
+                            "nothing"]
         return notes
 
     def _session_tools(self) -> dict[str, Any]:
@@ -1358,6 +1372,7 @@ class VoiceSession:
                 log.info("assistant: '%s': quiet now, listening", said)
             else:  # "stop", "be quiet", "enough": quiet, and the conversation is over
                 log.info("assistant: '%s': stopped", said)
+                self._told_to_stop = True
                 self.end(f"they said {said}")
 
     # ------------------------------------------------------------ the face and the dashboard
@@ -1428,6 +1443,8 @@ class VoiceSession:
         self._ended.set()
         if self._voice is not None:
             self._voice.cancel()
+        if self._told_to_stop and self.audio is not None:
+            await self._stop_sound()
         if self.audio is not None:
             with contextlib.suppress(Exception):
                 self.audio.mute()
@@ -1450,6 +1467,8 @@ class VoiceSession:
         current = self.ctx.state.state
         if self._our_state is not None and current in (RobotState.LISTENING, RobotState.SPEAKING, RobotState.THINKING):
             self.ctx.state.release(current, "assistant session ended")
+        if self._told_to_stop:
+            self._sleep_now()
         if self.carry is not None:
             self.carry.drop(self.end_reason or "session ended")
         if self._faces is not None:
@@ -1465,6 +1484,25 @@ class VoiceSession:
         self._publish(ev.SESSION, {"active": False, "reason": self.end_reason[:60]})
         log.info("assistant: session ended (%s) after %.1f s, %d turn(s)", self.end_reason,
                  self._now() - self._started, self.turns)
+
+    async def _stop_sound(self) -> None:
+        """Told to stop: STOP_SOUND through the call's own speaker, before it closes (nothing else is said)."""
+        with contextlib.suppress(Exception):
+            self.audio.drop_voice()
+        with contextlib.suppress(Exception):
+            self.audio.unmute()  # (cutting an answer off mutes it)
+        if self.play_sound(STOP_SOUND, cue=True):
+            await asyncio.sleep(STOP_SOUND_S)
+
+    def _sleep_now(self) -> None:
+        """Told to stop: asleep at once (the wake word still wakes it). Not while a video or music is on: "stop"
+        ended the chat, not what they are watching or listening to."""
+        video_on, spotify = self._media_on()
+        sm = self.ctx.state
+        if video_on or spotify is not None or sm.state != RobotState.IDLE:
+            return
+        if sm.transition(RobotState.SLEEPING, "told to stop"):
+            log.info("assistant: told to stop; asleep now")
 
     async def run_handover(self) -> list[str]:
         """The take-overs asked for in the last turn (a video, an activity, sleep), once everything is handed back."""

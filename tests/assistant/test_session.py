@@ -394,7 +394,7 @@ def test_the_brain_hears_which_words_may_be_misheard() -> None:
     assert S.VoiceSession._turn_notes(me, None) == []  # type: ignore[arg-type]
     me.turns, me._unsure = 1, ("Kubla",)
     first = S.VoiceSession._turn_notes(me, None)  # type: ignore[arg-type]
-    assert len(first) == 2 and "woke you" in first[1]
+    assert len(first) == 2 and "after your wake word" in first[1]
 
 
 async def test_no_words_after_the_wake_word() -> None:
@@ -1038,6 +1038,7 @@ async def test_its_own_voice_heard_back_is_not_a_turn() -> None:
     await _wait(lambda: not svc.status()["active"])
     assert svc.last_call["ended_reason"] == "said stop"  # without a word
     assert len(tts.said) == 1
+    assert svc.ctx.state.state == RobotState.SLEEPING  # told to stop: asleep at once (the owner, 2026-11-03)
 
 
 async def test_its_own_words_said_well_before_their_turn_began_are_theirs() -> None:
@@ -1067,9 +1068,12 @@ async def test_stop_word_ends_wait_word_only_quiets() -> None:
     audio.on_change("stop_word", {"said": "wait"})
     await asyncio.sleep(0.2)
     assert svc.status()["active"] and audio.dropped == 1
+    assert audio.cues == []
     audio.on_change("stop_word", {"said": "stop"})
     await _wait(lambda: not svc.status()["active"])
     assert svc.last_call["ended_reason"] == "they said stop"
+    assert audio.cues == [(480, 48000)]  # the short "stopped listening" sound (FakeAudio's samples)
+    assert svc.ctx.state.state == RobotState.SLEEPING
 
 
 async def test_only_one_voice_ever_talks() -> None:
@@ -1107,12 +1111,13 @@ async def test_the_brain_is_told_the_first_turn_and_a_cut_in_are_for_it() -> Non
     await _wait(lambda: stt.stream is not None)
     stt.say("hello")
     await _wait(lambda: len(seen) == 1)
-    assert "it is for you" in seen[0] and "woke you" in seen[0]  # the first turn after the wake word
+    # the first turn after the wake word: for it, unless it is plainly the TV (election night, 2026-11-03)
+    assert "almost always for you" in seen[0] and "goes off by mistake on the TV" in seen[0]
     await _wait(lambda: svc._session is not None and not svc._session._answering())
     svc._tts = SlowTTS()
     stt.say("count to three")
     await _wait(lambda: len(seen) == 2)
-    assert "it is for you" not in seen[1]  # an ordinary follow-up: the brain decides
+    assert "for you" not in seen[1]  # an ordinary follow-up: the brain decides
     await _wait(lambda: svc._session._voice is not None and bool(svc._session._voice.heard))
     audio.on_change("heard", {})  # they talked over it
     stt.say("what about tomorrow")
@@ -1334,7 +1339,7 @@ async def test_told_to_stop_in_its_own_words_the_brain_ends_the_call_without_a_w
     """"Please don't talk anymore" isn't an instant intent: the brain calls end_conversation, and whatever it
     writes after that is never said (asked for on the robot, 2026-10-31)."""
     brain = Scripted([("end_conversation", "{}"), "Okay, I'll stop talking now."])
-    svc, stt, tts, _ = _service(brain, follow_up_seconds=5)
+    svc, stt, tts, audio = _service(brain, follow_up_seconds=5)
     await svc.start()
     await svc.start_session()
     await _wait(lambda: stt.stream is not None)
@@ -1342,3 +1347,17 @@ async def test_told_to_stop_in_its_own_words_the_brain_ends_the_call_without_a_w
     await _wait(lambda: not svc.status()["active"])
     assert svc.last_call["ended_reason"] == "asked to stop"
     assert tts.said == []
+    assert len(audio.cues) == 1 and svc.ctx.state.state == RobotState.SLEEPING
+
+
+async def test_told_to_stop_while_a_video_is_on_it_stays_awake() -> None:
+    """"Stop" ended the chat, not the video they are watching: the sound, but no sleep."""
+    svc, stt, _, audio = _service(Scripted(), follow_up_seconds=5)
+    svc.ctx.media = type("M", (), {"status": staticmethod(lambda: {"state": "paused"})})()
+    await svc.start()
+    await svc.start_session()
+    await _wait(lambda: stt.stream is not None)
+    stt.say("stop talking")
+    await _wait(lambda: not svc.status()["active"])
+    assert svc.last_call["ended_reason"] == "said stop" and len(audio.cues) == 1
+    assert svc.ctx.state.state == RobotState.IDLE
