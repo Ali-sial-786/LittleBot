@@ -37,6 +37,24 @@ their **voice** or their **face** (Profile → Who's who; [VOICES.md](VOICES.md)
 "Probably Ali" (recognised but not sure) still uses Ali's, and LittleBot says so when it adds. The little one has no
 calendar of their own.
 
+### Several calendars for one person (Work and Personal)
+
+A grown-up can have several calendars, for example Ali's **Work** and **Personal**. Connect Ali's personal Google
+account with **Connect Google Calendar** (LittleBot can then add to it too). Then add the work calendar with
+**Add an iCal address**: name it *Work* and paste its secret address. A work account that blocks the Google sign-in
+usually still has the secret address. Or add both calendars as iCal addresses, each with its name.
+
+Then ask for one by its name:
+
+| Say | LittleBot looks at |
+|---|---|
+| "What's on Ali's work calendar tomorrow?" | only Ali's *Work* calendar |
+| "What's on my personal calendar this week?" | only the *Personal* calendar of the person talking |
+| "What's on today?" | all of the person talking's calendars, and the family's |
+
+A calendar added without a name uses its own name from Google (often an email address), so give each one a short
+name like *Work* or *Personal*.
+
 **Set it up on the dashboard**: Assistant → **Calendars and phones**. The family's row and one row per grown-up on
 Who's who, each with:
 
@@ -45,7 +63,9 @@ Who's who, each with:
   account" if the phone is signed in as someone else), allow it, then paste the address the tab lands on (the one
   that doesn't load) back into the dashboard. If your Google Cloud app isn't published yet, add each person's email
   as a test user first (step A.3).
-* **Add an iCal address**: their own secret address, read only.
+* **Add an iCal address**: one of their calendars by its secret address, read only, with a name for it (*Work*,
+  *Personal*...). Press **Add another iCal address** for each of their other calendars: they are all kept, and
+  each has its own **Remove**.
 * **Set up a phone**: shows a topic for their phone's ntfy app, once, and sends a test.
 * **Whose calendar**: LittleBot guesses whose each calendar is (one you signed in with is yours, one named after
   someone like "Sara's calendar" is Sara's, one called Family, Home or Holidays is everyone's, and so is anything
@@ -111,8 +131,11 @@ Quicker, but LittleBot can't add or change events this way.
 ssh -t alisial3@littlebot.local "cd ~/LittleBot && .venv/bin/python scripts/setup_calendar.py --ics"
 ```
 
-It is hidden as you paste it, checked, then saved. Run it again to add another calendar. Anyone with this address
-can read the calendar, so it's kept like a key and never logged.
+It is hidden as you paste it, checked, then saved, and it asks which calendar it is (*Work*, *Personal*; Enter
+uses the calendar's own name). Run it again for each of the other calendars: the ones saved before are kept. Anyone
+with this address
+can read the calendar, so it's kept like a key and never logged. A calendar with years of events is fine (up to 15 MB): LittleBot skips the one-off
+events that ended over a month ago, so the coming ones are never crowded out.
 
 ### Check, or undo
 

@@ -38,6 +38,12 @@ class FinishBody(Body):
 class IcsBody(SecretBody):
     person_id: int | None = Field(default=None, ge=1)
     url: str = Field(..., min_length=8, max_length=2000)
+    name: str = Field(default="", max_length=60)  # "Work", "Personal"; "" = the calendar's own name
+
+
+class IcsRemoveBody(Body):
+    person_id: int | None = Field(default=None, ge=1)
+    id: str | None = Field(default=None, pattern=r"^ics\d{1,2}$")  # one of theirs ("ics1"); None: all of them
 
 
 class OwnerBody(Body):
@@ -84,6 +90,7 @@ async def view(dash: DashState) -> dict[str, Any]:
         t = acc.auth.tokens() if acc is not None else None
         return {"google": t is not None, "connected_at": t.connected_at if t is not None else None,
                 "ics_feeds": len(cal.ics_urls(acc)) if acc is not None else 0,
+                "ics": cal.ics_view(person_id),  # [{id, name}]: never an address
                 "phone": bool(push.topic(person_id))}
 
     people = [{"id": p["id"], "name": p["name"], "role": p["role"], **one(p["id"])} for p in cal.people()]
@@ -144,21 +151,24 @@ async def google_disconnect(body: WhoBody, dash: DashState = Depends(get_dash)) 
 
 @router.put("/ics")
 async def ics_save(body: IcsBody, dash: DashState = Depends(get_dash)) -> dict[str, Any]:
-    """Read the iCal address once (it must work), then keep it (0600). The address is never sent back."""
+    """Add one iCal address to the household's or a person's (their others are kept), under a name ("Work"), once
+    it has been read (it must work); kept 0600. The address is never sent back."""
     from littlebot.skills.agenda import AgendaError  # noqa: PLC0415
 
     cal = _calendar(dash)
     _online(dash)
     try:
-        found = await cal.set_ics(body.person_id, body.url)
+        added = await cal.add_ics(body.person_id, body.url, body.name)
     except AgendaError as e:
         raise _fail(e) from None
-    return scrub({"ok": True, "events": found, **await view(dash)})
+    return scrub({"ok": True, "events": added["events"], "calendar": {"id": added["id"], "name": added["name"]},
+                  **await view(dash)})
 
 
 @router.post("/ics/remove")
-async def ics_remove(body: WhoBody, dash: DashState = Depends(get_dash)) -> dict[str, Any]:
-    had = _calendar(dash).remove_ics(body.person_id)
+async def ics_remove(body: IcsRemoveBody, dash: DashState = Depends(get_dash)) -> dict[str, Any]:
+    """Forget one of the household's or a person's iCal addresses (``id``), or all of them."""
+    had = _calendar(dash).remove_ics(body.person_id, body.id)
     return scrub({"ok": True, "removed": had, **await view(dash)})
 
 

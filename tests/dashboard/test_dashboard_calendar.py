@@ -50,7 +50,7 @@ async def test_needs_the_login(client, home) -> None:
 async def test_the_page_shows_who_is_connected_and_nothing_secret(authed, home) -> None:
     r = await authed.get("/api/calendar")
     d = r.json()
-    assert d["home"] == {"google": False, "connected_at": None, "ics_feeds": 0, "phone": False}
+    assert d["home"] == {"google": False, "connected_at": None, "ics_feeds": 0, "ics": [], "phone": False}
     people = {p["name"]: p for p in d["people"]}
     assert people["Ali"]["google"] is True and people["Sara"]["google"] is False
     assert d["client_known"] is True  # Ali's sign-in: Sara can use the same Google app
@@ -131,3 +131,23 @@ async def test_no_calendar_skill(authed, dctx) -> None:
     dctx.skills = SkillHub(dctx, [])
     r = await authed.get("/api/calendar")
     assert r.status_code == 503 and "skills.calendar" in json.dumps(r.json())
+
+
+async def test_two_named_ical_calendars_for_one_person_and_removing_one(authed, home) -> None:
+    sara = home["sara"]
+    r = await authed.put("/api/calendar/ics", json={"person_id": sara, "url": "https://ics.example.com/work.ics",
+                                                    "name": "Work"})
+    assert r.status_code == 200 and r.json()["calendar"] == {"id": "ics0", "name": "Work"}
+    r = await authed.put("/api/calendar/ics", json={"person_id": sara, "url": "https://ics.example.com/home.ics",
+                                                    "name": "Personal"})
+    assert r.status_code == 200, r.text
+    person = {p["name"]: p for p in r.json()["people"]}["Sara"]
+    assert person["ics_feeds"] == 2 and [c["name"] for c in person["ics"]] == ["Work", "Personal"]
+    no_secrets(r.text)
+    same = await authed.put("/api/calendar/ics", json={"person_id": sara, "url": "https://ics.example.com/x.ics",
+                                                       "name": "work"})
+    assert same.status_code == 400 and "already a calendar called work" in same.json()["detail"].lower()
+    r = await authed.post("/api/calendar/ics/remove", json={"person_id": sara, "id": "ics0"})
+    person = {p["name"]: p for p in r.json()["people"]}["Sara"]
+    assert r.json()["removed"] is True and [c["name"] for c in person["ics"]] == ["Personal"]
+    assert (await authed.post("/api/calendar/ics/remove", json={"person_id": sara, "id": "x; rm"})).status_code == 422

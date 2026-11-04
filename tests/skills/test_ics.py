@@ -325,3 +325,28 @@ def test_big_feed_parses_fast_and_caps_events():
     t0 = time.perf_counter()
     occ = occurrences(feed, local(2026, 1, 1), local(2027, 1, 1), TOR)
     assert len(occ) == 500 and time.perf_counter() - t0 < 1.0
+
+
+def test_old_one_off_events_are_skipped_so_a_busy_calendar_keeps_what_is_coming(monkeypatch):
+    # Years of one-off events, written before this week's repeating ones (calendars keep everything): without
+    # "since" the old ones filled MAX_EVENTS and the coming week came back empty.
+    monkeypatch.setattr(ics, "MAX_EVENTS", 50)
+    old = [f"UID:old{i}\nSUMMARY:Old {i}\nDTSTART:2024{(i % 12) + 1:02d}{(i % 28) + 1:02d}T150000Z\n"
+           f"DTEND:2024{(i % 12) + 1:02d}{(i % 28) + 1:02d}T160000Z" for i in range(200)]
+    keep = [
+        "UID:weekly\nSUMMARY:Standup\nDTSTART;TZID=America/Toronto:20230102T093000\n"
+        "DTEND;TZID=America/Toronto:20230102T100000\nRRULE:FREQ=WEEKLY;BYDAY=MO",  # began long ago, still repeats
+        "UID:weekly\nSUMMARY:Standup (moved)\nRECURRENCE-ID;TZID=America/Toronto:20261102T093000\n"
+        "DTSTART;TZID=America/Toronto:20261102T110000\nDTEND;TZID=America/Toronto:20261102T113000",
+        "UID:dent\nSUMMARY:Dentist\nDTSTART;TZID=America/Toronto:20261104T150000\nDURATION:PT1H",
+        "UID:trip\nSUMMARY:Trip\nDTSTART;VALUE=DATE:20261025\nDTEND;VALUE=DATE:20261106",  # began before, still on
+        "UID:last\nSUMMARY:Last week\nDTSTART;TZID=America/Toronto:20261027T090000\nDURATION:PT1H",
+    ]
+    text = cal(*old, *keep)
+    week = (local(2026, 11, 2), local(2026, 11, 9))
+    assert window(text, *week) == []  # the cap: only old events were kept
+    feed = parse(text, since=dt.date(2026, 10, 3))
+    assert sorted(e.uid for e in feed.events) == ["dent", "last", "trip", "weekly", "weekly"]
+    got = occurrences(feed, *week, TOR)
+    assert [(o.title, o.start.strftime("%a %H:%M")) for o in got] == [
+        ("Trip", "Sun 00:00"), ("Standup (moved)", "Mon 11:00"), ("Dentist", "Wed 15:00")]

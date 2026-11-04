@@ -335,8 +335,12 @@ def _build_event(props: list[tuple[str, dict[str, str], str]], zones: _Zones, in
     return event
 
 
-def parse(text: str) -> Feed:
-    """Read a feed's text. Never raises: bad events are skipped; at most MAX_EVENTS are kept."""
+def parse(text: str, since: _dt.date | None = None) -> Feed:
+    """Read a feed's text. Never raises: bad events are skipped; at most MAX_EVENTS are kept.
+
+    ``since``: one-off events that ended before that day are skipped (repeating events and their changes are all
+    kept). A calendar keeps every event since it was made: without this, a busy one's old events could fill
+    MAX_EVENTS and the coming ones be dropped."""
     feed = Feed()
     try:
         if isinstance(text, bytes):
@@ -374,7 +378,7 @@ def parse(text: str) -> Feed:
                 count += 1
                 try:
                     event = _build_event(props, zones, count)
-                    if event is not None:
+                    if event is not None and not (since is not None and _over_before(event, since)):
                         feed.events.append(event)
                 except Exception:  # noqa: BLE001 - one bad event never spoils the feed
                     log.debug("skipping a bad event", exc_info=True)
@@ -412,6 +416,17 @@ def parse(text: str) -> Feed:
             elif split[0] == "X-LIC-LOCATION" and tzid:
                 zones.aliases[tzid] = split[2].strip()
     return feed
+
+
+def _over_before(event: Event, day: _dt.date) -> bool:
+    """A one-off event that ended before ``day`` (by its own date; callers leave a day or two to spare)."""
+    if event.rule is not None or event.rdates or event.recurrence_id is not None:
+        return False
+    end = event.end.value if event.end is not None else event.start.value
+    if event.end is None and event.duration is not None:
+        end = end + event.duration
+    last = end.date() if isinstance(end, _dt.datetime) else end
+    return last < day
 
 
 # ---------------------------------------------------------------- expansion

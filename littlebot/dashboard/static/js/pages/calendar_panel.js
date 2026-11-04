@@ -58,13 +58,16 @@ export function calendarPanel(app) {
 
   function icsForm(pid) {
     const url = secretInput(`cal-ics-${pid || 0}`, 'https://calendar.google.com/calendar/ical/…/basic.ics');
+    const name = h('input', { class: 'input', id: `cal-ics-name-${pid || 0}`, type: 'text', autocomplete: 'off', maxlength: 40, list: 'cal-ics-names', placeholder: 'Work' });
+    const names = h('datalist', { id: 'cal-ics-names' }, ['Work', 'Personal', 'Family', 'School', 'Kids', 'Sports'].map((v) => h('option', { value: v })));
     return h('div', { class: 'stack-sm' },
-      h('p', { class: 'muted small', text: 'Read-only: Google Calendar → Settings → your calendar → “Secret address in iCal format”; Outlook → Shared calendars → Publish → ICS; iCloud → share calendar → Public. Several addresses: separate them with spaces.' }),
+      h('p', { class: 'muted small', text: 'Read-only: Google Calendar on a computer → ⋮ next to the calendar → Settings and sharing → Integrate calendar → “Secret address in iCal format”; Outlook → Shared calendars → Publish → ICS; iCloud → share calendar → Public. One calendar at a time: add each one (Work, Personal…) the same way.' }),
+      field(name.id, 'Which calendar (so you can ask for it: “Ali’s work calendar”)', name), names,
       field(url.id, 'iCal address (kept secret, never shown again)', url),
       h('div', { class: 'btn-row' },
         button('Check and save', { kind: 'primary', onClick: async () => {
-          const r = await act(() => put('/calendar/ics', { person_id: pid, url: url.value }));
-          if (r) { toast(`Saved: ${r.events} event(s) in the next days.`, 'ok'); open = null; render(true); }
+          const r = await act(() => put('/calendar/ics', { person_id: pid, url: url.value, name: name.value }, { timeout: 30000 }));
+          if (r) { toast(`Saved ${whoLabel(pid)}’s ${r.calendar.name} calendar: ${r.events} event(s) in the next days.`, 'ok'); open = null; render(true); }
         } }),
         button('Cancel', { kind: 'soft', onClick: () => { open = null; render(true); } })));
   }
@@ -88,10 +91,14 @@ export function calendarPanel(app) {
           }
         } }))
       : button('Connect Google Calendar', { kind: 'soft', small: true, iconName: 'link', onClick: () => { open = { pid, what: 'google' }; render(true); } });
-    const ics = st.ics_feeds
-      ? h('span', {}, h('span', { class: 'ok-dot', text: '● ' }), `iCal (${st.ics_feeds})`, ' ',
-        button('Remove', { kind: 'soft', small: true, onClick: () => act(() => post('/calendar/ics/remove', { person_id: pid }), 'Removed.') }))
-      : button('Add an iCal address', { kind: 'soft', small: true, onClick: () => { open = { pid, what: 'ics' }; render(true); } });
+    const icsList = (st.ics || []).map((c) => h('span', {}, h('span', { class: 'ok-dot', text: '● ' }), `${c.name} (iCal)`, ' ',
+      button('Remove', { kind: 'soft', small: true, ariaLabel: `Remove ${name}’s ${c.name} calendar`, onClick: async () => {
+        if (await confirmDialog({ title: `Remove ${name}’s ${c.name} calendar?`, confirm: 'Remove', body: 'LittleBot forgets its address and stops reading it. The calendar itself doesn’t change.' })) {
+          act(() => post('/calendar/ics/remove', { person_id: pid, id: c.id }), 'Removed.');
+        }
+      } })));
+    const ics = h('span', { class: 'btn-row' }, icsList,
+      (st.ics || []).length < 8 ? button((st.ics || []).length ? 'Add another iCal address' : 'Add an iCal address', { kind: 'soft', small: true, onClick: () => { open = { pid, what: 'ics' }; render(true); } }) : null);
     const phone = st.phone
       ? h('span', {}, h('span', { class: 'ok-dot', text: '● ' }), 'Phone', ' ',
         button('Test', { kind: 'soft', small: true, onClick: async () => { const r = await app.act(() => post('/calendar/phone/test', { person_id: pid })); if (r) toast(r.detail, r.ok ? 'ok' : 'error'); } }),

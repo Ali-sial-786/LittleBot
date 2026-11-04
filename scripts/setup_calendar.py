@@ -2,7 +2,8 @@
 """Connect LittleBot to your calendar (docs/CALENDAR.md).
 
     .venv/bin/python scripts/setup_calendar.py              # Google Calendar: see and add events (sign in once)
-    .venv/bin/python scripts/setup_calendar.py --ics        # or a calendar's secret iCal address (see only)
+    .venv/bin/python scripts/setup_calendar.py --ics        # or a calendar's secret iCal address (see only); run
+                                                            # it again for each one (Work, Personal...)
     .venv/bin/python scripts/setup_calendar.py --check      # what LittleBot sees (never a token or the address)
     .venv/bin/python scripts/setup_calendar.py --disconnect # forget the Google sign-in
     .venv/bin/python scripts/setup_calendar.py --remove-ics # forget the iCal address(es)
@@ -184,13 +185,26 @@ def add_ics(folder: Path, ics_file: str = ICS_FILE) -> int:
     except Exception as e:  # noqa: BLE001 - say why, never the address
         print(f"That address didn't work ({type(e).__name__}). Nothing saved.")
         return 1
+    from littlebot.skills.agenda import MAX_ICS, AgendaError, clean_calendar_name, ics_entries
+
     path = folder / ics_file
-    old = path.read_text(encoding="utf-8").split() if path.is_file() else []
-    if url in old:
+    old = ics_entries(path.read_text(encoding="utf-8")) if path.is_file() else []
+    if any(u == url for u, _ in old):
         print("That address was already saved.")
         return 0
-    save_secret(path, " ".join(old + [url]))
-    print(f"Saved in data/{ics_file} ({len(old) + 1} address{'es' if old else ''}; only you can read it).")
+    if len(old) >= MAX_ICS:
+        print(f"There are {MAX_ICS} addresses already: remove them first (--remove-ics). Nothing saved.")
+        return 1
+    while True:
+        try:
+            name = clean_calendar_name(ask("Which calendar is it (for example Work or Personal; Enter: its own "
+                                           f"name, {feed.name or 'none'})? "))
+            break
+        except AgendaError as e:
+            print(f"{str(e)[:1].upper()}{str(e)[1:]}.")
+    entries = old + [(url, name)]
+    save_secret(path, " ".join(f"{u} {n}".strip() for u, n in entries))  # one line: key files are read a line
+    print(f"Saved in data/{ics_file} ({len(entries)} address{'es' if old else ''}; only you can read it).")
     print("LittleBot picks it up after: systemctl --user restart littlebot")
     return 0
 
@@ -205,10 +219,13 @@ def check(folder: Path, token_file: str = TOKEN_FILE, ics_file: str = ICS_FILE) 
             print(f"Google Calendar: connected, but it didn't answer ({e})")
     else:
         print("Google Calendar: not connected")
+    from littlebot.skills.agenda import ics_entries
+
     path = folder / ics_file
-    n = len(path.read_text(encoding="utf-8").split()) if path.is_file() else 0
-    print(f"iCal addresses: {n}" + (" (in .env too?)" if os.environ.get("CALENDAR_ICS_URL") and ics_file == ICS_FILE
-                                    else ""))
+    entries = ics_entries(path.read_text(encoding="utf-8")) if path.is_file() else []
+    names = ", ".join(n or f"iCal calendar {i + 1}" for i, (_, n) in enumerate(entries))
+    print(f"iCal addresses: {len(entries)}" + (f" ({names})" if entries else "")
+          + (" (in .env too?)" if os.environ.get("CALENDAR_ICS_URL") and ics_file == ICS_FILE else ""))
     return 0
 
 
