@@ -66,6 +66,7 @@ A second opinion (``wake.oww_mode``)
 from __future__ import annotations
 
 import asyncio
+import collections
 import contextlib
 import json
 import logging
@@ -145,6 +146,7 @@ HANDOVER_QUIET_SECONDS = 0.1
 HANDOVER_WAIT_SECONDS = 0.4  # well within RELEASE_TIMEOUT
 RATE_16K = 16000  # the trained model (wake.oww_mode) only hears 16 kHz sound
 OUTCOME_WAIT_SECONDS = 1800.0  # how a chat after a wake went is noted when it ends, if within this long
+AGREE_SECONDS = 3.0  # wake.oww_primary_agree: words Vosk heard this recently count as agreeing with a model wake
 
 # Pauses after which the model is unloaded (they usually last long; ~130 MB back for a video).
 _LONG_PAUSES = {"disabled", "microphone_off", "video", "stopped"}
@@ -422,6 +424,7 @@ class WakeWordService(Service):
         self.ducks = 0
         self._duck_until = 0.0
         self._last_partial = ""
+        self._recent_words: collections.deque[tuple[float, tuple[str, ...]]] = collections.deque(maxlen=8)
 
     # ------------------------------------------------------------ lifecycle
     async def start(self) -> None:
@@ -833,6 +836,7 @@ class WakeWordService(Service):
         self._mic_failures = 0
         rec.reset()
         self._model("reset")
+        self._recent_words.clear()
         self._refresh_gain()
         self._listening, self._paused = True, ""
         if not self._listened_once:
@@ -906,13 +910,15 @@ class WakeWordService(Service):
                 del pcm
                 self._fed += len(block)
                 del block
+                self._note_words(result)
                 video = self._video_on()
-                if not video and self._model_woke(inp, heard, rec.sample_rate):
+                if not video and self._model_woke(inp, heard, rec.sample_rate, rec):
                     return True
                 early = False
                 if not result and not video and self.cfg.early:
                     result = self._early_result(rec)
                     early = bool(result)
+                    self._note_words(result)
                 if not result:
                     if video and self.cfg.video_duck:
                         self._maybe_duck(rec)
@@ -938,7 +944,7 @@ class WakeWordService(Service):
                     if carry is not None:
                         self._carry_on(inp, rec.sample_rate, carry)
                     return True
-                if not video and self._model_woke(inp, heard, rec.sample_rate, sync=True):
+                if not video and self._model_woke(inp, heard, rec.sample_rate, rec, sync=True):
                     return True  # Vosk missed it, the model didn't (asked before the sentence is forgotten)
                 heard.decided()  # no wake phrase in that sentence: it is forgotten
             return False
@@ -1082,15 +1088,18 @@ class WakeWordService(Service):
                  heard, min(confs, default=0.0), self.cfg.min_confidence)
         return heard
 
-    def _model_woke(self, inp: Any, heard: PreRoll, rate: int, *, sync: bool = False) -> bool:
+    def _model_woke(self, inp: Any, heard: PreRoll, rate: int, rec: KeywordRecognizer | None = None, *,
+                    sync: bool = False) -> bool:
         """``wake.oww_mode: primary``: the trained model's score went over ``wake.oww_primary_threshold``: the call
         starts as for Vosk's early wake, with what was said from where the phrase ended (Vosk is the backup).
-        ``sync``: first let the model score the sound so far (Vosk is about to forget that sentence)."""
+        ``sync``: first let the model score the sound so far (Vosk is about to forget that sentence).
+        ``wake.oww_primary_agree``: only with a second opinion (``_second_opinion``)."""
         if getattr(self.cfg, "oww_mode", "off") != "primary" or self._audio_busy or self._stop.is_set():
             return False
         if sync:
             self._model("score_now", self.cfg.oww_confirm_wait_seconds)
-        hit = self._model("take_wake")
+        agree = (lambda: self._second_opinion(rec)) if getattr(self.cfg, "oww_primary_agree", True) else None
+        hit = self._model("take_wake", agree=agree)
         if hit is None:
             return False
         ago, _score, wake_id = hit
@@ -1098,6 +1107,39 @@ class WakeWordService(Service):
         self._detected(MODEL_PHRASE, carry, early=True, wake_id=wake_id)
         self._carry_on(inp, rate, carry)
         return True
+
+    def _note_words(self, result: dict[str, Any] | None) -> None:
+        """Keep the words of a recogniser result a moment (``_second_opinion``)."""
+        if result:
+            self._recent_words.append((time.monotonic(), tuple(_heard_words(result)[0])))
+
+    def _second_opinion(self, rec: KeywordRecognizer | None) -> str | None:
+        """What else says a model wake is real: Vosk heard a word of a wake phrase ("little", "lil", "bot"), sure
+        of it or not, in its words so far or in the last AGREE_SECONDS; or someone's face is in front of the camera
+        (``wake.short_face_seconds``). None: nothing did. On its own the model woke LittleBot about 50 times in a
+        day on a cricket game, the TV and the room's noise, nobody speaking after (the robot, 2026-11-03), and
+        Vosk heard nothing of a wake phrase in those; it does hear part of one when someone says it."""
+        words = {w for _, ph in self._phrases for w in ph} - {"hey"}
+        heard: list[str] = []
+        partial = getattr(rec, "partial", None)
+        if partial is not None:
+            with contextlib.suppress(Exception):
+                heard = str(partial() or "").split()
+        now = time.monotonic()
+        heard += [w for t, toks in self._recent_words if now - t <= AGREE_SECONDS for w in toks]
+        if words.intersection(heard):
+            return "Vosk"
+        if self._face_seen(self.cfg.short_face_seconds):
+            return "a face"
+        return None
+
+    def _face_seen(self, seconds: float) -> bool:
+        """Someone's face was in front of the camera in the last ``seconds`` (False without a camera)."""
+        seen = getattr(getattr(self.ctx, "vision", None), "face_seen_within", None)
+        try:
+            return bool(seen(seconds)) if seen is not None else False
+        except Exception:  # noqa: BLE001 - no camera: nobody seen
+            return False
 
     def _rescue(self, heard: str | None) -> str | None:
         """``wake.oww_mode: rescue``: Vosk heard ``heard`` but wasn't sure of it; a high enough score of the trained

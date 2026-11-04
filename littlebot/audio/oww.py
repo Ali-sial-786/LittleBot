@@ -17,7 +17,8 @@ best score around it, and it logs its own peaks over ``wake.oww_peak_threshold``
 also go to ``data/wake/shadow.jsonl`` (numbers only: no sound, no words), with how the chat went after each wake.
 ``scripts/wake_shadow_report.py`` sums that file up. In ``confirm`` the wake word asks ``score_now`` before waking;
 in ``rescue`` it asks when Vosk heard a wake phrase but wasn't sure of it, and wakes on a high enough score; in
-``primary`` the model's own score over ``wake_threshold`` wakes LittleBot (``take_wake``), Vosk as the backup.
+``primary`` the model's own score over ``wake_threshold`` wakes LittleBot (``take_wake``), Vosk as the backup; with
+``wake.oww_primary_agree`` only when Vosk heard part of a wake phrase too, or someone is in front of the camera.
 
 Anything wrong (a missing file, no onnxruntime, an error while scoring) switches it off with one warning; the wake
 word then goes on exactly as without it.
@@ -219,7 +220,8 @@ class WakeModelCheck:
         self._load_ms = 0
         self._mem_mb: float | None = None
         self._hour = {"since": clock(), "sound": 0, "cpu": 0.0, "best": 0.0, "peaks": 0, "wakes": 0}
-        self.counts = {"vosk_wakes": 0, "agreed": 0, "model_only": 0, "blocked": 0, "model_wakes": 0}
+        self.counts = {"vosk_wakes": 0, "agreed": 0, "model_only": 0, "blocked": 0, "model_wakes": 0,
+                       "model_blocked": 0}
 
     # ------------------------------------------------------------ lifecycle
     def start(self) -> None:
@@ -298,9 +300,12 @@ class WakeModelCheck:
             span = self.window if seconds is None else int(float(seconds) * RATE)
             return self._best(target - span, target)
 
-    def take_wake(self, fresh_seconds: float = PRIMARY_FRESH_SECONDS) -> tuple[int, float, int] | None:
+    def take_wake(self, fresh_seconds: float = PRIMARY_FRESH_SECONDS, *,
+                  agree: Callable[[], str | None] | None = None) -> tuple[int, float, int] | None:
         """``primary``: the model's own wake since the last call, as (samples ago, score, the wake's id for
-        ``outcome``), or None. One per stretch over ``wake_threshold``; an old one (``fresh_seconds``) is dropped."""
+        ``outcome``), or None. One per stretch over ``wake_threshold``; an old one (``fresh_seconds``) is dropped.
+        ``agree`` (``wake.oww_primary_agree``): asked once the wake is taken, it names what else says it is real
+        ("Vosk", "a face"); None drops the wake (noted as blocked, never what was heard)."""
         if not self.working or self.mode != "primary":
             return None
         with self._cv:
@@ -314,12 +319,20 @@ class WakeModelCheck:
             self._peaks = [p for p in self._peaks if p["end"] < hit[0] - self.window]
             self._claimed_to = hit[0] + self.window
         wid = int(self._wall() * 1000)
+        rec: dict[str, Any] = {"t": _iso(self._wall()), "kind": "model_wake", "id": wid,
+                               "model_score": round(hit[1], 3), "mode": self.mode}
+        second = agree() if agree is not None else None
+        if agree is not None and second is None:
+            self.counts["model_blocked"] += 1
+            log.info("wake model: score %.2f, but Vosk heard no part of a wake phrase and nobody is in front of the "
+                     "camera: not waking", hit[1])
+            self._write({**rec, "blocked": True})
+            return None
         self.counts["model_wakes"] += 1
         self._hour["wakes"] += 1
-        log.info("wake model: it woke LittleBot (score %.2f, wake.oww_primary_threshold %.2f)", hit[1],
-                 self.wake_threshold)
-        self._write({"t": _iso(self._wall()), "kind": "model_wake", "id": wid, "model_score": round(hit[1], 3),
-                     "mode": self.mode})
+        log.info("wake model: it woke LittleBot (score %.2f, wake.oww_primary_threshold %.2f%s)", hit[1],
+                 self.wake_threshold, f"; agreed: {second}" if second else "")
+        self._write({**rec, **({"agreed": second} if second else {})})
         return fed - hit[0], hit[1], wid
 
     def vosk_wake(self, vosk_conf: float, *, early: bool = False, video: bool = False,

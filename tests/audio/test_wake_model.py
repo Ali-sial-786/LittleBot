@@ -279,16 +279,22 @@ async def test_rescue_mode_needs_the_model_to_be_sure_too(rig, tmp_path, caplog)
     await until(lambda: r.live.calls, what="live voice started")
 
 
+def _nobody_in_view(r: Any) -> None:
+    r.ctx.vision = type("V", (), {"face_seen_within": staticmethod(lambda _s: False)})()
+
+
 async def test_primary_mode_the_model_wakes_it_on_its_own(rig, tmp_path, caplog):
     # the owner's choice (2026-11-02): the trained model first at 0.45, Vosk as the backup
     caplog.set_level(logging.INFO, logger="littlebot.wake")
     r = await _rig_with_model(rig, tmp_path, 0.3, "primary")
+    _nobody_in_view(r)
     await asyncio.sleep(0.4)
     assert r.live.calls == []  # under 0.45: nothing
-    r.scorer.level = 0.6  # "hey little bot" that Vosk didn't make out at all
+    r.rec.partial_text = "hey little"  # Vosk hasn't made it out yet: a part of it is its agreement
+    r.scorer.level = 0.6
     await until(lambda: r.live.calls, what="live voice started")
     assert r.wake.triggers == 1 and r.live.carries[0].phrase == "hey little bot"
-    assert "wake model: it woke LittleBot (score 0.60, wake.oww_primary_threshold 0.45)" in caplog.text
+    assert "wake model: it woke LittleBot (score 0.60, wake.oww_primary_threshold 0.45; agreed: Vosk)" in caplog.text
     assert "wake word heard (phrase=hey little bot, before the sentence ended)" in caplog.text
     await until(lambda: any(x["kind"] == "model_wake" for x in _journal(r.journal)), what="the wake noted")
     wake = next(x for x in _journal(r.journal) if x["kind"] == "model_wake")
@@ -296,6 +302,55 @@ async def test_primary_mode_the_model_wakes_it_on_its_own(rig, tmp_path, caplog)
     await until(lambda: any(x["kind"] == "outcome" for x in _journal(r.journal)), what="the outcome")
     assert next(x for x in _journal(r.journal) if x["kind"] == "outcome")["id"] == wake["id"]
     assert not any(x["kind"] == "model_only" for x in _journal(r.journal))  # its own wake, not a stray peak
+
+
+async def test_primary_mode_the_model_alone_doesnt_wake_it(rig, tmp_path, caplog):
+    # a cricket game, the TV: the model went over 0.45 ~50 times in a day, Vosk heard nothing of a wake phrase and
+    # nobody spoke after (the robot, 2026-11-03)
+    caplog.set_level(logging.INFO, logger="littlebot.wake")
+    r = await _rig_with_model(rig, tmp_path, 0.2, "primary")
+    faces = {"seen": False}
+    r.ctx.vision = type("V", (), {"face_seen_within": staticmethod(lambda _s: faces["seen"])})()
+    await asyncio.sleep(0.3)
+    r.rec.partial_text = "the ball"
+    r.scorer.level = 0.97
+    await until(lambda: "not waking" in caplog.text, what="the blocked model wake")
+    await asyncio.sleep(0.3)
+    assert r.live.calls == [] and r.wake.triggers == 0 and r.wake.status()["listening"]
+    assert ("wake model: score 0.97, but Vosk heard no part of a wake phrase and nobody is in front of the camera: "
+            "not waking") in caplog.text
+    await until(lambda: any(x["kind"] == "model_wake" for x in _journal(r.journal)), what="the blocked wake noted")
+    rec = next(x for x in _journal(r.journal) if x["kind"] == "model_wake")
+    assert rec["blocked"] is True and "agreed" not in rec
+    assert r.wake.status()["wake_model"]["model_blocked"] == 1
+    # someone in front of the camera is a second opinion too
+    r.scorer.level = 0.1
+    await asyncio.sleep(0.3)
+    faces["seen"] = True
+    r.scorer.level = 0.8
+    await until(lambda: r.live.calls, what="live voice started")
+    assert "wake model: it woke LittleBot (score 0.80, wake.oww_primary_threshold 0.45; agreed: a face)" in caplog.text
+
+
+async def test_primary_mode_a_word_vosk_heard_just_before_agrees(rig, tmp_path):
+    r = await _rig_with_model(rig, tmp_path, 0.1, "primary")
+    _nobody_in_view(r)
+    await asyncio.sleep(0.3)
+    r.rec.say("little but", conf=0.4)  # "hey little bot" heard as something else, the sentence over
+    await asyncio.sleep(0.3)
+    assert r.live.calls == []
+    r.scorer.level = 0.7
+    await until(lambda: r.live.calls, what="live voice started")
+
+
+async def test_primary_mode_without_agree_the_model_wakes_it_alone(rig, tmp_path, caplog):
+    caplog.set_level(logging.INFO, logger="littlebot.wake")
+    r = await _rig_with_model(rig, tmp_path, 0.1, "primary", oww_primary_agree=False)
+    _nobody_in_view(r)
+    await asyncio.sleep(0.3)
+    r.scorer.level = 0.6
+    await until(lambda: r.live.calls, what="live voice started")
+    assert "wake model: it woke LittleBot (score 0.60, wake.oww_primary_threshold 0.45)" in caplog.text
 
 
 async def test_primary_mode_vosk_is_the_backup(rig, tmp_path):

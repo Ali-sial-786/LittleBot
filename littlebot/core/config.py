@@ -262,6 +262,11 @@ class WakeConfig(_Section):
     # Anything wrong with it (files, onnxruntime) switches it off with one warning: then Vosk alone, as before.
     oww_mode: Literal["off", "shadow", "confirm", "rescue", "primary"] = "off"
     oww_primary_threshold: float = Field(default=0.45, ge=0.05, le=1.0)
+    # primary: the model's score wakes LittleBot only with a second opinion: Vosk heard a word of a wake phrase
+    # ("little", "lil", "bot", even unsure) in the same few seconds, or someone's face is in front of the camera.
+    # Alone it woke LittleBot ~50 times in a day on a cricket game, the TV and the room's noise, with nobody
+    # speaking after (the robot, 2026-11-03). false: the model alone wakes it, as before.
+    oww_primary_agree: bool = True
     oww_rescue_threshold: float = Field(default=0.7, ge=0.0, le=1.0)
     oww_rescue_seconds: float = Field(default=5.0, gt=0.0, le=9.0)  # a Vosk result comes after their sentence
     oww_threshold: float = Field(default=0.5, ge=0.0, le=1.0)  # confirm: Vosk's wake counts at this score or more

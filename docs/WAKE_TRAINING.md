@@ -10,7 +10,8 @@ how that model is made, on the robot itself, with [openWakeWord](https://github.
 > | Run | Clips | Network, steps | Caught at 0.5 | False alarms an hour | Where |
 > |---|---|---|---|---|---|
 > | 1 (1 November, 03:16 to 06:52) | 10,000 wake word, 8,000 near misses | 32 wide, 50,000 | 68% | about 1.1 | `~/wwtrain/hey_little_bot/run1` |
-> | 2 (1 November, 11:57 to 22:22) | 40,000 wake word, 24,000 near misses, each in two rooms | 64 wide, 200,000 | 78% | about 2.5 | `~/wwtrain/hey_little_bot` |
+> | 2 (1 November, 11:57 to 22:22) | 40,000 wake word, 24,000 near misses, each in two rooms | 64 wide, 200,000 | 78% | about 2.5 | `~/wwtrain/hey_little_bot/run2` |
+> | 3 (3 November, from 15:03) | as run 2, made again, plus 111 of Ali's own (89 trained on, 22 held back) | 64 wide, 200,000 | stopped at 15:11 (1,200 of the 40,000 voices made) when the robot lost power; not restarted | | `~/wwtrain/hey_little_bot` |
 >
 > On its own neither is good enough to replace Vosk. Run 2 now listens **next to Vosk, in shadow mode**: it only
 > measures and logs, and changes nothing about when LittleBot wakes (see [Shadow mode](#shadow-mode-the-model-next-to-vosk)
@@ -112,7 +113,8 @@ systemctl --user restart littlebot
 | Setting | Default | What it does |
 |---|---|---|
 | `wake.oww_mode` | `off` | `off`, `shadow` (log only), `confirm`, `rescue` or `primary` (see below). The robot has `primary` (since 2026-11-02). |
-| `wake.oww_primary_threshold` | `0.45` | primary: the model's score that wakes LittleBot by itself |
+| `wake.oww_primary_threshold` | `0.45` | primary: the model's score that wakes LittleBot |
+| `wake.oww_primary_agree` | `true` | primary: only with a second opinion (Vosk heard part of a wake phrase, or a face is in front of the camera; see below) |
 | `wake.oww_threshold` | `0.5` | confirm: the score Vosk's wake needs |
 | `wake.oww_rescue_threshold` | `0.7` | rescue: the model's score that wakes it when Vosk wasn't sure |
 | `wake.oww_rescue_seconds` | `5.0` | rescue: how far back the model's score is looked at (Vosk's result comes after the sentence) |
@@ -176,6 +178,20 @@ false wake). On 2026-11-02 the model scored 0.5 or more about four times an hour
 expect some wakes on their own; each listens for a few seconds and closes. Back to Vosk first:
 `scripts/set_config.py wake.oww_mode rescue` (or `shadow`) and restart.
 
+**A second opinion (since 3 November).** Alone, the model woke LittleBot about 50 times in its first day with
+nobody speaking after (a cricket game on the TV, the room's noise; scores up to 0.99), against about 15 real
+requests. In those, Vosk had heard nothing of a wake phrase; when someone says it, Vosk hears at least part of it.
+So with `wake.oww_primary_agree` (on by default) the model's wake counts only when Vosk heard a word of a wake
+phrase ("little", "lil" or "bot", sure of it or not) in the same few seconds (`AGREE_SECONDS`, 3), or someone's
+face is in front of the camera (`wake.short_face_seconds`). Otherwise the log says `wake model: score 0.97, but Vosk
+heard no part of a wake phrase and nobody is in front of the camera: not waking`, and the journal has a
+`model_wake` line with `"blocked": true`. A wake that went through says what agreed (`; agreed: Vosk` or `; agreed:
+a face`). The model alone again: `scripts/set_config.py wake.oww_primary_agree false` and restart.
+
+Vosk's own mishears on TV speech are not caught this way (on election night it heard "lil bot" at 0.82-1.00 in a
+newsreader's words, the model scoring 0.00). For those the brain is told that the first words after a wake may be
+the TV, a video, a game or people talking to each other, and to end the chat without a word if they plainly are.
+
 ## Memory: run it with the limit
 
 The robot has 4 GB and LittleBot itself uses about 800 MB. On 1 November 2026 a step of the download that read a
@@ -205,8 +221,23 @@ up to 15 minutes / 50 MB) of someone saying "hey little bot" over and over, with
 Vosk held to the wake phrases marks each word, and every "hey little bot" is cut out as a 16 kHz WAV in
 `data/wake_clips/<name>/` (littlebot/audio/wake_clips.py). Only the clips are kept, never the recording, and nothing
 leaves the robot. About 100 clips per person is enough. Run together, a free Vosk found none of 20 phrases and the
-held one found all 20 (espeak, 2026-11-03). The next training run adds them to the made-up positives
-(not wired into `~/wwtrain/train.py` yet).
+held one found all 20 (espeak, 2026-11-03).
+
+The training uses them (from run 3): the `features` step reads `~/LittleBot/data/wake_clips/` (or `$WAKE_CLIPS`),
+holds back every 5th clip of each person for the check and puts each of the others in 100 rooms and sounds (the
+made-up ones get 2); `train` puts 8 of them in every batch next to the 50 made-up ones; `check` adds how many of
+the held-back ones it catches (`family_caught` in `check.json`, and `the family's own clips caught` in the log).
+With the made-up clips and their features still in `~/wwtrain/hey_little_bot`, only the family's features are new
+(a few minutes), so a run is about the training's 3 to 4 hours. Run 2's were deleted on 3 November (at 01:25), so
+run 3 makes them again: about 13 hours in all (voices 7 to 8, features 1.5, training 3.6). Move the last model out
+first (the robot's own copy in `data/wake/` is not touched):
+
+```
+cd ~/wwtrain/hey_little_bot && mkdir -p run2 && mv hey_little_bot.onnx hey_little_bot.pt check.json run2/
+cd ~/wwtrain && (nohup bash ~/LittleBot/scripts/wake_training/run_all.sh > train.log 2>&1 < /dev/null &)
+```
+
+A new recording changes how many clips there are, so their features are made again on the next run.
 
 Code: `scripts/wake_training/setup.sh`, `download.sh`, `train.py`, `run_all.sh`; on LittleBot `littlebot/audio/oww.py`
 and `scripts/wake_shadow_report.py`.
