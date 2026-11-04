@@ -31,6 +31,7 @@ Run them on the robot as the desktop user. Each step prints its command and runs
 | 3 | `scripts/setup_waydroid.sh start` | starts Android (a minute or two the first time) and shows it full screen; sign in to Google Play there |
 | 4 | `scripts/setup_waydroid.sh play-id` | prints Android's ID: register it at https://www.google.com/android/uncertified, wait a few minutes, then `stop` and `start` |
 | 5 | `scripts/setup_waydroid.sh aosu` | opens the Aosu app (install "aosu" from Play first; its package is `com.glazero.android`). Try a camera's live view |
+| type | `ssh -t alisial3@littlebot.local LittleBot/scripts/setup_waydroid.sh type` | no keyboard on the robot: tap a box in Android (email, password, code), then type the text on your computer. It isn't shown or saved, and goes into Android through `sudo waydroid shell` on stdin (Android's `input text`), never on a command line. An empty line ends it |
 | off | `scripts/setup_waydroid.sh stop` | Android off (its memory back for LittleBot). LittleBot does this by itself once Android isn't on the screen |
 | undo | `scripts/setup_waydroid.sh undo` then `sudo reboot` | the usual 16K kernel back (the marked block and `psi=1` removed; one blank line stays in config.txt). `undo --remove` also uninstalls Waydroid and deletes Android with everything signed in to it |
 

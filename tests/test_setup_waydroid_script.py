@@ -19,8 +19,16 @@ def test_the_script_asks_before_changing_anything() -> None:
     ask = text.index('read -r -p "Run it now?')
     assert text.index('bash -c "$2"') > ask  # the only place a change is run
     assert '[ ! -t 0 ]' in text  # not on a terminal: only prints
-    for step in ("kernel", "install", "start", "play-id", "aosu", "stop", "undo"):
+    for step in ("kernel", "install", "start", "play-id", "aosu", "type", "stop", "undo"):
         assert f"\n  {step}) " in text, step
+
+
+def test_typing_keeps_the_text_off_command_lines() -> None:
+    text = SCRIPT.read_text(encoding="utf-8")
+    body = text[text.index("cmd_type() {"):text.index("cmd_stop() {")]
+    assert 'read -r -s -p' in body  # not shown while typed
+    assert """printf '%s\\n' "$text" | sudo waydroid shell -- sh -c 'IFS= read -r t; input text "$t"'""" in body
+    assert body.count("$text") == 2  # tested, piped: never an argument of a program
 
 
 def test_step_one_is_backed_up_marked_and_undone() -> None:

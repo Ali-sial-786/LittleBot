@@ -8,6 +8,7 @@
 #   scripts/setup_waydroid.sh start         # step 3: Android on the robot's screen (or "Hey LittleBot, open Android")
 #   scripts/setup_waydroid.sh play-id       # step 4: the number to register at google.com/android/uncertified
 #   scripts/setup_waydroid.sh aosu          # step 5: open the Aosu app (installed from Play in Android)
+#   scripts/setup_waydroid.sh type          # no keyboard: what you type here (hidden) goes into the box tapped in Android
 #   scripts/setup_waydroid.sh stop          # Android off again (its memory back for LittleBot)
 #   scripts/setup_waydroid.sh undo          # the usual 16K kernel back (reboot after); Waydroid stays installed
 #   scripts/setup_waydroid.sh undo --remove # ... and Waydroid with its Android images removed too
@@ -179,6 +180,26 @@ cmd_aosu() {
   fi
 }
 
+cmd_type() {  # typing into Android from another computer's keyboard (over ssh -t), for sign-ins
+  have_cmd waydroid && session_running || { echo "Android isn't running: say \"Hey LittleBot, open Android\" first." >&2; exit 1; }
+  [ -t 0 ] || { echo "Run it on a terminal: ssh -t alisial3@littlebot.local LittleBot/scripts/setup_waydroid.sh type" >&2; exit 1; }
+  echo "Tap the box on LittleBot's screen first (email, password, code ...). Empty line: done."
+  local text
+  while true; do
+    IFS= read -r -s -p "Text for the box (not shown, not saved): " text
+    echo
+    [ -n "$text" ] || break
+    # through stdin, never on a command line here (printf is bash's own); Android's input command types it
+    # (it can't type emoji or other characters missing from a keyboard; "%s" in the text becomes a space)
+    if printf '%s\n' "$text" | sudo waydroid shell -- sh -c 'IFS= read -r t; input text "$t"'; then
+      echo "Typed. Tap the next box (or Next / Sign in on the screen), then type again."
+    else
+      echo "Typing didn't work (is Android's window in front?)." >&2
+    fi
+  done
+  text=""
+}
+
 cmd_stop() {
   have_cmd waydroid || exit 0
   if session_running; then waydroid session stop; echo "Android stopped."; else echo "Android isn't running."; fi
@@ -216,8 +237,9 @@ case "${1:-check}" in
   start) cmd_start ;;
   play-id) cmd_play_id ;;
   aosu) cmd_aosu ;;
+  type) cmd_type ;;
   stop) cmd_stop ;;
   undo) cmd_undo "$@" ;;
-  -h|--help|help) sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//' ;;
+  -h|--help|help) sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//' ;;
   *) echo "unknown step: $1 (try --help)" >&2; exit 2 ;;
 esac
