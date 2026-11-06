@@ -358,6 +358,9 @@ def test_camera_live_view_on_a_phone(phone):
     expect(stage.get_by_text("Press “Start live view” to see what LittleBot sees.")).to_be_visible()
     vision = phone.bot.ctx.vision
     assert vision.status()["live_view"]["viewers"] == 0  # nothing until the parent presses Start
+    stream_requests, frame_requests = [], []
+    page.on("request", lambda r: stream_requests.append(r.url) if "/api/camera/stream" in r.url
+            else frame_requests.append(r.url) if "/api/camera/frame" in r.url else None)
     page.get_by_role("button", name="Start live view").click()
     expect(page.locator(".cam-live")).to_be_visible()
     expect(page.locator(".cam-fps")).to_have_text(re.compile(r"^\d+\.\d fps$"))
@@ -367,7 +370,9 @@ def test_camera_live_view_on_a_phone(phone):
         const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
         let sum = 0; for (let i = 0; i < d.length; i += 397) sum += d[i];
         return [c.width, c.height, sum]; }""")
-    assert 0 < painted[0] <= 480 and painted[0] * 3 == painted[1] * 4 and painted[2] > 0  # the mock camera's picture
+    cc = phone.bot.ctx.config.camera  # the mock camera's picture, in the configured shape (16:9 for 1080p)
+    assert 0 < painted[0] <= 480 and painted[0] * cc.capture_height == painted[1] * cc.capture_width and painted[2] > 0
+    assert stream_requests and not frame_requests  # one stream, not one request per frame
     expect(page.get_by_text(re.compile(r"^1 device \(this one\)$"))).to_be_visible()
     with page.expect_download() as download:
         page.get_by_role("button", name="Take snapshot").click()
