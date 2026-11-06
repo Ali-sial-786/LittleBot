@@ -126,6 +126,23 @@ def test_say_cheese_then_the_new_photo(tmp_path: Path) -> None:
     assert not card.animating and card.linger_seconds == 8
 
 
+def test_the_gallery_and_the_code_go_after_30_seconds(svc, clock, tmp_path: Path) -> None:
+    """Once nobody talks or touches it, the face comes back after 30 s (then it dozes and sleeps as usual)."""
+    g, items = _gallery(tmp_path)
+    for card in (G.GalleryCard({}, gallery=g, items=items),
+                 G.ShareCard({}, url="http://192.168.2.112:8765/share/AbCdEfGhIjKlMnOpQrStUv", item=items[0])):
+        svc.show_card(card)
+        clock.advance(29)
+        svc.tick()
+        assert svc.active
+        clock.advance(1.5)
+        svc.tick()
+        assert not svc.active
+    assert G.GalleryCard({}, items=items, slideshow=True).linger_seconds == 30  # 3 photos: 15 s, at least 30
+    assert G.GalleryCard({}, items=items * 4, slideshow=True).linger_seconds == 12 * G.SLIDESHOW_S  # once through
+    assert G.GalleryCard({}, items=items * 100, slideshow=True).linger_seconds == G.SLIDESHOW_MAX_S
+
+
 def test_a_failed_photo_says_why(tmp_path: Path) -> None:
     card = G.GalleryCard({}, RecordingHost(), items=[], countdown=3)
     card.failed("The camera is switched off in Privacy.")

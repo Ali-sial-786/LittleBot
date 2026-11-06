@@ -50,6 +50,19 @@ PRELOAD_MODULES = ("anthropic", "littlebot.brain.text_model", "littlebot.brain.p
                    "littlebot.chatgpt.responses", "littlebot.assistant.session", "littlebot.chatgpt.live_audio",
                    "littlebot.chatgpt.tools", "littlebot.assistant.tts", "littlebot.assistant.stt")
 DONE_TURNS = 4  # the history's note of what the tools did covers this many recent turns
+LIVE_SPEAKER_FRESH_S = 60.0  # GPT-Live: a voice recognised this recently is still who is talking
+# An answer they talked over: told in front of their next words, never in the answer's own. An answer kept as
+# "... (interrupted)" taught the brain to write "(interrupted)" itself and stop ("Let me look again. (interrupted)",
+# no look), and the safety check put its stock "Let's do something fun. Can you show me a big smile?" in its place
+# (the robot's brain, 2026-11-06).
+CUT_CONTEXT = "they talked over your answer above, so they heard only that much of it"
+CUT_NOTE = f"[Context, not said by them: {CUT_CONTEXT}]\n"
+
+
+def _cut(text: str, n: int) -> str:
+    """``text`` at most ``n`` characters, cut between words ("..." when cut)."""
+    text = " ".join(text.split()).replace(";", ",")
+    return text if len(text) <= n else text[:n].rsplit(" ", 1)[0].rstrip(",.:") + "..."
 
 
 def _import_all(names: tuple[str, ...]) -> list[str]:
@@ -72,16 +85,17 @@ class History:
         self.turns = int(turns)
         self.minutes = float(minutes)
         self._now = now
-        self._items: collections.deque[tuple[float, str, str, tuple[str, ...]]] = collections.deque(
+        self._items: collections.deque[tuple[float, str, str, tuple[str, ...], bool]] = collections.deque(
             maxlen=max(1, self.turns))
 
-    def add(self, user: str, assistant: str, done: list[str] | None = None) -> None:
-        """``done``: what its tools did in that turn ("volume_down: Volume 50%"), see :meth:`done_note`."""
+    def add(self, user: str, assistant: str, done: list[str] | None = None, *, cut: bool = False) -> None:
+        """``done``: what its tools did in that turn ("volume_down: Volume 50%"), see :meth:`done_note`. ``cut``:
+        they talked over the answer, so ``assistant`` is only what they heard of it (CUT_NOTE)."""
         if self.turns <= 0 or not (user.strip() or assistant.strip()):
             return
-        self._items.append((self._now(), user.strip()[:2000], assistant.strip()[:2000], tuple(done or ())))
+        self._items.append((self._now(), user.strip()[:2000], assistant.strip()[:2000], tuple(done or ()), bool(cut)))
 
-    def _fresh(self) -> list[tuple[float, str, str, tuple[str, ...]]]:
+    def _fresh(self) -> list[tuple[float, str, str, tuple[str, ...], bool]]:
         cutoff = self._now() - self.minutes * 60
         while self._items and self._items[0][0] < cutoff:
             self._items.popleft()
@@ -89,17 +103,28 @@ class History:
 
     def messages(self) -> list[dict[str, str]]:
         out: list[dict[str, str]] = []
-        for _, user, assistant, _done in self._fresh():
-            out += [{"role": "user", "content": user}, {"role": "assistant", "content": assistant}]
+        cut_before = False
+        for _, user, assistant, _done, cut in self._fresh():
+            out += [{"role": "user", "content": CUT_NOTE + user if cut_before else user},
+                    {"role": "assistant", "content": assistant}]
+            cut_before = cut
         return out
 
     def done_note(self) -> str:
         """A context note of what the tools really did in the earlier turns, or "". The history keeps only the
         words, so without it the brain doubts its own actions ("I never actually checked the volume")."""
-        turns = [f'after "{user[:60]}": ' + "; ".join(done) for _, user, _a, done in self._fresh()[-DONE_TURNS:]
-                 if done]
+        # (no ";" in it: the context notes are joined with "; ", and the brain read the next note as part of a tool's
+        # result cut short; the robot, 2026-11-06)
+        turns = [f'after "{_cut(user, 60)}": ' + ", ".join(d.replace(";", ",") for d in done)
+                 for _, user, _a, done, _was_cut in self._fresh()[-DONE_TURNS:] if done]
         return ("what your tools really did earlier in this chat (it happened, trust it): " + " | ".join(turns)
                 if turns else "")
+
+    def cut_note(self) -> str:
+        """For the turn right after one they talked over: CUT_NOTE as a context note (``messages`` puts it in front
+        of the next words kept, but the words of this turn aren't kept yet), or ""."""
+        fresh = self._fresh()
+        return CUT_CONTEXT if fresh and fresh[-1][4] else ""
 
     def clear(self) -> None:
         self._items.clear()
@@ -210,6 +235,29 @@ class AssistantService(Service):
             return session.speaker
         except Exception:  # noqa: BLE001
             return None
+
+    async def identify_speaker(self) -> Any:
+        """Who is talking, for something meant for one person (the camera's "send it to my phone"): by voice, else a
+        fresh look with the camera (``Session.identify``). Outside a conversation of this pipeline (GPT-Live), only
+        the look. A sure ``assistant.who.Who``, or None."""
+        session = self._session
+        if session is not None and not getattr(session, "ended", False) and hasattr(session, "identify"):
+            try:
+                return await session.identify()
+            except Exception:  # noqa: BLE001 - not knowing who is talking must never break a turn
+                log.debug("assistant: identifying the speaker failed", exc_info=True)
+                return None
+        from littlebot.assistant.who import Who, by_face, child_test, look_now  # noqa: PLC0415
+
+        heard = None  # GPT-Live's own voice recognition: its latest turn, when recent and clear
+        with contextlib.suppress(Exception):
+            last = self.ctx.bus.recent(1, Topics.VOICE_SPEAKER)
+            if last and time.monotonic() - last[-1].ts <= LIVE_SPEAKER_FRESH_S:
+                heard = last[-1].data
+        if heard and heard.get("person_id") is not None and not heard.get("is_child") and heard.get("name"):
+            return Who(int(heard["person_id"]), str(heard["name"]), str(heard.get("role") or ""), "voice", sure=True)
+        people = await look_now(self.ctx)
+        return by_face(people, None, child_test(self.ctx)) if people is not None else None
 
     def use_cascade(self) -> bool:
         mode = self.cfg.pipeline

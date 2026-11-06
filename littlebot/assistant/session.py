@@ -52,6 +52,7 @@ THINKING_REPEAT_S = 2.2
 QUESTION_FOLLOW_UP_S = 10.0  # LittleBot asked them something: wait at least this long for the answer
 HEARD_KEEP_S = 12.0  # the microphone kept (in memory only) to recognise whose voice a turn was
 IDENTIFY_TIMEOUT_S = 3.0
+IDENTIFY_WAIT_S = 2.5  # something meant for one person waits this long for the voice check of the turn just heard
 SPECULATION_MAX_S = 8.0  # an early answer whose turn is neither confirmed nor resumed by then is dropped
 # Instant intents that steer Spotify when it is what's playing on LittleBot (skills/spotify.py command()).
 SPOTIFY_ACTIONS = {"pause": "pause", "resume": "resume", "skip": "next", "stop_media": "stop"}
@@ -194,6 +195,7 @@ class VoiceSession:
         self._heard_audio: collections.deque[np.ndarray] = collections.deque()  # the last HEARD_KEEP_S, 16 kHz
         self._heard_n = 0
         self._faces: Any = None  # vision.faces.CallFaces while face recognition can look
+        self._identifying: asyncio.Task[Any] | None = None  # the voice check of the turn just heard
 
     # ------------------------------------------------------------ status
     def snapshot(self) -> dict[str, Any]:
@@ -687,6 +689,8 @@ class VoiceSession:
         video_on, spotify = self._media_on()
         if intents.match(text, media_on=video_on or spotify is not None, recording_on=self._recording()):
             return False
+        if intents.camera_asking(self.ctx):  # the answer to "whose phone?" sends a photo: never early
+            return False
         hub = getattr(self.ctx, "skills", None)
         games = hub.get("voice_games") if hub is not None and hasattr(hub, "get") else None
         if games is not None and getattr(games, "active", None) is not None:
@@ -781,6 +785,7 @@ class VoiceSession:
             local = await self._local_answer(text, box) if gate is None else None
             if local is not None:
                 said_by, words, end = local
+                done.extend(_intent_done(said_by, words))
                 for s in _sentences(words):
                     say(s)
                 if end:
@@ -790,7 +795,8 @@ class VoiceSession:
                 result = await self.svc.brain.respond(text, history=self.svc.history.messages(), toolbox=tools,
                                                       on_sentence=say, on_tool=self._tool_started, mark_day=False,
                                                       extra=[*self.who_notes(), *self._turn_notes(gate),
-                                                             self.svc.history.done_note(), self._jokes_note(text)],
+                                                             self.svc.history.done_note(),
+                                                             self.svc.history.cut_note(), self._jokes_note(text)],
                                                       extra_tools=self._session_tools(), done=done,
                                                       first_words=True)
                 if result.error and not result.sentences:
@@ -819,7 +825,7 @@ class VoiceSession:
             with contextlib.suppress(Exception):
                 self.svc.brain.talked_today()
         if heard and said_by != "stop":
-            self.svc.history.add(text, heard, list(getattr(result, "done", None) or []))
+            self.svc.history.add(text, heard, list(done))
             jokes = getattr(self.svc, "jokes", None)
             if jokes is not None and said_by == "brain":
                 with contextlib.suppress(Exception):
@@ -905,6 +911,9 @@ class VoiceSession:
         alarm = self._alarm_answer(text)
         if alarm is not None:
             return "alarm", alarm, False
+        whose = await intents.camera_reply(text, box, self.ctx)  # "Ali's" to "whose phone should I send it to?"
+        if whose is not None:
+            return "intent:send_photo", whose, False
         video_on, spotify = self._media_on()
         hit = intents.match(text, media_on=video_on or spotify is not None, recording_on=self._recording())
         if hit is not None:
@@ -1014,7 +1023,7 @@ class VoiceSession:
         self._claim = _claim(self.ctx, voices, text) if text else None
         audio = np.concatenate(list(self._heard_audio))
         keep = int(min(HEARD_KEEP_S, max(1.0, spoke_ms / 1000 + 0.6)) * STT_RATE)
-        self._spawn(self._identify(audio[-keep:], STT_RATE, learn=True))
+        self._identifying = self._spawn(self._identify(audio[-keep:], STT_RATE, learn=True))
 
     async def _identify(self, samples: np.ndarray, rate: int, *, learn: bool = False) -> None:
         voices = self._voices()
@@ -1162,6 +1171,40 @@ class VoiceSession:
         """Who is talking now (``assistant.who.Who``), or None."""
         return self.who.current() if self.who is not None else None
 
+    async def identify(self, *, wait: float = IDENTIFY_WAIT_S) -> Any:
+        """Who is talking, for something meant for one person (a photo sent to their phone): by voice first (the
+        check of the turn just heard is waited for, at most ``wait`` seconds); when the voice isn't sure, a fresh
+        look with the camera (``assistant.who.by_face``). A sure ``Who``, or None when neither can tell."""
+        task = self._identifying
+        if task is not None and not task.done():
+            with contextlib.suppress(Exception):
+                await asyncio.wait({task}, timeout=wait)
+        who = self.speaker
+        if who is not None and who.sure:
+            return who
+        from littlebot.assistant.who import by_face, look_now  # noqa: PLC0415
+
+        faces = self._faces
+        people: list[Any] | None = None
+        if faces is not None:  # the call's own face checks: this look also tells the brain who is here
+            before = faces.latest_at
+            with contextlib.suppress(Exception):
+                await faces.answer_now()
+            if faces.latest is not None and faces.latest_at is not None and faces.latest_at != before:
+                people = list(faces.latest.people())
+        else:
+            people = await look_now(self.ctx)
+        if people is None:
+            log.info("assistant: not sure who is talking, and the camera can't look")
+            return None
+        tracker = self._tracker()
+        tracker.faces(people)
+        found = by_face(people, who, tracker._is_child)  # noqa: SLF001 - the tracker's own child test
+        log.info("assistant: %s", f"by a look with the camera, talking with {found.label} (by {found.how})"
+                 if found is not None else f"a look with the camera didn't settle who is talking ({len(people)} "
+                                           "known face(s) in view)")
+        return found
+
     def _alarm_answer(self, text: str) -> str | None:
         """An alarm or reminder is ringing: "stop" / "okay" stops it, "snooze" snoozes it (no model needed)."""
         hub = getattr(self.ctx, "skills", None)
@@ -1301,7 +1344,7 @@ class VoiceSession:
             done = list(self._answer_done)
             if any(getattr(p, "takeover", True) for p in getattr(self._toolbox, "pending", None) or []):
                 done.append("but they cut in, so what was to start after the answer did NOT start")
-            self.svc.history.add(self._answer_text, " ".join(voice.heard) + " (interrupted)", done)
+            self.svc.history.add(self._answer_text, " ".join(voice.heard), done, cut=True)
             with contextlib.suppress(Exception):
                 self.svc.brain.talked_today()
 
@@ -1639,6 +1682,26 @@ async def _run_quiet(items: list[Any]) -> None:
             continue
         if started is not False:
             log.info("after the turn: %s (under the answer)", label)
+
+
+# An instant command's turn kept in the history as the tool it stands for: with none, "How did you send it?" after
+# "Can you send this picture to my phone?" -> "Sent to your phone." got "I should have checked that earlier: my last
+# answer said it was sent, but I hadn't actually called the tool for it", and the photo was sent again (the robot,
+# 2026-11-06).
+INTENT_TOOLS = {"photo": "take_photo", "record": "start_recording", "stop_record": "stop_recording",
+                "show_photos": "show_photos", "send_photo": "send_photo_to_phone", "volume": "set_volume",
+                "pause": "pause_video", "resume": "resume_video", "skip": "skip_video", "stop_media": "stop_video"}
+
+
+def _intent_done(said_by: str, words: str) -> list[str]:
+    """For the history's note of what the tools did: an instant command's turn ("intent:send_photo"), or []."""
+    tool = INTENT_TOOLS.get(said_by.removeprefix("intent:"))
+    if tool is None:
+        return []
+    said = " ".join(str(words or "").split()).replace(";", ",")[:100]
+    if said.endswith("?"):  # "Whose phone should I send it to: Ali's or Sara's?": nothing done yet
+        return [f'{tool}: not done yet, your instant command asked "{said}"']
+    return [f"{tool}: done by your instant command" + (f', and you said "{said}"' if said else "")]
 
 
 def _sentences(text: str) -> list[Sentence]:

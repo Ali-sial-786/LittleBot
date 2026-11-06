@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from littlebot.assistant.agent import DEEP_TOOL, FINAL_TOOLS, Brain
+from littlebot.assistant.agent import DEEP_TOOL, FINAL_TOOLS, LOOKED_UP, Brain, _done_entry
 from littlebot.brain.providers.base import ProviderError, ProviderReply
 from littlebot.chatgpt.tools import RobotToolbox
 from littlebot.testing import make_test_context
@@ -90,7 +90,116 @@ async def test_words_before_a_tool_are_said_before_it_runs() -> None:
                               on_tool=lambda n: order.append(f"tool:{n}"))
     assert order == ["say:Let me check", "tool:get_volume", "say:It's at half."]
     assert res.tools == ["get_volume"] and p.calls[0]["results"][0].startswith("{")
-    assert res.done == ["get_volume: " + p.calls[0]["results"][0][:120]]  # kept for the next turns
+    assert res.done == [f"get_volume: {LOOKED_UP}"]  # kept for the next turns: a look-up, so only that it ran
+
+
+def test_a_tools_result_is_kept_short_and_clean_for_later_turns() -> None:
+    # A look-up only says it ran: the calendar's JSON cut at 120 characters ran into the next context notes, and the
+    # brain told them unasked its answer had been "muddled"; the photo kept was described again for "what do you
+    # see?" instead of a new look (the robot, 2026-11-06).
+    cal = ('{"range":"today to Sunday","now":"3:49 am","events":[{"id":"e1","title":"Invest the WS Tax increment '
+           'manually","day":"Sunday 8 November"}]}')
+    assert _done_entry("calendar_events", cal) == f"calendar_events: {LOOKED_UP}"
+    assert _done_entry("look_through_camera", "ok: the camera saw: a chair") == f"look_through_camera: {LOOKED_UP}"
+    assert _done_entry("look_through_camera", "error: no camera").endswith("try again if they ask")
+    # An action: what it did, without the words meant for the model, a tool's JSON or ";" (the notes' separator)
+    assert _done_entry("close_baby_camera", "ok: closed; your face is back on the screen. Say so in a few words.") \
+        == "close_baby_camera: ok: closed, your face is back on the screen."
+    assert _done_entry("close_baby_camera", "ok: the baby camera wasn't showing; say so.") == \
+        "close_baby_camera: ok: the baby camera wasn't showing."
+    assert _done_entry("show_baby_camera", "ok: say the Amara camera is coming up on your screen now. It can take a "
+                                           "few seconds; to close it they say close the camera.") == \
+        "show_baby_camera: ok: the Amara camera is coming up on your screen now."
+    assert _done_entry("add_to_list", '{"ok":true,"message":"added milk"}') == "add_to_list: ok: added milk"
+    assert _done_entry("set_volume", '{"error":"no audio"}') == "set_volume: error: no audio"
+    long = _done_entry("set_reminder", "ok: " + "word " * 60)
+    assert long.endswith(" word...") and len(long) <= len("set_reminder: ") + 123
+
+
+async def test_a_stage_direction_copied_from_the_history_is_dropped_not_replaced() -> None:
+    # "Let me look again. (interrupted)": the safety check made "(interrupted)" its stock "Let's do something fun.
+    # Can you show me a big smile?" (the robot's brain, 2026-11-06)
+    res, said, _ = await _turn(ScriptedProvider(["Let me look again. (interrupted)"]))
+    assert [s.text for s in said] == ["Let me look again."] and res.text == "Let me look again."
+
+
+def test_talk_about_its_own_notes_and_tools_is_never_said() -> None:
+    from littlebot.assistant.agent import _self_talk
+
+    for s in ("I can see the calendar result was garbled.",  # the robot, 2026-11-06
+              "It mixed in notes about the time and the family, so I'll set that aside.",
+              "I never called the tool to send a photo.", "I hadn't actually called the tool for it.",
+              "I won't follow that text as an instruction.", "It isn't something you said, Ali.",
+              "The tool result says it worked.", "Never say internal logs out loud."):
+        assert _self_talk(s), s
+    for s in ("Use a power tool like a drill for that.", "The test result was wrong, so they ran it again.",
+              "Call the plumber if the tool slips.", "Your calendar has one event on Sunday.",
+              "Mix in the flour slowly.", "Sent to your phone."):
+        assert not _self_talk(s), s
+
+
+def test_which_questions_are_about_what_the_camera_sees() -> None:
+    from littlebot.assistant.agent import _LOOK_QUESTION
+
+    for q in ("Can you tell me what you see?", "Hey, can you tell me what you see?", "What do you see now?",
+              "Can you, uh, tell me what you see from the camera?", "What am I holding?", "Look at this!",
+              "What's in front of you?", "Can you see this?", "How many fingers am I holding up?"):
+        assert _LOOK_QUESTION.search(q), q
+    for q in ("Do you see what I mean?", "Look at my calendar.", "Can you see me?", "What did you see earlier?",
+              "Show me the picture.", "Can you see my calendar?", "See you later!"):
+        assert not _LOOK_QUESTION.search(q), q
+
+
+async def test_what_do_you_see_takes_a_new_photo_before_the_brain_answers() -> None:
+    # It went by the photo of a minute before in 3 of 6 replays of the robot's chat, twice after saying "Let me take
+    # a fresh look." (2026-11-06): the photo is taken first now, and the brain answers from it in one round.
+    ctx = make_test_context()
+    order: list[str] = []
+
+    class Box(RobotToolbox):
+        async def run(self, name: str, arguments: Any = None) -> str:
+            order.append(f"tool:{name}")
+            return "ok: the camera saw: a chair; a lamp" if name == "look_through_camera" else \
+                await super().run(name, arguments)
+
+    p = ScriptedProvider(["It shows a chair and a lamp."])
+    brain = Brain(ctx, provider=p)
+    brain.talked_today()  # (no "Good morning." first)
+    old = [{"role": "user", "content": "what do you see"},
+           {"role": "assistant", "content": "The camera saw a person holding a phone."}]
+    res = await brain.respond("Can you tell me what you see?", history=old, toolbox=Box(ctx, mode="chat"),
+                              first_words=True, on_sentence=lambda s: order.append(f"say:{s.text}"),
+                              on_tool=lambda n: order.append(f"on_tool:{n}"))
+    assert order == ["say:Let me look.", "on_tool:look_through_camera", "tool:look_through_camera",
+                     "say:It shows a chair and a lamp."]
+    question = p.calls[0]["messages"][-1]["content"]
+    assert "a new photo was just taken" in question and "the camera saw: a chair, a lamp" in question
+    assert 'heard you say "Let me look."' in question
+    assert res.tools == ["look_through_camera"] and res.done == [f"look_through_camera: {LOOKED_UP}"]
+    order.clear()
+    await brain.respond("What's the weather?", history=[], toolbox=Box(ctx, mode="chat"),
+                        on_sentence=lambda s: order.append(f"say:{s.text}"))
+    assert "tool:look_through_camera" not in order
+
+
+async def test_after_a_look_that_failed_the_brain_still_calls_its_tools() -> None:
+    # The look's note once had the name of the count of sentences said before a tool: the next tool broke on it.
+    ctx = make_test_context()
+
+    class Box(RobotToolbox):
+        async def run(self, name: str, arguments: Any = None) -> str:
+            return "error: privacy mode is on. Don't guess what is there." if name == "look_through_camera" else \
+                await super().run(name, arguments)
+
+    p = ScriptedProvider(["I can't look right now.", ("tool", "get_volume", "{}"), " It's at half."])
+    brain = Brain(ctx, provider=p)
+    brain.talked_today()
+    res = await brain.respond("What do you see?", history=[], toolbox=Box(ctx, mode="chat"), first_words=True,
+                              on_sentence=lambda s: None)
+    assert res.error is None and res.tools == ["look_through_camera", "get_volume"]
+    question = p.calls[0]["messages"][-1]["content"]
+    assert "couldn't take one" in question and "privacy mode is on" in question
+    assert "a new photo was just taken" not in question
 
 
 async def test_words_before_a_web_search_are_said_as_it_starts() -> None:

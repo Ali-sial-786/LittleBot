@@ -149,4 +149,50 @@ class WhoTracker:
         self._who, self._confirmed_at, self._in_view = None, None, []
 
 
-__all__ = ["FACE_HELP_BELOW", "KEEP_BELOW", "STICKY_S", "Who", "WhoTracker"]
+def by_face(people: Sequence[Any], probable: Who | None,
+            is_child: Callable[[str, str], bool] = lambda _n, _r: False) -> Who | None:
+    """Who is talking after a fresh look with the camera (``people``: the ``vision.faces.Known`` in that photo), for
+    something meant for one person (a photo sent to their phone). ``probable``: who the voice probably is (not
+    sure), or None. The one the voice probably is, when they are in view ("voice and face"); else the only grown-up
+    in view, unless the voice sounds like someone else ("face"); else None. Both answers count as sure."""
+    grown = [p for p in people if not is_child(str(p.name), str(p.role))]
+    if probable is not None:
+        seen = next((p for p in grown if int(p.id) == int(probable.person_id)), None)
+        if seen is not None:
+            return Who(int(seen.id), str(seen.name), str(seen.role), "voice and face", sure=True)
+        if "voice" in probable.how:
+            return None  # it sounds like someone who isn't in view: the face can't settle who is talking
+    if len(grown) == 1:
+        p = grown[0]
+        return Who(int(p.id), str(p.name), str(p.role), "face", sure=True)
+    return None
+
+
+def child_test(ctx: Any) -> Callable[[str, str], bool]:
+    """(name, role) -> whether someone on Who's who is the little one (a child's role, or the child's nickname)."""
+    try:
+        from littlebot.brain.prompts import clean_child_name  # noqa: PLC0415
+        from littlebot.vision.faces import is_child  # noqa: PLC0415
+
+        child = clean_child_name((ctx.settings.get("profile") or {}).get("nickname"))
+    except Exception:  # noqa: BLE001
+        return lambda _n, _r: False
+    return lambda name, role: bool(is_child(name, role, child))
+
+
+async def look_now(ctx: Any) -> list[Any] | None:
+    """One fresh photo through face recognition (opt-in, on the robot): the known people in it (``Known``; [] when
+    nobody known is in view or nobody is enrolled), or None when it can't look (off, no camera, camera off)."""
+    try:
+        from littlebot.vision import faces  # noqa: PLC0415
+
+        recognition = faces.get_faces(ctx)
+        if recognition.blocked_reason() is not None:
+            return None
+        sighting = await recognition.who_is_there()
+    except Exception:  # noqa: BLE001 - FacesUnavailable, or no models: it just can't tell
+        return None
+    return [] if sighting is None else list(sighting.people())
+
+
+__all__ = ["FACE_HELP_BELOW", "KEEP_BELOW", "STICKY_S", "Who", "WhoTracker", "by_face", "child_test", "look_now"]

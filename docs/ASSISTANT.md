@@ -75,6 +75,10 @@ wins over both). After an ssh change restart: `systemctl --user restart littlebo
 
 The last 12 exchanges (15 minutes, `history_turns` / `history_minutes`) are kept **in memory only**, so "and
 tomorrow?" works across follow-ups and the next wake word. Nothing is recorded or written anywhere.
+With them goes a short note of what the tools did in the last 4 turns (an instant command such as "send this
+to my phone" counts too), so "how did you send it?" knows it went. A look-up (the calendar, the weather, the
+camera's photo) is kept only as "looked it up then": "what do you see?" always takes a new photo, before the
+brain is asked, and it says "Let me look." meanwhile. An answer you talked over is kept as the words you heard.
 
 ## The brain
 

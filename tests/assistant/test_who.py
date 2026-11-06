@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from littlebot.assistant.who import STICKY_S, WhoTracker
+from littlebot.assistant.who import STICKY_S, Who, WhoTracker, by_face
 from littlebot.voices.service import Heard, VoiceMatch
 
 
@@ -79,3 +79,13 @@ def test_they_say_who_they_are() -> None:
     who = w.said(2, "Sara", "mum")
     assert who.sure and "said" in who.how
     assert "probably" not in who.note()
+
+
+def test_by_face_after_a_look_with_the_camera() -> None:
+    baby = lambda n, r: r == "baby"  # noqa: E731
+    probably_ali = Who(1, "Ali", "dad", "voice", sure=False)
+    assert by_face([ALI, SARA], probably_ali, baby) == Who(1, "Ali", "dad", "voice and face", True)
+    assert by_face([SARA, AMARA], None, baby) == Who(2, "Sara", "mum", "face", True)  # the baby isn't asking
+    assert by_face([SARA], probably_ali, baby) is None  # it sounds like Ali, but only Sara is in view
+    assert by_face([SARA], Who(1, "Ali", "dad", "face", sure=False), baby).name == "Sara"  # an old look
+    assert by_face([ALI, SARA], None, baby) is None and by_face([], None, baby) is None

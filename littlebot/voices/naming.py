@@ -75,6 +75,10 @@ def _role_group(role_text: str) -> set[str]:
     return {_ROLE_OF[w] for w in words if w in _ROLE_OF}
 
 
+ROLE_OF = _ROLE_OF  # a role word ("mommy") -> its group ("mum"); also littlebot/capture/recipients.py
+role_group = _role_group  # a Who's who role ("Amara's grandma") -> its groups ({"grandma"})
+
+
 def _looks_like_name(word: str, robot_name: str) -> bool:
     """A name LittleBot doesn't know yet: capitalised in the transcript, not a common word, not "Ali's"."""
     w = word.lower()
@@ -111,4 +115,4 @@ def claimed(text: str, people: Sequence[dict[str, Any]], *, robot_name: str = "L
     return None
 
 
-__all__ = ["NOT_NAMES", "Claim", "claimed"]
+__all__ = ["NOT_NAMES", "ROLE_OF", "Claim", "claimed", "role_group"]

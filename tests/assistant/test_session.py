@@ -211,6 +211,53 @@ def test_the_tools_note_covers_the_recent_turns_and_goes_with_them() -> None:
     assert h.done_note() == "" and h.messages() == []  # forgotten with the words
 
 
+def test_the_tools_note_never_has_the_context_notes_separator_in_it() -> None:
+    # The context notes are joined with "; ": a tool's result with one in it ran into the next note (the robot,
+    # 2026-11-06). The question is cut between words.
+    from littlebot.assistant.service import History
+
+    h = History(turns=10, minutes=5, now=lambda: 0.0)
+    h.add("Can you tell me what's on my calendar for the whole of this week please; thanks", "One event.",
+          ["close_baby_camera: ok: closed; your face is back"])
+    note = h.done_note()
+    assert ";" not in note
+    assert 'after "Can you tell me what\'s on my calendar for the whole of this...": close_baby_camera: ok: closed, ' \
+           "your face is back" in note
+
+
+def test_an_answer_they_talked_over_has_no_marker_the_brain_could_copy() -> None:
+    # Kept as "... (interrupted)", it taught the brain to write "(interrupted)" itself and stop (2026-11-06): it is
+    # told in front of their next words instead.
+    from littlebot.assistant.service import CUT_CONTEXT, CUT_NOTE, History
+
+    h = History(turns=10, minutes=5, now=lambda: 0.0)
+    h.add("what do you see", "Sorry, my camera", cut=True)
+    assert h.cut_note() == CUT_CONTEXT  # the very next turn is told too: its own words aren't kept yet
+    h.add("try again", "It shows a chair.")
+    assert [m["content"] for m in h.messages()] == ["what do you see", "Sorry, my camera", CUT_NOTE + "try again",
+                                                    "It shows a chair."]
+    assert h.cut_note() == ""  # that answer was heard in full
+
+
+async def test_an_instant_command_is_in_the_tools_note_for_the_next_turns() -> None:
+    # "How did you send it?" after the instant "Sent to your phone." got "I hadn't actually called the tool for it",
+    # and the photo was sent again (the robot, 2026-11-06).
+    from littlebot.assistant.session import _intent_done
+
+    assert _intent_done("intent:send_photo", "Sent to your phone.") == [
+        'send_photo_to_phone: done by your instant command, and you said "Sent to your phone."']
+    assert _intent_done("intent:thanks", "You're welcome!") == [] and _intent_done("brain", "Hi") == []
+    svc, stt, tts, _ = _service(Scripted(["Done."]), follow_up_seconds=3)
+    await svc.start()
+    await svc.start_session()
+    await _wait(lambda: stt.stream is not None)
+    stt.say("turn the volume down a bit")
+    await _wait(lambda: len(svc.history) == 1)
+    assert 'after "turn the volume down a bit": set_volume: done by your instant command, and you said "Quieter."' \
+        in svc.history.done_note()
+    await svc.stop_session("test")
+
+
 async def test_thanks_ends_the_session_without_the_brain() -> None:
     brain = Scripted()
     svc, stt, tts, _ = _service(brain, follow_up_seconds=5)
@@ -829,8 +876,8 @@ async def test_a_barge_in_mid_sentence_cancels_the_turns_take_over_and_records_i
     await asyncio.sleep(0.5)
     assert svc.status()["active"] is True
     assert svc.ctx.state.state != RobotState.SLEEPING
-    assert svc.history.messages()[-1]["content"].endswith("(interrupted)")
-    assert len(svc.history) == 1
+    assert svc.history.messages()[-1]["content"].startswith("Going to sleep")  # the words they heard, no marker
+    assert len(svc.history) == 1 and svc.history._items[-1][-1] is True  # told in front of their next words
     note = svc.history.done_note()  # the next answer knows the nap was asked for but never happened
     assert 'after "could you have a little nap please": go_to_sleep:' in note and "did NOT start" in note
     assert not svc.brain.first_today()  # an answer heard in part was talk today: no second "Good morning"
@@ -939,6 +986,70 @@ async def test_saying_who_you_are_teaches_littlebot_your_voice() -> None:
     who = svc._session.speaker
     assert who is not None and who.name == "Sara" and who.sure
     await svc.stop_session("test")
+
+
+async def test_for_one_person_the_voice_first_then_a_look_with_the_camera(monkeypatch: Any) -> None:
+    """"Send it to my phone" (littlebot/skills/camera.py): the voice check of the turn just heard is waited for;
+    when the voice can't tell, the camera looks."""
+    from types import SimpleNamespace
+
+    from littlebot.assistant import who as who_mod
+    from littlebot.voices.service import Heard, VoiceMatch
+
+    class Voices:
+        threshold = 0.5
+        sure = True
+
+        def blocked_reason(self) -> str | None:
+            return None
+
+        async def analyse(self, samples: Any, rate: int, **kw: Any) -> Heard:
+            await asyncio.sleep(0.3)  # slower than the answer
+            if not self.sure:
+                return Heard("nobody", 2.0, one_voice=True)
+            m = VoiceMatch(person_id=1, name="Ali", role="dad", score=0.8, is_child=False, margin=0.3)
+            return Heard("ok", 2.5, m, 1, 0.8, 0.4, True)
+
+        def improve(self, heard: Heard) -> bool:
+            return False
+
+    looks: list[int] = []
+
+    async def look(ctx: Any) -> list[Any]:
+        looks.append(1)
+        return [SimpleNamespace(id=2, name="Sara", role="mum")]
+
+    monkeypatch.setattr(who_mod, "look_now", look)
+    svc, stt, tts, _ = _service(Scripted(["Hi!"], ["Sure."]), follow_up_seconds=3)
+    svc.ctx.voices = Voices()
+    await svc.start()
+    await svc.start_session()
+    await _wait(lambda: stt.stream is not None)
+    await asyncio.sleep(0.2)
+    stt.say("hello")
+    await _wait(lambda: svc._session is not None and svc._session._identifying is not None)
+    who = await svc.identify_speaker()
+    assert who is not None and who.name == "Ali" and who.sure and looks == []
+    await _wait(lambda: "Hi." in tts.said)
+    svc._session.who.reset()
+    svc.ctx.voices.sure = False
+    first = svc._session._identifying
+    stt.say("what's up")
+    await _wait(lambda: svc._session._identifying is not first)
+    who = await svc.identify_speaker()
+    assert who is not None and who.name == "Sara" and who.how == "face" and looks == [1]
+    await svc.stop_session("test")
+
+
+async def test_outside_a_session_gpt_lives_voice_recognition_says_who() -> None:
+    svc, _stt, _tts, _ = _service(Scripted(["Hi!"]))
+    assert await svc.identify_speaker() is None  # no voice heard, and face recognition is off
+    svc.ctx.bus.publish("voice.speaker", {"person_id": None, "name": None, "is_child": None, "score": 0.4})
+    assert await svc.identify_speaker() is None  # unsure
+    svc.ctx.bus.publish("voice.speaker", {"person_id": 2, "name": "Sara", "role": "mum", "is_child": False,
+                                          "score": 0.8})
+    who = await svc.identify_speaker()
+    assert who is not None and who.name == "Sara" and who.sure and who.how == "voice"
 
 
 async def test_who_is_here_tool_says_what_it_knows() -> None:

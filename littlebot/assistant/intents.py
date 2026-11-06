@@ -112,11 +112,16 @@ _MINE = r"(?:my |our |the |your |all (?:the |my |our )?)?(?:last |latest |new |n
 _ALBUM = r"(?:photos?|pictures?|pics|videos?|recordings?|gallery|photo gallery|photo album)"
 SHOW_PHOTOS = _whole(rf"{_ASK}{_SEE}(?: me| us)? {_MINE}{_ALBUM}(?: (?:you|we|i) took)?|(?:open|show) (?:the )?"
                      rf"(?:photo )?gallery")
-_PHONE = r"(?:my|our) (?:phone|iphone|cell ?phone|mobile|android)"
+# Whose phone ("my", "our", "my wife's", "Ali's", "everyone's"): littlebot/capture/recipients.py reads it.
+_REL = r"(?:wife|husband|hubby|wifey|spouse|partner|other half|better half|mum|mom|mommy|mummy|dad|daddy)"
+_WHOSE = rf"(?:my|our|(?:my |our )?{_REL}'?s|[^\W\d_][\w-]{{1,19}}'s|everyone'?s|everybody'?s|all (?:of )?our)"
+_PHONE = rf"(?P<to1>{_WHOSE}) (?:phones?|iphones?|cell ?phones?|mobiles?|androids?)"
 _THING = r"(?:it|that|this|them|(?:the|that|this|my) (?:last |latest )?(?:photo|picture|pic|video|selfie))"
+_MEDIA = r"(?:the|that|this|my) (?:last |latest )?(?:photo|picture|pic|video|selfie)"
+_TO = rf"(?P<to2>me|my {_REL}|[^\W\d_][\w-]{{1,19}}|everyone|everybody|the family)"
 SEND_PHOTO = _whole(rf"{_ASK}(?:send|share|airdrop|put) (?:{_THING} )?(?:to|on|onto) {_PHONE}|"
-                    rf"{_ASK}(?:send|share|airdrop) (?:me )?(?:the|that|this|my) (?:last |latest )?(?:photo|picture|pic|"
-                    rf"video|selfie)")
+                    rf"{_ASK}(?:send|share|airdrop) (?:me )?{_MEDIA}|"
+                    rf"{_ASK}(?:send|share|airdrop) {_MEDIA} to {_TO}")
 
 
 def _kind(t: str) -> str | None:
@@ -171,8 +176,9 @@ def match(text: str, *, media_on: bool = False, recording_on: bool = False) -> I
         return Intent("record")
     if SHOW_PHOTOS.match(t):
         return Intent("show_photos", args={"kind": _kind(t)})
-    if SEND_PHOTO.match(t):
-        return Intent("send_photo", args={"kind": _kind(t)})
+    m = SEND_PHOTO.match(t)
+    if m:
+        return Intent("send_photo", args={"kind": _kind(t), "to": m.group("to1") or m.group("to2") or None})
     if STOP.match(t):
         return Intent("stop", "", end=True)
     if BYE.match(t):
@@ -260,25 +266,61 @@ CAMERA = {"photo": "photo", "record": "record", "stop_record": "stop_record", "s
           "send_photo": "send"}
 
 
-async def _camera(intent: Intent, box: Any, ctx: Any) -> str:
-    """A photo / video phrase through the camera skill; what it queued to start after the words (the photo, the
-    recording) goes to ``box``'s after-the-turn list, as when the brain calls the tool."""
+def _cam(ctx: Any) -> Any:
     hub = getattr(ctx, "skills", None)
-    cam = hub.get("camera") if hub is not None and hasattr(hub, "get") else None
-    if cam is None:
-        return "I can't take photos or videos."
-    try:
-        words = await cam.instant(CAMERA[intent.name], kind=intent.args.get("kind"))
-    except Exception:  # noqa: BLE001 - the skill's bug: say sorry rather than break the chat
-        log.warning("assistant: the camera phrase failed", exc_info=True)
-        return "Sorry, the camera didn't work."
+    return hub.get("camera") if hub is not None and hasattr(hub, "get") else None
+
+
+def _claim(box: Any, ctx: Any) -> None:
+    """What the camera queued to start after the words (the photo, the recording) goes to ``box``'s after-the-turn
+    list, as when the brain calls the tool."""
     queue = getattr(box, "_queue", None)
     if callable(queue):
         from littlebot.skills import takeover  # noqa: PLC0415
 
         for p in takeover.claim(ctx):
             queue(p.label, p.run, takeover=bool(getattr(p, "takeover", True)))
+
+
+async def _camera(intent: Intent, box: Any, ctx: Any) -> str:
+    """A photo / video phrase through the camera skill."""
+    cam = _cam(ctx)
+    if cam is None:
+        return "I can't take photos or videos."
+    try:
+        if intent.name == "send_photo":
+            words = await cam.instant("send", kind=intent.args.get("kind"), to=intent.args.get("to"))
+        else:
+            words = await cam.instant(CAMERA[intent.name], kind=intent.args.get("kind"))
+    except Exception:  # noqa: BLE001 - the skill's bug: say sorry rather than break the chat
+        log.warning("assistant: the camera phrase failed", exc_info=True)
+        return "Sorry, the camera didn't work."
+    _claim(box, ctx)
     return words
 
 
-__all__ = ["Intent", "match", "run"]
+def camera_asking(ctx: Any) -> bool:
+    """The camera just asked whose phone to send a photo to: the next words may be the answer."""
+    cam = _cam(ctx)
+    try:
+        return cam is not None and bool(cam.asking())
+    except Exception:  # noqa: BLE001
+        return False
+
+
+async def camera_reply(text: str, box: Any, ctx: Any) -> str | None:
+    """Their answer to the camera's "whose phone should I send it to?" ("Ali's", "mine", "my wife's"): sent, and
+    the words to say; None when ``text`` isn't such an answer (the brain answers)."""
+    if not camera_asking(ctx):
+        return None
+    try:
+        words = await _cam(ctx).reply(text)
+    except Exception:  # noqa: BLE001
+        log.warning("assistant: the answer to whose phone failed", exc_info=True)
+        return None
+    if words is not None:
+        _claim(box, ctx)
+    return words
+
+
+__all__ = ["Intent", "camera_asking", "camera_reply", "match", "run"]

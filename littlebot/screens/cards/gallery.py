@@ -37,7 +37,11 @@ SLIDESHOW_S = 5.0
 FLASH_S = 0.45
 SWIPE_PX = 70
 EDGE = 0.26  # a tap in the outer quarter goes back / on
-BROWSE_LINGER_S = 60.0
+# Once the voice chat is over (or since the last touch): the face comes back after this long, and it dozes and
+# sleeps as usual. A slideshow first goes once through everything (at most SLIDESHOW_MAX_S).
+BROWSE_LINGER_S = 30.0
+SHARE_LINGER_S = 30.0
+SLIDESHOW_MAX_S = 300.0
 CACHE = 4  # fitted pictures kept
 PRESENTER = (10, 8, 118, 68)
 
@@ -150,7 +154,7 @@ class GalleryCard(Card):
         self.flash_at: float | None = None
         self.error: str | None = None
         self.slideshow = bool(slideshow)
-        self.linger_seconds = float(linger) if linger is not None else BROWSE_LINGER_S
+        self._linger = float(linger) if linger is not None else None
         self._on_play = on_play
         self._on_share = on_share
         self._pics = _Pictures()
@@ -181,6 +185,14 @@ class GalleryCard(Card):
         self.preview = None
         self.error = str(words)[:120]
         self.mood = "surprised"
+
+    @property
+    def linger_seconds(self) -> float:
+        """How long it stays once the chat is over (littlebot/screens/service.py): the new photo ``linger``
+        seconds, browsing BROWSE_LINGER_S, a slideshow until it has shown each one once."""
+        if self.slideshow and self.count is None and len(self.items) > 1:
+            return max(BROWSE_LINGER_S, min(SLIDESHOW_MAX_S, SLIDESHOW_S * len(self.items)))
+        return BROWSE_LINGER_S if self._linger is None else self._linger
 
     @property
     def animating(self) -> bool:
@@ -389,7 +401,7 @@ class ShareCard(Card):
         self.hours = float(hours)
         self.reachable = bool(reachable)
         self.mood = "happy"
-        self.linger_seconds = 120.0
+        self.linger_seconds = SHARE_LINGER_S
         self._qr: pygame.Surface | None = None
         self._pics = _Pictures()
 

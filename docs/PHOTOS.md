@@ -13,11 +13,17 @@ Start each one with **"Hey LittleBot"**.
 | "Record this" / "start recording" / "make a video of the baby" | "Recording!". The chat ends, so LittleBot doesn't listen or talk while people are being filmed. A red **REC 0:42** sign shows at the top of the screen. |
 | "Stop recording" (or just "stop", "cut", "that's it" while it records) | The video is saved. LittleBot says how long it is. |
 | "Show me my photos" / "show the videos" / "open the gallery" | The gallery, newest first. Swipe, tap the left or right edge, or say "next" / "previous". Tap a video (or say "play") to play it full screen with its sound. |
-| "Send it to my phone" / "send that photo to my phone" | The photo or video on the screen (else the newest) goes to your phone as a notification. |
+| "Send it to my phone" / "send that photo to my phone" | The photo or video on the screen (else the newest) goes to **your** phone as a notification (see [Whose phone](#whose-phone)). |
+| "Send it to my wife's phone" / "send it to Ali's phone" / "send the photo to my husband" | To that person's phone. |
+| "Send it to everyone" / "put it on our phones" | To every phone set up for LittleBot. |
 | "Show me a code for it" | A QR code on the screen. Point any phone's camera at it to open the photo. |
 
 Anything longer ("take a picture and send it to my phone", "show me yesterday's video") goes to LittleBot's brain,
 which uses the same tools.
+
+The gallery and the QR code go away **30 seconds** after the chat is over (or after the last touch), and the face
+comes back. It then dozes and sleeps as usual when nobody talks. A slideshow first goes once through every photo
+(at most 5 minutes). A new photo stays 8 seconds.
 
 A recording also stops by itself:
 
@@ -71,9 +77,27 @@ uploaded anywhere.
 
   Without it LittleBot says phones can't open its links yet.
 * **For notifications**, a phone set up once for LittleBot's notifications: dashboard, Assistant page,
-  **Calendars and phones** (or `scripts/setup_phone.py`). Each grown-up can have their own. When voice or face
-  recognition knows who asked, it goes to their phone, else to the family's. **Cloud communication** must be on
-  (Privacy page). Without a phone set up, LittleBot shows the QR code instead.
+  **Calendars and phones** (or `scripts/setup_phone.py`). Each grown-up can have their own. **Cloud
+  communication** must be on (Privacy page). Without a phone set up, LittleBot shows the QR code instead.
+
+### Whose phone
+
+LittleBot never sends a photo to every phone unless you say so ("everyone", "the family", "our phones").
+
+* **"My phone"** (or nothing said): the phone of whoever is talking. LittleBot listens to the **voice** first
+  (voice recognition, Privacy page and Who's who). When the voice isn't sure, it **looks with the camera** at once
+  (face recognition): the one grown-up in view, or the one the voice sounds most like.
+* **A name or a role**: "Ali's phone", "dad's phone", "grandma's phone", from the names and roles on the Profile
+  page's **Who's who**.
+* **"My wife's / husband's / spouse's / partner's phone"**: the other parent. "Wife" is the one whose role is
+  mum (mom, mommy, ...) and "husband" the one whose role is dad, whoever is talking. With other roles ("parent"),
+  LittleBot has to know who is talking, and it's the other one.
+* **When it can't tell**, it asks: "Whose phone should I send it to: Ali's or Sara's?" (with one phone: "Should I
+  send it to Ali's phone?"). Answer "Ali's", "mine", "my wife's", "yes" or "no". The answer works for 2 minutes.
+* **Someone whose phone isn't set up** gets the QR code instead, and LittleBot says so.
+
+For "take a picture and send it to my phone", LittleBot works out whose phone **before** the photo, because the
+chat ends when the photo starts.
 
 ## Privacy
 

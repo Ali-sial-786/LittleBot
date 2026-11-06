@@ -8,8 +8,12 @@ The service is ``ctx.capture`` (littlebot/capture/service.py); this only checks,
   while people are being filmed. "Hey LittleBot, stop recording" ends a recording.
 * the gallery shows at once (a card, like any other: "next", "previous" work by voice while the chat goes on);
   playing a video waits for the answer (it needs the speaker).
-* sending: a link to the one photo or video on LittleBot itself, as a phone notification to whoever asked (voice
-  recognition, else the family's phones) and/or as a QR code on the screen. Nothing is uploaded.
+* sending: a link to the one photo or video on LittleBot itself, as a phone notification and/or as a QR code on
+  the screen. Nothing is uploaded. Whose phone: the one they name ("to Ali's phone", "to my wife's",
+  littlebot/capture/recipients.py), else whoever is talking: their voice first, and when that isn't sure, a fresh
+  look with the camera (``AssistantService.identify_speaker``). When neither can tell, LittleBot asks whose phone
+  ("Ali's or Sara's?") and the answer sends it (:meth:`Camera.reply`). Every phone only when they say so
+  ("everyone", "the family").
 
 :meth:`Camera.instant` answers the plain phrases without the model (littlebot/assistant/intents.py).
 """
@@ -17,12 +21,15 @@ The service is ``ctx.capture`` (littlebot/capture/service.py); this only checks,
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 import logging
+import re
 import time
 from typing import Any
 
+from littlebot.capture.recipients import possessive, target, words_of
 from littlebot.skills import takeover
-from littlebot.skills.base import BOOL, INT, Skill, ToolSpec, err, ok, tool
+from littlebot.skills.base import BOOL, INT, STR, Skill, ToolSpec, err, ok, tool
 
 log = logging.getLogger("littlebot.skills.camera")
 
@@ -30,6 +37,26 @@ PHOTO_LABEL = "photo "
 VIDEO_LABEL = "recording "
 PLAY_LABEL = "gallery video "
 WHICH = ("screen", "latest", "latest_photo", "latest_video")
+ASK_FRESH_S = 120.0  # after "whose phone should I send it to?", an answer this soon is about it
+REPLY_MAX_WORDS = 8  # longer than this is never just the answer to "whose phone?"
+_YES = re.compile(r"^\s*(?:yes|yeah|yep|yup|sure|ok(?:ay)?|please|go ahead|do it|yes please|sure thing|that'?s right|"
+                  r"correct|right)(?:[\s,.!]+(?:please|thanks?(?: you)?|do it|send it))*[\s,.!]*$", re.I)
+_NO = re.compile(r"^\s*(?:no|nope|no thanks?|no thank you|don'?t(?: send it)?|not now|nobody|no one|neither)"
+                 r"[\s,.!]*$", re.I)
+
+
+@dataclasses.dataclass
+class Whose:
+    """Where "send it" goes (:meth:`Camera.whose`)."""
+
+    to: int | None = None  # a Who's who id (None: with ``everyone``, every phone)
+    name: str = ""  # their name ("Ali")
+    everyone: bool = False  # they asked for every phone
+    yours: bool = False  # the phone of the one talking
+    ask: list[str] | None = None  # nobody could tell: the choices to ask about ("Ali's", "the family phone")
+    unknown: str = ""  # the words of a name or a role nobody on Who's who has
+    no_phone: bool = False  # that person's phone isn't set up (nor the family's)
+    none: bool = False  # no phone is set up at all
 
 # What the voice says when something can't be done (the service's error codes).
 REFUSED = {
@@ -51,7 +78,28 @@ REFUSED = {
     "cloud_off": "phone notifications need Cloud communication on (Privacy page); a QR code on the screen works "
                  "instead.",
     "offline": "LittleBot is offline, so it can't send a phone notification; a QR code on the screen works instead.",
+    "no_phone": "{name}'s phone isn't set up for LittleBot's notifications yet (it's added on the dashboard: "
+                "Assistant page, Calendars and phones); a QR code on the screen works instead.",
 }
+
+
+def _refused(code: str, name: str = "", default: str = "sorry.") -> str:
+    words = REFUSED.get(code, default)
+    return words.replace("{name}", name or "That person") if "{name}" in words else words
+
+
+def _choice_words(choices: list[str]) -> str:
+    """["Ali's", "Sara's", "the family phone"] -> "Ali's, Sara's or the family phone"."""
+    return choices[0] if len(choices) == 1 else ", ".join(choices[:-1]) + " or " + choices[-1]
+
+
+def ask_whose(choices: list[str], unknown: str = "") -> str:
+    """The question when LittleBot can't tell whose phone ("Whose phone should I send it to: Ali's or Sara's?")."""
+    lead = f"I don't know who {unknown} is. " if unknown else ""
+    if len(choices) == 1:
+        one = choices[0]
+        return lead + f"Should I send it to {one if one.startswith('the ') else one + ' phone'}?"
+    return lead + f"Whose phone should I send it to: {_choice_words(choices)}?"
 
 
 def _minutes(seconds: float) -> str:
@@ -79,11 +127,14 @@ class Camera(Skill):
     def tools(self) -> list[ToolSpec]:
         which = {"type": "string", "enum": list(WHICH),
                  "description": "screen: the one on LittleBot's screen now; latest (default): the newest of either"}
+        to = {**STR, "description": "whose phone, in their own words: a name (\"Ali\"), \"my wife\", \"my husband\", "
+                                    "\"dad\", \"everyone\". Leave it out for their own phone (\"my phone\")"}
         return [
             tool("take_photo", "Take a photo with LittleBot's camera (a 3-2-1 countdown on the screen first; it's "
                  "saved in LittleBot's gallery). Only when someone asks for a photo / picture / selfie.",
                  {"countdown": {**INT, "description": "seconds to count down, 0-10 (leave out for the usual 3)"},
-                  "then_send": {**BOOL, "description": "true when they also asked to send it to their phone"}}),
+                  "then_send": {**BOOL, "description": "true when they also asked to send it to a phone"},
+                  "to": to}),
             tool("start_recording", "Start recording a video (picture and sound) with LittleBot's camera, saved in "
                  "the gallery. Only when someone asks to record / film / make a video."),
             tool("stop_recording", "Stop the video recording and save it."),
@@ -97,13 +148,16 @@ class Camera(Skill):
                  "with a link that opens and saves it (over the home Wi-Fi), and/or a QR code on the screen.",
                  {"which": which,
                   "how": {"type": "string", "enum": ["phone", "qr", "both"],
-                          "description": "phone (default): a notification; qr: a code on the screen to scan"}}),
+                          "description": "phone (default): a notification; qr: a code on the screen to scan"},
+                  "to": to}),
         ]
 
     def prompt_note(self) -> str:
         return ("Camera: take_photo when asked for a photo / picture / selfie; start_recording to record or film a "
                 "video, stop_recording to stop it; show_photos to see the photos and videos (or play one); "
-                "send_photo_to_phone to send one to their phone (\"send that\" means the one on the screen). The "
+                "send_photo_to_phone to send one to a phone (\"send that\" means the one on the screen; to: whose "
+                "phone in their words, \"my wife\", \"Ali\", left out for their own). LittleBot works out who is "
+                "talking itself (voice, then the camera) and says when it must ask whose phone. The "
                 "photo and the recording start after you've spoken and this chat ends then: answer in a few words "
                 "(\"Okay, smile!\", \"Recording!\"). Never take a photo or record unless asked. Deleting is on the "
                 "dashboard's Photos page.")
@@ -125,6 +179,12 @@ class Camera(Skill):
                 latest = svc.describe_latest()
                 if latest and not latest.startswith("no "):
                     parts.append(f"Gallery: newest is {latest}.")
+            asked = self._pending()
+            if asked is not None:
+                then = ("take_photo with then_send true and to" if asked.get("photo_first") else
+                        "send_photo_to_phone with to")
+                parts.append(f"You asked whose phone to send it to ({_choice_words(asked['choices'])}): when they "
+                             f"answer, call {then} = what they said.")
         except Exception:  # noqa: BLE001
             log.debug("camera: context note failed", exc_info=True)
         return " ".join(parts)
@@ -134,8 +194,9 @@ class Camera(Skill):
         if svc is None:
             return err("LittleBot can't take photos or videos; say so")
         args = args or {}
+        to = str(args.get("to") or "").strip()[:60] or None
         if name == "take_photo":
-            return self._offer_photo(svc, args.get("countdown"), bool(args.get("then_send")))
+            return await self._offer_photo(svc, args.get("countdown"), bool(args.get("then_send")), to)
         if name == "start_recording":
             return self._offer_video(svc)
         if name == "stop_recording":
@@ -144,19 +205,20 @@ class Camera(Skill):
             return await self._show(svc, str(args.get("which") or "latest"), bool(args.get("slideshow")),
                                     bool(args.get("play")))
         if name == "send_photo_to_phone":
-            return await self._send(svc, str(args.get("which") or "latest"), str(args.get("how") or "phone"))
+            return await self._send(svc, str(args.get("which") or "latest"), str(args.get("how") or "phone"), to)
         return err(f"camera has no tool called {str(name)[:40]}")
 
     # ------------------------------------------------------------ the instant phrases (no model)
-    async def instant(self, what: str, *, kind: str | None = None) -> str:
+    async def instant(self, what: str, *, kind: str | None = None, to: str | None = None) -> str:
         """For littlebot/assistant/intents.py: do ``what`` (photo, record, stop_record, show, send) and return the
-        few words to say. ``kind``: "photo" / "video" when the words said which. A photo or a recording is only
-        queued (littlebot/skills/takeover.py): the caller hands it to its host to start after the words."""
+        few words to say. ``kind``: "photo" / "video" when the words said which; ``to``: whose phone, in their
+        words ("my", "my wife's", "Ali's"). A photo or a recording is only queued (littlebot/skills/takeover.py):
+        the caller hands it to its host to start after the words."""
         svc = self._svc()
         if svc is None or not self.available():
             return "I can't take photos or videos."
         if what == "photo":
-            res = self._offer_photo(svc, None, False)
+            res = await self._offer_photo(svc, None, False)
             return "Okay, smile!" if res.startswith("ok") else _sorry(res)
         if what == "record":
             res = self._offer_video(svc)
@@ -180,15 +242,50 @@ class Camera(Skill):
                 _sorry(REFUSED.get(code, "I can't show them right now."))
         if what == "send":
             out = await self.send(svc, {"photo": "latest_photo", "video": "latest_video"}.get(kind or "", "screen"),
-                                  "phone")
-            if out.get("error") == "nothing":
-                return "There's nothing to send yet."
-            if out.get("error"):
-                return _sorry(REFUSED.get(out["error"], str(out.get("detail") or "I couldn't send it.")))
-            if out.get("pushed"):
-                return "Sent to your phone." if out.get("where") == "own" else "Sent to the family's phones."
-            return "I can't send a notification, so scan this code with your phone's camera."
+                                  "phone", to)
+            return _sent_words(out)
         return "Okay."
+
+    # ------------------------------------------------------------ the answer to "whose phone?"
+    def _pending(self) -> dict[str, Any] | None:
+        asked = getattr(self, "_asked", None)
+        if asked is None or time.monotonic() - float(asked["at"]) > ASK_FRESH_S:
+            return None
+        return asked
+
+    def asking(self) -> bool:
+        """LittleBot just asked whose phone to send a photo or video to (an answer now is :meth:`reply`'s)."""
+        return self._pending() is not None
+
+    async def reply(self, text: str) -> str | None:
+        """Their answer to "whose phone should I send it to?" ("Ali's", "mine", "my wife's", "everyone", "yes" to
+        a single choice, "no"): sent, and the few words to say; None when ``text`` isn't such an answer (the brain
+        takes it, with the question in its context)."""
+        asked = self._pending()
+        svc = self._svc()
+        if asked is None or svc is None or len(str(text or "").split()) > REPLY_MAX_WORDS:
+            return None
+        if _NO.match(text):
+            self._asked = None
+            return "Okay, I won't send it."
+        said = text
+        if _YES.match(text):
+            if len(asked["choices"]) != 1:
+                return None
+            said = asked["says"][0]
+        elif not words_of(text) or target(text, self._people(), is_child=self._child_test()).kind in (
+                "unknown", "unclear"):
+            return None
+        log.info("camera: they answered whose phone")
+        if not asked.get("photo_first"):
+            return _sent_words(await self.send(svc, "pending", str(asked.get("how") or "phone"), said))
+        whose = await self.whose(svc, said)
+        if whose.ask is not None:
+            self._remember_ask(whose, photo_first=True, countdown=asked.get("countdown"))
+            return ask_whose(whose.ask, whose.unknown)
+        self._asked = None
+        res = await self._offer_photo(svc, asked.get("countdown"), True, whose=whose)
+        return "Okay, smile!" if res.startswith("ok") else _sorry(res)
 
     # ------------------------------------------------------------ the work
     def _who(self) -> tuple[int | None, str | None]:
@@ -203,7 +300,83 @@ class Camera(Skill):
         pid = getattr(who, "person_id", None)
         return (int(pid) if pid is not None else None), (str(getattr(who, "name", "") or "") or None)
 
-    def _offer_photo(self, svc: Any, countdown: Any, then_send: bool) -> str:
+    async def _identify(self) -> Any:
+        """Who is talking, for "send it to my phone": their voice first, else a fresh look with the camera
+        (``AssistantService.identify_speaker``). A sure ``assistant.who.Who``, or None."""
+        svc = getattr(self.ctx, "assistant", None)
+        ident = getattr(svc, "identify_speaker", None)
+        if callable(ident):
+            try:
+                return await ident()
+            except Exception:  # noqa: BLE001
+                log.debug("camera: identifying the speaker failed", exc_info=True)
+                return None
+        pid, _name = self._who()
+        if pid is not None:
+            with contextlib.suppress(Exception):
+                return svc.speaker()
+        from littlebot.assistant.who import by_face, child_test, look_now  # noqa: PLC0415
+
+        people = await look_now(self.ctx)
+        return by_face(people, None, child_test(self.ctx)) if people is not None else None
+
+    def _people(self) -> list[dict[str, Any]]:
+        """Who's who (id, name, role), for whose phone."""
+        try:
+            from littlebot.vision.faces import get_faces  # noqa: PLC0415
+
+            return list(get_faces(self.ctx).store.people())
+        except Exception:  # noqa: BLE001
+            return []
+
+    def _child_test(self) -> Any:
+        from littlebot.assistant.who import child_test  # noqa: PLC0415
+
+        return child_test(self.ctx)
+
+    async def whose(self, svc: Any, said: str | None) -> Whose:
+        """Where "send it" goes: the phone ``said`` names (littlebot/capture/recipients.py), or for "my phone" (and
+        nothing said) that of whoever is talking (voice, else a look with the camera). Every phone only when they
+        said so. When nobody can tell: ``ask`` (the phones to choose from), never every phone."""
+        try:
+            phones = list(svc.phones())
+        except Exception:  # noqa: BLE001
+            phones = []
+        if not phones:
+            return Whose(none=True)
+        people, child = self._people(), self._child_test()
+        t = target(said or "", people, is_child=child)
+        speaker = None
+        if t.kind in ("me", "needs_speaker"):
+            speaker = await self._identify()
+            if speaker is not None:
+                t = target(said or "", people, speaker_id=int(speaker.person_id), is_child=child)
+        if t.kind == "everyone":
+            return Whose(everyone=True)
+        if t.kind == "me" and speaker is not None:  # (recognised, but not on the list the recipients read)
+            t = dataclasses.replace(t, kind="person", person={"id": int(speaker.person_id), "name": str(speaker.name),
+                                                              "role": str(getattr(speaker, "role", "") or "")})
+        if t.kind == "person" and t.person is not None:
+            pid, name = int(t.person["id"]), str(t.person["name"])
+            talking = int(speaker.person_id) if speaker is not None else self._who()[0]
+            own = {int(p["id"]) for p in phones if p.get("id") is not None}
+            family = any(p.get("id") is None for p in phones)
+            return Whose(to=pid, name=name, yours=talking == pid, no_phone=pid not in own and not family)
+        choices = [("the family phone" if p.get("id") is None else possessive(str(p["name"]))) for p in phones]
+        unknown = " ".join(words_of(said or "")) if t.kind == "unknown" else ""
+        log.info("camera: can't tell whose phone (%s); asking", t.kind)
+        return Whose(ask=choices, unknown=unknown)
+
+    def _remember_ask(self, whose: Whose, *, item: str | None = None, how: str = "phone", photo_first: bool = False,
+                      countdown: Any = None) -> None:
+        """LittleBot is asking whose phone: an answer in the next ASK_FRESH_S sends it (:meth:`reply`)."""
+        choices = list(whose.ask or [])
+        says = ["family" if c == "the family phone" else c.removesuffix("'s") for c in choices]
+        self._asked = {"at": time.monotonic(), "item": item, "how": how, "choices": choices, "says": says,
+                       "photo_first": photo_first, "countdown": countdown}
+
+    async def _offer_photo(self, svc: Any, countdown: Any, then_send: bool, to: str | None = None, *,
+                           whose: Whose | None = None) -> str:
         why = svc.check("photo")
         if why is not None:
             return err("say " + REFUSED.get(why, "the photo can't be taken right now."))
@@ -211,29 +384,44 @@ class Camera(Skill):
         if countdown is not None:
             with contextlib.suppress(TypeError, ValueError):
                 n = max(0, min(10, int(countdown)))
-        to, name = self._who()
+        _talking, name = self._who()
+        if then_send and whose is None:
+            whose = await self.whose(svc, to)
+            if whose.ask is not None:  # whose phone first: the chat ends when the photo starts
+                self._remember_ask(whose, photo_first=True, countdown=n)
+                return ok(("they named " + whose.unknown + ", who isn't on Who's who; " if whose.unknown else
+                           "LittleBot can't tell who is asking (voice and face recognition weren't sure); ") +
+                          f"no photo yet. Ask whose phone it should go to ({_choice_words(whose.ask)}) in a few "
+                          "words; when they answer, call take_photo again with then_send true and to = what they "
+                          "said")
+            self._asked = None
 
         async def snap() -> bool:
             res = await svc.take_photo(source="voice", who=name, countdown=n)
             if not res.get("ok"):
                 self.announce("The photo didn't work: " + REFUSED.get(str(res.get("error")), "sorry."), kind="camera")
                 return False
-            if then_send:
-                sent = await svc.send_to_phone(res["item"]["id"], to=to)
-                if sent.get("ok"):
-                    self.announce("I sent it to your phone." if sent.get("where") == "own" else
-                                  "I sent it to the family's phones.", kind="camera")
-                else:
-                    self.announce("I couldn't send it: " + REFUSED.get(str(sent.get("error")),
-                                                                       str(sent.get("detail") or "sorry.")),
-                                  kind="camera")
+            if then_send and whose is not None:
+                self.announce(await self._push(svc, res["item"]["id"], whose), kind="camera")
             return True
 
         takeover.offer(self.ctx, f"{PHOTO_LABEL}{int(time.time())}", snap)
         secs = svc.cfg.countdown_seconds if n is None else n
         when = f"after a {secs}-second countdown on the screen" if secs else "straight away"
+        where = "" if whose is None else (" and that you'll send it to " + _where(whose))
         return ok(f"the photo is taken as soon as you've finished speaking, {when} (this chat ends then). Say a few "
-                  f"words like \"Okay, smile!\"" + (" and that you'll send it to their phone" if then_send else ""))
+                  f"words like \"Okay, smile!\"" + where)
+
+    async def _push(self, svc: Any, item_id: str, whose: Whose) -> str:
+        """The notification to ``whose`` phone once a photo is taken: what to announce."""
+        if whose.none or whose.no_phone:
+            code = "not_set_up" if whose.none else "no_phone"
+            return "I couldn't send it: " + _refused(code, whose.name).split(";")[0] + "."
+        sent = await svc.send_to_phone(item_id, to=None if whose.everyone else whose.to)
+        if sent.get("ok"):
+            return "I sent it to " + _where(whose, sent.get("where")) + "."
+        return "I couldn't send it: " + _refused(str(sent.get("error")), whose.name, str(sent.get("detail") or
+                                                                                      "sorry."))
 
     def _offer_video(self, svc: Any) -> str:
         why = svc.check("video")
@@ -296,41 +484,68 @@ class Camera(Skill):
         return ok(f"showing {res.get('showing')}, the newest of {count}{only}. Swipe or say next / previous; "
                   f"\"play\" plays a video. Say so in a few words")
 
-    async def _send(self, svc: Any, which: str, how: str) -> str:
-        out = await self.send(svc, which, how)
+    async def _send(self, svc: Any, which: str, how: str, to: str | None = None) -> str:
+        out = await self.send(svc, which, how, to)
         what = out.get("what") or "photo"
         if out.get("error") == "nothing":
             return ok("there's no photo or video to send yet; say so")
         if out.get("error"):
             return err("say " + REFUSED.get(out["error"], str(out.get("detail") or "it couldn't be sent.")))
         said: list[str] = []
-        if out.get("pushed"):
-            said.append(f"the {what} went to {'your own phone' if out.get('where') == 'own' else 'the family phones'} "
-                        "as a notification: tap it, then save it (on the home Wi-Fi)")
+        if out.get("ask") is not None:
+            said.append(("they named " + out["unknown"] + ", who isn't on Who's who, so " if out.get("unknown") else
+                         "LittleBot can't tell who is asking (voice and face recognition weren't sure), so ") +
+                        f"nothing went to a phone yet. Ask whose phone the {what} should go to "
+                        f"({_choice_words(out['ask'])}); when they answer, call send_photo_to_phone again with to = "
+                        "what they said")
+        elif out.get("pushed"):
+            said.append(f"the {what} went to {_where(out['whose'], out.get('where'))} as a notification: tap it, "
+                        "then save it (on the home Wi-Fi)")
         elif out.get("push_error"):
-            said.append("no notification could go (" + REFUSED.get(out["push_error"], "it didn't send") + ")")
+            said.append("no notification could go (" + _refused(out["push_error"], out.get("name", ""),
+                                                                "it didn't send") + ")")
         if out.get("qr"):
             said.append(f"a QR code for the {what} is on your screen: their phone's camera opens it")
         return ok("; ".join(said) + ". Say so in a few words")
 
-    async def send(self, svc: Any, which: str, how: str) -> dict[str, Any]:
-        """Send one item: ``{what, pushed, where, push_error, qr, error, detail}``. A notification that can't go
-        (no phone set up, cloud off) falls back to the QR code on the screen."""
-        item = self._pick(svc, which)
+    async def send(self, svc: Any, which: str, how: str, to: str | None = None) -> dict[str, Any]:
+        """Send one item: ``{what, id, pushed, where, whose, push_error, name, ask, unknown, qr, error, detail}``.
+        ``to``: whose phone, in their words (:meth:`whose`); ``which`` "pending": the one LittleBot asked about.
+        A notification that can't go (no phone set up, cloud off) falls back to the QR code on the screen; when
+        nobody can tell whose phone, ``ask`` holds the choices and nothing is sent (a QR code still shows with
+        ``how`` "both")."""
+        asked = self._pending()
+        item = None
+        if asked is not None and asked.get("item") and (which == "pending" or to and which in ("screen", "latest")):
+            item = svc.gallery.get(asked["item"])
+        if item is None:
+            item = self._pick(svc, "screen" if which == "pending" else which)
         if item is None:
             return {"error": "nothing"}
         out: dict[str, Any] = {"what": "photo" if item.kind == "photo" else "video", "id": item.id}
-        to, _name = self._who()
         if how in ("phone", "both"):
-            res = await svc.send_to_phone(item.id, to=to)
-            if res.get("ok"):
-                out.update(pushed=True, where=res.get("where"))
-            else:
-                code = str(res.get("error"))
-                if code not in ("not_set_up", "cloud_off", "offline", "push_failed"):
-                    return {**out, "error": code, "detail": res.get("detail")}
-                out["push_error"] = code
+            whose = await self.whose(svc, to)
+            out["whose"], out["name"] = whose, whose.name
+            if whose.ask is not None:
+                self._remember_ask(whose, item=item.id, how=how)
+                out.update(ask=whose.ask, unknown=whose.unknown)
+                if how == "phone":
+                    return out
+                how = "qr"
+            elif whose.none or whose.no_phone:
+                out["push_error"] = "not_set_up" if whose.none else "no_phone"
                 how = "qr"  # the code on the screen still gets it to their phone
+            else:
+                res = await svc.send_to_phone(item.id, to=None if whose.everyone else whose.to)
+                if res.get("ok"):
+                    self._asked = None
+                    out.update(pushed=True, where=res.get("where"))
+                else:
+                    code = str(res.get("error"))
+                    if code not in ("not_set_up", "cloud_off", "offline", "push_failed"):
+                        return {**out, "error": code, "detail": res.get("detail")}
+                    out["push_error"] = code
+                    how = "qr"  # the code on the screen still gets it to their phone
         if how in ("qr", "both"):
             res = await svc.show_share_code(item.id)
             if not res.get("ok"):
@@ -356,6 +571,34 @@ class Camera(Skill):
         except Exception:  # noqa: BLE001
             return None
         return card if card is not None and getattr(card, "kind", "") == "gallery" else None
+
+
+def _where(whose: Whose, where: str | None = None) -> str:
+    """ "your phone", "Sara's phone", "everyone's phones" ("family": that person's own isn't set up, so the
+    family's phone got it)."""
+    if whose.everyone:
+        return "everyone's phones"
+    if where == "family":
+        return "the family phone"
+    if whose.yours:
+        return "your phone"
+    return possessive(whose.name) + " phone" if whose.name else "the phone"
+
+
+def _sent_words(out: dict[str, Any]) -> str:
+    """What to say after :meth:`Camera.send` (an instant phrase, or the answer to "whose phone?")."""
+    if out.get("error") == "nothing":
+        return "There's nothing to send yet."
+    if out.get("error"):
+        return _sorry(REFUSED.get(out["error"], str(out.get("detail") or "I couldn't send it.")))
+    if out.get("ask") is not None:
+        return ask_whose(out["ask"], out.get("unknown") or "")
+    if out.get("pushed"):
+        return "Sent to " + _where(out["whose"], out.get("where")) + "."
+    if out.get("push_error") == "no_phone":
+        return f"{possessive(out.get('name') or 'That person')} phone isn't set up for me yet, so scan this code " \
+               "with a phone's camera."
+    return "I can't send a notification, so scan this code with your phone's camera."
 
 
 def _sorry(result: str) -> str:

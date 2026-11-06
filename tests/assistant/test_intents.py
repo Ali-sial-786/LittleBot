@@ -151,7 +151,19 @@ def test_camera_phrases(text: str, name: str, kind: str | None) -> None:
     hit = intents.match(text)
     assert hit is not None and hit.name == name
     if name in ("show_photos", "send_photo"):
-        assert hit.args == {"kind": kind}
+        assert hit.args["kind"] == kind
+
+
+@pytest.mark.parametrize("text,to", [
+    ("send it to my phone", "my"), ("send it to my wife's phone", "my wife's"), ("Send that to Ali's phone.", "Ali's"),
+    ("send the photo to my husband", "my husband"), ("share that picture to Sara", "Sara"),
+    ("send it to my spouse's phone", "my spouse's"), ("send the video to everyone", "everyone"),
+    ("put it on our phones", "our"), ("send it to dad's phone", "dad's"), ("send me the photo", None),
+    ("send the picture to me", "me"),
+])
+def test_whose_phone_is_kept(text: str, to: str | None) -> None:
+    hit = intents.match(text)
+    assert hit is not None and hit.name == "send_photo" and hit.args["to"] == to
 
 
 @pytest.mark.parametrize("text", [
@@ -187,10 +199,10 @@ class _Cam(Skill):
         super().__init__(ctx)
         self.asked: list[tuple[str, object]] = []
 
-    async def instant(self, what: str, *, kind: str | None = None) -> str:
+    async def instant(self, what: str, *, kind: str | None = None, to: str | None = None) -> str:
         from littlebot.skills import takeover
 
-        self.asked.append((what, kind))
+        self.asked.append((what, kind) if to is None else (what, kind, to))
         if what == "photo":
             async def snap() -> bool:
                 return True
@@ -211,6 +223,8 @@ async def test_a_photo_phrase_queues_the_photo_for_after_the_words() -> None:
     assert said == "Okay, smile!" and [p.label for p in box.pending] == ["photo 1"] and box.pending[0].takeover
     said = await intents.run(intents.match("show me my videos"), box, ctx)
     assert said == "Here they are." and cam.asked[-1] == ("show", "video")
+    await intents.run(intents.match("send it to my wife's phone"), box, ctx)
+    assert cam.asked[-1] == ("send", None, "my wife's")
     ctx.skills = SkillHub(ctx, [])
     assert await intents.run(intents.match("take a picture"), box, ctx) == "I can't take photos or videos."
     ctx.db.close()

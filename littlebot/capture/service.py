@@ -36,9 +36,10 @@ receiver), so LittleBot makes a link to the one item on itself, ``http://<the ro
 (the dashboard's server, no login: the 22-character token is the password, ``capture.share_hours`` long). The phone
 opens it over the home Wi-Fi and saves it from the browser. The link reaches the phone two ways:
 
-* ``send_to_phone``: a phone notification (littlebot/skills/push.py, ntfy) to whoever asked (voice recognition),
-  else the family's phones. Only the link goes through ntfy; with ``capture.push_attach`` the ntfy app also fetches a
-  preview straight from the robot (the photo itself, or a video's still).
+* ``send_to_phone``: a phone notification (littlebot/skills/push.py, ntfy) to one person's phone (``to``), or with
+  ``to`` None to every phone. By voice, the camera skill works out whose (littlebot/skills/camera.py
+  ``Camera.whose``: never every phone unless asked). Only the link goes through ntfy; with ``capture.push_attach``
+  the ntfy app also fetches a preview straight from the robot (the photo itself, or a video's still).
 * ``show_share_code``: the link as a QR code on LittleBot's screen; any phone's camera opens it.
 
 Both need LAN access (``dashboard.lan_access``): otherwise only the robot itself can open the link ("lan_off").

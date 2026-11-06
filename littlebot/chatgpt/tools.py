@@ -159,8 +159,10 @@ TOOLS: tuple[_Tool, ...] = (
           "camera or hears their move, picks for you and says who won, so never play it out loud or make up a pick.",
           _obj({"game": {**_STR, "description": "game id or name"}}, ("game",))),
     _Tool("stop_game", "Stop the game that is running.", _obj()),
-    _Tool("look_through_camera", "Take one photo with LittleBot's camera (only if a grown-up allows it) and say "
-          "what is in it, to answer a question like 'what am I holding?'.",
+    _Tool("look_through_camera", "Take one new photo with LittleBot's camera (only if a grown-up allows it) and say "
+          "what is in it, to answer a question like 'what am I holding?'. Call it EVERY time they ask what you see, "
+          "what is there or what they are holding, even if you looked a moment ago or it failed before: an earlier "
+          "photo is old (things move), so never answer from it.",
           _obj({"question": _STR}, ("question",)), modes=("chat",)),
     _Tool("get_weather", "The real weather from a weather service: now (temperature, feels-like, conditions, wind), "
           "the next 12 hours in three-hour blocks (next_hours), and the forecast (high, low, conditions, chance of "
