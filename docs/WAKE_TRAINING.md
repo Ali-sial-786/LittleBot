@@ -5,17 +5,23 @@ It works, but it can mishear (it heard "little" in other words, so `min_confiden
 tuned). A wake word model trained only on "Hey LittleBot" is smaller, faster and should mishear less. This page is
 how that model is made, on the robot itself, with [openWakeWord](https://github.com/dscripka/openWakeWord).
 
-> **Status (2 November 2026).**
+> **Status (6 November 2026).**
 >
 > | Run | Clips | Network, steps | Caught at 0.5 | False alarms an hour | Where |
 > |---|---|---|---|---|---|
 > | 1 (1 November, 03:16 to 06:52) | 10,000 wake word, 8,000 near misses | 32 wide, 50,000 | 68% | about 1.1 | `~/wwtrain/hey_little_bot/run1` |
 > | 2 (1 November, 11:57 to 22:22) | 40,000 wake word, 24,000 near misses, each in two rooms | 64 wide, 200,000 | 78% | about 2.5 | `~/wwtrain/hey_little_bot/run2` |
-> | 3 (3 November, from 15:03) | as run 2, made again, plus 111 of Ali's own (89 trained on, 22 held back) | 64 wide, 200,000 | stopped at 15:11 (1,200 of the 40,000 voices made) when the robot lost power; not restarted | | `~/wwtrain/hey_little_bot` |
+> | 3 (3 November 15:03 to 4 November 13:12, stopped and carried on twice) | as run 2, made again, plus 111 of Ali's own (89 trained on, 22 held back) | 64 wide, 200,000 | 78% | about 8 | `~/wwtrain/hey_little_bot` |
 >
-> On its own neither is good enough to replace Vosk. Run 2 now listens **next to Vosk, in shadow mode**: it only
-> measures and logs, and changes nothing about when LittleBot wakes (see [Shadow mode](#shadow-mode-the-model-next-to-vosk)
-> below). The idea is that it may be a good second opinion on Vosk's wakes, to cut the times Vosk mishears.
+> On the 22 held-back clips of Ali's own voice (each in 4 rooms) run 3 catches **72%** at 0.5, run 2 only **15%**:
+> the made-up voices alone hardly knew a real voice. But run 3 also has about 8 false alarms an hour on everyday sound
+> (still 4.2 at 0.9), against run 2's 2.5. **On the robot since 6 November 2026, 02:56**, in `data/wake/` in place
+> of run 2 (still primary at 0.45, with `wake.oww_primary_agree` holding back the model's wakes Vosk heard nothing
+> of). Run 2 is in `data/wake/run2/`; `data/wake/MODELS.md` has the one line to go back.
+>
+> On its own no run is good enough to replace Vosk. The model wakes LittleBot first ([primary
+> mode](#primary-mode-on-the-robot-the-owners-choice) below), but only when Vosk heard part of the wake phrase or a
+> face is in view, and Vosk stays the backup.
 
 ## How it works, in plain words
 
