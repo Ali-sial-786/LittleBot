@@ -55,6 +55,9 @@ class CameraDevice(abc.ABC):
         self.frames_read = 0
         self.open_count = 0
         self.release_count = 0
+        # Decode the next frame while the consumer works on this one (a USB camera's reader thread): set while
+        # frames are wanted back to back (the live view at 30 fps), so decoding never halves the rate.
+        self.prefetch = False
 
     @abc.abstractmethod
     def open(self) -> None:
@@ -589,6 +592,9 @@ class OpenCVCamera(CameraDevice):
                 frame, self._frame = self._frame, None  # hand over; keep no reference
                 self._taken_seq = self._seq
                 self.frames_read += 1
+                if self.prefetch:  # decode the next one meanwhile (on the reader thread)
+                    self._want = True
+                    self._cancelled = False
                 return frame
             return None
 

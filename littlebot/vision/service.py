@@ -797,6 +797,9 @@ class VisionService(Service):
         return nxt if nxt > now else now + interval  # keep the average rate, never burst to catch up
 
     def _capture(self, cam: CameraDevice, now: float) -> bool:
+        # While someone watches the live view, frames are wanted back to back: the camera decodes the next one
+        # while this thread works on the current one (1080p: ~20 ms decode + ~25 ms of work > 33 ms a frame).
+        cam.prefetch = bool(self._viewers)
         try:
             frame = cam.read(timeout=self._read_timeout)
         except Exception as e:  # noqa: BLE001
