@@ -1069,28 +1069,49 @@ module pod_box(w, d, h, r) { hull() { translate([0, d/2, 0]) linear_extrude(h - 
 // back and the plug stay clear. M3 x 12 pivots from outside the pod into the bracket's bosses: snug = it holds its tilt.
 // Local: x across, y back from the board's front face, z up from the board's centre (place_cam_bracket()). Prints upright.
 cam_brk_wo = 19.0;                     // the bracket's outer faces (the pod's pillars are 0.2 further out)
+cam_rib_y = 0.2;                       // the back ribs reach 0.2 into the board (crushed as it slides in)
+cam_rib_x = 0.15;                      // the side ribs, each side
 module place_cam_bracket() { translate([0, cam_board_y, cam_z]) children(); }
 module camera_bracket() {
     bw = cam_board/2 + 0.25;           // the board's edges + 0.25
     wo = cam_brk_wo;
     py = cam_pivot_dy;
     s1 = cam_pcb_t + 0.15;             // the slot: y -0.15 .. s1
+    // 2026-11-06: crush ribs take up the slot's play (the board was loose): they press the board forward onto the
+    // front lips and centre it sideways; the springy hooks are shorter (rigid back lips below them, ribs on those).
+    rib_y = cam_pcb_t - cam_rib_y;     // the back ribs' tips (the board's back is at cam_pcb_t)
+    rib_x = cam_board/2 - cam_rib_x;   // the side ribs' tips
+    yt = s1;                           // the hook beams' front face
+    module rib(p0, p1, d) {            // a vertical half-round rib from z0 to z1, its top end tapered (lead-in)
+        hull() { translate([p0[0], p0[1], p1[0]]) cylinder(d = d, h = eps, $fn = 16);
+                 translate([p0[0], p0[1], p1[1] - 2]) cylinder(d = d, h = eps, $fn = 16);
+                 translate([p0[0], p0[1], p1[1]]) cylinder(d = 0.1, h = eps, $fn = 8); }
+    }
     difference() {
         union() {
             for (k = [0, 1]) mirror([k, 0, 0]) {
                 translate([bw, -1.6, -17.25]) cube([wo - bw, 5, 17.25 + 16]);                        // side wall
                 translate([14.8, -1.6, -16]) cube([bw - 14.8 + eps, 1.45, 32]);                      // front lip (over the board's edge)
-                translate([14.8, s1, -16]) cube([bw - 14.8 + eps, 3.4 - s1, 6]);                    // back lip, low
-                translate([14.8, s1, -10 - eps]) cube([16 - 14.8, 1.2, 26.15 + eps]);               // springy beam, free beside the wall...
+                translate([14.8, s1, -16]) cube([bw - 14.8 + eps, 3.4 - s1, 16]);                   // back lip, rigid, up to the middle
+                translate([14.8, yt, -eps]) cube([16 - 14.8, 1.2, 16.05 + eps]);                    // springy beam, free beside the wall...
                 translate([14.8, 0, 0]) rotate([90, 0, 90]) linear_extrude(16 - 14.8)                 // ... its hook over the board's top edge
-                    polygon([[s1 + 1.2, 16.15], [s1 - 0.8, 16.15], [s1 - 0.8, 16.5], [s1 + 1.2, 18.5]]);
+                    polygon([[yt + 1.2, 16.05], [yt - 0.8, 16.05], [yt - 0.8, 16.4], [yt + 1.2, 18.4]]);
                 translate([12, -1.6, -17.25]) cube([bw - 12 + eps, 5, 1.25]);                        // ledge under the board's lower corner
                 translate([bw, 0, 0]) rotate([90, 0, 90]) linear_extrude(wo - bw)                     // arm back to the pivot (45-degree underside)
                     polygon([[3.4 - eps, -17.25], [py + 4, -17.25 + (py + 4 - 3.4)], [py + 4, 16.5], [3.4 - eps, 16.5]]);
                 translate([12.5, py, 0]) rotate([0, 90, 0]) linear_extrude(wo - 12.5)                 // pivot boss (pointed underneath)
                     hull() { circle(d = 7, $fn = 32); translate([3.5 * 1.414, 0]) square(eps, center = true); }
+                // crush ribs: on the back lip (pressing the board forward) and on the side wall (centring it)
+                intersection() {
+                    rib([15.4, s1 + 0.4 - (s1 - rib_y)], [-15, -1.5], 0.8);
+                    translate([14.8, rib_y, -16]) cube([1.2, 1, 16]);
+                }
+                intersection() {
+                    rib([bw + 0.4 - (bw - rib_x), (s1 - 0.15) / 2 - 0.075], [-15, 10], 0.8);
+                    translate([rib_x, -0.15, -16]) cube([1, s1 + 0.15, 27]);
+                }
             }
-            translate([-wo, 4.5, 13.5]) cube([2 * wo, 4, 3]);                                          // top bar
+            translate([-wo, cam_pcb_t + cam_conn_box[2] + 0.8, 13.5]) cube([2 * wo, 4, 3]);           // top bar: behind the 5-pin socket as the board slides in
             translate([-wo, -1.6, -17.25]) cube([2 * wo, 1.6, 1.25]);                                  // bottom bar, under the board's front edge (it stands on it to print)
         }
         for (k = [-1, 1]) translate([k * 16, py, 0]) rotate([0, 90, 0]) cylinder(d = pilot_m3, h = 8, center = true, $fn = fn_small);

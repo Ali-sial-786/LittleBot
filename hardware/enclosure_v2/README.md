@@ -148,7 +148,7 @@ Each plate is a single STL with several separate bodies. Most slicers can split 
 | `ear_left.stl`, `ear_right.stl` | 1 each | mirror images; LED-ring pocket behind a 1 mm skin |
 | `camera_pod.stl` | 1 | the camera housing on top of the head; the bracket's two pivot screws go in from outside, their heads sunk into its sides; its own two screws go in from the top |
 | `pod_bar.stl` | 1 | small bar under the head's roof that the pod's two screws go into (46 × 9 × 7 mm) |
-| `camera.stl` | 1 | camera bracket inside the pod: the board slides down into two side slots and two springy hooks snap over its top edge (no screws in the board); the 5-pin socket on the board's back stays free |
+| `camera.stl` | 1 | camera bracket inside the pod: the board slides down into two side slots and two springy hooks snap over its top edge (no screws in the board); small crush ribs in the slots hold it tight; the 5-pin socket on the board's back passes under the top bar as it slides in and stays free |
 | `arm_left.stl`, `arm_right.stl` | 1 each | print flat side (the side facing the body) down |
 | later: `base_floor_mobile.stl`, `shelf.stl`, `front_sonar.stl` | 1 each | wheel phase: wheel slots + motor/caster grids, the old battery-bay shelf, HC-SR04 plate (**not updated for the UPS yet**) |
 
@@ -249,6 +249,8 @@ The robot itself reports the screen as `MPI3508` (EDID), the camera as `U20CAM-1
 
 The pod's two screws went in from inside the head, up through its roof: there's no room in there to turn a key with any force. Now they go in **from the top of the pod** (2 × M3 × 30, heads 21 mm down two 6.4 mm holes), through the head's existing holes, into a small printed **pod bar** held up under the roof. Inside the head you only hold the bar; all the turning is from outside. Reprint the **camera pod** and print the **pod bar** (with the camera bracket: `plates_256/project/LittleBot_camera_pod_fix_A1.3mf`, A1). The head doesn't change. The screws cut 6.2 mm of thread in the bar.
 
+The **camera bracket** changed too (print it again, it's in the same project): the board was loose in it, and its top bar was in the way of the 5-pin socket (4.2 mm tall on the board's back) as the board slid down. The top bar moved back behind the socket (a new check, `camera_insert`, slides the board in from 40 mm above), and small crush ribs in the slots now press the board onto the front lips (0.2 mm) and centre it sideways (0.15 mm each side). The hooks are shorter, with rigid back lips under them.
+
 ## What changed (2026-11-03): one M3 kit for every screw
 
 All six 256 mm plates were printed. This change prints three plates again (07–09) and needs **only the Glarks M3 kit**: no M2 or M2.5 screws, no nuts, nothing drilled, and no screw goes into a hole made for a smaller one.
@@ -300,7 +302,7 @@ These values come from drawings, listings or estimates. Check each with calipers
 | `usbc_sock` | 13 × 7 × 18 | the female end of your USB-C extension (width, height, length) |
 | `charge_plug` | 12.2 × 6.8 × 18 | your USB-C extension's plug moulding (width, thickness, length). It sits 14 mm from the screen-power cable's USB-A plug, so keep both slim |
 | `pi_pcb_t` | 1.4 | Pi PCB thickness at an edge (the drawing shows 1.4; some boards are 1.6) |
-| `cam_pcb_t` | 1.6 | the camera board's thickness: the bracket's slots are 1.9 mm wide. A thinner board rattles a little: a strip of tape on its edges takes that up |
+| `cam_pcb_t` | 1.6 | the camera board's thickness: the bracket's slots are 1.9 mm wide, and crush ribs reach 0.2 mm into the board from behind (`cam_rib_y`) and 0.15 mm from each side (`cam_rib_x`) |
 | `cam_conn` | −6.7, 3.1 | the 5-pin socket on the board's back (from your photos): its centre from the board's middle (as seen from the front) and from its lower edge. The bracket leaves the whole lower middle of the back free |
 | `cam_board_y` | 26 | lens length: board front to the front of the lens, after focusing (the lens screws in and out) |
 | `sv_*` | MG90S drawing | clones differ – measure one servo: `sv_spline_h` (bottom → spline top), `sv_tab_z` (bottom → underside of the tabs), `sv_hole_sp` (tab holes) |
@@ -350,7 +352,7 @@ These values come from drawings, listings or estimates. Check each with calipers
    1. Lay the head face down on a soft cloth. Stick 1 mm foam tape around the window on the back of the visor and put the visor into the face seat from the front. It has no screws: the clamp holds it.
    2. Screen into the visor's ribs (glass first, HDMI socket down), then the screen clamp onto the four posts (4 × M3 × 12), its four feet on the head's visor tabs. Tighten evenly while pressing the screen gently forward: the clamp pulls the visor into its seat.
    3. Ears: 2 × M3 × 20 each from inside; fit the LED rings later.
-   4. **Camera, off the robot:** slide the camera board down into the bracket's two slots (lens to the front, its 5-pin socket at the bottom of its back) until both hooks click over its top edge. Put the bracket into the pod from below and screw it in from outside the pod (2 × M3 × 12, one each side): snug, so it holds its angle.
+   4. **Camera, off the robot:** slide the camera board down into the bracket's two slots (lens to the front, its 5-pin socket at the bottom of its back) until both hooks click over its top edge. The last 15 mm get firm (the crush ribs): push on the board's top edge with both thumbs, not on the lens. Put the bracket into the pod from below and screw it in from outside the pod (2 × M3 × 12, one each side): snug, so it holds its angle.
    5. Hold the head over the neck and plug in what comes up it: the HDMI (right-angle plug), the screen's power and the touch wires. Pass the camera cable up through the head and out of the opening in its top. Lower the head onto the coupler and screw it on (3 × M3 × 12 from inside; the uneven pattern only fits one way). Leave slack for the head to turn ±60°, tie the rest down.
    6. **Camera onto the head:** plug the camera cable into the socket on the back of the board (reach in through the pod's open bottom) and set the pod onto the head. Drop an M3 × 30 into each of the two holes in the pod's top. Through the open back, hold the **pod bar** up flat against the head's roof under the two screws with a fingertip, and turn the screws in from the top with a 2 mm hex key (the heads sit 21 mm down). Once the first one catches, the bar hangs on it; swing it under the second. Cut the bar's threads on the bench first (turn an M3 into each hole and back out), so nothing inside needs force.
    7. Close the back cap (4 × M3 × 30).

@@ -22,7 +22,7 @@ export -f one; export tmp
 {
     if (($#)); then printf '%s\n' "$@"; else
     for c in electronics_vs_torso electronics_overlap torso_parts_vs_electronics frame_vs_servo frame_vs_torso pinion_vs_torso \
-             gears_mesh_clear back_cover_vs_torso screen_vs_head ups_internal camera_vs_head bracket_vs_pod \
+             gears_mesh_clear back_cover_vs_torso screen_vs_head ups_internal camera_vs_head bracket_vs_pod camera_insert \
              head_parts_overlap torso_vs_base base_parts_overlap electronics_vs_base charge_cable_clear cables_body cables_head sonar_vs_base \
              wheels_vs_mobile_base stack_mount screws_forced screw_heads; do echo "$c"; done
     # the Pi + UPS stack's clear plate: thin and short, thick and tall (the floor and the keeper take both); and its

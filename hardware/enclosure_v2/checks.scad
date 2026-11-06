@@ -84,6 +84,17 @@ if (check == "ups_internal")          union() {
     intersection() { pca_floor(s); union() { ups_stack(s); ups_plugs(s); usbc_socket(s); } }
     intersection() { usbc_socket(s); union() { ups_stack(s); ups_plugs(s); } } }
 if (check == "camera_vs_head")        intersection() { place_head() union() { head_shell(); camera_pod(); pod_bar(); place_cam_bracket() camera_bracket(); } place_head() camera_s(); }
+// the board sliding down into the bracket (2026-11-06): everything on it but its edges (the slots, ribs and hooks take
+// those) must pass the bracket on the way in, from 40 mm above to its place. Bracket coordinates.
+module cam_parts_local() {
+    translate([-14, cam_pcb_t, -14]) cube([28, 1.5, 28]);                                                         // parts on the back
+    translate([cam_conn[0] - cam_conn_box[0]/2 - 0.5, cam_pcb_t, -16 + cam_conn[1] - cam_conn_box[1]/2 - 0.5])
+        cube([cam_conn_box[0] + 1, cam_conn_box[2], cam_conn_box[1] + 1]);                                        // the 5-pin socket
+    translate([-7.5, -6, -7.5]) cube([15, 6, 15]);                                                                 // lens holder
+    translate([-12.5, -2.5, -3]) cube([25, 2.5, 6]);                                                              // its screw ears
+    rotate([90, 0, 0]) cylinder(d = 14, h = 20);                                                                  // lens
+}
+if (check == "camera_insert")         intersection() { camera_bracket(); hull() { cam_parts_local(); translate([0, 0, 40]) cam_parts_local(); } }
 if (check == "bracket_vs_pod")        intersection() { place_head() union() { head_shell(); camera_pod(); pod_bar(); } place_head() place_cam_bracket() camera_bracket(); }
 if (check == "head_parts_overlap")    place_head() union() {
     intersection() { head_shell(); translate([0, -s, 0]) visor(); }
