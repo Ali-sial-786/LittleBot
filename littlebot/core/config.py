@@ -103,6 +103,9 @@ class CameraConfig(_Section):
     # --- added by vision (all optional, defaults keep previous behaviour) ---
     fourcc: str = "MJPG"  # requested pixel format; MJPG keeps USB 2.0 bandwidth low ("" = driver default)
     stall_seconds: float = 3.0  # no frame for this long => treated as disconnected
+    # V4L2 buffers: with 1, a frame that arrives while the reader still holds the last one is dropped, so a
+    # 30 fps camera gives 15. The reader grabs continuously, so 3 adds no lag.
+    buffers: int = 3
     fixture: str | None = None  # dev aid: image / video / directory used instead of a real camera
     mock_face: bool = False  # mock camera draws a slowly moving synthetic face (demos)
     live_view_fps: float = 30.0  # dashboard live view frame rate while watched (1-30; up to capture_fps)

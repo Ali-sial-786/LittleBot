@@ -273,7 +273,7 @@ def test_opencv_camera_negotiation_read_and_release(fake_driver):
     cap = FakeCap.instances[-1]
     assert cap.api == FAKE_CV2.CAP_V4L2 or not cam_mod._is_linux()
     assert cap.props[FAKE_CV2.CAP_PROP_FOURCC] == FAKE_CV2.VideoWriter_fourcc(*"MJPG")
-    assert cap.props[FAKE_CV2.CAP_PROP_BUFFERSIZE] == 1
+    assert cap.props[FAKE_CV2.CAP_PROP_BUFFERSIZE] == 3  # 1 drops every other frame (30 fps -> 15)
     info = cam.info()
     assert (info["width"], info["height"], info["fps"], info["fourcc"]) == (640, 480, 30.0, "MJPG")
     assert info["requested"]["fps"] == 15.0
