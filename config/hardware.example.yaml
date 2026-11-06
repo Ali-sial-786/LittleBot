@@ -41,9 +41,9 @@ display:
 camera:
   backend: auto            # auto | real | mock | none   (switch to real once the camera is confirmed)
   device: auto
-  capture_width: 640       # 640x480 MJPG keeps USB bandwidth and CPU low; 1080p is not needed
-  capture_height: 480
-  capture_fps: 15
+  capture_width: 1920       # 1080p30 MJPG (the U20CAM's top mode); 640x480 halves the vision CPU if needed
+  capture_height: 1080
+  capture_fps: 30
   fourcc: MJPG
   process_width: 320       # detection runs on a 320 px wide copy
   detect_fps: 5.0          # face detections per second (CPU budget on a 2 GB Pi 5)

@@ -97,7 +97,7 @@ async def test_live_frames_come_from_the_mock_camera(authed, vision, dctx):
     assert r.status_code == 200 and r.headers["content-type"] == "image/jpeg"
     assert r.headers["cache-control"] == "no-store"  # the browser keeps nothing either
     seq = int(r.headers["x-frame-seq"])
-    assert decode(r.content).shape[:2] == (360, vs.LIVE_VIEW_WIDTH)
+    assert decode(r.content).shape[:2] == (480, 640)  # the 640x480 mock camera, narrower than the live view
     r2 = await frame(authed, after=seq)
     assert r2.status_code == 200 and int(r2.headers["x-frame-seq"]) > seq
     assert vision.camera.open_count == 1  # the vision thread's own camera

@@ -84,14 +84,14 @@ is held, and only until it is handed over.
 optional extra, like `keep_photo_warm`); the dashboard checks for it.
 
 * Each call registers or refreshes `viewer`. While anyone is registered, the vision thread
-  JPEG-encodes the frames **it reads anyway**: 480 px wide (bilinear from 640), quality 60,
-  dim rooms lifted (`brighten_if_dark`), at most `LIVE_VIEW_MAX_FPS` (8) per second. Only the
+  JPEG-encodes the frames **it reads anyway**: `camera.live_view_width` wide (1920 = the full 1080p picture), quality 60,
+  dim rooms lifted (`brighten_if_dark`), at most `camera.live_view_fps` (30) per second. Only the
   newest one is kept, in memory, for the viewers; everybody gets the same encoded frame.
 * The encode runs **after** detection and gestures in the same cycle, so a viewer never delays
   a detection. Awake, the read schedule is unchanged (`detect_fps`: 6/s, 5 in `pi.yaml`; 10 with gestures): the same
   detections at the same moments with or without a viewer (tested). Only when vision reads
-  fewer than `LIVE_VIEW_MIN_FPS` (5) frames/s, i.e. while the robot sleeps, a viewer raises the
-  read rate to 5/s; detection stays at its own 1.5/s.
+  fewer than `camera.live_view_fps` frames/s, i.e. while the robot sleeps, a viewer raises the
+  read rate to that; detection stays at its own 1.5/s.
 * Separate from the warm photo (its own slot, size and quality; no AI consent involved), so a
   viewer can never keep the AI's photo alive or change it. Photos are still served first.
   No arbiter lease, no second camera open.
@@ -174,7 +174,7 @@ Bookworm/Trixie) Haar works out of the box.
 
 ## CPU budget (Raspberry Pi 5, 2 GB)
 
-Design choices: 640x480 MJPG capture (USB 2.0 friendly, cheap to decode), detection on a 320 px
+Design choices: 1080p30 MJPG capture since 2026-11-06 (USB 2.0 friendly; 640x480 is cheaper to decode), detection on a 320 px
 copy at 6 Hz (5 Hz in `pi.yaml`), decode only the frames we process, `vision.opencv_threads: 2` so
 detection never takes every core from the face renderer and audio. There is no work at all while
 the camera is disabled or a video plays, and 1.5 Hz while the robot sleeps (see above).

@@ -92,9 +92,9 @@ class FaceConfig(_Section):
 class CameraConfig(_Section):
     backend: DeviceBackend = "auto"
     device: int | str = 0  # index or /dev/videoN path
-    capture_width: int = 640
+    capture_width: int = 640  # config/default.yaml and pi.yaml ask for 1920x1080
     capture_height: int = 480
-    capture_fps: int = 15
+    capture_fps: int = 30
     process_width: int = 320  # frames are downscaled to this width before detection
     detect_fps: float = 6.0  # detection rate (CPU budget)
     mirror: bool = True  # camera faces the child: image-right means "look to my right"
@@ -104,6 +104,8 @@ class CameraConfig(_Section):
     stall_seconds: float = 3.0  # no frame for this long => treated as disconnected
     fixture: str | None = None  # dev aid: image / video / directory used instead of a real camera
     mock_face: bool = False  # mock camera draws a slowly moving synthetic face (demos)
+    live_view_fps: float = 30.0  # dashboard live view frame rate while watched (1-30; up to capture_fps)
+    live_view_width: int = 1920  # dashboard live view picture width (160-1920; 1920 = full 1080p)
 
 
 class VisionConfig(_Section):
