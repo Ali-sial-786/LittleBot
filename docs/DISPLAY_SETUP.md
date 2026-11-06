@@ -122,12 +122,17 @@ scale, black borders if the aspect differs).
   Blanking -> No), otherwise the face disappears after 10 minutes. LittleBot handles its
   own sleep face.
 
+LittleBot finds the screen's port by itself (`display.output_name: auto`): the Pi 5's two micro-HDMI
+ports are `HDMI-A-1` and `HDMI-A-2`, and it uses whichever has the screen. `wlr-randr` lists them.
+
 ## 4. Rotation
 
 Needed only if the screen is mounted upside down or portrait.
 
 - Desktop (Wayland): Screen Configuration -> right-click the screen -> Orientation, or
-  `wlr-randr --output HDMI-A-1 --transform 180` (values `normal`, `90`, `180`, `270`).
+  `wlr-randr --output HDMI-A-1 --transform 180` (values `normal`, `90`, `180`, `270`; `HDMI-A-2` if the
+  screen is on the other port). To keep it after a reboot, put `output HDMI-A-1 enable transform 180` in a
+  `profile { }` in `~/.config/kanshi/config`.
 - Boot console: add `video=HDMI-A-1:720x480@60,rotate=180` (rotation for the text console
   only; supported values 0/90/180/270 on recent kernels - UNVERIFIED for this panel).
 - `display_rotate=` / `lcd_rotate=` in `config.txt` do nothing under KMS.

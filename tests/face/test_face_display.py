@@ -437,6 +437,40 @@ def test_output_mode_failure_is_not_fatal(caplog):
     assert "failed to apply" in caplog.text
 
 
+WLR_TWO = """HDMI-A-1 "Unknown (HDMI-A-1)"
+  Enabled: no
+HDMI-A-2 "MPI3508 (HDMI-A-2)"
+  Enabled: yes
+  Modes:
+    720x480 px, 60.000000 Hz (current)
+  Position: 0,0
+  Transform: 180
+"""
+
+
+def test_find_output_picks_the_port_the_screen_is_on(caplog):
+    which = lambda _: "/usr/bin/wlr-randr"  # noqa: E731
+    run = _Run(current=WLR_TWO)
+    assert D.find_output("auto", run=run, which=which, env=WAYLAND) == "HDMI-A-2"  # HDMI-A-1 is off
+    assert run.calls == [["wlr-randr"]]
+    assert D.find_output("HDMI-A-2", run=run, which=which, env=WAYLAND) == "HDMI-A-2"
+    with caplog.at_level("WARNING", logger="littlebot.face.display"):  # a named port without a screen
+        assert D.find_output("HDMI-A-3", run=run, which=which, env=WAYLAND) == "HDMI-A-2"
+    assert "HDMI-A-3 not found" in caplog.text
+    assert D.find_output("auto", run=_Run(current=WLR_1280), which=which, env=WAYLAND) == "HDMI-A-1"
+    assert D.find_output("HDMI-A-1", run=_Run(current=WLR_1280), which=which, env=WAYLAND) == "HDMI-A-1"  # named, on
+    assert D.find_output("HDMI-A-1", run=_Run(current=WLR_TWO), which=which, env=WAYLAND) == "HDMI-A-2"  # named, but off
+
+
+def test_find_output_without_wayland_or_wlr_randr():
+    run = _Run(current=WLR_TWO)
+    assert D.find_output("auto", run=run, which=lambda _: "/usr/bin/wlr-randr", env={}) == "HDMI-A-1"
+    assert D.find_output("HDMI-A-2", run=run, which=lambda _: None, env=WAYLAND) == "HDMI-A-2"
+    assert run.calls == []
+    broken = _Run(current="")
+    assert D.find_output("auto", run=broken, which=lambda _: "/usr/bin/wlr-randr", env=WAYLAND) == "HDMI-A-1"
+
+
 def test_current_size_reads_only_the_named_output():
     text = 'HDMI-A-2 "other"\n  Modes:\n    1920x1080 px, 60.0 Hz (current)\n' + WLR_1280
     assert D._current_size(text, "HDMI-A-1") == "1280x720"

@@ -72,7 +72,7 @@ class DisplayConfig(_Section):
     # Screen mode to request from the Wayland compositor before going fullscreen, e.g.
     # "720x480@60" (None = leave the desktop's mode alone). See docs/DISPLAY_SETUP.md.
     output_mode: str | None = None
-    output_name: str = "HDMI-A-1"  # the Pi 5's HDMI0 port
+    output_name: str = "auto"  # the screen's port: auto = the HDMI port it is plugged into (or e.g. "HDMI-A-1")
     # SDL video driver to prefer, e.g. "wayland" (None = SDL's own choice, which is X11 via
     # Xwayland under labwc). An SDL_VIDEODRIVER environment variable always wins.
     video_driver: str | None = None

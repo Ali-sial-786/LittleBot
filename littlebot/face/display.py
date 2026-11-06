@@ -133,6 +133,41 @@ def run_display(robot: Any, demo: bool = False) -> None:
         _wait_for_shutdown(robot)
 
 
+def find_output(name: str | None, *, run: Callable[..., Any] = subprocess.run,
+                which: Callable[[str], str | None] = shutil.which, env: Any = None) -> str:
+    """The screen's output name. ``name`` ("auto", or e.g. "HDMI-A-1") is used when that output is on;
+    otherwise (auto, or that port has no screen) the first enabled HDMI output (the Pi 5's two micro-HDMI ports
+    are HDMI-A-1 and HDMI-A-2), else the first enabled one. Without Wayland / wlr-randr: ``name``, or HDMI-A-1."""
+    env = os.environ if env is None else env
+    wanted = (name or "").strip()
+    fallback = wanted if wanted and wanted.lower() != "auto" else "HDMI-A-1"
+    if not env.get("WAYLAND_DISPLAY") or which("wlr-randr") is None:
+        return fallback
+    try:
+        res = run(["wlr-randr"], capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        log.debug("could not list the screens", exc_info=True)
+        return fallback
+    if res.returncode != 0:
+        return fallback
+    outputs: list[tuple[str, bool]] = []  # (name, enabled), in the compositor's order
+    for line in (res.stdout or "").splitlines():
+        if line and not line[0].isspace():
+            outputs.append((line.split()[0], True))
+        elif outputs and re.match(r"\s*Enabled:\s*no\b", line):
+            outputs[-1] = (outputs[-1][0], False)
+    names = [n for n, _ in outputs]
+    enabled = [n for n, on in outputs if on]
+    if wanted and wanted.lower() != "auto" and wanted in enabled:
+        return wanted
+    pick = next((n for n in enabled if n.startswith("HDMI")), None) or (enabled or names or [fallback])[0]
+    if wanted and wanted.lower() != "auto":
+        log.warning("screen %s not found (screens: %s): using %s", wanted, ", ".join(names) or "none", pick)
+    else:
+        log.info("screen found on %s", pick)
+    return pick
+
+
 def apply_output_mode(output: str, mode: str, *, run: Callable[..., Any] = subprocess.run,
                       which: Callable[[str], str | None] = shutil.which,
                       env: Any = None, settle_s: float = 0.5) -> bool:
@@ -366,6 +401,7 @@ class DisplayLoop:
         self._battery_sub: Any = None
         # The screen's signal off after a quiet spell (the robot's own screen only; made in open()).
         self.screen_power: ScreenPower | None = None
+        self.output_name = str(self.cfg.output_name)  # the screen's port, found in open() ("auto")
         self._waking_touch = False  # the finger that woke the dark screen: its press does nothing else
         self._woke_lift = float("-inf")  # when that finger lifted (a flicker right after is still it)
 
@@ -374,8 +410,9 @@ class DisplayLoop:
         import pygame
 
         self._pg = pygame
+        self.output_name = find_output(self.cfg.output_name) if self.fullscreen else self.cfg.output_name
         if self.fullscreen and self.cfg.output_mode:
-            apply_output_mode(self.cfg.output_name, self.cfg.output_mode)
+            apply_output_mode(self.output_name, self.cfg.output_mode)
         init_video(pygame, self.cfg.video_driver)
         pygame.font.init()
         pygame.display.set_caption(f"{self.ctx.config.robot_name}")
@@ -394,7 +431,7 @@ class DisplayLoop:
         self._watch_live_view()
         self._watch_levels()
         self._watch_power()
-        self.screen_power = make_screen_power(self.cfg.output_name, fullscreen=self.fullscreen,
+        self.screen_power = make_screen_power(self.output_name, fullscreen=self.fullscreen,
                                               sim_mode=self.sim_mode)
         if self.screen_power is not None:
             self.screen_power.restore()  # a crash may have left it dark
