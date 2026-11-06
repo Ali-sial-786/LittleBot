@@ -10,7 +10,7 @@ Two complete designs. Both are parametric OpenSCAD models with ready-to-slice ST
 |---|---|---|
 | Look | ![v1](enclosure/images/front.png) | ![v2](enclosure_v2/images/front.png) |
 | Size | 130 × 126 mm footprint, 212 mm tall, head 146 mm wide | 176 × 152 mm footprint, 340 mm tall |
-| Parts | 11 STLs (12 prints) | 23 STLs (25 prints) + 2 for the wheel phase |
+| Parts | 11 STLs (12 prints) | 24 STLs (26 prints) + 2 for the wheel phase |
 | Head | screen + Pi stack in the face, mic in the head's side | helmet head, black visor with the screen behind it, LED-ring ears, camera pod on top |
 | Neck | geared turntable, head = 0.67 × servo | same |
 | Body | camera in the chest, speaker + PCA9685 on the floor plate | speaker + mic in the chest; Pi on its UPS battery, PCA9685, wheel wells, sensor/light-bar plate in the base |

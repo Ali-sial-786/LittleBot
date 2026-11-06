@@ -54,7 +54,7 @@ PRINTED = {256: ["01_main", "02_main", "03_main", "04_main", "05_black", "06_glo
 # are printed again; the printed ones they replace are simply not used. One plate per printer job.
 REPRINT = {256: [("main", "P2S", ["base_floor", "stack_keeper", "pca_clamp", "pca_clamp", "coupler", "ring_gear"]),
                  ("black", "A1", ["visor"]),
-                 ("main", "A1", ["screen_clamp", "camera_pod", "camera", "servo_frame"])]}
+                 ("main", "A1", ["screen_clamp", "camera_pod", "pod_bar", "camera", "servo_frame"])]}
 
 
 def load(name: str) -> np.ndarray:

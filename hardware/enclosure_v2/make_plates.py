@@ -29,7 +29,7 @@ PLATES = [
     ("06_arms",        "main colour",           [["torso_back", "arm_left"], ["arm_right"]]),
     ("07_small_parts", "main colour, print slowly (gears)",
                                                 [["coupler", "ring_gear", "pinion"], ["servo_frame", "camera", "rear_usb"],
-                                                 ["stack_keeper", "pca_clamp", "pca_clamp"]]),
+                                                 ["stack_keeper", "pca_clamp", "pca_clamp", "pod_bar"]]),
     ("08_visor",       "black",                 [["visor"]]),
     ("09_glow",        "white / natural / translucent", [["ear_left", "ear_right"], ["front_blank"]]),
     # later, for the wheel phase

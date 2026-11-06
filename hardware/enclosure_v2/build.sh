@@ -9,7 +9,7 @@ OUT=${OUT:-stl}
 IMG=${IMG:-images}
 PARTS=(base base_floor stack_keeper pca_clamp base_floor_mobile shelf well_cover front_blank front_sonar rear_blank rear_usb
        torso torso_back coupler ring_gear pinion servo_frame
-       head head_back visor ear_left ear_right camera_pod camera screen_clamp arm_left arm_right)
+       head head_back visor ear_left ear_right camera_pod pod_bar camera screen_clamp arm_left arm_right)
 (($#)) && PARTS=("$@")
 mkdir -p "$OUT" "$IMG"
 render() { openscad -q -o "$OUT/$1.stl" -D "part=\"$1\"" "$SCAD" && python3 stl_tools.py binary "$OUT/$1.stl" && echo "==> $1"; }

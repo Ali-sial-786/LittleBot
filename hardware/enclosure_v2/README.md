@@ -98,7 +98,7 @@ Each plate is a single STL with several separate bodies. Most slicers can split 
 |---|---|---|---|
 | `07_main_P2S.3mf` | **P2S** | floor (the stack mount), stack keeper, 2 PCA9685 clamps, neck coupler, ring gear | main colour |
 | `08_black_A1.3mf` | **A1** | visor | **black** |
-| `09_main_A1.3mf` | **A1** | screen clamp, camera pod, camera bracket (5 mm brim), servo frame | main colour |
+| `09_main_A1.3mf` | **A1** | screen clamp, camera pod, pod bar, camera bracket (5 mm brim), servo frame | main colour |
 
 - **P2S:** the floor is the biggest and tallest part (57 mm), so it goes on the printer whose bed doesn't move.
 - **A1:** the visor first, then plate 09. **Test the fits first:** print just the **servo frame** and the **camera bracket** from plate 09 (delete the others in Bambu Studio, about 35 min) and try them: a collar slides over one of the torso's servo pillars and its pinch screw tightens it; the camera board slides down into the bracket and its two hooks click over the board's top edge. Then print the P2S plate and the rest.
@@ -146,7 +146,8 @@ Each plate is a single STL with several separate bodies. Most slicers can split 
 | `visor.stl` | 1 | print in **black**: the frame around the screen, glass locating ribs and four posts that carry the screen clamp. No screws of its own |
 | `screen_clamp.stl` | 1 | screws onto the visor posts (4 × M3 × 12) and presses the screen's four PCB tabs into the visor; hooks under the lower tabs, so the screen sits on it and can't slide down. Four feet press on the head's visor tabs: tightening it clamps the visor into the head |
 | `ear_left.stl`, `ear_right.stl` | 1 each | mirror images; LED-ring pocket behind a 1 mm skin |
-| `camera_pod.stl` | 1 | the camera housing on top of the head; the bracket's two pivot screws go in from outside, their heads sunk into its sides |
+| `camera_pod.stl` | 1 | the camera housing on top of the head; the bracket's two pivot screws go in from outside, their heads sunk into its sides; its own two screws go in from the top |
+| `pod_bar.stl` | 1 | small bar under the head's roof that the pod's two screws go into (46 × 9 × 7 mm) |
 | `camera.stl` | 1 | camera bracket inside the pod: the board slides down into two side slots and two springy hooks snap over its top edge (no screws in the board); the 5-pin socket on the board's back stays free |
 | `arm_left.stl`, `arm_right.stl` | 1 each | print flat side (the side facing the body) down |
 | later: `base_floor_mobile.stl`, `shelf.stl`, `front_sonar.stl` | 1 each | wheel phase: wheel slots + motor/caster grids, the old battery-bay shelf, HC-SR04 plate (**not updated for the UPS yet**) |
@@ -167,9 +168,9 @@ Each plate is a single STL with several separate bodies. Most slicers can split 
 | Item | Qty | Use |
 |---|---|---|
 | M3 × 10 | 20 | well covers (8) and front/rear plates (4): in their countersinks the button heads sit 1.3 mm proud; torso back cover (4, through its lip: it fits lip outwards); the servo frame's collars (2 pinch screws); the PCA9685 clamps (2) |
-| M3 × 12 | 22 | ring gear → coupler (3, from below); torso → base (4, from inside the base); floor → base (4, from below, heads in pockets); screen clamp → visor posts (4); head → coupler (3, from inside); camera pod → head (2, from inside); camera bracket pivots (2, from outside the pod) |
+| M3 × 12 | 20 | ring gear → coupler (3, from below); torso → base (4, from inside the base); floor → base (4, from below, heads in pockets); screen clamp → visor posts (4); head → coupler (3, from inside); camera bracket pivots (2, from outside the pod) |
 | M3 × 20 | 6 | ears (4, from inside the head); the stack keeper (2) |
-| M3 × 30 | 4 | head back cap (through the cap's bosses; the heads sit 1.3 mm proud in the countersinks) |
+| M3 × 30 | 6 | head back cap (4, through the cap's bosses; the heads sit 1.3 mm proud in the countersinks); camera pod → head (2, from the top of the pod, down into the pod bar) |
 | servo screws (in the servo bags) | | servo tabs, horns, the arms' centre screws |
 | the UPS kit's own screws | | the Pi onto the UPS (as Waveshare assembles it; the clear plate keeps its own flush screws too) |
 | PTFE tape or a drop of silicone grease | – | neck bearing ring |
@@ -243,6 +244,10 @@ The robot itself reports the screen as `MPI3508` (EDID), the camera as `U20CAM-1
 | MG90S servo | A 32.5 (spline top), B 22.8 (body), C 28.4 (boss top), D 12.4 (width), E 32.1 (across tabs), F 18.5 (tab top) | [TowerPro MG90S](https://www.towerpro.com.tw/product/mg90s-3/) |
 | PCA9685 (Adafruit 815 layout) | 62.2 × 25.4 board, 4 holes Ø2.5 at 3.30 / 59.18 × 3.30 / 22.35 (55.88 × 19.05) | [Adafruit 815](https://www.adafruit.com/product/815), [fab print](https://learn.adafruit.com/16-channel-pwm-servo-driver/downloads) |
 | Waveshare UPS HAT (E) | board 88 × 56, six Ø3.0 holes: the corners 3.5 mm in and the Pi's 58 × 49 pattern (23 mm from a corner hole); on its port edge, from the Pi's SD-card end: switch 15.2 (13.2 wide, its knob 4.8 mm past the edge), USB-A 5V OUT 32.45 (13.9 wide), USB-C POWER 49.35 (8.9 wide); pogo pins under the Pi's header pins 2/4/6; clear plate about the board's size and thickness, its screws flush (your measurement); 4 × 21700 cells (21 × 70 mm); **not published:** the standoffs (model: 46 mm plate → UPS, 10 mm UPS → Pi) | Waveshare's outline drawing and product photos (sent 2026-11-03), [Waveshare wiki](https://www.waveshare.com/wiki/UPS_HAT_(E)) |
+
+## What changed (2026-11-06): the camera pod screws from the top
+
+The pod's two screws went in from inside the head, up through its roof: there's no room in there to turn a key with any force. Now they go in **from the top of the pod** (2 × M3 × 30, heads 21 mm down two 6.4 mm holes), through the head's existing holes, into a small printed **pod bar** held up under the roof. Inside the head you only hold the bar; all the turning is from outside. Reprint the **camera pod** and print the **pod bar** (with the camera bracket: `plates_256/project/LittleBot_camera_pod_fix_A1.3mf`, A1). The head doesn't change. The screws cut 6.2 mm of thread in the bar.
 
 ## What changed (2026-11-03): one M3 kit for every screw
 
@@ -347,7 +352,7 @@ These values come from drawings, listings or estimates. Check each with calipers
    3. Ears: 2 × M3 × 20 each from inside; fit the LED rings later.
    4. **Camera, off the robot:** slide the camera board down into the bracket's two slots (lens to the front, its 5-pin socket at the bottom of its back) until both hooks click over its top edge. Put the bracket into the pod from below and screw it in from outside the pod (2 × M3 × 12, one each side): snug, so it holds its angle.
    5. Hold the head over the neck and plug in what comes up it: the HDMI (right-angle plug), the screen's power and the touch wires. Pass the camera cable up through the head and out of the opening in its top. Lower the head onto the coupler and screw it on (3 × M3 × 12 from inside; the uneven pattern only fits one way). Leave slack for the head to turn ±60°, tie the rest down.
-   6. **Camera onto the head:** plug the camera cable into the socket on the back of the board (reach in through the pod's open bottom), then set the pod onto the head and screw it on from inside the head (2 × M3 × 12, through the open back).
+   6. **Camera onto the head:** plug the camera cable into the socket on the back of the board (reach in through the pod's open bottom) and set the pod onto the head. Drop an M3 × 30 into each of the two holes in the pod's top. Through the open back, hold the **pod bar** up flat against the head's roof under the two screws with a fingertip, and turn the screws in from the top with a 2 mm hex key (the heads sit 21 mm down). Once the first one catches, the bar hangs on it; swing it under the second. Cut the bar's threads on the bench first (turn an M3 into each hole and back out), so nothing inside needs force.
    7. Close the back cap (4 × M3 × 30).
 8. **Arms:** set the arm servos to their calibrated neutral, screw the horn into the arm's pocket (2 small screws), press the arm onto the spline and drive the centre screw through the hole in the arm.
 

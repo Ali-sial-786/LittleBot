@@ -53,7 +53,7 @@ module wheels_s() { for (k = [-1, 1]) translate([k * wheel_x, wheel_y, wheel_d/2
 
 // --- moving assemblies ---
 module rotate_about_neck(a) { translate([0, neck_y, 0]) rotate(a) translate([0, -neck_y, 0]) children(); }
-module head_all() { place_head() { head_shell(); head_back(); visor(); screen_clamp(); ear(); mirror([1, 0, 0]) ear(); camera_pod(); } }
+module head_all() { place_head() { head_shell(); head_back(); visor(); screen_clamp(); ear(); mirror([1, 0, 0]) ear(); camera_pod(); pod_bar(); } }
 module moving_neck() { place_torso() translate([0, neck_yt, 0]) rotate(head_angle) translate([0, -neck_yt, 0]) {
     translate([0, neck_yt, torso_h + s]) coupler(); translate([0, neck_yt, gear_z0]) ring_gear(); } }
 module arms_at(a) { for (k = [-1, 1]) place_arm(k, a); }
@@ -74,7 +74,7 @@ if (check == "back_cover_vs_torso")   intersection() { torso_shell(); translate(
 if (check == "neck_vs_torso")         intersection() { place_torso() torso_shell(); moving_neck(); }
 if (check == "head_vs_torso")         intersection() { place_torso() torso_shell(); translate([0, 0, s]) rotate_about_neck(head_angle) head_all(); }
 // the screen and the cables plugged into it vs the head, the visor (ribs, posts), the screen clamp and the camera
-if (check == "screen_vs_head")        intersection() { place_head() union() { head_shell(); visor(); screen_clamp(); camera_pod(); place_cam_bracket() camera_bracket(); }
+if (check == "screen_vs_head")        intersection() { place_head() union() { head_shell(); visor(); screen_clamp(); camera_pod(); pod_bar(); place_cam_bracket() camera_bracket(); }
                                                        place_head() screen_s(); }
 // the stack's plugs don't run into each other or into the stack (the jumpers sit on the GPIO pins by design)
 if (check == "ups_internal")          union() {
@@ -83,14 +83,15 @@ if (check == "ups_internal")          union() {
     intersection() { ups_plug(5, s); difference() { ups_stack(s); pi_box(7.13, 57.93, 50.02, 55.0, 0, 8.57); } }
     intersection() { pca_floor(s); union() { ups_stack(s); ups_plugs(s); usbc_socket(s); } }
     intersection() { usbc_socket(s); union() { ups_stack(s); ups_plugs(s); } } }
-if (check == "camera_vs_head")        intersection() { place_head() union() { head_shell(); camera_pod(); place_cam_bracket() camera_bracket(); } place_head() camera_s(); }
-if (check == "bracket_vs_pod")        intersection() { place_head() union() { head_shell(); camera_pod(); } place_head() place_cam_bracket() camera_bracket(); }
+if (check == "camera_vs_head")        intersection() { place_head() union() { head_shell(); camera_pod(); pod_bar(); place_cam_bracket() camera_bracket(); } place_head() camera_s(); }
+if (check == "bracket_vs_pod")        intersection() { place_head() union() { head_shell(); camera_pod(); pod_bar(); } place_head() place_cam_bracket() camera_bracket(); }
 if (check == "head_parts_overlap")    place_head() union() {
     intersection() { head_shell(); translate([0, -s, 0]) visor(); }
     intersection() { head_shell(); translate([0, s, 0]) head_back(); }
     intersection() { head_shell(); for (k = [-1, 1]) translate([k * s, 0, 0]) mirror([k < 0 ? 1 : 0, 0, 0]) ear(); }
     intersection() { head_shell(); translate([0, 0, s]) camera_pod(); }
-    intersection() { union() { head_shell(); camera_pod(); } screen_clamp(); }
+    intersection() { union() { head_shell(); camera_pod(); } translate([0, 0, -s]) pod_bar(); }
+    intersection() { union() { head_shell(); camera_pod(); pod_bar(); } screen_clamp(); }
     intersection() { visor(); translate([0, s, 0]) screen_clamp(); } }
 if (check == "torso_vs_base")         intersection() { base_shell(); translate([0, 0, s]) place_torso() torso_shell(); }
 if (check == "base_parts_overlap")    union() {
@@ -117,7 +118,7 @@ if (check == "cables_body")           intersection() { union() { for (c = hw_cab
             translate([0, neck_yt, gear_z0]) ring_gear(); translate([0, pinion_yt, gear_z0]) rotate(7.5) pinion();
             translate([0, pinion_yt, hs_tab_top - sv_tab_t - frame_t]) servo_frame(); torso_electronics_s(); } } }
 if (check == "cables_head")           intersection() { union() { for (c = hw_cables()) if (c[2] == "head") cable_route(c, s); }
-    place_head() union() { head_shell(); head_back(); visor(); screen_clamp(); ear(); mirror([1, 0, 0]) ear(); camera_pod();
+    place_head() union() { head_shell(); head_back(); visor(); screen_clamp(); ear(); mirror([1, 0, 0]) ear(); camera_pod(); pod_bar();
         place_cam_bracket() camera_bracket(); screen_dummy(s); camera_s(); } }
 if (check == "sonar_vs_base")         intersection() { union() { base_parts(); place_front_plate() port_plate(front_w, front_h, "sonar"); } sonar_s(); }
 if (check == "wheels_vs_mobile_base") intersection() { union() { base_shell(); base_floor(true); place_torso() torso_shell(); } wheels_s(); }
@@ -138,7 +139,7 @@ module printed_parts() {
     place_torso() { torso_shell(); translate([-46 + clr, torso_d - torso_wall, 0]) torso_back(); translate([0, neck_yt, torso_h]) coupler();
         translate([0, neck_yt, gear_z0]) ring_gear(); translate([0, pinion_yt, gear_z0]) rotate(7.5) pinion();
         translate([0, pinion_yt, hs_tab_top - sv_tab_t - frame_t]) servo_frame(); }
-    place_head() { head_shell(); head_back(); visor(); screen_clamp(); ear(); mirror([1, 0, 0]) ear(); camera_pod(); place_cam_bracket() camera_bracket(); }
+    place_head() { head_shell(); head_back(); visor(); screen_clamp(); ear(); mirror([1, 0, 0]) ear(); camera_pod(); pod_bar(); place_cam_bracket() camera_bracket(); }
 }
 module electronics_all() { base_electronics_s(); charge_cable(s); place_torso() torso_electronics_s(); place_head() { screen_s(); camera_s(); }
     for (c = hw_cables()) cable_route(c, s); }

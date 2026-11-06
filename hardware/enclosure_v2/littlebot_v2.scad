@@ -826,6 +826,12 @@ visor_post_d = 7;
 function visor_post_pts() = [[lcd_x0 - 4.4, visor_z - 5], [lcd_x0 - 4.4, visor_z + 10],
                              [pi_h([pi_l + 3, 0])[0] + 5.1, visor_z - 14], [12, visor_z + 35]];
 pod_screw_pts = [[-20, pod_y0 + 6.2], [20, pod_y0 + 6.2]];   // front corners, clear of the camera bracket
+pod_col_d = 10.4;                      // the pod's screw columns (a 6.4 counterbore down each)
+pod_cb_d = 6.4;
+pod_bar = [46, 9, 7];                  // the bar under the head's roof (x, y, z)
+// the head's outer top at the pod's screws (126 at y = 0, 130 at y = 4, 132 at y = 60); M3 x 30 heads sit 21 mm above
+// it, 21 mm down from the pod's top (any 2 mm hex key reaches)
+pod_seat_z = head_h - 2 + 2 * (pod_screw_pts[0][1] - head_chamfer) / (60 - head_chamfer) + 21;
 cam_z = head_h + 18;  // lens centre height in the pod (head coordinates)
 
 module head_shell() {
@@ -1030,7 +1036,7 @@ module camera_pod() {
             }
             // pillars beside the bracket's pivots (fused to the side walls), screw bosses
             for (s = [-1, 1]) translate([s * (cam_brk_wo + 0.2 + 3.3), cam_pivot_y, cam_z - 6]) cylinder(d = 6.6, h = head_h + pod_h - cam_z + 6 - pw + eps);
-            for (p = pod_screw_pts) translate([p[0], p[1], head_h - 6]) cylinder(d = 8, h = pod_h + 6 - pw + eps);
+            for (p = pod_screw_pts) translate([p[0], p[1], head_h - 6]) cylinder(d = pod_col_d, h = pod_h + 6 - pw + eps);
         }
         head_solid();
         // lens aperture (flared)
@@ -1041,7 +1047,19 @@ module camera_pod() {
             translate([s * 24, cam_pivot_y, cam_z]) rotate([0, 90, 0]) cylinder(d = clear_m3, h = 12, center = true, $fn = fn_small);
             translate([s * (pod_w/2 - 1.8), cam_pivot_y, cam_z]) rotate([0, s * 90, 0]) cylinder(d = 6.4, h = 5, $fn = 24);
         }
-        for (p = pod_screw_pts) translate([p[0], p[1], head_h - 7]) cylinder(d = pilot_m3, h = 17.5, $fn = fn_small);   // M3 x 12 from inside the head
+        // M3 x 30 from the TOP (2026-11-06): down a counterbore, through the head's existing holes into pod_bar() inside
+        for (p = pod_screw_pts) {
+            translate([p[0], p[1], head_h - 7]) cylinder(d = clear_m3, h = pod_h + 8, $fn = fn_small);
+            translate([p[0], p[1], pod_seat_z]) cylinder(d = pod_cb_d, h = head_h + pod_h - pod_seat_z + 1, $fn = 24);
+        }
+    }
+}
+// the bar inside the head that the pod's two screws go into: held up under the roof by a fingertip, no turning
+// inside (cut its threads on the bench first). The screws turn from the top, with full access.
+module pod_bar() {
+    difference() {
+        translate([-pod_bar[0]/2, pod_screw_pts[0][1] - pod_bar[1]/2, pod_screw_bear_z - 0.2 - pod_bar[2]]) cube(pod_bar);
+        for (p = pod_screw_pts) translate([p[0], p[1], pod_screw_bear_z - pod_bar[2] - 1]) cylinder(d = pilot_m3, h = pod_bar[2] + 2, $fn = fn_small);
     }
 }
 module pod_box(w, d, h, r) { hull() { translate([0, d/2, 0]) linear_extrude(h - r/2) rrect(w, d, r); translate([0, d/2, h - eps]) linear_extrude(eps) rrect(w - r, d - r, r/2); } }
@@ -1218,6 +1236,7 @@ module assembly(explode = 0) {
         color("#9fd3f5") place_head() { ear(); mirror([1, 0, 0]) ear(); }
         color("#f7f4ee") translate([0, 0, explode * 0.3]) place_head() camera_pod();
         color("#aab") place_head() place_cam_bracket() camera_bracket();
+        color("#aab") place_head() pod_bar();
     }
     for (s = [-1, 1]) color("#f2efe8") translate([s * explode * 0.5, 0, explode * 0.4]) place_arm(s);
     if (explode == 0) electronics();
@@ -1260,7 +1279,7 @@ function hw_screws() = concat(
     [for (p = visor_post_pts()) ["clamp", "M3 × 12", 3, 12, "pan", head_pt([p[0], carrier_y + carrier_t, p[1]]), [0, -1, 0]]],
     [for (s = [-1, 1]) for (dz = [-ear_screw_dz, ear_screw_dz]) ["ears", "M3 × 20", 3, 20, "pan", head_pt([s * (head_w/2 - 11), ear_y, ear_z + dz]), [s, 0, 0]]],
     [for (s = [-1, 1]) ["camera", "M3 × 12", 3, 12, "pan", head_pt([s * (pod_w/2 - 1.8), cam_pivot_y, cam_z]), [-s, 0, 0]]],                 // the bracket's pivots
-    [for (p = pod_screw_pts) ["camera", "M3 × 12", 3, 12, "pan", head_pt([p[0], p[1], pod_screw_bear_z]), [0, 0, 1]]],                    // the pod, from inside the head
+    [for (p = pod_screw_pts) ["camera", "M3 × 30", 3, 30, "pan", head_pt([p[0], p[1], pod_seat_z]), [0, 0, -1]]],                         // the pod, from the top into pod_bar()
     [for (a = head_screw_angles) ["head_on", "M3 × 12", 3, 12, "pan", head_pt([head_screw_r * cos(a), head_neck_y + head_screw_r * sin(a), head_bottom_t]), [0, 0, -1]]],
     [for (p = head_back_boss_pts()) ["back_cap", "M3 × 30", 3, 30, "pan", head_pt([p[0], head_d - csk_btn, p[1]]), [0, -1, 0]]],
     [for (s = [-1, 1]) for (a = [0, 180]) ["arms", "horn screws", 2, 5, "pan", arm_pt(s, [7.5 * cos(a), 7.5 * sin(a), 0]), arm_dir(s, [0, 0, 1])]],
@@ -1409,6 +1428,7 @@ module print_part(p) {
     else if (p == "ear_left")    mirror([0, 1, 0]) print_part("ear_right");     // the head tapers, so the ears are mirror images
     else if (p == "camera_pod")  translate([0, 0, head_h + pod_h]) mirror([0, 0, 1]) camera_pod();
     else if (p == "camera")      translate([0, 0, 17.25]) camera_bracket();          // upright
+    else if (p == "pod_bar")     translate([0, 0, -(pod_screw_bear_z - 0.2 - pod_bar[2])]) pod_bar();   // flat
     else if (p == "pi_carrier")  translate([0, 0, carrier_y + carrier_t]) rotate([-90, 0, 0]) pi_carrier();   // back face down (no longer used)
     else if (p == "screen_clamp") translate([0, 0, carrier_y + carrier_t]) rotate([-90, 0, 0]) screen_clamp(); // back face down
     else if (p == "arm_left")    arm_left();      // inner (flat) face down
