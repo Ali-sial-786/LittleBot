@@ -75,6 +75,7 @@ class FakeVision:
         self.photos = 0
         self.warm: tuple[bytes, float] | None = None
         self.warm_asked = 0
+        self.max_widths: list[int] = []
         self.error: Exception | None = None
 
     def status(self) -> dict[str, Any]:
@@ -88,6 +89,7 @@ class FakeVision:
         if self.error is not None:
             raise self.error
         self.photos += 1
+        self.max_widths.append(max_width)
         return jpeg()
 
 
@@ -516,7 +518,7 @@ async def test_a_sample_that_looks_like_someone_else_is_not_kept(setup):
 
 # ------------------------------------------------------------------ who is there
 @needs_cv2
-async def test_who_is_there_uses_the_warm_photo_and_never_guesses(setup):
+async def test_who_is_there_takes_a_full_size_photo_and_never_guesses(setup):
     s = setup
     assert await s.rec.who_is_there() is None  # nobody enrolled: no photo at all
     assert s.vision.photos == 0
@@ -525,13 +527,10 @@ async def test_who_is_there_uses_the_warm_photo_and_never_guesses(setup):
     s.store.add_sample(pid, face((0, 1.0), (2, 0.3)))
     s.engine.scripted = [seen_face(face((0, 0.8), (6, 0.6)), x=0.1), seen_face(face((9, 1.0)), x=0.7),
                          seen_face(face((0, 1.0)), score=0.65, width=30)]
-    s.vision.warm = (jpeg(), 0.2)
+    s.vision.warm = (jpeg(), 0.2)  # a live call's warm photo is only 640 px: not used for faces
     sighting = await s.rec.who_is_there()
-    assert s.vision.photos == 0 and s.vision.warm_asked == 1  # the call's warm photo: no extra photo
+    assert s.vision.photos == 1 and s.vision.warm_asked == 0 and s.vision.max_widths == [F.PHOTO_WIDTH]
     assert [p.name for p in sighting.people()] == ["Ali"] and sighting.unknown == 1  # the tiny face isn't compared
-    s.vision.warm = None
-    await s.rec.who_is_there()
-    assert s.vision.photos == 1
 
 
 @needs_cv2
