@@ -34,13 +34,15 @@ face:
 camera:
   backend: auto          # auto | real | mock | none   (auto: real camera, else mock in simulation/offline)
   device: auto           # auto (first USB camera) | index (0) | /dev/videoN  -- see scripts/check_camera.py --list
-  capture_width: 640
-  capture_height: 480
-  capture_fps: 15
+  capture_width: 1920
+  capture_height: 1080
+  capture_fps: 30
   fourcc: MJPG           # compressed frames: low USB 2.0 bandwidth
   process_width: 320     # detection runs on a 320 px wide copy (CPU budget on the Pi)
   detect_fps: 6.0
   mirror: true           # camera faces the child: image-right => eyes look to the robot's right
+  live_view_fps: 30      # dashboard Camera page frame rate while watched (1-30, at most capture_fps)
+  live_view_width: 1920  # dashboard Camera page picture width (1920 = full 1080p; 1280 if Wi-Fi stutters)
   reconnect_seconds: 3.0
 
 vision:
