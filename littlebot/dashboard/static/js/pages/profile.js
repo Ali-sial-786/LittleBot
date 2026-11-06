@@ -2,6 +2,7 @@
 
 import { del, get, post, put } from '../api.js';
 import { banner, button, clear, confirmDialog, fmtAge, h, icon, pageHead, setText, tagInput, toast } from '../ui.js';
+import { liveStream } from '../livestream.js';
 
 export default {
   mount(view, app) {
@@ -125,7 +126,7 @@ export default {
 
     get('/profile').then(fill).catch((e) => view.append(banner('danger', 'alert', 'Could not load the profile', e.message)));
     who.load();
-    return {};
+    return { destroy() { who.destroy(); } };
   },
 };
 
@@ -148,6 +149,46 @@ function whosWho(app) {
     h('div', { class: 'field' }, h('label', { for: 'ww-role', text: 'Who they are' }), role, h('span', { class: 'hint', text: 'A few words, for example "dad", "the baby" or "Amara\'s grandma".' })),
     h('div', {}, addBtn));
   let state = { people: [], suggested_samples: 5, retake_days: 30 };
+
+  // Live camera (the Camera page's stream) to line people up before "Take a sample": nothing is kept.
+  const camCanvas = h('canvas', { class: 'cam-canvas', 'aria-label': 'Live view from LittleBot\'s camera' });
+  const camFps = h('span', { class: 'cam-fps tnum', hidden: true, 'aria-label': 'Frame rate' });
+  const camMsg = h('p', { class: 'muted', text: '' });
+  const camBox = h('div', { class: 'stack-sm mt-2', hidden: true },
+    h('div', { class: 'cam-stage', style: { maxWidth: '480px' } }, camCanvas, camFps), camMsg);
+  const stamps = [];
+  const CAM_TEXT = {
+    connecting: 'Connecting to the camera…', live: 'Live. Nothing is recorded; LittleBot shows its camera sign meanwhile.',
+    camera_off: 'Camera is off (Privacy).', paused: 'Paused while a video plays on LittleBot.', no_camera: 'No camera connected.',
+    busy: 'Too many devices are watching.', timeout: 'Waiting for the camera…', network: 'Can’t reach LittleBot. Retrying…',
+    unavailable: 'The live view isn’t available on this robot.',
+  };
+  let camToggle = null;
+  const cam = liveStream(app, camCanvas, {
+    onState: (code, detail) => {
+      camFps.hidden = code !== 'live';
+      if (code === 'stopped') { camBox.hidden = true; stamps.length = 0; }
+      setText(camMsg, CAM_TEXT[code] || detail || '');
+      if (camToggle) setText(camToggle.querySelector('span'), cam.running ? 'Hide camera' : 'Show camera');
+    },
+    onFrame: () => {
+      const now = performance.now();
+      stamps.push(now);
+      while (stamps.length && now - stamps[0] > 3000) stamps.shift();
+      const span = (stamps[stamps.length - 1] - stamps[0]) / 1000;
+      setText(camFps, stamps.length > 1 && span > 0 ? `${((stamps.length - 1) / span).toFixed(1)} fps` : '… fps');
+    },
+  });
+  camToggle = button('Show camera', {
+    kind: 'soft', iconName: 'camera',
+    onClick: () => {
+      if (cam.running) { cam.stop(); return; }
+      if (!cam.supported) { toast('This browser can’t show the live view.', 'error'); return; }
+      camBox.hidden = false;
+      cam.start();
+      setText(camToggle.querySelector('span'), 'Hide camera');
+    },
+  });
   const voiceBox = h('div', { class: 'card info mt-2', hidden: true });
   let recording = false;
 
@@ -320,11 +361,12 @@ function whosWho(app) {
     h('p', { class: 'muted', text: 'LittleBot can learn to recognise the family on its camera, so the voice chat knows who is in front of it and uses their names. Add each person, then take about 5 samples with only them in front of the camera, about an arm\'s length away, facing it, in good light (turn the head a little between samples). Babies\' faces change fast: take new samples every month or so.' }),
     h('p', { class: 'muted mt-1', text: 'Kept on the robot only: the names and, for each sample, 128 numbers that describe the face. Never the photos. The voice chat is told only the names of the people in view.' }),
     h('p', { class: 'muted mt-1', text: 'Voices: press Record voice and read three short sentences to LittleBot (about 20 seconds), so the voice chat knows which grown-up is talking, from "Hey LittleBot" on. LittleBot also learns a voice when someone says who they are in a voice chat ("I\'m Ali"), and gets better each time it is sure. Only voiceprints (192 numbers per sample) are kept on the robot, never recordings.' }),
-    status, addForm, h('div', { class: 'mt-2' }, list), voiceBox, shotBox,
+    status, addForm, h('div', { class: 'btn-row mt-2' }, camToggle), camBox, h('div', { class: 'mt-2' }, list), voiceBox, shotBox,
     h('div', { class: 'btn-row mt-2' }, check, voiceCheck, forget));
 
   return {
     el,
+    destroy: () => cam.destroy(),
     load: () => get('/people').then(fill).catch((e) => clear(status).append(banner('danger', 'alert', 'Could not load Who\'s who', e.message))),
   };
 }

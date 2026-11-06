@@ -279,6 +279,35 @@ def test_ask_what_littlebot_sees_card_and_privacy_switch(phone):
     expect(row.get_by_role("switch")).not_to_be_checked()  # off by default
 
 
+def test_whos_who_shows_the_live_camera_to_line_people_up(phone):
+    page = phone.open("profile")
+    card = page.locator("section.card", has=page.get_by_role("heading", name="Who's who"))
+    card.scroll_into_view_if_needed()
+    vision = phone.bot.ctx.vision
+    assert vision.status()["live_view"]["viewers"] == 0  # not until asked
+    streams = []
+    page.on("request", lambda r: streams.append(r.url) if "/api/camera/stream" in r.url else None)
+    card.get_by_role("button", name="Show camera").click()
+    expect(card.locator(".cam-fps")).to_have_text(re.compile(r"^\d+\.\d fps$"))
+    expect(card.get_by_role("button", name="Hide camera")).to_be_visible()
+    assert vision.status()["live_view"]["viewers"] == 1 and streams  # the same stream as the Camera page
+    painted = page.evaluate("""() => {
+        const c = document.querySelector('section.card .cam-canvas');
+        const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+        let sum = 0; for (let i = 0; i < d.length; i += 397) sum += d[i];
+        return [c.width, sum]; }""")
+    assert painted[0] > 0 and painted[1] > 0
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")  # no sideways scroll
+    card.get_by_role("button", name="Hide camera").click()
+    expect(card.get_by_role("button", name="Show camera")).to_be_visible()
+    assert _wait(lambda: vision.status()["live_view"]["viewers"] == 0, timeout=2.0)
+    card.get_by_role("button", name="Show camera").click()  # and leaving the page stops it at once
+    expect(card.locator(".cam-fps")).to_have_text(re.compile(r"^\d+\.\d fps$"))
+    page.goto(f"{phone.base}/#/home")
+    expect(page.get_by_role("heading", name="Devices & privacy")).to_be_visible()
+    assert _wait(lambda: vision.status()["live_view"]["viewers"] == 0, timeout=2.0)
+
+
 def test_whos_who_on_the_profile_page_and_its_privacy_switch(phone):
     page = phone.open("profile")
     card = page.locator("section.card", has=page.get_by_role("heading", name="Who's who"))
