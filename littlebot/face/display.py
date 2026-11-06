@@ -69,6 +69,11 @@ LIVE_BADGE_MARGIN = 12
 LIVE_BADGE_INK = (66, 32, 62, 150)  # deep plum, ~60 % opaque
 LIVE_BADGE_DOT = (146, 40, 82, 210)  # raspberry "on" dot
 LIVE_BADGE_DOT_DARK = (255, 120, 146, 220)
+# While LittleBot records a video (littlebot/capture): a red dot and "REC 0:42" at the top centre, over cards
+# too, so everyone in the room can see they are being filmed.
+REC_TOPIC = "capture.recording"  # littlebot.capture.service.RECORDING
+REC_RED = (232, 44, 52)
+REC_TEXT = 19  # px at the native 480x320
 STATUS_POLL_SECONDS = 0.5
 MOTION_POLL_SECONDS = 1 / 15
 SCREEN_RETRY_SECONDS = 5.0  # a wlopm call that failed is tried again after this long
@@ -379,6 +384,10 @@ class DisplayLoop:
         self.live_viewers = 0
         self._live_sub: Any = None
         self._badges: dict[int, Any] = {}
+        # Recording a video since (monotonic), else None: the REC sign shows.
+        self.recording_since: float | None = None
+        self._rec_sub: Any = None
+        self._rec_label: tuple[str, int, Any] | None = None
         self._game_t: float | None = None  # last frame time while an on-screen game runs
         self._card_t: float | None = None  # last frame time while an info card shows
         self._press: tuple[float, float, float] | None = None  # (nx, ny, when) a finger held on the idle face
@@ -429,6 +438,7 @@ class DisplayLoop:
             attach()
         self._watch_setup_code()
         self._watch_live_view()
+        self._watch_recording()
         self._watch_levels()
         self._watch_power()
         self.screen_power = make_screen_power(self.output_name, fullscreen=self.fullscreen,
@@ -446,6 +456,9 @@ class DisplayLoop:
         if self._live_sub is not None:
             self._live_sub.cancel()
             self._live_sub = None
+        if self._rec_sub is not None:
+            self._rec_sub.cancel()
+            self._rec_sub = None
         if self._levels_sub is not None:
             self._levels_sub.cancel()
             self._levels_sub = None
@@ -504,6 +517,25 @@ class DisplayLoop:
             if recent:
                 self.battery.on_state(recent[-1])
             self._battery_sub = bus.subscribe(Topics.POWER_BATTERY, self.battery.on_state)
+
+    def _watch_recording(self) -> None:
+        capture = getattr(self.ctx, "capture", None)
+        try:  # a recording may be going already when the window opens
+            rec = capture.recording if capture is not None else None
+            self.recording_since = time.monotonic() - float(rec.get("seconds") or 0.0) if rec else None
+        except Exception:  # noqa: BLE001
+            self.recording_since = None
+        self._rec_sub = self.ctx.bus.subscribe(REC_TOPIC, self._on_recording)
+
+    def _on_recording(self, event: Any) -> None:
+        if not event.get("active"):
+            self.recording_since = None
+            return
+        try:
+            ago = max(0.0, time.time() - float(event.get("started_at") or time.time()))
+        except (TypeError, ValueError):
+            ago = 0.0
+        self.recording_since = time.monotonic() - ago
 
     def _on_live_view(self, event: Any) -> None:
         try:
@@ -674,6 +706,8 @@ class DisplayLoop:
             self._draw_setup_banner(win)
         if self.live_viewers > 0:
             self._draw_live_view_badge(win)
+        if self.recording_since is not None:
+            self._draw_rec_badge(win)
         if self.show_debug:
             self._draw_debug(win)
         if self.show_help:
@@ -714,6 +748,46 @@ class DisplayLoop:
         win.blit(box, (x, y))
         win.blit(label, (x + 2 * pad, y + (h - label.get_height()) // 2))
         win.blit(value, (x + 3 * pad + label.get_width(), y + (h - value.get_height()) // 2))
+
+    def _draw_rec_badge(self, win: Any) -> None:
+        """While recording: a dark pill with a blinking red dot and "REC m:ss", top centre."""
+        since = self.recording_since
+        if since is None:
+            return
+        pg = self._pg
+        r = self.face_rect
+        s = r.h / self.native_size[1]
+        secs = max(0, int(time.monotonic() - since))
+        text = f"REC {secs // 60}:{secs % 60:02d}"
+        size = max(14, int(round(REC_TEXT * s)))
+        cached = self._rec_label
+        if cached is None or cached[0] != text or cached[1] != size:
+            label = self._font(size).render(text, True, (255, 255, 255))
+            cached = self._rec_label = (text, size, label)
+        label = cached[2]
+        pad = max(4, int(round(6 * s)))
+        dot_r = max(3, int(round(label.get_height() * 0.28)))
+        h = label.get_height() + 2 * pad
+        w = 2 * pad + 2 * dot_r + pad + label.get_width() + pad
+        x, y = r.centerx - w // 2, r.y + max(4, int(round(8 * s)))
+        box = pg.Surface((w, h), pg.SRCALPHA)
+        pg.draw.rect(box, (0, 0, 0, 165), box.get_rect(), border_radius=h // 2)
+        win.blit(box, (x, y))
+        if (time.monotonic() - since) % 1.0 < 0.65:  # blinks once a second
+            pg.draw.circle(win, REC_RED, (x + 2 * pad + dot_r - pad // 2, y + h // 2), dot_r)
+        win.blit(label, (x + 2 * pad + 2 * dot_r + pad // 2, y + (h - label.get_height()) // 2))
+
+    def rec_badge_rect(self) -> Any:
+        """Where the REC sign is drawn (tests / screenshots), or None when not recording."""
+        if self.recording_since is None:
+            return None
+        cached = self._rec_label
+        s = self.face_rect.h / self.native_size[1]
+        pad = max(4, int(round(6 * s)))
+        lw, lh = (cached[2].get_width(), cached[2].get_height()) if cached else (60, 16)
+        dot_r = max(3, int(round(lh * 0.28)))
+        w, h = 2 * pad + 2 * dot_r + pad + lw + pad, lh + 2 * pad
+        return self._pg.Rect(self.face_rect.centerx - w // 2, self.face_rect.y + max(4, int(round(8 * s))), w, h)
 
     def _draw_live_view_badge(self, win: Any) -> None:
         """While a parent watches the camera live on the dashboard: a small camera sign, top right."""

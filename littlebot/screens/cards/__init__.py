@@ -13,7 +13,9 @@ log = logging.getLogger("littlebot.screens")
 _MODULES = ("weather", "clock", "timer", "maths", "definition", "explain", "recipe", "facts", "games",
             # the rethink's cards (a module not written yet is skipped)
             "lists", "reminders", "calendar", "briefing", "home", "glance", "note", "music", "quiz", "word_game",
-            "game_board")
+            "game_board",
+            # LittleBot's own photos and videos (littlebot/capture): never offered to the director
+            "gallery")
 
 for _name in _MODULES:
     try:

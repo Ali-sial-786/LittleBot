@@ -149,6 +149,9 @@ def build_defaults(cfg: LittleBotConfig) -> dict[str, Any]:
         # the Nanit baby camera on the screen when asked (littlebot/nanit), and whether its sound plays
         "nanit.enabled": True,
         "nanit.sound": cfg.nanit.sound,
+        # photos and videos by voice (littlebot/capture): the parent's switch, and the room's sound in videos
+        "capture.enabled": True,
+        "capture.video_sound": cfg.capture.video_sound,
         # Android (Waydroid) on the screen when asked (littlebot/android): the parent's switch
         "android.enabled": True,
         # fast decision models (littlebot/decide): the provider (off | jev | openai | claude) and each feature's mode

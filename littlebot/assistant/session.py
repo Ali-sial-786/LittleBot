@@ -677,10 +677,15 @@ class VoiceSession:
         spotify_on = sp is not None and bool(_safe(sp.playing) or _safe(sp.paused))
         return video_on, (sp if spotify_on else None)
 
+    def _recording(self) -> bool:
+        """LittleBot is recording a video (littlebot/capture): "stop" / "cut" are about the recording."""
+        capture = getattr(self.ctx, "capture", None)
+        return capture is not None and bool(_safe(lambda: capture.recording))
+
     def _speculable(self, text: str) -> bool:
         """Only the brain's answers start early (an instant intent or a game's move is quicker than that anyway)."""
         video_on, spotify = self._media_on()
-        if intents.match(text, media_on=video_on or spotify is not None):
+        if intents.match(text, media_on=video_on or spotify is not None, recording_on=self._recording()):
             return False
         hub = getattr(self.ctx, "skills", None)
         games = hub.get("voice_games") if hub is not None and hasattr(hub, "get") else None
@@ -901,7 +906,7 @@ class VoiceSession:
         if alarm is not None:
             return "alarm", alarm, False
         video_on, spotify = self._media_on()
-        hit = intents.match(text, media_on=video_on or spotify is not None)
+        hit = intents.match(text, media_on=video_on or spotify is not None, recording_on=self._recording())
         if hit is not None:
             if spotify is not None and not video_on and hit.name in SPOTIFY_ACTIONS:
                 try:  # "pause", "next", "carry on" while Spotify plays on LittleBot: no model, no video tools

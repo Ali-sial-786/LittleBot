@@ -13,7 +13,7 @@ Security layers applied here (details in docs/modules/dashboard.md):
   state-changing methods, checks the ``X-CSRF-Token`` header and the
   Origin / Referer host (403 on mismatch); ``/hooks/doorbell/{secret}`` is outside ``/api`` on purpose (a phone
   can't log in: the secret is its password; littlebot/dashboard/routes/doorbell_routes.py), the guard above still
-  applies;
+  applies; so is ``/share/{token}`` (one photo or video for a phone, littlebot/dashboard/routes/capture_routes.py);
 * security headers on every response (CSP, X-Frame-Options, nosniff ...);
 * exception mapping: PermissionError -> 403, KeyError -> 404, ValueError -> 422,
   with sanitised validation errors (request values are never echoed back).
@@ -91,8 +91,9 @@ DEFAULT_PLAYER_MAX_BODY_BYTES = 16 * 1024
 UNKNOWN_HOST_MESSAGE = ("Unknown host name. Open the dashboard at the address LittleBot shows in its "
                         "console (or add this name to dashboard.allowed_hosts).\n")
 SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
-# Paths served by other modules' routers that set their own security headers.
-EXTERNAL_PREFIXES = ("/player",)
+# Paths served by other modules' routers that set their own security headers (/share: a photo or video for a
+# phone, littlebot/dashboard/routes/capture_routes.py).
+EXTERNAL_PREFIXES = ("/player", "/share/")
 
 CONTENT_SECURITY_POLICY = "; ".join([
     "default-src 'self'",
@@ -101,7 +102,7 @@ CONTENT_SECURITY_POLICY = "; ".join([
     "img-src 'self' data: https://i.ytimg.com",  # YouTube thumbnails for approved videos
     "connect-src 'self'",
     "font-src 'self'",
-    "media-src 'none'",
+    "media-src 'self'",  # the Photos page plays LittleBot's own videos
     "object-src 'none'",
     "frame-src 'none'",
     "frame-ancestors 'none'",

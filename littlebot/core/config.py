@@ -762,6 +762,37 @@ class NanitConfig(_Section):
     extra_ffplay_args: list[str] = Field(default_factory=list)
 
 
+class CaptureConfig(_Section):
+    """Photos and videos by voice ("Hey LittleBot, take a picture" / "record this" / "stop recording"), the gallery on
+    the screen and the dashboard, and sharing to a phone (littlebot/capture, docs/PHOTOS.md).
+
+    Everything stays on the robot (``data/<folder>``): nothing is uploaded. Sharing makes a link to one photo or video
+    on the robot itself (the phone opens it over the home Wi-Fi); only that link goes through the phone notification.
+    The parent's switches (dashboard Photos page: ``capture.enabled``, ``capture.video_sound``) start from these;
+    ``enabled: false`` here switches the feature off whatever the parent chose."""
+
+    enabled: bool = True
+    folder: str = Field(default="gallery", min_length=1, max_length=80)  # under data_dir
+    photo_width: int = Field(default=1920, ge=320, le=4096)  # never upscaled: the camera's picture at most
+    photo_quality: int = Field(default=92, ge=40, le=98)
+    countdown_seconds: int = Field(default=3, ge=0, le=10)  # "3, 2, 1" before a voice photo (0 = at once)
+    show_seconds: float = Field(default=8.0, ge=0.0, le=120.0)  # a new photo shows on the screen this long
+    video_width: int = Field(default=1280, ge=320, le=1920)  # 1280x720: ~1 core of the Pi 5 at 30 fps
+    video_fps: int = Field(default=30, ge=5, le=30)
+    video_crf: int = Field(default=23, ge=16, le=35)  # H.264 quality (lower = better and bigger)
+    video_preset: Literal["ultrafast", "superfast", "veryfast", "faster", "fast", "medium"] = "veryfast"
+    video_sound: bool = True  # the room's sound in videos (the microphone privacy switch still wins)
+    audio_source: str = Field(default="default", min_length=1, max_length=200)  # PipeWire/Pulse source for ffmpeg
+    max_video_minutes: float = Field(default=10.0, ge=0.5, le=60.0)  # a recording stops by itself after this
+    min_free_mb: int = Field(default=1000, ge=100, le=100000)  # no new photo or video below this much free disk
+    share_hours: float = Field(default=24.0, ge=0.25, le=720.0)  # a share link works this long
+    # Phone notifications with a picture: the ntfy app fetches it from the robot itself (home Wi-Fi), so only the
+    # link goes through ntfy. Off: the notification carries the link only.
+    push_attach: bool = True
+    ffmpeg_command: str = "ffmpeg"  # a name on PATH or an absolute path
+    ffplay_command: str = "ffplay"  # plays a video from the gallery full screen
+
+
 class AndroidConfig(_Section):
     """Android (Waydroid) on LittleBot's screen (littlebot/android, docs/ANDROID_ON_PI.md), only while it is on the
     screen: as soon as it isn't, it is shut down and its 1 to 1.5 GB of memory comes back. Set up with
@@ -1023,6 +1054,7 @@ class LittleBotConfig(BaseModel):
     browser: BrowserConfig = Field(default_factory=BrowserConfig)
     mirror: MirrorConfig = Field(default_factory=MirrorConfig)
     nanit: NanitConfig = Field(default_factory=NanitConfig)
+    capture: CaptureConfig = Field(default_factory=CaptureConfig)
     android: AndroidConfig = Field(default_factory=AndroidConfig)
     decide: DecideConfig = Field(default_factory=DecideConfig)
     power: PowerConfig = Field(default_factory=PowerConfig)

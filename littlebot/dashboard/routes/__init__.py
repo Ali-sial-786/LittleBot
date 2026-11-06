@@ -10,6 +10,7 @@ from littlebot.dashboard.routes.auth_routes import router as auth
 from littlebot.dashboard.routes.browser_routes import router as browser
 from littlebot.dashboard.routes.calendar_routes import router as calendar
 from littlebot.dashboard.routes.camera_routes import router as camera
+from littlebot.dashboard.routes.capture_routes import router as capture  # also /share/{token} (no login: a secret)
 from littlebot.dashboard.routes.chatgpt_routes import router as chatgpt
 from littlebot.dashboard.routes.decide_routes import router as decide
 from littlebot.dashboard.routes.device_routes import router as devices
@@ -35,6 +36,6 @@ from littlebot.dashboard.routes.wake_clip_routes import router as wake_clips
 
 ROUTERS = (auth, robot, assistant, voice_setup, face, camera, activities, games, screens, browser, media, profile, people,
            ai, chatgpt, decide, info, privacy, devices, motion, sim, voice_lines, power, doorbell, keys, calendar,
-           mirror, nanit, android, wake_clips)
+           mirror, nanit, android, wake_clips, capture)
 
 __all__ = ["ROUTERS"]

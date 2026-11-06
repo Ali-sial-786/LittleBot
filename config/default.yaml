@@ -191,6 +191,21 @@ android:
   apps:                    # "open <name>" opens that app in Android: the name -> the Android package
     aosu: com.glazero.android
 
+capture:
+  # Photos and videos by voice ("take a picture", "record this", "stop recording"), a gallery on the screen and on
+  # the dashboard's Photos page, and a link to send one to a phone (docs/PHOTOS.md). Kept in data/gallery only.
+  enabled: true
+  countdown_seconds: 3     # "3, 2, 1" on the screen before a voice photo (the dashboard's button takes it at once)
+  show_seconds: 8          # the new photo stays on the screen this long
+  photo_width: 1920        # px; the camera's full 1080p picture
+  video_width: 1280        # px (720p); 1920 makes the Pi 5 work much harder for little gain on a phone
+  video_fps: 30
+  video_sound: true        # the microphone's sound in videos (the dashboard switch starts from this; Privacy wins)
+  max_video_minutes: 10    # a recording stops by itself after this long
+  min_free_mb: 1000        # no new photo or video when the storage has less than this free
+  share_hours: 24          # a link sent to a phone works this long (dashboard: "Stop every share link" ends them sooner)
+  push_attach: true        # the phone notification shows a preview, which the ntfy app fetches from LittleBot
+
 power:
   # The battery (docs/POWER.md section 8): an RP2040-Zero battery monitor on a USB port. Without one
   # LittleBot behaves exactly as on mains power. Low / shutdown levels are dashboard settings.

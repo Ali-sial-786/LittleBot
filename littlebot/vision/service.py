@@ -36,6 +36,10 @@ stored, sent anywhere, or used for identification. The exceptions:
   only raise the read rate to ``camera.live_view_fps`` when vision itself reads less.
   Start and stop are logged and published (``vision.live_view``) so the robot's
   screen shows a camera sign while anyone watches.
+* ``add_frame_sink``: while someone asked LittleBot to record a video (littlebot/capture), the thread hands every
+  frame it reads to that one recorder (``fn(frame, now)``, which must only keep a reference and return), reading at
+  least the recorder's frame rate meanwhile. Nothing is kept here; the recorder writes the video the person asked
+  for and nothing else. ``remove_frame_sink`` ends it (the recording stopping, privacy, the camera lost).
 """
 
 from __future__ import annotations
@@ -199,6 +203,9 @@ class VisionService(Service):
         self._view_rate = RateMeter(window=3.0)
         self._view_ms: float | None = None
         self._view_bytes = 0
+        # frame sinks (a video being recorded, littlebot/capture): owner -> (fn(frame, now), frames per second)
+        self._sinks: dict[str, tuple[Callable[[Any, float], None], float]] = {}
+        self._sink_errors = 0
         self._refresh_snapshot(self._clock())
 
     # ------------------------------------------------------------------ setup
@@ -246,6 +253,9 @@ class VisionService(Service):
             rate = max(rate, float(self.vis_cfg.gesture_fps))
         if self._viewers:  # someone watches the live view: a smooth enough picture (detection keeps its own rate)
             rate = max(rate, self.live_view_fps)
+        sinks = self._sinks
+        if sinks:  # a video is being recorded: every frame it needs (detection keeps its own rate)
+            rate = max(rate, *(fps for _fn, fps in sinks.values()))
         return 1.0 / rate
 
     @property
@@ -712,6 +722,41 @@ class VisionService(Service):
         for _vid, fut in waiters:
             _resolve(fut, (data, seq))
 
+    # ------------------------------------------------------------ frame sinks (recording a video)
+    def add_frame_sink(self, owner: str, fn: Callable[[Any, float], None], fps: float = 30.0) -> None:
+        """Hand every frame read from now on to ``fn(frame, now)`` on the vision thread, reading at least ``fps`` a
+        second. ``fn`` must be quick (keep a reference, return) and never raise; the frame is the camera's own
+        picture (BGR, full size). The same ``owner`` again replaces its sink. Privacy, a lost camera or a video
+        playing simply stop the frames coming; ``remove_frame_sink`` ends it."""
+        if not self.ctx.privacy.camera_enabled or not self._camera_allowed:
+            raise PhotoUnavailable("camera_off", "camera turned off in privacy settings")
+        if self._kind == "none":
+            raise PhotoUnavailable("no_camera", "disabled in config (camera.backend: none)")
+        with self._lock:
+            self._sinks = {**self._sinks, str(owner): (fn, min(60.0, max(1.0, float(fps))))}
+        self._next_frame_at = min(self._next_frame_at, self._clock())
+        self._wake.set()
+
+    def remove_frame_sink(self, owner: str) -> bool:
+        """No more frames for ``owner``. True if it had a sink."""
+        with self._lock:
+            had = str(owner) in self._sinks
+            self._sinks = {k: v for k, v in self._sinks.items() if k != str(owner)}
+        self._wake.set()
+        return had
+
+    def _feed_sinks(self, frame: Any, now: float) -> None:
+        """Vision thread: the frame to every sink (a broken sink is dropped after a few errors)."""
+        for owner, (fn, _fps) in list(self._sinks.items()):
+            try:
+                fn(frame, now)
+            except Exception:  # noqa: BLE001 - a recorder must never break vision
+                self._sink_errors += 1
+                if self._sink_errors <= 3:
+                    self.log.exception("frame sink %s failed", owner)
+                if self._sink_errors >= 30:
+                    self.remove_frame_sink(owner)
+
     def face_seen_within(self, seconds: float) -> bool:
         """Someone's face was in front of the camera in the last ``seconds`` (the wake word's "hey bot" check)."""
         return time.monotonic() - self._face_at <= seconds
@@ -799,7 +844,7 @@ class VisionService(Service):
     def _capture(self, cam: CameraDevice, now: float) -> bool:
         # While someone watches the live view, frames are wanted back to back: the camera decodes the next one
         # while this thread works on the current one (1080p: ~20 ms decode + ~25 ms of work > 33 ms a frame).
-        cam.prefetch = bool(self._viewers)
+        cam.prefetch = bool(self._viewers) or bool(self._sinks)
         try:
             frame = cam.read(timeout=self._read_timeout)
         except Exception as e:  # noqa: BLE001
@@ -820,6 +865,8 @@ class VisionService(Service):
             self._serve_photos(frame)
         if self._warm_owners:
             self._refresh_warm(frame, now)
+        if self._sinks:
+            self._feed_sinks(frame, now)
         small = resize_to_width(frame, int(self.cam_cfg.process_width))
         view = frame if self._viewers else None  # encoded for the live view after detection, never before
         del frame  # never keep full frames around
@@ -1041,6 +1088,7 @@ class VisionService(Service):
             "robot_state": self._robot_state,
             "photo_warm": bool(self._warm_owners),  # a live conversation keeps one recent photo in memory
             "live_view": self._live_view_status(now),  # the dashboard's Camera page (who watches, no images)
+            "recording": sorted(self._sinks),  # who is recording a video (littlebot/capture), no images
         }
         with self._lock:
             self._snapshot = snap

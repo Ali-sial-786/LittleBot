@@ -6,6 +6,7 @@ import pytest
 
 from littlebot.assistant import intents
 from littlebot.chatgpt.tools import RobotToolbox
+from littlebot.skills.base import Skill
 from littlebot.testing import make_test_context
 
 
@@ -128,3 +129,88 @@ async def test_voice_can_never_make_it_silent() -> None:
     assert ctx.audio.volume == 0.15  # the quietest it goes by voice
     assert await intents.run(intents.match("softer"), box, ctx) == "That's as quiet as I go."
     assert ctx.audio.volume == 0.15
+
+
+# ------------------------------------------------------------------ photos and videos (littlebot/skills/camera.py)
+@pytest.mark.parametrize("text,name,kind", [
+    ("Take a picture.", "photo", None), ("take a photo of us", "photo", None), ("Can you take a selfie?", "photo", None),
+    ("Hey LittleBot, take a pic", "photo", None), ("snap a photo of the baby please", "photo", None),
+    ("take my picture", "photo", None), ("picture time!", "photo", None), ("take another photo", "photo", None),
+    ("Record this.", "record", None), ("start recording", "record", None), ("record a video", "record", None),
+    ("make a video of the baby", "record", None), ("can you film us", "record", None), ("take a video", "record", None),
+    ("stop recording", "stop_record", None), ("Stop the recording, please.", "stop_record", None),
+    ("end the recording", "stop_record", None),
+    ("show me my photos", "show_photos", "photo"), ("show the videos", "show_photos", "video"),
+    ("open the gallery", "show_photos", None), ("can I see the pictures", "show_photos", "photo"),
+    ("show me the last video", "show_photos", "video"),
+    ("send it to my phone", "send_photo", None), ("send that photo to my phone", "send_photo", "photo"),
+    ("airdrop it to my iPhone", "send_photo", None), ("send me the video", "send_photo", "video"),
+    ("share the picture", "send_photo", "photo"),
+])
+def test_camera_phrases(text: str, name: str, kind: str | None) -> None:
+    hit = intents.match(text)
+    assert hit is not None and hit.name == name
+    if name in ("show_photos", "send_photo"):
+        assert hit.args == {"kind": kind}
+
+
+@pytest.mark.parametrize("text", [
+    "cheese", "say cheese", "smile", "what's in this picture", "take a picture of a cat and describe it",
+    "show me a picture of a dog", "send a message to dad", "picture", "record player", "is it recording?",
+    "how do I take a good photo", "send it", "show it", "video", "recording",
+])
+def test_not_a_camera_phrase(text: str) -> None:
+    hit = intents.match(text)
+    assert hit is None or hit.name not in ("photo", "record", "stop_record", "show_photos", "send_photo")
+
+
+@pytest.mark.parametrize("text", ["stop", "Stop!", "stop it", "cut", "that's a wrap", "that's it", "we're done",
+                                  "stop the video", "done"])
+def test_while_recording_stop_means_the_recording(text: str) -> None:
+    hit = intents.match(text, recording_on=True)
+    assert hit is not None and hit.name == "stop_record" and hit.end
+    other = intents.match(text)
+    assert other is None or other.name != "stop_record"
+
+
+def test_while_recording_never_mind_still_ends_the_chat() -> None:
+    assert intents.match("never mind", recording_on=True).name == "stop"
+    assert intents.match("cancel", recording_on=True).name == "stop"
+    # a YouTube video on too: "stop" is about what's playing (a video starting stops a recording anyway)
+    assert intents.match("stop the video", recording_on=True, media_on=True).name == "stop_media"
+
+
+class _Cam(Skill):
+    name = "camera"
+
+    def __init__(self, ctx) -> None:
+        super().__init__(ctx)
+        self.asked: list[tuple[str, object]] = []
+
+    async def instant(self, what: str, *, kind: str | None = None) -> str:
+        from littlebot.skills import takeover
+
+        self.asked.append((what, kind))
+        if what == "photo":
+            async def snap() -> bool:
+                return True
+
+            takeover.offer(self.ctx, "photo 1", snap)
+            return "Okay, smile!"
+        return "Here they are."
+
+
+async def test_a_photo_phrase_queues_the_photo_for_after_the_words() -> None:
+    from littlebot.skills.hub import SkillHub
+
+    ctx = make_test_context()
+    cam = _Cam(ctx)
+    ctx.skills = SkillHub(ctx, [cam])
+    box = RobotToolbox(ctx, mode="chat")
+    said = await intents.run(intents.match("take a picture"), box, ctx)
+    assert said == "Okay, smile!" and [p.label for p in box.pending] == ["photo 1"] and box.pending[0].takeover
+    said = await intents.run(intents.match("show me my videos"), box, ctx)
+    assert said == "Here they are." and cam.asked[-1] == ("show", "video")
+    ctx.skills = SkillHub(ctx, [])
+    assert await intents.run(intents.match("take a picture"), box, ctx) == "I can't take photos or videos."
+    ctx.db.close()

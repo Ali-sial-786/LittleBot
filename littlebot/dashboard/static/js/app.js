@@ -7,6 +7,7 @@ import home from './pages/home.js';
 import assistant from './pages/assistant.js';
 import activities from './pages/activities.js';
 import media from './pages/media.js';
+import photos from './pages/photos.js';
 import face from './pages/face.js';
 import camera from './pages/camera.js';
 import games from './pages/games.js';
@@ -25,6 +26,7 @@ export const NAV = [
   { id: 'assistant', label: 'Assistant', icon: 'sparkles', tab: true, page: assistant },
   { id: 'activities', label: 'Activities', icon: 'shapes', tab: true, page: activities },
   { id: 'media', label: 'Videos', icon: 'film', tab: true, page: media },
+  { id: 'photos', label: 'Photos', icon: 'camera', page: photos, blurb: 'Pictures and videos LittleBot took' },
   { id: 'face', label: 'Face', icon: 'face', page: face, blurb: 'Expressions and animations' },
   { id: 'camera', label: 'Camera', icon: 'camera', page: camera, blurb: 'Live view from LittleBot' },
   { id: 'games', label: 'Games', icon: 'star', page: games, blurb: 'Fun games on the robot\'s screen' },

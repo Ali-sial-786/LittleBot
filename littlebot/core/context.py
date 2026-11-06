@@ -53,6 +53,7 @@ class RobotContext:
     mirror: Any = None  # a phone's screen on the screen when asked (littlebot.mirror.service.MirrorService)
     nanit: Any = None  # the Nanit baby camera on the screen when asked (littlebot.nanit.service.NanitService)
     android: Any = None  # Android (Waydroid) while it's on the screen (littlebot.android.service.AndroidService)
+    capture: Any = None  # photos and videos by voice, the gallery (littlebot.capture.service.CaptureService)
     live: Any = None  # live voice (littlebot.chatgpt.live.LiveVoiceService)
     wake: Any = None  # wake word, "Hey LittleBot" (littlebot.audio.wakeword.WakeWordService)
     voices: Any = None  # the family's voices, opt-in (littlebot.voices.service.VoiceRecognition; get_voices(ctx))

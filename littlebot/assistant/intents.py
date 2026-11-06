@@ -1,17 +1,21 @@
 """Instant answers: the few things said so often, and so plainly, that waiting for a model would only be slower.
 
-"Stop", "never mind", "louder", "volume 40", "pause", "carry on", "skip", "what time is it?", "thanks", "bye":
-matched on the whole utterance (never a word inside a longer question), answered in a few milliseconds with
-LittleBot's own tools (``chatgpt.tools.RobotToolbox``), and said straight away. Anything else goes to the brain.
+"Stop", "never mind", "louder", "volume 40", "pause", "carry on", "skip", "what time is it?", "thanks", "bye",
+"take a picture", "record this", "stop recording", "show me my photos", "send it to my phone": matched on the whole
+utterance (never a word inside a longer question), answered in a few milliseconds with LittleBot's own tools
+(``chatgpt.tools.RobotToolbox``, the camera skill), and said straight away. Anything else goes to the brain.
 A short, fixed list on purpose: the brain understands everything; this only saves it the trouble.
 """
 
 from __future__ import annotations
 
 import dataclasses
+import logging
 import random
 import re
 from typing import Any
+
+log = logging.getLogger("littlebot.assistant.intents")
 
 _FILLER = r"(?:hey|please|now|little ?bot|thanks|okay|ok)"
 _POLITE = rf"(?:(?:{_FILLER})[\s,.!]*)*"  # speech-to-text writes "Thanks. Bye." as often as "Thanks, bye!"
@@ -88,6 +92,42 @@ SKIP = _whole(r"(?:skip|next)(?: (?:song|track|video|one|it))?|play the next (?:
 STOP_MEDIA = _whole(r"stop (?:the )?(?:video|music|song|playing)|turn (?:the )?(?:video|music) off")
 TIME = _whole(r"what(?:'s| is) the time|what time is it(?: now)?|(?:tell me )?the time")
 
+# Photos and videos (littlebot/skills/camera.py). Never a bare "cheese" or "smile": said to a child, not to LittleBot.
+_SHOT = r"(?:photo|picture|pic|selfie|snapshot|snap|photograph)"
+_OF = (r"(?: of (?:me|us|this|that|him|her|them|it|everyone|everybody|the (?:baby|kids?|children|family|dog|cat|"
+       r"room)|my (?:baby|kids?|son|daughter|family)))?")
+_NOW = r"(?: (?:now|please|right now))?"
+PHOTO = _whole(rf"{_ASK}(?:take|snap|get|make|grab|shoot) (?:a |an |the |one |another |my |our )?(?:quick )?{_SHOT}"
+               rf"{_OF}{_NOW}|(?:photo|picture|selfie) time")
+RECORD = _whole(rf"{_ASK}(?:(?:start|begin) (?:recording|filming)|record|film)(?: (?:this|that|me|us|him|her|them|"
+                rf"it|everyone|everybody|a video|video|the (?:baby|kids?|children|family)))?{_NOW}|"
+                rf"{_ASK}(?:take|make|shoot|start|record|film) (?:a |an )?(?:video|movie|clip|recording){_OF}{_NOW}")
+STOP_RECORD = _whole(r"(?:stop|end|finish) (?:the )?(?:recording|filming|video recording)(?: (?:now|please))?|"
+                     r"(?:stop|end|finish) (?:recording|filming|videoing)(?: (?:this|that|it|now|please))?")
+# Said while recording (and no video or music on): about the recording. ("never mind", "cancel" still end the chat.)
+STOP_WHILE_RECORDING = _whole(r"stop(?: (?:it|that|now|the video|the camera))?|cut|that'?s a wrap|"
+                              r"(?:i'?m|we'?re) done|that'?s (?:it|all|enough)|done|finish(?:ed)?")
+_SEE = r"(?:show|let me see|i want to see|can i see|let'?s see|let'?s look at|open|see)"
+_MINE = r"(?:my |our |the |your |all (?:the |my |our )?)?(?:last |latest |new |newest |recent )?"
+_ALBUM = r"(?:photos?|pictures?|pics|videos?|recordings?|gallery|photo gallery|photo album)"
+SHOW_PHOTOS = _whole(rf"{_ASK}{_SEE}(?: me| us)? {_MINE}{_ALBUM}(?: (?:you|we|i) took)?|(?:open|show) (?:the )?"
+                     rf"(?:photo )?gallery")
+_PHONE = r"(?:my|our) (?:phone|iphone|cell ?phone|mobile|android)"
+_THING = r"(?:it|that|this|them|(?:the|that|this|my) (?:last |latest )?(?:photo|picture|pic|video|selfie))"
+SEND_PHOTO = _whole(rf"{_ASK}(?:send|share|airdrop|put) (?:{_THING} )?(?:to|on|onto) {_PHONE}|"
+                    rf"{_ASK}(?:send|share|airdrop) (?:me )?(?:the|that|this|my) (?:last |latest )?(?:photo|picture|pic|"
+                    rf"video|selfie)")
+
+
+def _kind(t: str) -> str | None:
+    """"photo" / "video" when the words say which."""
+    low = t.lower()
+    if re.search(r"\b(?:video|videos|recording|recordings|movie|clip)\b", low):
+        return "video"
+    if re.search(r"\b(?:photos?|pictures?|pics?|selfie|snapshot)\b", low):
+        return "photo"
+    return None
+
 MIN_VOICE_VOLUME = 0.15  # by voice the volume never goes below this (the dashboard can still go lower)
 
 
@@ -105,20 +145,34 @@ ACK_OK = ("Okay.", "Sure.", "Done.")
 
 @dataclasses.dataclass
 class Intent:
-    name: str  # stop | thanks | bye | volume | pause | resume | skip | stop_media | time
+    name: str  # stop | thanks | bye | volume | pause | resume | skip | stop_media | time | photo | record |
+    #            stop_record | show_photos | send_photo
     say: str = ""  # what to say (may be "")
     end: bool = False  # the session ends after saying it
     args: dict[str, Any] = dataclasses.field(default_factory=dict)
 
 
-def match(text: str, *, media_on: bool = False) -> Intent | None:
+def match(text: str, *, media_on: bool = False, recording_on: bool = False) -> Intent | None:
     """The instant intent ``text`` is, or None (the brain answers). ``media_on``: a video or music is playing or
-    paused for this chat, so "pause", "play", "skip" are about it."""
+    paused for this chat, so "pause", "play", "skip" are about it. ``recording_on``: LittleBot is recording a video,
+    so "stop" / "cut" / "that's it" stop the recording."""
     t = " ".join(str(text or "").replace("’", "'").split())
     if not t or len(t) > 60:
         return None
+    if recording_on and not media_on and STOP_WHILE_RECORDING.match(t):
+        return Intent("stop_record", end=True)
+    if STOP_RECORD.match(t):
+        return Intent("stop_record", end=True)
     if STOP_MEDIA.match(t) and media_on:
         return Intent("stop_media", random.choice(ACK_OK))
+    if PHOTO.match(t):
+        return Intent("photo")  # the chat ends when the photo starts (a take-over), not here
+    if RECORD.match(t):
+        return Intent("record")
+    if SHOW_PHOTOS.match(t):
+        return Intent("show_photos", args={"kind": _kind(t)})
+    if SEND_PHOTO.match(t):
+        return Intent("send_photo", args={"kind": _kind(t)})
     if STOP.match(t):
         return Intent("stop", "", end=True)
     if BYE.match(t):
@@ -197,7 +251,34 @@ async def run(intent: Intent, box: Any, ctx: Any) -> str:
             except Exception:  # noqa: BLE001 - nothing to skip to
                 return "There's nothing to skip to."
         return intent.say
+    if name in CAMERA:
+        return await _camera(intent, box, ctx)
     return intent.say
+
+
+CAMERA = {"photo": "photo", "record": "record", "stop_record": "stop_record", "show_photos": "show",
+          "send_photo": "send"}
+
+
+async def _camera(intent: Intent, box: Any, ctx: Any) -> str:
+    """A photo / video phrase through the camera skill; what it queued to start after the words (the photo, the
+    recording) goes to ``box``'s after-the-turn list, as when the brain calls the tool."""
+    hub = getattr(ctx, "skills", None)
+    cam = hub.get("camera") if hub is not None and hasattr(hub, "get") else None
+    if cam is None:
+        return "I can't take photos or videos."
+    try:
+        words = await cam.instant(CAMERA[intent.name], kind=intent.args.get("kind"))
+    except Exception:  # noqa: BLE001 - the skill's bug: say sorry rather than break the chat
+        log.warning("assistant: the camera phrase failed", exc_info=True)
+        return "Sorry, the camera didn't work."
+    queue = getattr(box, "_queue", None)
+    if callable(queue):
+        from littlebot.skills import takeover  # noqa: PLC0415
+
+        for p in takeover.claim(ctx):
+            queue(p.label, p.run, takeover=bool(getattr(p, "takeover", True)))
+    return words
 
 
 __all__ = ["Intent", "match", "run"]

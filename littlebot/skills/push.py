@@ -6,7 +6,9 @@ long random one (``scripts/setup_phone.py`` makes it and sends a test), kept lik
 ``data/ntfy_topic`` (chmod 600), never logged. ``skills.ntfy_server`` can point at your own ntfy server instead.
 
 What is sent: the short heads-up or reminder text only (an event's title, time and place; a reminder's words), over
-https, to the ntfy server. Nothing is sent in offline mode or while cloud communication is off in Privacy.
+https, to the ntfy server. Nothing is sent in offline mode or while cloud communication is off in Privacy. A photo or
+video shared to a phone (littlebot/capture) sends only a link to it on the robot itself: the phone opens it, and the
+ntfy app fetches its preview, straight from LittleBot over the home Wi-Fi.
 
 Each grown-up on Who's who can have their own phone too (``data/ntfy_topic_p<id>``, made on the dashboard or with
 ``setup_phone.py --person NAME``): their own events' heads-ups go to their phone; the family's events and reminders
@@ -122,21 +124,35 @@ class Push:
         return None
 
     async def send(self, title: str, message: str, *, tags: tuple[str, ...] = (), priority: str = "default",
-                   to: int | None = None) -> bool:
-        """To one person's phone (``to``) or the whole family's. True when it reached at least one."""
+                   to: int | None = None, click: str | None = None, attach: str | None = None,
+                   filename: str | None = None) -> bool:
+        """To one person's phone (``to``) or the whole family's. True when it reached at least one.
+
+        ``click``: a web address the notification opens when tapped (it also gets an "Open" button); ``attach``: a
+        picture's web address the ntfy app fetches itself and shows (ntfy passes the address on, it doesn't
+        download it), ``filename`` its name. Both only http(s)."""
         why = self.blocked_reason(to)
         if why is not None:
             self.last_error = why
             return False
+        extra: dict[str, Any] = {}
+        if click and str(click).startswith(("http://", "https://")):
+            extra["click"] = str(click)[:1000]
+            extra["actions"] = [{"action": "view", "label": "Open", "url": str(click)[:1000], "clear": True}]
+        if attach and str(attach).startswith(("http://", "https://")):
+            extra["attach"] = str(attach)[:1000]
+            if filename:
+                extra["filename"] = str(filename)[:100]
         went = False
         for topic in self.topics(to):
-            went = await self._send_one(topic, title, message, tags, priority) or went
+            went = await self._send_one(topic, title, message, tags, priority, extra) or went
         return went
 
-    async def _send_one(self, topic: str, title: str, message: str, tags: tuple[str, ...], priority: str) -> bool:
+    async def _send_one(self, topic: str, title: str, message: str, tags: tuple[str, ...], priority: str,
+                        extra: dict[str, Any] | None = None) -> bool:
         body: dict[str, Any] = {"topic": topic, "title": " ".join(str(title).split())[:MAX_TITLE],
                                 "message": str(message).strip()[:MAX_MESSAGE] or " ",
-                                "priority": PRIORITY.get(priority, 3)}
+                                "priority": PRIORITY.get(priority, 3), **(extra or {})}
         if tags:
             body["tags"] = [str(t) for t in tags][:5]
         try:
