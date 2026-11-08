@@ -22,6 +22,7 @@ part = "layout";       // overrides v2's default
 cut = false;           // layout: cut away x > 0 to show the inside
 arm_angle = 8;         // arm angle, degrees (+ = forwards / up)
 head_angle = 0;
+spin = 0;              // layout: turn the robot round (for lit back views)
 
 /* [v3 body: a bell of superellipse sections] */
 b_cy = 78;                              // the sections' centre (y)
@@ -65,19 +66,22 @@ scr_holes = [[4.7, 5.15], [160.2, 5.15], [4.7, 95.3], [160.2, 95.3]];   // threa
 scr_spk = [[20.5, 58.1], [105.3, 142.9]];   // the two speaker boxes on the back (x ranges), y 1.2 .. 28.9
 spk_box_h = 9;                          // MEASURE how far the speaker boxes stand off the board
 scr_ports = [18, 38.8, 52.7, 71.4];     // on the end at x = 164.9: volume/backlight wheel, audio, USB-C (power + touch), HDMI
-hdmi_ad = [19.5, 17, 19];               // VCELINK right-angle adapter beyond the port: length out, width (along the edge), depth back
+// plugs at the port end (all inside the head): the flat-ribbon HDMI's angled plug, the right-angle USB-C
+fpc_plug = [8, 22, 20];                 // beyond the port: out, along the edge, back (its ribbon leaves backwards)
+usbc_l = [15, 12, 16];                  // right-angle USB-C head beyond the port: out, along the edge, back (cable backwards)
+hdmi_cpl = [38, 22, 11.5];              // HDMI female-female coupler: length, width, thickness
+hdmi_plug = [36, 21, 11];               // the original cable's full-size plug (moulding + strain relief)
 
 /* [v3 head] */
-hd_end = 23;                            // frame beside the screen's ends (the adapters fit in it)
+hd_end = 18;                            // frame beside the screen's ends (the plugs fit in it)
 hd_tb = 4;                              // frame above and below the screen
-hd = [scr[0] + 2 * hd_end, scr[1] + 2 * hd_tb];   // 210.9 x 108
-hd_d = 21;                              // glass front -> back face
-hd_r = 12;
+hd = [scr[0] + 2 * hd_end, scr[1] + 2 * hd_tb];   // 200.9 x 108
+hd_d = 46;                              // glass front -> back: the camera, its bracket and plug need 41 in the pod
+hd_r = 12; hd_ch = 10;                  // corner radius (front view); the back's 45-degree edge
 hd_wall = 2;
-hd_axis = 12;                           // neck axis behind the glass
-g3_y = neck_y - hd_axis;             // 77
-hd_z0 = head_z0 - coupler_h - bearing_h + coupler_h + bearing_h;   // 207.8: the head's foot sits on v2's coupler
-foot_d = 54; foot_t = head_bottom_t;    // round foot under the head (on the coupler)
+hd_axis = 24;                           // neck axis behind the glass: all 3 coupler screws are under the head
+g3_y = neck_y - hd_axis;                // 65: the glass front
+hd_z0 = torso_z0 + torso_h + bearing_h + coupler_h;   // 207.8: the head's bottom sits on v2's coupler
 scr_cz = hd_z0 + hd[1] / 2;             // screen centre height
 function scr_pt(p) = [scr[0] / 2 - p[0], scr_cz + scr[1] / 2 - p[1]];   // screen-frame point -> robot (x, z), seen from the front
 
@@ -120,7 +124,7 @@ module sh_cut() {
 
 // the top: a ledge the neck plate rests on (45-degree underside), four nut bosses
 module np_outline(extra = 0) sq2d(bell[2] - b_wall - np_clr + extra, bell[3] - b_wall - np_clr + extra, bell_sec(1)[2]);
-function np_boss_to(p) = p[1] < neck_y ? [p[0] + sign(p[0]) * 16, p[1], b_top - np_t - 18] : [p[0] + sign(p[0]) * 10, p[1] + 22, b_top - np_t - 32];
+function np_boss_to(p) = p[1] < neck_y ? [p[0] + sign(p[0]) * 16, p[1], b_top - np_t - 28] : [p[0] + sign(p[0]) * 14, p[1] + 34, b_top - np_t - 40];
 module top_ledge() {
     zt = b_top - np_t;
     difference() {
@@ -141,7 +145,7 @@ module top_cuts() {
 }
 
 // speaker (Adafruit 3369) behind the chest grille, above the AA box
-spk3_c = [0, 12, 125.5];                // the speaker's front face centre
+spk3_c = [0, 14, 120];                // the speaker's front face centre
 module speaker3_dummy() color("#333") translate([-spk_w/2, spk3_c[1], spk3_c[2] - spk_h/2]) cube([spk_w, spk_d, spk_h]);
 module speaker_ribs() intersection() {
     body_inner();
@@ -163,7 +167,7 @@ module speaker_cuts() {
         translate([s * (spk_w/2 + 1.8), spk3_c[1] + spk_d + 0.5, zz]) cube([5, 3, 3.5], center = true);
 }
 // mic (Adafruit 3367): flat behind its holes above the grille, its USB plug pointing +x to the extension socket
-mic3 = [-25, 18.5, 172];
+mic3 = [-25, 25.5, 176];
 module mic3_sleeve() intersection() {
     body_inner();
     difference() {
@@ -185,12 +189,11 @@ module bat_cradle() {
     w2 = bat[0]/2 + bat_c; y1 = bat_y - bat[2] - bat_c;          // the box's front face
     difference() {
         union() {
-            intersection() {    // backing plate: from the body out to the box's back plane
+            difference() {      // backing plate: fills the gap between the body and the box's back plane, fused to the wall
                 translate([-w2 - bat_rail, bat_y, bat_z0 - 3]) cube([2 * (w2 + bat_rail), 20, bat[1] + 3]);
-                body_outer(-0.01);
-                translate([0, bat_y, 0]) mirror([0, 1, 0]) slab(-1, 400);
+                body_inner();
+                translate([0, 0, sh0 - 10]) linear_extrude(10) sq2d(300, 300, 4);
             }
-            difference() { intersection() { translate([-w2 - bat_rail, bat_y - 0.01, bat_z0 - 3]) cube([2 * (w2 + bat_rail), 20, bat[1] + 3]); body_outer(-0.01); } body_outer(0.5); }
             for (s = [-1, 1]) {
                 // rail: side wall + lip; its lower end slopes back at 45 degrees (prints), the lip starts above that
                 translate([s > 0 ? w2 : -w2 - bat_rail, 0, 0]) rotate([90, 0, 90]) linear_extrude(bat_rail)
@@ -207,7 +210,7 @@ module bat_cradle() {
         translate([-10, bat_y - 1, bat_z0 - 6]) cube([20, 30, 5]);                                 // the leads' slot (under the box, into the body)
     }
 }
-module bat_dummy() color("#151515") translate([-bat[0]/2, bat_y - bat_c - bat[2], bat_z0]) cube(bat);
+module bat_dummy() color("#151515") translate([-bat[0]/2, bat_y - bat_c - bat[2], bat_z0]) cube([bat[0], bat[2], bat[1]]);
 
 // the UPS's power switch: a slider through the back wall with a fork over the switch's knob. Its fork is flared:
 // pushing the floor in, the knob finds the fork whichever way the switch is set.
@@ -231,7 +234,7 @@ module v3_ups_slider() {   // robot coordinates, at the switch's centre position
         union() {
             translate([ups_knob_c[0] - sl_w/2, y0 + 8, sl_z0]) cube([sl_w, y1 - y0 - 8, sl_h]);                       // bar
             translate([ups_knob_c[0] - sl_head/2, y0, sl_z0]) cube([sl_head, 10, sl_h]);                             // fork head
-            translate([ups_knob_c[0] - 8, y1, sl_z0 - 3]) cube([16, 4, sl_h + 6]);                                    // thumb tab (outside)
+            translate([ups_knob_c[0] - 8, y1, sl_z0 - 6]) cube([16, 4, sl_h + 6]);                                    // thumb tab (outside)
         }
         translate([ups_knob_c[0], y0 - 1, sl_z0 - 1]) linear_extrude(ups_knob[1] + 1.5 + 1)            // the knob's notch (open below and at the front)
             polygon([[-2.15, 0], [2.15, 0], [2.15, 13], [-2.15, 13]]);
@@ -304,7 +307,15 @@ module v3_ring() {
         union() {
             difference() { linear_extrude(sh0) ring2d(0); translate([0, 0, -1]) linear_extrude(sh0 + 2) ring2d(b_wall); }
             // lip inside the body's bottom (locates it)
-            translate([0, 0, sh0 - 0.01]) linear_extrude(lip_h) difference() { sq2d(s0[0] - b_wall - 0.3, s0[1] - b_wall - 0.3, s0[2]); sq2d(s0[0] - b_wall - 3.3, s0[1] - b_wall - 3.3, s0[2]); }
+            let (sl = bell_at(sh0 + lip_h + 1)) difference() {
+                translate([0, 0, sh0 - 0.01]) linear_extrude(lip_h) difference() { sq2d(sl[0] - b_wall - 0.6, sl[1] - b_wall - 0.6, sl[2]); sq2d(sl[0] - b_wall - 3.6, sl[1] - b_wall - 3.6, sl[2]); }
+                translate([rear_x - 11, b_cy, sh0 - 1]) cube([22, 100, lip_h + 2]);
+            }
+            // a ledge from the wall in to the lip (45-degree underside), the lip and the tabs stand on it
+            difference() {
+                translate([0, 0, sh0 - 11]) linear_extrude(11) difference() { ring2d(b_wall - 0.01); ring2d(b_wall + 6); }
+                hull() { translate([0, 0, sh0 - 11 - 0.01]) linear_extrude(0.01) ring2d(b_wall); translate([0, 0, sh0 - 0.5]) linear_extrude(0.01) ring2d(b_wall + 6.5); }
+            }
             // pads between the wall and v2's floor posts, under 45 degrees
             for (p = floor_screw_pts()) intersection() {
                 translate([0, 0, 0]) linear_extrude(sh0) ring2d(1);
@@ -314,8 +325,8 @@ module v3_ring() {
                 }
             }
             // tabs up into the body for its 4 screws, each with a nut slot open at the top
-            for (p = br_screws) let (dir = p[1] == 0 ? 1 : -1, y = br_wall_y(p, b_wall + 0.3)) intersection() {
-                translate([0, 0, sh0]) linear_extrude(16) sq2d(s0[0] - b_wall - 0.3, s0[1] - b_wall - 0.3, s0[2]);
+            for (p = br_screws) let (dir = p[1] == 0 ? 1 : -1, y = br_wall_y(p, b_wall + 0.3), st = bell_at(sh0 + 14)) intersection() {
+                translate([0, 0, sh0]) linear_extrude(16) sq2d(st[0] - b_wall - 0.6, st[1] - b_wall - 0.6, st[2]);
                 translate([p[0] - 6, dir > 0 ? y : y - 5, sh0 - 0.01]) cube([12, 5, 13]);
             }
             // stops: short ribs over the floor's top edge (it rests on them while the robot is upside down)
@@ -369,15 +380,22 @@ module v3_neck_plate() {
 function arm_path() = let (e = [0, 0, -ua_len], d = [0, -sin(elbow_bend), -cos(elbow_bend)])
     [[0, 0, 0], e, e + fa_len * d, e + (fa_len + 20) * d, d];
 module ball(c, d, sx = 1) translate(c) scale([sx, 1, 1]) sphere(d = d, $fn = 40);
+// The hand: palm, four fingers and a thumb in a relaxed open pose, in the arm's plane (the whole arm still prints
+// flat on its inner face). Half-round like the arm; fingers 5.6 mm thick.
 module v3_arm_solid() {
-    P = arm_path(); d = P[4]; side = [0, cos(elbow_bend), -sin(elbow_bend)];
+    P = arm_path(); d = P[4]; side = [0, cos(elbow_bend), -sin(elbow_bend)];   // side: across the hand (towards the back)
+    wr = P[2] + 6 * d;                                                           // wrist
     intersection() {
         union() {
-            ball(P[0], cap_d, 0.5);
-            hull() { ball(P[0], 30); ball(P[1], 27); }
-            hull() { ball(P[1], 27); ball(P[2], 21); }
-            hull() { ball(P[2], 21, 0.75); ball(P[3], 30, 0.5); ball(P[3] + 10 * d, 26, 0.5); }
-            hull() { ball(P[3] - 2 * d + 4 * side, 14, 0.6); ball(P[3] - 9 * d + 15 * side, 12, 0.6); }
+            ball(P[0], cap_d, 0.5);                                              // shoulder cap
+            hull() { ball(P[0], 30); ball(P[1], 27); }                           // upper arm
+            hull() { ball(P[1], 27); ball(P[2], 21); }                           // forearm
+            hull() { ball(P[2], 21, 0.75); ball(wr + 4 * d, 26, 0.55); ball(wr + 18 * d + 1 * side, 28, 0.5); }   // wrist + palm
+            for (i = [0:3]) let (o = (-1.5 + i) * 6.6, L = [17, 23, 22, 17][i], fan = (-1.5 + i) * 3, f0 = wr + 26 * d + o * side,
+                                 dir = cos(fan) * d + sin(fan) * side, bend = [0, cos(elbow_bend + 14), -sin(elbow_bend + 14)])
+                hull() { ball(f0, 8.4, 1.3); ball(f0 + L * dir, 7, 1.3); }                                    // fingers
+            let (t0 = wr + 12 * d - 12 * side, tdir = (d - side) / norm(d - side))
+                hull() { ball(t0, 10, 1.1); ball(t0 + 16 * tdir, 7.6, 1.2); }                                // thumb (front edge)
         }
         translate([0, -200, -200]) cube([60, 400, 400]);
     }
@@ -391,125 +409,119 @@ module v3_arm() difference() {
 module place_arm3(s, a) place_sh(s) rotate([-a, 0, 0]) children();
 
 // -----------------------------------------------------------------------------
-// HEAD: a slim shell the shape of the screen. The screen is held only by its own 4 corner standoffs, screwed
-// from the back; nothing touches the glass. Robot coordinates (head facing forwards).
+// HEAD: a shell the shape of the screen. The screen is held only by its own 4 corner standoffs, screwed from the
+// back; nothing touches the glass. Every plug hides inside. Prints standing on its bottom.
 // -----------------------------------------------------------------------------
-hb_ys = g3_y + hd_d - 7;             // where the back's rounding starts
-module head_outer() hull() {
-    translate([0, g3_y, scr_cz]) rotate([-90, 0, 0]) linear_extrude(hd_d - 7) rr(hd[0], hd[1], hd_r);
-    translate([0, g3_y + hd_d - 0.01, scr_cz]) rotate([-90, 0, 0]) linear_extrude(0.01) rr(hd[0] - 12, hd[1] - 12, hd_r - 6);
+module head_shape(i) translate([0, g3_y, scr_cz]) rotate([-90, 0, 0]) hull() {
+    translate([0, 0, -1]) linear_extrude(hd_d - hd_ch + 1) rr(hd[0] - 2 * i, hd[1] - 2 * i, hd_r - i);
+    linear_extrude(hd_d - i) rr(hd[0] - 2 * hd_ch - 2 * i * 0.41, hd[1] - 2 * hd_ch - 2 * i * 0.41, max(1, hd_r - hd_ch));
 }
-module head_inner() hull() {
-    translate([0, g3_y - 1, scr_cz]) rotate([-90, 0, 0]) linear_extrude(hd_d - 7 + 1) rr(hd[0] - 2 * hd_wall, hd[1] - 2 * hd_wall, hd_r - hd_wall);
-    translate([0, g3_y + hd_d - hd_wall - 0.01, scr_cz]) rotate([-90, 0, 0]) linear_extrude(0.01) rr(hd[0] - 12 - 2 * hd_wall, hd[1] - 12 - 2 * hd_wall, hd_r - 6 - hd_wall);
-}
+module head_outer() intersection() { head_shape(0); translate([0, g3_y, 0]) cube([400, 2 * hd_d, 800], center = true); }
+module head_inner() head_shape(hd_wall);
 scr_back_y = g3_y + scr[2];
-pod_scr = [[-14, g3_y + 15], [14, g3_y + 15]];   // the pod's two screws (robot x, y)
+pod_scr = [[-16, g3_y + 18.5], [16, g3_y + 18.5]];   // the camera pod's two screws (robot x, y)
 function hole_xz(h) = scr_pt(h);
-module scr_port_xz(i) let (p = scr_pt([scr[0], scr_ports[i]])) children();
+cpl_c = [-40, scr_back_y + 4 + hdmi_cpl[2] / 2, hd_z0 + 26];   // the coupler's centre (behind the screen, low down)
 module v3_head() {
     zt = hd_z0 + hd[1];
     difference() {
         union() {
             difference() { head_outer(); head_inner(); }
-            // the round foot on v2's coupler (the bottom wall over it)
-            translate([0, neck_y, hd_z0]) cylinder(d = foot_d, h = foot_t);
             // 4 bosses from the back wall to the screen's board, round its corner standoffs
             for (h = scr_holes) let (q = hole_xz(h)) intersection() {
-                head_outer();
-                translate([q[0], scr_back_y, q[1]]) rotate([-90, 0, 0]) cylinder(d = 9, h = hd_d);
+                head_shape(0.5);
+                translate([q[0], scr_back_y, q[1]]) rotate([-90, 0, 0]) cylinder(d = 9.5, h = hd_d);
             }
-            // the pod's nut bosses under the roof, behind the screen (45-degree undersides)
+            // the camera pod's nut bosses under the roof, behind the screen (45-degree undersides)
             for (p = pod_scr) intersection() {
-                head_outer();
-                hull() { translate([p[0] - 5, scr_back_y + 0.6, zt - hd_wall - 6]) cube([10, g3_y + hd_d - scr_back_y, 6]);
-                         translate([p[0] - 5, g3_y + hd_d - 4, zt - hd_wall - 13]) cube([10, 4, 1]); }
+                head_shape(0.5);
+                hull() { translate([p[0] - 5.5, scr_back_y + 0.8, zt - hd_wall - 7]) cube([11, hd_d, 7]);
+                         translate([p[0] - 5.5, g3_y + hd_d - 4, zt - hd_wall - 7 - (hd_d - scr[2] - 5)]) cube([11, 4, 1]); }
+            }
+            // cradle for the HDMI coupler + the cable's plug: two hooks from the back wall
+            for (dx = [-12, 12]) translate([cpl_c[0] + dx - 3, cpl_c[1] - hdmi_cpl[2]/2 - 2.6, cpl_c[2] - hdmi_cpl[1]/2 - 2.5]) difference() {
+                cube([6, g3_y + hd_d - 1 - (cpl_c[1] - hdmi_cpl[2]/2 - 2.6), hdmi_cpl[1] + 5]);
+                translate([-1, 2.3, 2.5]) cube([8, hdmi_cpl[2] + 0.6, hdmi_cpl[1] + 0.5]);
             }
         }
-        // the screen: pocket from the front (glass flush with the frame), its standoffs, its speakers
+        // the screen: pocket from the front (glass flush with the frame), its standoffs
         translate([0, g3_y - 1, scr_cz]) rotate([-90, 0, 0]) linear_extrude(scr[2] + 1 + 0.2) rr(scr[0] + 0.6, scr[1] + 0.6, 2);
         for (h = scr_holes) let (q = hole_xz(h)) translate([q[0], 0, q[1]]) {
-            translate([0, scr_back_y - 1, 0]) rotate([-90, 0, 0]) cylinder(d = 6.2, h = 7);              // the standoff (any height up to 6)
-            translate([0, scr_back_y, 0]) rotate([-90, 0, 0]) cylinder(d = 3.4, h = 30, $fn = 16);       // M2.5 or M3, through the boss's floor
-            translate([0, scr_back_y + 8, 0]) rotate([-90, 0, 0]) cylinder(d = 6.4, h = 30, $fn = 24);   // the screw head's well (from the back)
+            translate([0, scr_back_y - 1, 0]) rotate([-90, 0, 0]) cylinder(d = 6.2, h = 7);               // the standoff (any height up to 6)
+            translate([0, scr_back_y, 0]) rotate([-90, 0, 0]) cylinder(d = 3.4, h = 60, $fn = 16);        // M2.5 or M3 through the boss's floor
+            translate([0, scr_back_y + 8, 0]) rotate([-90, 0, 0]) cylinder(d = 6.4, h = 60, $fn = 24);    // the screw head's well (from the back)
         }
-        // speaker grilles (over the screen's speaker boxes)
-        if (detail) for (r = scr_spk) let (xa = scr_pt([r[0], 0])[0], xb = scr_pt([r[1], 0])[0], zc = scr_pt([0, 15])[1])
-            for (gx = [min(xa, xb) + 5 : 4.5 : max(xa, xb) - 5]) for (gz = [-9, -4.5, 0, 4.5, 9])
-                translate([gx + (abs(gz) % 9 == 0 ? 0 : 2.25), g3_y + hd_d - 6, zc + gz]) rotate([-90, 0, 0]) cylinder(d = 2.4, h = 10, $fn = 10);
-        // port end (viewer's left): a window in the back for the HDMI adapter's plug and the right-angle USB-C,
-        // and one at the volume / backlight wheel
-        let (xe = -scr[0] / 2) {
-            translate([xe - 3 - 14, g3_y + 4, scr_pt([0, scr_ports[2] - 9])[1] - 0.01]) mirror([0, 0, 1]) cube([14, 40, scr_ports[3] - scr_ports[2] + 22]);
-            translate([xe - 3 - 12, g3_y + 4, scr_pt([0, scr_ports[0] + 7])[1]]) cube([12, 40, 14]);
+        // speaker grilles over the screen's speaker boxes; vent slots along the back (top and bottom rows)
+        if (detail) {
+            for (r = scr_spk) let (xa = scr_pt([r[0], 0])[0], xb = scr_pt([r[1], 0])[0], zc = scr_pt([0, 15])[1])
+                for (gx = [min(xa, xb) + 4 : 4.5 : max(xa, xb) - 4]) for (k = [-2:2])
+                    translate([gx + (k % 2 == 0 ? 0 : 2.25), g3_y + hd_d - 8, zc + k * 4.5]) rotate([-90, 0, 0]) cylinder(d = 2.6, h = 12, $fn = 12);
+            for (x = [-56:8:56]) for (zz = [scr_cz - 22, scr_cz + 4]) translate([x - 1.6, g3_y + hd_d - 8, zz - 7]) cube([3.2, 12, 14]);
         }
-        // cables into the neck: a notch at the back of the foot and the bottom wall, down to the coupler's bore
-        translate([0, neck_y, hd_z0 - 1]) cylinder(r = neck_bore_r, h = foot_t + 2);
-        translate([-6, neck_y, hd_z0 - 1]) cube([12, foot_d, foot_t + 6]);
-        // the head's 3 screws into v2's coupler (M3 x 12, as v2)
-        for (a = head_screw_angles) translate([0, neck_y, hd_z0 - 1]) rotate(a) translate([head_screw_r, 0, 0]) cylinder(d = clear_m3, h = foot_t + 2, $fn = fn_small);
-        // camera: the pod's screws (nuts slide in from the front with the screen out) and its cable hole
+        // a finger slot at the screen's volume / backlight wheel (port end, back)
+        translate([-scr[0]/2 - 14, g3_y + hd_d - 14, scr_pt([0, scr_ports[0]])[1] - 8]) cube([12, 20, 16]);
+        // the cables' way down into the neck (v2's coupler bore) and the head's 3 screws into the coupler (M3 x 12, as v2)
+        translate([0, neck_y, hd_z0 - 1]) cylinder(r = neck_bore_r, h = hd_wall + 2);
+        for (a = head_screw_angles) translate([0, neck_y, hd_z0 - 1]) rotate(a) translate([head_screw_r, 0, 0]) cylinder(d = clear_m3, h = hd_wall + 2, $fn = fn_small);
+        // camera: the pod's screws (their nuts slide in from the front with the screen out) and its cable hole
         for (p = pod_scr) {
             translate([p[0], p[1], zt - 14]) cylinder(d = clear_m3, h = 20, $fn = fn_small);
-            translate([p[0] - 3.05, g3_y + 4, zt - hd_wall - 4.2]) cube([6.1, p[1] - g3_y - 4 + 3.2, 2.7]);
+            translate([p[0] - 3.05, scr_back_y - 1, zt - hd_wall - 4.4]) cube([6.1, p[1] - scr_back_y + 4.2, 2.7]);
         }
-        translate([0, g3_y + 15, zt - 5]) linear_extrude(10) rr(18, 10, 2);
+        translate([0, g3_y + 33, zt - 5]) linear_extrude(10) rr(18, 10, 2);
     }
 }
 module screen_dummy3(s = 0) {
-    color([0.06, 0.06, 0.08]) translate([0, g3_y + s, scr_cz]) rotate([-90, 0, 0]) linear_extrude(scr[2] - 2*s) rr(scr[0] - 2*s, scr[1] - 2*s, 2);
+    color([0.06, 0.06, 0.08]) translate([0, g3_y + 0.15 + s, scr_cz]) rotate([-90, 0, 0]) linear_extrude(scr[2] - 2*s) rr(scr[0] - 2*s, scr[1] - 2*s, 2);
     for (r = scr_spk) let (xa = scr_pt([r[0], 0])[0], xb = scr_pt([r[1], 0])[0])
         color([0.15, 0.15, 0.17]) translate([min(xa, xb) + s, scr_back_y, scr_pt([0, 28.9])[1] + s]) cube([abs(xb - xa) - 2*s, spk_box_h - s, 27.7 - 2*s]);
     for (h = scr_holes) let (q = hole_xz(h)) color("#c9a74a") translate([q[0], scr_back_y, q[1]]) rotate([-90, 0, 0]) cylinder(d = 5 - 2*s, h = 4 - s);
 }
-// the HDMI adapter in the screen's HDMI-IN, its opening backwards, and the cable plug in it; the right-angle USB-C
+// what plugs into the screen, all inside the head: the ribbon HDMI's angled plug, the right-angle USB-C (cable
+// backwards), the coupler with the original cable's plug in its cradle
 module screen_plugs3(s = 0) {
     xe = -scr[0] / 2;
     zh = scr_pt([0, scr_ports[3]])[1]; zu = scr_pt([0, scr_ports[2]])[1];
-    color("#999") translate([xe - hdmi_ad[0] + s, g3_y + 2 + s, zh - hdmi_ad[1]/2 + s]) cube([hdmi_ad[0] - 2*s, hdmi_ad[2] - 2*s, hdmi_ad[1] - 2*s]);
-    color("#222") translate([xe - hdmi_ad[0] + 4 + s, g3_y + 2 + hdmi_ad[2], zh - 10.5 + s]) cube([11 - 2*s, 45, 21 - 2*s]);      // the cable's plug + strain relief
-    color("#333") translate([xe - 16 + s, g3_y + 2 + s, zu - 4 + s]) cube([16 - 2*s, 12 - 2*s, 8 - 2*s]);                           // right-angle USB-C
-    color("#333") translate([xe - 13 + s, g3_y + 12, zu - 2.5 + s]) cube([7 - 2*s, 40, 5 - 2*s]);                                  // its cable, backwards
+    color("#c9a74a") translate([xe - fpc_plug[0] + s, g3_y + 1 + s, zh - fpc_plug[1]/2 + s]) cube(fpc_plug - [2*s, 0, 2*s]);
+    color("#333") translate([xe - usbc_l[0] + s, g3_y + 1 + s, zu - usbc_l[1]/2 + s]) cube([usbc_l[0] - 2*s, usbc_l[2] - 2*s, usbc_l[1] - 2*s]);
+    color("#111") translate([cpl_c[0] - hdmi_cpl[0]/2 + s, cpl_c[1] - hdmi_cpl[2]/2 + s, cpl_c[2] - hdmi_cpl[1]/2 + s]) cube([hdmi_cpl[0] - 2*s, hdmi_cpl[2] - 2*s, hdmi_cpl[1] - 2*s]);
+    color("#222") translate([cpl_c[0] + hdmi_cpl[0]/2 + s, cpl_c[1] - hdmi_plug[2]/2 + s, cpl_c[2] - hdmi_plug[1]/2 + s]) cube([hdmi_plug[0] - 2*s, hdmi_plug[2] - 2*s, hdmi_plug[1] - 2*s]);
 }
 
 // -----------------------------------------------------------------------------
-// CAMERA POD: flush with the glass, running back over the head; v2's bracket inside (tilt on 2 side screws)
+// CAMERA POD: on the head's roof, 4 mm behind the face (nothing of it in front), flush with the head's back;
+// v2's bracket inside (tilt on 2 side screws). Prints standing on its bottom.
 // -----------------------------------------------------------------------------
-pod3 = [56, 40, 42];                    // width, depth (from the glass back), height
+pod_set = 4;                            // behind the glass
+pod3 = [58, hd_d - pod_set, 46];        // width, depth, height
 pod3_r = 9; pod3_w = 2.2;
-cam3_z = hd_z0 + hd[1] + 20;            // lens centre
-module place_cam3() translate([0, g3_y + cam_board_y - 1, cam3_z]) children();
-module pod3_outer() translate([0, g3_y, hd_z0 + hd[1]]) hull() {
-    translate([0, 0, pod3[2]/2]) rotate([-90, 0, 0]) linear_extrude(pod3[1] - pod3_r) rr(pod3[0], pod3[2], pod3_r);
-    translate([0, pod3[1] - 0.01, pod3[2]/2]) rotate([-90, 0, 0]) linear_extrude(0.01) rr(pod3[0] - 10, pod3[2] - 8, pod3_r - 4);
+pod3_y0 = g3_y + pod_set;
+cam3_z = hd_z0 + hd[1] + 22;            // lens centre
+module place_cam3() translate([0, pod3_y0 + cam_board_y, cam3_z]) children();
+module pod3_shape(i) translate([0, pod3_y0, hd_z0 + hd[1]]) intersection() {
+    hull() {
+        for (x = [-1, 1]) translate([x * (pod3[0]/2 - pod3_r), i, pod3[2] - pod3_r]) rotate([-90, 0, 0]) cylinder(r = pod3_r - i, h = pod3[1] - 5 - 2 * i);
+        translate([-pod3[0]/2 + i, i, 0]) cube([pod3[0] - 2 * i, pod3[1] - 5 - 2 * i, 1]);
+        translate([-pod3[0]/2 + 5 + i, i, 0]) cube([pod3[0] - 2 * (5 + i), pod3[1] - 2 * i, pod3[2] - 5 - i]);
+    }
+    translate([-200, -1, i > 0 ? -1 : 0]) cube([400, pod3[1] - i + 1, 200]);
 }
 module v3_pod() {
     zt = hd_z0 + hd[1];
     difference() {
         union() {
-            difference() {
-                pod3_outer();
-                translate([0, g3_y + pod3_w, zt - 1]) hull() {
-                    translate([0, 0, (pod3[2] - pod3_w)/2 + 1]) rotate([-90, 0, 0]) linear_extrude(pod3[1] - pod3_r - pod3_w) rr(pod3[0] - 2*pod3_w, pod3[2] - pod3_w + 2, pod3_r - pod3_w);
-                    translate([0, pod3[1] - 2*pod3_w - 0.01, (pod3[2] - pod3_w)/2 + 1]) rotate([-90, 0, 0]) linear_extrude(0.01) rr(pod3[0] - 10 - 2*pod3_w, pod3[2] - 8 - pod3_w, pod3_r - 4 - pod3_w);
-                }
-            }
-            // pillars beside the bracket's pivots (as v2's pod), and the two screw columns
-            for (s = [-1, 1]) intersection() { pod3_outer(); translate([s * (cam_brk_wo + 0.2 + 3.3), g3_y + cam_board_y - 1 + cam_pivot_dy, cam3_z - 6]) cylinder(d = 6.6, h = 40); }
-            for (p = pod_scr) intersection() { pod3_outer(); translate([p[0], p[1], zt]) cylinder(d = 10.4, h = pod3[2]); }
+            difference() { pod3_shape(0); pod3_shape(pod3_w); }
+            for (s = [-1, 1]) intersection() { pod3_shape(0); translate([s * (cam_brk_wo + 0.2 + 3.3), pod3_y0 + cam_board_y + cam_pivot_dy, cam3_z - 6]) cylinder(d = 6.6, h = 40); }
+            for (p = pod_scr) intersection() { pod3_shape(0); translate([p[0], p[1], zt]) cylinder(d = 10.4, h = pod3[2]); }
         }
-        // lens aperture (flared)
-        translate([0, g3_y - 1, cam3_z]) rotate([-90, 0, 0]) cylinder(d = cam_aperture, h = pod3_w + 2);
-        translate([0, g3_y - 0.01, cam3_z]) rotate([-90, 0, 0]) cylinder(d1 = cam_aperture + 6, d2 = cam_aperture, h = pod3_w * 0.8);
-        // the bracket's pivot screws: M3 x 12 from outside, heads sunk into the sides
+        translate([0, pod3_y0 - 1, cam3_z]) rotate([-90, 0, 0]) cylinder(d = cam_aperture, h = pod3_w + 2);
+        translate([0, pod3_y0 - 0.01, cam3_z]) rotate([-90, 0, 0]) cylinder(d1 = cam_aperture + 6, d2 = cam_aperture, h = pod3_w * 0.8);
         for (s = [-1, 1]) {
-            translate([s * 24, g3_y + cam_board_y - 1 + cam_pivot_dy, cam3_z]) rotate([0, 90, 0]) cylinder(d = clear_m3, h = 12, center = true, $fn = fn_small);
-            translate([s * (pod3[0]/2 - 1.8), g3_y + cam_board_y - 1 + cam_pivot_dy, cam3_z]) rotate([0, s * 90, 0]) cylinder(d = 6.4, h = 5, $fn = 24);
+            translate([s * 24, pod3_y0 + cam_board_y + cam_pivot_dy, cam3_z]) rotate([0, 90, 0]) cylinder(d = clear_m3, h = 14, center = true, $fn = fn_small);
+            translate([s * (pod3[0]/2 - 1.8), pod3_y0 + cam_board_y + cam_pivot_dy, cam3_z]) rotate([0, s * 90, 0]) cylinder(d = 6.4, h = 6, $fn = 24);
         }
-        // its 2 screws: M3 x 10 down a well from the top, through the column's floor into the head's nuts
         for (p = pod_scr) translate([p[0], p[1], zt - 1]) { cylinder(d = clear_m3, h = pod3[2] + 2, $fn = fn_small); translate([0, 0, 1 + 3]) cylinder(d = 6.4, h = pod3[2], $fn = 24); }
-        // the camera's cable down into the head
-        translate([0, g3_y + 15, zt - 1]) linear_extrude(4) rr(18, 10, 2);
+        translate([0, g3_y + 33, zt - 1]) linear_extrude(5) rr(18, 10, 2);
     }
 }
 
@@ -547,7 +559,7 @@ module layout() {
     }
     for (s = [-1, 1]) { arm_servo3(s); color(WHITE3) place_arm3(s, arm_angle) v3_arm(); }
 }
-if (part == "layout") {
+if (part == "layout") translate([0, b_cy, 0]) rotate(spin) translate([0, -b_cy, 0]) {
     if (cut) difference() { layout(); translate([0, -200, -10]) cube([400, 400, 500]); } else layout();
 }
 else if (part == "v3_body") v3_body();

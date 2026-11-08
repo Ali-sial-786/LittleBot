@@ -1,4 +1,4 @@
-// Interference checks for v3 (run_checks_v3.sh). PASS = empty (or zero-volume contact).
+// Interference checks for v3 "Bell" (run_checks_v3.sh). PASS = empty (or zero-volume contact).
 include <littlebot_v3.scad>
 part = "none";
 check = "";
@@ -15,6 +15,7 @@ module head_servo_s() place_torso() translate([0, pinion_yt, hs_spline_z]) servo
 module speaker_s() translate([-spk_w/2 + s, spk3_c[1] + s, spk3_c[2] - spk_h/2 + s]) cube([spk_w - 2*s, spk_d - 2*s, spk_h - 2*s]);
 module mic_s() { translate([mic3[0] + s, mic3[1] + s, mic3[2] - mic_w/2 + s]) cube([mic_l - 2*s, mic_t - 2*s, mic_w - 2*s]);
                  translate([mic3[0] + mic_body + s, mic3[1] + mic_t/2 - 4.75, mic3[2] - 9]) cube([32, 9.5, 18]); }   // + extension socket
+module bat_s() translate([-bat[0]/2 + s, bat_y - bat_c - bat[2] + s, bat_z0 + s]) cube([bat[0], bat[2], bat[1]] - [2*s, 2*s, 2*s]);
 module base_electronics_s() { ups_stack(s); ups_plugs(s); pca_floor(s); usbc_socket(s); charge_cable(s); }
 module floor_parts() { base_floor(false); stack_keeper(); pca_clamp(0); pca_clamp(1); }
 module neck_static() place_torso() { translate([0, pinion_yt, gear_z0]) rotate(7.5) pinion(); translate([0, pinion_yt, hs_tab_top - sv_tab_t - frame_t]) servo_frame(); }
@@ -23,20 +24,39 @@ module neck_moving(a) translate([0, neck_y, 0]) rotate(a) translate([0, -neck_y,
 module arms_at(a) for (k = [-1, 1]) place_arm3(k, a) v3_arm();
 module arm_grown(g) minkowski() { v3_arm(); sphere(r = g, $fn = 8); }
 module arms_grown_at(a) for (k = [-1, 1]) place_arm3(k, a) arm_grown(grow);
-module head_all(a) place_head3(a) head_v3();
-// the rod's path when pressed 1 mm (it must reach nothing but the button)
-module rod_pressed() translate([1.0, 0, 0]) v3_pi_rod();
+module head_all(a) place_head3(a) { v3_head(); v3_pod(); }
+module camera_s() {   // v2's camera board, lens and the 5-pin plug behind it, in the pod
+    translate([-cam_board/2 + s, pod3_y0 + cam_board_y + s, cam3_z - cam_board/2 + s]) cube([cam_board - 2*s, cam_pcb_t - 2*s, cam_board - 2*s]);
+    translate([0, pod3_y0 + cam_board_y, cam3_z]) rotate([90, 0, 0]) cylinder(d = 14, h = cam_board_y - pod3_w - 0.3);
+    translate([-7.5 + s, pod3_y0 + cam_board_y - 6, cam3_z - 7.5 + s]) cube([15 - 2*s, 6 - s, 15 - 2*s]);
+    translate([-12.5 + s, pod3_y0 + cam_board_y - 2.5, cam3_z - 3 + s]) cube([25 - 2*s, 2.5 - s, 6 - 2*s]);
+    translate([-14, pod3_y0 + cam_board_y + cam_pcb_t, cam3_z - 14]) cube([28, 1.5, 28]);
+    translate([cam_conn[0] - cam_conn_box[0]/2 - 0.5, pod3_y0 + cam_board_y + cam_pcb_t, cam3_z - 16 + cam_conn[1] - cam_conn_box[1]/2 - 0.5]) cube([cam_conn_box[0] + 1, cam_plug, cam_conn_box[1] + 1]);
+}
+module slider_positions() for (st = [-1, 1]) translate([st * ups_knob[2], 0, 0]) v3_ups_slider();
 
-if (check == "body_vs_electronics")  intersection() { v3_body(); union() { base_electronics_s(); speaker_s(); mic_s(); arm_servo_s(-1); arm_servo_s(1); } }
+// body, ring, floor, electronics
+if (check == "body_vs_electronics")  intersection() { v3_body(); union() { base_electronics_s(); speaker_s(); mic_s(); arm_servo_s(-1); arm_servo_s(1); bat_s(); } }
+if (check == "ring_vs_electronics")  intersection() { v3_ring(); base_electronics_s(); }
 if (check == "body_vs_floor")        intersection() { v3_body(); floor_parts(); }
+if (check == "ring_vs_floor")        intersection() { v3_ring(); floor_parts(); }
+if (check == "body_vs_ring")         intersection() { v3_body(); v3_ring(); }
 if (check == "body_vs_plate")        intersection() { v3_body(); v3_neck_plate(); }
 if (check == "plate_vs_neck")        intersection() { v3_neck_plate(); union() { neck_moving(head_angle); head_servo_s(); place_torso() translate([0, pinion_yt, gear_z0]) rotate(7.5) pinion(); } }
 if (check == "frame_vs_plate")       intersection() { v3_neck_plate(); place_torso() translate([0, pinion_yt, hs_tab_top - sv_tab_t - frame_t]) servo_frame(); }
 if (check == "body_vs_neck")         intersection() { v3_body(); union() { neck_moving(head_angle); neck_static(); head_servo_s(); } }
-if (check == "rod_vs_parts")         intersection() { rod_pressed(); union() { v3_body(); floor_parts(); base_electronics_s(); } }
-if (check == "rod_reaches_button")   intersection() { rod_pressed(); translate(pib) cube([1.2, 4, 4], center = true); }   // must NOT be empty
-if (check == "arms_vs_body")         intersection() { v3_body(); arms_at(arm_angle); }
+// the UPS switch slider, at either end of its travel: clear of everything but the knob it pushes
+if (check == "slider_vs_parts")      difference() { intersection() { slider_positions(); union() { v3_body(); floor_parts(); ups_stack(s); for (i = [0, 1, 2, 4, 5]) ups_plug(i, s); charge_cable(s); } }
+    translate([ups_knob_c[0] - 4, ups_knob_c[1] - 1.8, ups_knob_c[2] - 0.5]) cube([8, 3.6, ups_knob[1] + 1]); }   // the knob itself: slider_grips_knob
+if (check == "slider_grips_knob")    intersection() { v3_ups_slider(); ups_knob_dummy(0); }                 // must be EMPTY at rest (knob in the notch)
+if (check == "slider_moves_knob")    intersection() { translate([ups_knob[2] + 1.5, 0, 0]) v3_ups_slider(); ups_knob_dummy(0); }   // must NOT be empty
+// head: the screen and its plugs, the camera, the pod
+if (check == "head_vs_screen")       intersection() { v3_head(); union() { screen_dummy3(s); screen_plugs3(s); } }
+if (check == "pod_vs_camera")        intersection() { union() { v3_pod(); v3_head(); } union() { camera_s(); place_cam3() camera_bracket(); } }
+if (check == "pod_vs_head")          intersection() { v3_pod(); v3_head(); }
+if (check == "head_vs_body")         intersection() { union() { v3_body(); v3_neck_plate(); }; head_all(head_angle); }
+// arms
+if (check == "arms_vs_body")         intersection() { union() { v3_body(); v3_ring(); }; arms_at(arm_angle); }
 if (check == "arms_vs_plate")        intersection() { union() { v3_neck_plate(); neck_moving(head_angle); }; arms_at(arm_angle); }
 if (check == "pinch_arm_head")       intersection() { head_all(head_angle); arms_grown_at(arm_angle); }
-if (check == "head_vs_body")         intersection() { union() { v3_body(); v3_neck_plate(); }; head_all(head_angle); }
-if (check == "selftest_must_fail")   intersection() { v3_body(); translate([80, 60, 30]) cube(10); }
+if (check == "selftest_must_fail")   intersection() { v3_body(); translate([80, 60, 40]) cube(10); }
