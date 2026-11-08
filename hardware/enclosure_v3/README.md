@@ -7,7 +7,7 @@ EP-0177) turning on v2's geared neck, a camera pod on the head, and one-piece ar
 
 - **Few, big parts:** 9 printed parts on 4 plates of a Bambu Lab A1 (256 mm).
 - **Everything from v2 that works is reused as printed:** the floor with the Pi 5 + UPS, the stack keeper, the PCA9685 clamps, the neck coupler, ring gear, pinion and servo frame, and the camera bracket.
-- **Nothing touches the screen's glass.** The screen hangs on its own 4 corner standoffs, screwed from behind. The head's back cover comes off on its own (4 screws) to reach everything inside.
+- **Nothing touches the screen's glass.** The screen hangs on its own 4 corner standoffs, screwed from behind. A bezel, flush with the head's front, closes the head around the glass but stays 0.6 mm off its edges and never covers it, so touch works right to the edge. The head's back cover comes off on its own (4 screws) to reach everything inside.
 - **Every plug hides inside the head:**
   - flat-ribbon HDMI with an angled plug;
   - right-angle USB-C;
@@ -23,7 +23,7 @@ EP-0177) turning on v2's geared neck, a camera pod on the head, and one-piece ar
 | `LittleBot_v3_assembled.3mf` | the whole robot assembled and coloured, to look at (not to print) |
 | `stl/*.stl` | each part on its own, already in its print orientation |
 | `plates_v3.png` | top view of the 4 plates |
-| `checks_v3.scad`, `run_checks_v3.sh` | 46 interference checks (`OPENSCAD=... ./run_checks_v3.sh`); all pass |
+| `checks_v3.scad`, `run_checks_v3.sh` | 50 checks (`OPENSCAD=... ./run_checks_v3.sh`), all passing: interference, finger pinch, the bezel never within 0.3 mm of the glass, and room behind the screen to push each plug in |
 | `make_v3_project.py` | packs `stl/` onto the plates and writes the project |
 | `make_v3_assembly.py` | writes the assembled 3MF from `stl/assembled/` (see below) |
 | `concepts/` | the concept the design follows |
@@ -111,8 +111,8 @@ M3 nuts: 4 (ring tabs) + 4 (neck plate) + 4 (back cover) + 2 (pod) = **14**.
    - Set the plate in and fit 4 × M3 × 8.
 7. **Head:**
    - Coupler screws: 3 × M3 × 12 down through the frame's floor. The front one is under the screen, so fit them before the screen.
-   - Screen: 4 corner screws from behind.
-   - Plug in: the angled ribbon HDMI, the right-angle USB-C, and the coupler with the original cable in its clips.
+   - Screen: in from the front through the bezel, with nothing plugged in yet, then 4 corner screws from behind.
+   - Plug in from behind: the angled ribbon HDMI, the right-angle USB-C, and the coupler with the original cable in its clips. Each end of the head has room for a plug plus its push-in travel.
    - Camera pod: its 2 nuts go in from behind, then 2 screws from the top.
    - Back cover: 4 × M3 × 12.
 8. **Arms:** fit the horn on each arm, push it onto its spline at the neutral angle, and fit the spline screw.

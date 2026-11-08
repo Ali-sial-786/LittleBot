@@ -52,6 +52,10 @@ if (check == "slider_grips_knob")    intersection() { v3_ups_slider(); ups_knob_
 if (check == "slider_moves_knob")    intersection() { translate([ups_knob[2] + 1.5, 0, 0]) v3_ups_slider(); ups_knob_dummy(0); }   // must NOT be empty
 // head: the screen and its plugs, the camera, the pod
 if (check == "head_vs_screen")       intersection() { union() { v3_head_frame(); v3_head_back(); } union() { screen_dummy3(s); screen_plugs3(s); } }
+// the screen goes in first (through the bezel), then the HDMI and USB-C plugs from behind: room for their whole stroke
+if (check == "plugs_go_in")          intersection() { v3_head_frame(); union() { screen_plugs3(s, true); screen_dummy3(s); } }
+// nothing touches the glass: the frame (bezel included) stays 0.3 mm or more off its front and edges, even with square corners
+if (check == "glass_untouched")      intersection() { v3_head_frame(); translate([0, g3_y - 0.5, scr_cz]) rotate([-90, 0, 0]) linear_extrude(scr[2] + 0.5) rr(scr[0] + 0.6, scr[1] + 0.6, 0.01); }
 if (check == "cover_vs_frame")       intersection() { v3_head_frame(); v3_head_back(); }
 if (check == "pod_vs_camera")        intersection() { union() { v3_pod(); v3_head_frame(); v3_head_back(); } union() { camera_s(); place_cam3() camera_bracket(); } }
 if (check == "pod_vs_head")          intersection() { v3_pod(); union() { v3_head_frame(); v3_head_back(); } }

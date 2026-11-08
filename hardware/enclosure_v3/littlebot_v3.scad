@@ -72,11 +72,13 @@ fpc_plug = [8, 22, 20];                 // beyond the port: out, along the edge,
 usbc_l = [15, 12, 16];                  // right-angle USB-C head beyond the port: out, along the edge, back (cable backwards)
 hdmi_cpl = [38, 22, 11.5];              // HDMI female-female coupler: length, width, thickness
 hdmi_plug = [36, 21, 11];               // the original cable's full-size plug (moulding + strain relief)
+plug_stroke = [10, 6.6];                // how far the HDMI and the USB-C plug travel going in (they go in from behind)
 
 /* [v3 head] */
-hd_end = 18;                            // frame beside the screen's ends (the plugs fit in it)
+hd_end = 24;                            // frame beside the screen's ends: each plug + its stroke fits in it, so they go in from behind
 hd_tb = 4;                              // frame above and below the screen
-hd = [scr[0] + 2 * hd_end, scr[1] + 2 * hd_tb];   // 200.9 x 108
+hd = [scr[0] + 2 * hd_end, scr[1] + 2 * hd_tb];   // 212.9 x 108
+bz_gap = 0.6;                           // the front bezel stays this far off the glass's edges, all round (never touches it)
 hd_d = 46;                              // glass front -> back: the camera, its bracket and plug need 41 in the pod
 hd_r = 12; hd_ch = 10;                  // corner radius (front view); the back's 45-degree edge
 hd_wall = 2;
@@ -431,7 +433,13 @@ module v3_head_frame() {
     zt = hd_z0 + hd[1];
     difference() {
         union() {
-            intersection() { difference() { head_outer(); head_inner(); } y_slab(g3_y - 1, hd_split); }
+            intersection() { difference() { head_outer(); translate([0, -0.5, 0]) head_inner(); } y_slab(g3_y - 1, hd_split); }   // (shift: no coplanar front, clean previews)
+            // front bezel, flush with the frame's front: hides the plugs' room beside the glass. Its opening is bz_gap clear of the
+            // glass all round, so nothing touches or covers the glass; the screen goes in through it, the plugs go in from behind
+            difference() {
+                intersection() { head_outer(); y_slab(g3_y - 1, g3_y + 0.8); }
+                translate([0, g3_y - 2, scr_cz]) rotate([-90, 0, 0]) linear_extrude(4) rr(scr[0] + 2 * bz_gap, scr[1] + 2 * bz_gap, 0.8);   // clear of square corners too
+            }
             // 4 bosses behind the screen's corner standoffs, webbed to the roof / floor (tree supports under them)
             for (h = scr_holes) let (q = hole_xz(h), up = q[1] > scr_cz ? 1 : -1) {
                 translate([q[0], scr_back_y, q[1]]) rotate([-90, 0, 0]) cylinder(d = 9.5, h = hd_split - scr_back_y);
@@ -442,8 +450,12 @@ module v3_head_frame() {
                 translate([p[0] - 5.5, scr_back_y + 7.8, zt - hd_wall - 7]) cube([11, hd_split - scr_back_y - 7.8, 7.01]);
                 translate([p[0] - 5.5, scr_back_y + 0.8, zt - hd_wall - 0.5]) cube([11, 1, 0.51]);
             }
-            // the cover's 4 nut bosses in the frame's corners, up to the split
-            for (c = cov_scr) translate([c[0], hd_split - 12, c[1]]) rotate([-90, 0, 0]) cylinder(d = 9, h = 12);
+            // the cover's 4 nut bosses: columns in the frame's corners from the bezel to the split, joined to the corner walls
+            for (c = cov_scr) intersection() {
+                head_shape(0.01);
+                hull() for (k = [0, 1]) translate([c[0] + k * sign(c[0]) * 4, g3_y, c[1] + k * sign(c[1] - scr_cz) * 4])
+                    rotate([-90, 0, 0]) cylinder(d = 9, h = hd_split - g3_y);
+            }
             // cradle: two clips on the floor hold the HDMI coupler (the original cable's plug goes into its end)
             for (dx = [-11, 11]) translate([cpl_c[0] + dx - 3, cpl_c[1] - hdmi_cpl[2]/2 - 1.8, hd_z0 + 1]) difference() {
                 cube([6, hdmi_cpl[2] + 3.6, hdmi_cpl[1] * 0.6 + 1.3]);
@@ -481,8 +493,10 @@ module v3_head_back() {
             intersection() { difference() { head_outer(); head_inner(); } y_slab(hd_split, g3_y + hd_d + 1); }
             // a lip inside the frame's walls (locates the cover)
             intersection() {     // only on clear stretches of the walls (the frame's bosses, clips and the coupler are elsewhere)
-                y_slab(hd_split - 3, hd_split + 0.01);
-                difference() { head_shape(hd_wall + 0.3); head_shape(hd_wall + 1.6); }
+                union() {   // the lip, and a 1.5 mm ledge joining it to the cover's wall
+                    intersection() { y_slab(hd_split - 3, hd_split + 1.5); difference() { head_shape(hd_wall + 0.3); head_shape(hd_wall + 1.6); } }
+                    intersection() { y_slab(hd_split, hd_split + 1.5); difference() { head_shape(hd_wall - 0.5); head_shape(hd_wall + 1.6); } }
+                }
                 union() {
                     for (x = [-1, 1]) translate([x * hd[0]/2, 0, scr_cz]) cube([30, 400, 50], center = true);          // ends, mid height
                     translate([0, 0, hd_z0 + hd[1]]) cube([12, 400, 30], center = true);                               // top, centre
@@ -514,13 +528,16 @@ module screen_dummy3(s = 0) {
 }
 // what plugs into the screen, all inside the head: the ribbon HDMI's angled plug, the right-angle USB-C (cable
 // backwards), the coupler with the original cable's plug in its cradle
-module screen_plugs3(s = 0) {
+module screen_plugs3(s = 0, going_in = false) {   // going_in: the two plugs at the start of their stroke (checks)
     xe = -scr[0] / 2;
     zh = scr_pt([0, scr_ports[3]])[1]; zu = scr_pt([0, scr_ports[2]])[1];
-    color("#c9a74a") translate([xe - fpc_plug[0] + s, g3_y + 1 + s, zh - fpc_plug[1]/2 + s]) cube(fpc_plug - [2*s, 0, 2*s]);
-    color("#333") translate([xe - usbc_l[0] + s, g3_y + 1 + s, zu - usbc_l[1]/2 + s]) cube([usbc_l[0] - 2*s, usbc_l[2] - 2*s, usbc_l[1] - 2*s]);
-    color("#111") translate([cpl_c[0] - hdmi_cpl[0]/2 + s, cpl_c[1] - hdmi_cpl[2]/2 + s, cpl_c[2] - hdmi_cpl[1]/2 + s]) cube([hdmi_cpl[0], hdmi_cpl[2], hdmi_cpl[1]] - [2*s, 2*s, 2*s]);
-    color("#222") translate([cpl_c[0] + hdmi_cpl[0]/2 + s, cpl_c[1] - hdmi_plug[2]/2 + s, cpl_c[2] - hdmi_plug[1]/2 + s]) cube([hdmi_plug[0], hdmi_plug[2], hdmi_plug[1]] - [2*s, 2*s, 2*s]);
+    ph = going_in ? plug_stroke[0] : 0; pu = going_in ? plug_stroke[1] : 0;
+    color("#c9a74a") translate([xe - fpc_plug[0] - ph + s, g3_y + 1 + s, zh - fpc_plug[1]/2 + s]) cube(fpc_plug - [2*s, 0, 2*s]);
+    color("#333") translate([xe - usbc_l[0] - pu + s, g3_y + 1 + s, zu - usbc_l[1]/2 + s]) cube([usbc_l[0] - 2*s, usbc_l[2] - 2*s, usbc_l[1] - 2*s]);
+    if (!going_in) {
+        color("#111") translate([cpl_c[0] - hdmi_cpl[0]/2 + s, cpl_c[1] - hdmi_cpl[2]/2 + s, cpl_c[2] - hdmi_cpl[1]/2 + s]) cube([hdmi_cpl[0], hdmi_cpl[2], hdmi_cpl[1]] - [2*s, 2*s, 2*s]);
+        color("#222") translate([cpl_c[0] + hdmi_cpl[0]/2 + s, cpl_c[1] - hdmi_plug[2]/2 + s, cpl_c[2] - hdmi_plug[1]/2 + s]) cube([hdmi_plug[0], hdmi_plug[2], hdmi_plug[1]] - [2*s, 2*s, 2*s]);
+    }
 }
 
 // -----------------------------------------------------------------------------
@@ -580,11 +597,12 @@ module v3_neck_parts(a = 0) place_torso() {
 }
 module arm_servo3(s) place_sh(s) translate([sv_spline_top, 0, 0]) rotate([0, 90, 0]) rotate(90) servo_dummy();
 module place_head3(a = 0) translate([0, neck_y, 0]) rotate(a) translate([0, -neck_y, 0]) children();
-WHITE3 = [0.96, 0.95, 0.92]; DARK3 = [0.13, 0.14, 0.16];
+WHITE3 = [0.96, 0.95, 0.92]; DARK3 = [0.13, 0.14, 0.16]; BLUE3 = [0.35, 0.72, 0.94];
 module layout() {
     v3_electronics();
     v3_neck_parts(head_angle);
-    color(DARK3) v3_ring();
+    color(DARK3) render() difference() { v3_ring(); slab(ring_h, sh0); }
+    color(BLUE3) render() intersection() { v3_ring(); slab(ring_h, sh0); }   // the accent line (a filament change)
     color(WHITE3) v3_body();
     color([0.85, 0.85, 0.83]) v3_neck_plate();
     color(DARK3) v3_ups_slider();
