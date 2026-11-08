@@ -20,10 +20,12 @@ EP-0177) turning on v2's geared neck, a camera pod on the head, and one-piece ar
 |---|---|
 | `littlebot_v3.scad` | the model (it includes `../enclosure_v2/littlebot_v2.scad` for the reused parts) |
 | `LittleBot_v3_A1.3mf` | **the Bambu Studio project: 4 plates, colours, supports and brims set** |
+| `LittleBot_v3_assembled.3mf` | the whole robot assembled and coloured, to look at (not to print) |
 | `stl/*.stl` | each part on its own, already in its print orientation |
 | `plates_v3.png` | top view of the 4 plates |
 | `checks_v3.scad`, `run_checks_v3.sh` | 46 interference checks (`OPENSCAD=... ./run_checks_v3.sh`); all pass |
 | `make_v3_project.py` | packs `stl/` onto the plates and writes the project |
+| `make_v3_assembly.py` | writes the assembled 3MF from `stl/assembled/` (see below) |
 | `concepts/` | the concept the design follows |
 
 Re-make the STLs after changing the model. Run from this folder:
@@ -34,6 +36,16 @@ for w in body ring neck_plate head_frame head_back pod arm_left arm_right ups_sl
 
 ```bash
 python3 make_v3_project.py
+```
+
+The assembled 3MF (28 parts, made by `assy_v3()`):
+
+```bash
+mkdir -p stl/assembled; for w in ring ring_band body neck_plate ups_slider arm_left arm_right head_frame head_back pod camera_bracket floor floor_clips coupler gears servo_frame servos pi_ups pca speaker mic aa_box charge_socket screen screen_plugs face eyes camera; do openscad -o stl/assembled/$w.stl -D 'part="assy"' -D "which=\"$w\"" littlebot_v3.scad; done
+```
+
+```bash
+python3 make_v3_assembly.py
 ```
 
 ## Printing (Bambu Lab A1, PLA, 0.20 mm Standard, Textured PEI plate)

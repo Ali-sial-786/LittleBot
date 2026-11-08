@@ -607,6 +607,7 @@ else if (part == "v3_head_back") v3_head_back();
 else if (part == "v3_pod") v3_pod();
 else if (part == "v3_ups_slider") v3_ups_slider();
 else if (part == "print") print_v3(which);
+else if (part == "assy") assy_v3(which);
 
 // -----------------------------------------------------------------------------
 // PRINT ORIENTATIONS (part = "print", which = name): each part on the bed (z = 0) as it should print
@@ -626,3 +627,41 @@ module print_v3(w) {
 
 echo(str("LittleBot v3: total height ", hd_z0 + hd[1] + pod3[2], " mm; head ", hd[0], " x ", hd[1], " x ", hd_d,
          "; slider wall y ", sl_wall_y, "; charging wall y ", chg_wall_y));
+
+// -----------------------------------------------------------------------------
+// ASSEMBLED (part = "assy", which = name): each component where it sits in the robot, for the assembled 3MF
+// -----------------------------------------------------------------------------
+module assy_v3(w) {
+    if (w == "ring")        difference() { v3_ring(); slab(ring_h, sh0); }
+    if (w == "ring_band")   intersection() { v3_ring(); slab(ring_h, sh0); }
+    if (w == "body")        v3_body();
+    if (w == "neck_plate")  v3_neck_plate();
+    if (w == "ups_slider")  v3_ups_slider();
+    if (w == "arm_left")    place_arm3(-1, arm_angle) v3_arm();
+    if (w == "arm_right")   place_arm3(1, arm_angle) v3_arm();
+    if (w == "head_frame")  place_head3(head_angle) v3_head_frame();
+    if (w == "head_back")   place_head3(head_angle) v3_head_back();
+    if (w == "pod")         place_head3(head_angle) v3_pod();
+    if (w == "camera_bracket") place_head3(head_angle) place_cam3() camera_bracket();
+    if (w == "floor")       base_floor();
+    if (w == "floor_clips") { stack_keeper(); pca_clamp(0); pca_clamp(1); }
+    if (w == "coupler")     place_torso() translate([0, neck_yt, torso_h]) coupler();
+    if (w == "gears")       place_torso() { translate([0, neck_yt, gear_z0]) ring_gear(); translate([0, pinion_yt, gear_z0]) rotate(7.5) pinion(); }
+    if (w == "servo_frame") place_torso() translate([0, pinion_yt, hs_tab_top - sv_tab_t - frame_t]) servo_frame();
+    if (w == "servos")      { place_torso() translate([0, pinion_yt, hs_spline_z]) servo_dummy(); for (k = [-1, 1]) arm_servo3(k); }
+    if (w == "pi_ups")      { ups_stack(); ups_plugs(); }
+    if (w == "pca")         pca_floor();
+    if (w == "speaker")     speaker3_dummy();
+    if (w == "mic")         mic3_dummy();
+    if (w == "aa_box")      bat_dummy();
+    if (w == "charge_socket") { usbc_socket(); charge_cable(); }
+    if (w == "screen")      place_head3(head_angle) screen_dummy3();
+    if (w == "screen_plugs") place_head3(head_angle) screen_plugs3();
+    if (w == "face")        place_head3(head_angle) translate([0, g3_y - 0.05, scr_cz]) rotate([90, 0, 0]) linear_extrude(0.4) offset(r = 2) square([150, 82], center = true);
+    if (w == "eyes")        place_head3(head_angle) translate([0, g3_y - 0.45, scr_cz]) rotate([90, 0, 0]) linear_extrude(0.4) {
+                                for (sx = [-1, 1]) translate([sx * 30, 6]) offset(r = 12) square([2, 16], center = true);
+                                translate([0, -24]) difference() { circle(13); translate([0, 6]) square([40, 20], center = true); circle(9.5); } }
+    if (w == "camera")      place_head3(head_angle) {
+                                translate([-cam_board/2, pod3_y0 + cam_board_y, cam3_z - cam_board/2]) cube([cam_board, cam_pcb_t, cam_board]);
+                                translate([0, pod3_y0 + cam_board_y, cam3_z]) rotate([90, 0, 0]) cylinder(d = 14, h = cam_board_y - pod3_w - 0.5); }
+}
