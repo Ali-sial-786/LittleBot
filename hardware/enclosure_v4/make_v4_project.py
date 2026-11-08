@@ -31,13 +31,14 @@ from make_v3_project import raster, rot, free_spots, BED, EDGE, GAP, RES   # noq
 COLOURS = {"white": "#F2EFE8", "dark": "#2B2D31"}
 SLOTS = ["white", "dark"]
 GROUPS = {"head_frame": [("head_frame", "white"), ("head_inlay", "dark")]}     # one object, two filaments
-PLATES = [("body", "white", ["body", "arm_left", "arm_right"]),
+PLATES = [("body", "white", ["body", "arm_left", "arm_right", "ups_slider"]),
           ("head", "white", ["head_frame"]),
-          ("back", "white", ["head_back", "neck_plate"]),
-          ("dark", "dark", ["ring", "puck", "door", "ups_slider"])]
+          ("back", "white", ["head_back"]),
+          ("dark", "dark", ["ring", "puck", "port_panel"]),
+          ("neck", "white", ["neck_plate"])]
 SUPPORT = {"head_frame", "head_back"}   # tree supports from the build plate only
 NO_NEST = {"head_frame", "head_back"}   # nothing inside their footprint (their supports go there)
-BRIM = {"body": 5.0}
+BRIM = {"body": 5.0, "port_panel": 3.0}
 
 
 def load(name):
@@ -118,7 +119,7 @@ def mesh_xml(oid, name, tris, centre):
 def project(plates, out):
     objects, items, obj_cfg, plate_cfg, assemble = [], [], [], [], []
     k = 0; nparts = 0
-    cols = 2
+    cols = int(round(len(plates) ** 0.5)) + (1 if len(plates) ** 0.5 > round(len(plates) ** 0.5) else 0)   # as Bambu Studio lays plates out
     for i, (pname, colour, objs) in enumerate(plates):
         origin = np.array([(i % cols) * bp.STRIDE, -(i // cols) * bp.STRIDE, 0.0])
         inst = []

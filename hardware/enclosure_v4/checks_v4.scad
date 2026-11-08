@@ -15,7 +15,8 @@ module arm_servo_s(k) place_sh(k) translate([sv_spline_top, 0, 0]) rotate([0, 90
 module head_servo_s() place_torso() translate([0, pinion_yt, hs_spline_z]) servo_shrunk();
 module mic_s() { translate([mic3[0] + s, mic3[1] + s, mic3[2] - mic_w/2 + s]) cube([mic_l - 2*s, mic_t - 2*s, mic_w - 2*s]);
                  translate([mic3[0] + mic_body + s, mic3[1] + mic_t/2 - 4.75, mic3[2] - 9]) cube([32, 9.5, 18]); }   // + extension socket
-module bat4_s() place_door() translate([-bat[0] / 2 + s, -door4_t - bat4_clr - bat[2] + s, bat4_lz + s]) cube([bat[0], bat[2], bat[1]] - [2*s, 2*s, 2*s]);
+module bat4_s() translate([-bat[0] / 2 + s, y4f + bat4_y + bat4_clr + s, bat4_z0 + s]) cube([bat[0], bat[2], bat[1]] - [2*s, 2*s, 2*s]);
+module speaker_s() translate([-spk_w/2 + s, spk3_c[1] + s, spk3_c[2] - spk_h/2 + s]) cube([spk_w - 2*s, spk_d - 2*s, spk_h - 2*s]);
 module base_electronics_s() { ups_stack(s); ups_plugs(s); pca_floor(s); usbc_socket(s); charge_cable(s); }
 module floor_parts() { base_floor(false); stack_keeper(); pca_clamp(0); pca_clamp(1); }
 module neck_static() place_torso() { translate([0, pinion_yt, gear_z0]) rotate(7.5) pinion(); translate([0, pinion_yt, hs_tab_top - sv_tab_t - frame_t]) servo_frame(); }
@@ -36,7 +37,7 @@ module camera_s() {   // v2's camera board, lens and the 5-pin plug behind it, i
 module slider_positions() for (st = [-1, 1]) translate([st * ups_knob[2], 0, 0]) v3_ups_slider();
 
 // body, ring, floor, electronics
-if (check == "body_vs_electronics")  intersection() { sa_body(); union() { base_electronics_s(); mic_s(); arm_servo_s(-1); arm_servo_s(1); bat4_s(); } }
+if (check == "body_vs_electronics")  intersection() { sa_body(); union() { base_electronics_s(); mic_s(); speaker_s(); arm_servo_s(-1); arm_servo_s(1); } }
 if (check == "ring_vs_electronics")  intersection() { v3_ring(); base_electronics_s(); }
 if (check == "body_vs_floor")        intersection() { sa_body(); floor_parts(); }
 if (check == "ring_vs_floor")        intersection() { v3_ring(); floor_parts(); }
@@ -45,12 +46,13 @@ if (check == "body_vs_plate")        intersection() { sa_body(); v3_neck_plate()
 if (check == "plate_vs_neck")        intersection() { v3_neck_plate(); union() { neck_moving(head_angle); head_servo_s(); place_torso() translate([0, pinion_yt, gear_z0]) rotate(7.5) pinion(); } }
 if (check == "frame_vs_plate")       intersection() { v3_neck_plate(); place_torso() translate([0, pinion_yt, hs_tab_top - sv_tab_t - frame_t]) servo_frame(); }
 if (check == "body_vs_neck")         intersection() { sa_body(); union() { neck_moving(head_angle); neck_static(); head_servo_s(); } }
-// the AA box behind its door: clear of everything inside; the door clear of the body (it sits in its pocket)
-if (check == "box_vs_parts")         intersection() { bat4_s(); union() { base_electronics_s(); floor_parts(); v3_neck_plate(); neck_static(); head_servo_s(); arm_servo_s(-1); arm_servo_s(1); mic_s(); } }
-if (check == "door_vs_body")         intersection() { sa_door_all(); sa_body(); }
-if (check == "door_vs_box")          intersection() { sa_door_all(); bat4_s(); }
+// the speaker and mic clear of the neck's parts; the dark panel on the skin (contact only)
+if (check == "chest_vs_neck")        intersection() { union() { speaker_s(); mic_s(); } union() { neck_static(); head_servo_s(); neck_moving(head_angle); } }
+if (check == "panel_vs_body")        intersection() { sa_port_panel(); sa_body(); }
+// the AA box in the head: clear of the frame, the cover, the screen, its plugs, the coupler and the camera
+if (check == "box_vs_head")          intersection() { bat4_s(); union() { sa_head_frame_body(); sa_head_back(); screen_dummy3(s); screen_plugs3(s); camera_s(); place_cam4() camera_bracket(); } }
 // the UPS switch slider, at either end of its travel: clear of everything but the knob it pushes
-if (check == "slider_vs_parts")      difference() { intersection() { slider_positions(); union() { sa_body(); floor_parts(); ups_stack(s); for (i = [0, 1, 2, 4, 5]) ups_plug(i, s); charge_cable(s); bat4_s(); sa_door_all(); } }
+if (check == "slider_vs_parts")      difference() { intersection() { slider_positions(); union() { sa_body(); floor_parts(); ups_stack(s); for (i = [0, 1, 2, 4, 5]) ups_plug(i, s); charge_cable(s); sa_port_panel(); } }
     translate([ups_knob_c[0] - 4, ups_knob_c[1] - 1.8, ups_knob_c[2] - 0.5]) cube([8, 3.6, ups_knob[1] + 1]); }
 if (check == "slider_grips_knob")    intersection() { v3_ups_slider(); ups_knob_dummy(0); }
 if (check == "slider_moves_knob")    intersection() { translate([ups_knob[2] + 1.5, 0, 0]) v3_ups_slider(); ups_knob_dummy(0); }   // must NOT be empty
@@ -68,4 +70,4 @@ if (check == "head_vs_body")         intersection() { union() { sa_body(); v3_ne
 if (check == "arms_vs_body")         intersection() { union() { sa_body(); v3_ring(); }; arms_at(arm_angle); }
 if (check == "arms_vs_plate")        intersection() { union() { v3_neck_plate(); neck_moving(head_angle); }; arms_at(arm_angle); }
 if (check == "pinch_arm_head")       intersection() { head_all(head_angle); arms_grown_at(arm_angle); }
-if (check == "selftest_must_fail")   intersection() { sa_body(); translate([86, 60, 60]) cube(10); }
+if (check == "selftest_must_fail")   intersection() { sa_body(); translate([96, 70, 80]) cube(10); }

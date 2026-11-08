@@ -6,7 +6,7 @@ Four complete designs. All are parametric OpenSCAD models with ready-to-slice ST
 - Adafruit mini USB mic (3367) + mini USB speaker (3369);
 - 3 × MG90S servos (head turn + two arms) and a PCA9685.
 
-v3 and v4 keep v2's base (Pi 5 on the UPS HAT, PCA9685), neck and camera, and swap the 3.5" screen for the 52Pi EP-0177 7" touch screen with speakers. v4 plays sound through that screen's speakers instead of the USB speaker.
+v3 and v4 keep v2's base (Pi 5 on the UPS HAT, PCA9685), neck and camera, and swap the 3.5" screen for the 52Pi EP-0177 7" touch screen with speakers. v4 lifts v2's neck 45 mm for a taller body.
 
 ![v1 to v4 at the same scale](comparison/littlebot_v1_to_v4_front.png)
 
@@ -15,11 +15,11 @@ Side and back views, same scale: [side](comparison/littlebot_v1_to_v4_side.png),
 | | [v1 "TV head"](enclosure/README.md) | [v2 "companion"](enclosure_v2/README.md) | [v3 "Bell"](enclosure_v3/README.md) | [v4 "Soft Arc"](enclosure_v4/README.md) |
 |---|---|---|---|---|
 | Look | ![v1](enclosure/images/front.png) | ![v2](enclosure_v2/images/front.png) | ![v3](enclosure_v3/LittleBot_v3_model.png) | ![v4](enclosure_v4/LittleBot_v4_model.png) |
-| Size | 130 × 126 mm footprint, 212 mm tall, head 146 mm wide | 176 × 152 mm footprint, 340 mm tall (380 with the camera pod) | 186 × 182 mm body, 362 mm tall with the camera pod, head 213 mm wide | 189 × 162 mm body, 391 mm tall, head 246 mm wide |
-| Parts | 11 STLs (12 prints) | 24 STLs (26 prints) + 2 for the wheel phase | 9 new parts on 4 A1 plates + v2's floor, neck and camera bracket | 11 parts on 4 A1 plates (v3's ring, neck plate, slider + v2's floor, neck, camera bracket) |
-| Head | screen + Pi stack in the face, mic in the head's side | helmet head, black visor with the screen behind it, LED-ring ears, camera pod on top | the screen's own shape; nothing touches the glass; every plug hidden inside; camera pod on top | soft rounded head, flat face, camera hood with a dark arch; sound from the screen's speakers |
+| Size | 130 × 126 mm footprint, 212 mm tall, head 146 mm wide | 176 × 152 mm footprint, 340 mm tall (380 with the camera pod) | 186 × 182 mm body, 362 mm tall with the camera pod, head 213 mm wide | 208 × 182 mm body, 437 mm tall, head 242 × 158 × 131 mm |
+| Parts | 11 STLs (12 prints) | 24 STLs (26 prints) + 2 for the wheel phase | 9 new parts on 4 A1 plates + v2's floor, neck and camera bracket | 11 parts on 5 A1 plates (v3's ring, neck plate, slider + v2's floor, neck, camera bracket) |
+| Head | screen + Pi stack in the face, mic in the head's side | helmet head, black visor with the screen behind it, LED-ring ears, camera pod on top | the screen's own shape; nothing touches the glass; every plug hidden inside; camera pod on top | round head (flat face, soft bevel), camera hood with a dark arch; the 4×AA box behind its back |
 | Neck | geared turntable, head = 0.67 × servo | same | v2's | v2's, under a black neck |
-| Body | camera in the chest, speaker + PCA9685 on the floor plate | speaker + mic in the chest; Pi on its UPS battery, PCA9685, wheel wells, sensor/light-bar plate in the base | one-piece bell on a dark base ring; v2's floor inside; 4×AA servo box on the front; arms with hands | soft egg on a dark base; v2's floor inside; 4×AA box behind a dark back door; paddle arms |
+| Body | camera in the chest, speaker + PCA9685 on the floor plate | speaker + mic in the chest; Pi on its UPS battery, PCA9685, wheel wells, sensor/light-bar plate in the base | one-piece bell on a dark base ring; v2's floor inside; 4×AA servo box on the front; arms with hands | smooth egg on a dark base; v2's floor inside; USB-C + power switch in a dark back panel; one-piece arms with hands |
 | Future phases | servo supply jack | wheels (TT motors), casters, HC-SR04, ESP32 + TB6612FNG, LED strips | wheels: a new base ring + floor | same as v3 |
 | Screws | M2.5 + M3 | one M3 kit (4 lengths); nothing drilled or forced | the M3 kit + 4 M2.5 for the screen | same |
 | Checks | 48 | 118 (incl. 12 mm finger-pinch clearance for the arms, every cable route and every screw) | 50 (incl. finger pinch, glass never touched, room to plug in) | 58 |

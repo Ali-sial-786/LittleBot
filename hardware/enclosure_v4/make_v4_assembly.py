@@ -25,13 +25,13 @@ COLOURS = {   # name: hex
     "servo": "#3A6FB0", "board": "#2E7D4F", "eye": "#4FE3E0"}
 PARTS = [  # (stl name, colour, label)
     ("ring", "dark", "base ring"), ("body", "white", "body"), ("neck_plate", "white", "neck plate"),
-    ("ups_slider", "dark", "UPS switch slider"), ("door", "dark", "AA box door"),
+    ("ups_slider", "white", "UPS switch slider"), ("port_panel", "dark", "port panel (USB-C + UPS switch)"),
     ("arm_left", "white", "left arm"), ("arm_right", "white", "right arm"), ("puck", "dark", "black neck"),
     ("head_frame", "white", "head frame"), ("head_inlay", "dark", "camera arch"), ("head_back", "white", "head back"),
     ("camera_bracket", "v2", "camera bracket (v2)"), ("floor", "v2", "floor (v2)"), ("floor_clips", "v2", "stack keeper + PCA clamps (v2)"),
     ("coupler", "v2", "neck coupler (v2)"), ("gears", "v2", "neck gears (v2)"), ("servo_frame", "v2", "servo frame (v2)"),
     ("servos", "servo", "MG90S servos"), ("pi_ups", "board", "Pi 5 + UPS HAT (E)"), ("pca", "board", "PCA9685"),
-    ("mic", "black", "USB mic"), ("aa_box", "black", "4xAA box"), ("charge_socket", "metal", "USB-C charging socket + cable"),
+    ("speaker", "black", "USB speaker"), ("mic", "black", "USB mic"), ("aa_box", "black", "4xAA box (in the head)"), ("charge_socket", "metal", "USB-C charging socket + cable"),
     ("screen", "black", "7in screen (EP-0177)"), ("screen_plugs", "metal", "HDMI ribbon plug, USB-C, HDMI coupler"),
     ("eyes", "eye", "eyes"), ("camera", "black", "camera"),
 ]
