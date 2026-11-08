@@ -12,6 +12,7 @@ EP-0177) turning on v2's geared neck, a camera pod on the head, and one-piece ar
   - flat-ribbon HDMI with an angled plug;
   - right-angle USB-C;
   - the HDMI coupler with your original cable's plug, which clips onto the head's floor.
+- **Cooling where the heat is:** the Pi's fan blows down through v2's floor vents and out through 6 notches in the base ring's bottom edge, hidden against the table. The head only holds the screen, so its back is plain, with one row of slots hidden underneath. The screen's own speakers aren't used: sound comes from the USB speaker in the chest.
 - **Wheels later:** the dark base ring and v2's floor are the only parts a wheeled version replaces. The body's sides stay clear inside for the wheels.
 
 ## Files

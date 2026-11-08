@@ -28,6 +28,7 @@ spin = 0;              // layout: turn the robot round (for lit back views)
 b_cy = 78;                              // the sections' centre (y)
 ring_ab = [93, 80]; ring_n = 4;         // base ring outline (half sizes); v2's floor fits inside (checked)
 ring_h = 22; accent_h = 2;              // dark ring, then a 2 mm accent band (filament change)
+vent_h = 4;                             // the ring's breathing notches, against the table
 sh0 = ring_h + accent_h;                // 24: the white body starts here
 b_top = 197;                            // = v2's torso top: the neck, gears and coupler sit as in v2
 bell = [92.7, 79.7, 60, 51];            // half width / depth at the bottom, at the top
@@ -339,6 +340,10 @@ module v3_ring() {
                           for (x = [-50, 50]) translate([x - 5, base_d - 30, 0]) cube([10, 40, 40]); }
             }
         }
+        // breathing notches in the bottom edge, against the table: the Pi's fan blows down through v2's floor vents into the
+        // 3 mm under the floor, and out here (clear of the floor's screw pads at y 46 and 106)
+        for (s = [-1, 1]) for (yy = [[61, 91], [120, 140]]) translate([s > 0 ? 70 : -110, yy[0], -1]) cube([40, yy[1] - yy[0], 1 + vent_h]);
+        for (x = [-30, 30]) translate([x - 10, 130, -1]) cube([20, 40, 1 + vent_h]);
         // v2's floor: relief round its posts, the screws through the wall and pad (button heads on the ring)
         for (p = floor_screw_pts()) translate([p[0] * well_pillar_x, p[1], -1]) cylinder(d = 8 + 2 * clr, h = base_z0 + base_floor_t + 10 + 1);
         for (p = floor_screw_pts()) translate([p[0] * (ring_x(p[1], 0) + 1), p[1], floor_screw_z]) tear_x(clear_m3, 20, true);
@@ -484,7 +489,9 @@ module v3_head_frame() {
         translate([0, g3_y + 33, zt - 5]) linear_extrude(10) rr(18, 10, 2);
     }
 }
-// BACK COVER: grilles over the screen's speakers, vents, a finger slot at the volume wheel; 4 x M3 x 10 into the frame.
+// BACK COVER: a plain back; one row of vent slots hidden in its bottom 45-degree edge (the head only holds the screen,
+// ~2.5 W, most of it out through the glass; the screen's own speakers are never used: sound goes to the USB speaker).
+// 4 x M3 x 10 into the frame.
 // Prints back face down.
 module v3_head_back() {
     zt = hd_z0 + hd[1];
@@ -506,13 +513,7 @@ module v3_head_back() {
             }
             intersection() { head_shape(0.01); for (c = cov_scr) translate([c[0], hd_split, c[1]]) rotate([-90, 0, 0]) cylinder(d = 9, h = hd_d); }   // inside the cover only
         }
-        if (detail) {
-            for (r = scr_spk) let (xa = scr_pt([r[0], 0])[0], xb = scr_pt([r[1], 0])[0], zc = scr_pt([0, 15])[1])
-                for (gx = [min(xa, xb) + 4 : 4.5 : max(xa, xb) - 4]) for (k = [-2:2])
-                    translate([gx + (k % 2 == 0 ? 0 : 2.25), g3_y + hd_d - 8, zc + k * 4.5]) rotate([-90, 0, 0]) cylinder(d = 2.6, h = 12, $fn = 12);
-            for (x = [-56:8:56]) for (zz = [scr_cz - 22, scr_cz + 4]) translate([x - 1.6, g3_y + hd_d - 8, zz - 7]) cube([3.2, 12, 14]);
-        }
-        translate([-scr[0]/2 - 14, g3_y + hd_d - 14, scr_pt([0, scr_ports[0]])[1] - 8]) cube([12, 20, 16]);          // volume wheel
+        if (detail) for (x = [-60:8:60]) translate([x - 1.5, g3_y + hd_d - hd_ch + 1.5, hd_z0 - 1]) cube([3, hd_ch - 3.5, hd_ch + 2]);   // vents, underneath
         for (c = cov_scr) translate([c[0], 0, c[1]]) {
             translate([0, hd_split - 1, 0]) rotate([-90, 0, 0]) cylinder(d = clear_m3, h = 40, $fn = fn_small);
             translate([0, hd_split + 2, 0]) rotate([-90, 0, 0]) cylinder(d = 6.4, h = 40, $fn = 24);              // M3 x 10: head on a 2 mm floor
