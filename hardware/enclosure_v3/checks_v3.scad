@@ -24,7 +24,7 @@ module neck_moving(a) translate([0, neck_y, 0]) rotate(a) translate([0, -neck_y,
 module arms_at(a) for (k = [-1, 1]) place_arm3(k, a) v3_arm();
 module arm_grown(g) minkowski() { v3_arm(); sphere(r = g, $fn = 8); }
 module arms_grown_at(a) for (k = [-1, 1]) place_arm3(k, a) arm_grown(grow);
-module head_all(a) place_head3(a) { v3_head(); v3_pod(); }
+module head_all(a) place_head3(a) { v3_head_frame(); v3_head_back(); v3_pod(); }
 module camera_s() {   // v2's camera board, lens and the 5-pin plug behind it, in the pod
     translate([-cam_board/2 + s, pod3_y0 + cam_board_y + s, cam3_z - cam_board/2 + s]) cube([cam_board - 2*s, cam_pcb_t - 2*s, cam_board - 2*s]);
     translate([0, pod3_y0 + cam_board_y, cam3_z]) rotate([90, 0, 0]) cylinder(d = 14, h = cam_board_y - pod3_w - 0.3);
@@ -51,9 +51,10 @@ if (check == "slider_vs_parts")      difference() { intersection() { slider_posi
 if (check == "slider_grips_knob")    intersection() { v3_ups_slider(); ups_knob_dummy(0); }                 // must be EMPTY at rest (knob in the notch)
 if (check == "slider_moves_knob")    intersection() { translate([ups_knob[2] + 1.5, 0, 0]) v3_ups_slider(); ups_knob_dummy(0); }   // must NOT be empty
 // head: the screen and its plugs, the camera, the pod
-if (check == "head_vs_screen")       intersection() { v3_head(); union() { screen_dummy3(s); screen_plugs3(s); } }
-if (check == "pod_vs_camera")        intersection() { union() { v3_pod(); v3_head(); } union() { camera_s(); place_cam3() camera_bracket(); } }
-if (check == "pod_vs_head")          intersection() { v3_pod(); v3_head(); }
+if (check == "head_vs_screen")       intersection() { union() { v3_head_frame(); v3_head_back(); } union() { screen_dummy3(s); screen_plugs3(s); } }
+if (check == "cover_vs_frame")       intersection() { v3_head_frame(); v3_head_back(); }
+if (check == "pod_vs_camera")        intersection() { union() { v3_pod(); v3_head_frame(); v3_head_back(); } union() { camera_s(); place_cam3() camera_bracket(); } }
+if (check == "pod_vs_head")          intersection() { v3_pod(); union() { v3_head_frame(); v3_head_back(); } }
 if (check == "head_vs_body")         intersection() { union() { v3_body(); v3_neck_plate(); }; head_all(head_angle); }
 // arms
 if (check == "arms_vs_body")         intersection() { union() { v3_body(); v3_ring(); }; arms_at(arm_angle); }

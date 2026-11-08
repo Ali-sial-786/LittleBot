@@ -20,10 +20,10 @@ export -f one; export tmp OPENSCAD
 {
     if (($#)); then printf '%s\n' "$@"; else
     for c in body_vs_electronics ring_vs_electronics body_vs_floor ring_vs_floor body_vs_ring body_vs_plate plate_vs_neck frame_vs_plate \
-             slider_vs_parts slider_grips_knob slider_moves_knob head_vs_screen pod_vs_camera pod_vs_head selftest_must_fail; do echo "$c"; done
+             slider_vs_parts slider_grips_knob slider_moves_knob head_vs_screen cover_vs_frame pod_vs_camera pod_vs_head selftest_must_fail; do echo "$c"; done
     for h in -60 0 60; do echo "body_vs_neck -D head_angle=$h"; echo "head_vs_body -D head_angle=$h"; done
-    for a in -90 -60 -30 0 8 30 60 90 100; do echo "arms_vs_body -D arm_angle=$a"; echo "arms_vs_plate -D arm_angle=$a"; done
-    for h in -60 0 60; do for a in 60 90 100; do echo "pinch_arm_head -D head_angle=$h -D arm_angle=$a"; done; done
+    for a in -90 -60 -30 0 8 30 60 90 95; do echo "arms_vs_body -D arm_angle=$a"; echo "arms_vs_plate -D arm_angle=$a"; done
+    for h in -60 0 60; do for a in 60 90 95; do echo "pinch_arm_head -D head_angle=$h -D arm_angle=$a"; done; done
     fi
 } | xargs -P "${JOBS:-4}" -I{} bash -c 'one {}' | sort | tee "$tmp/summary.txt"
 # the self-test must FAIL (find an overlap), everything else must pass

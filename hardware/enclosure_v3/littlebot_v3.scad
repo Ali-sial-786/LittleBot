@@ -64,7 +64,8 @@ bat_y = -1.6;                           // the box's back face (just in front of
 scr = [164.9, 100, 9];                  // outline and thickness (the standard 7" 1024x600 module)
 scr_holes = [[4.7, 5.15], [160.2, 5.15], [4.7, 95.3], [160.2, 95.3]];   // threaded corner standoffs (M2.5 or M3)
 scr_spk = [[20.5, 58.1], [105.3, 142.9]];   // the two speaker boxes on the back (x ranges), y 1.2 .. 28.9
-spk_box_h = 9;                          // MEASURE how far the speaker boxes stand off the board
+spk_box_h = 9;
+scr_standoff_h = 3;                     // MEASURE: how far the corner standoffs stand off the screen's board (the bosses sit on them)                          // MEASURE how far the speaker boxes stand off the board
 scr_ports = [18, 38.8, 52.7, 71.4];     // on the end at x = 164.9: volume/backlight wheel, audio, USB-C (power + touch), HDMI
 // plugs at the port end (all inside the head): the flat-ribbon HDMI's angled plug, the right-angle USB-C
 fpc_plug = [8, 22, 20];                 // beyond the port: out, along the edge, back (its ribbon leaves backwards)
@@ -419,63 +420,98 @@ module head_shape(i) translate([0, g3_y, scr_cz]) rotate([-90, 0, 0]) hull() {
 module head_outer() intersection() { head_shape(0); translate([0, g3_y, 0]) cube([400, 2 * hd_d, 800], center = true); }
 module head_inner() head_shape(hd_wall);
 scr_back_y = g3_y + scr[2];
+hd_split = g3_y + hd_d - hd_ch - 6;      // the back cover starts here (16 mm deep incl. its 45-degree edge)
 pod_scr = [[-16, g3_y + 18.5], [16, g3_y + 18.5]];   // the camera pod's two screws (robot x, y)
+cov_scr = [for (x = [-1, 1], z = [-1, 1]) [x * (hd[0]/2 - 9), scr_cz + z * (hd[1]/2 - 9)]];   // the cover's 4 screws (x, z)
 function hole_xz(h) = scr_pt(h);
-cpl_c = [-40, scr_back_y + 4 + hdmi_cpl[2] / 2, hd_z0 + 26];   // the coupler's centre (behind the screen, low down)
-module v3_head() {
+cpl_c = [-45, scr_back_y + 3 + hdmi_cpl[2] / 2, hd_z0 + hd_wall + hdmi_cpl[1] / 2 + 0.3];   // the coupler, on edge on the head's floor
+module y_slab(y0, y1) translate([-300, y0, -10]) cube([600, y1 - y0, 800]);
+// FRAME: holds the screen by its 4 standoffs, sits on v2's coupler, carries the camera pod and the coupler; prints face down
+module v3_head_frame() {
     zt = hd_z0 + hd[1];
     difference() {
         union() {
-            difference() { head_outer(); head_inner(); }
-            // 4 bosses from the back wall to the screen's board, round its corner standoffs
-            for (h = scr_holes) let (q = hole_xz(h)) intersection() {
-                head_shape(0.5);
-                translate([q[0], scr_back_y, q[1]]) rotate([-90, 0, 0]) cylinder(d = 9.5, h = hd_d);
+            intersection() { difference() { head_outer(); head_inner(); } y_slab(g3_y - 1, hd_split); }
+            // 4 bosses behind the screen's corner standoffs, webbed to the roof / floor (tree supports under them)
+            for (h = scr_holes) let (q = hole_xz(h), up = q[1] > scr_cz ? 1 : -1) {
+                translate([q[0], scr_back_y, q[1]]) rotate([-90, 0, 0]) cylinder(d = 9.5, h = hd_split - scr_back_y);
+                translate([q[0] - 3, scr_back_y, up > 0 ? q[1] : q[1] - (q[1] - (hd_z0 + 1))]) cube([6, hd_split - scr_back_y, up > 0 ? zt - 1 - q[1] : q[1] - hd_z0 - 1]);
             }
-            // the camera pod's nut bosses under the roof, behind the screen (45-degree undersides)
-            for (p = pod_scr) intersection() {
-                head_shape(0.5);
-                hull() { translate([p[0] - 5.5, scr_back_y + 0.8, zt - hd_wall - 7]) cube([11, hd_d, 7]);
-                         translate([p[0] - 5.5, g3_y + hd_d - 4, zt - hd_wall - 7 - (hd_d - scr[2] - 5)]) cube([11, 4, 1]); }
+            // the camera pod's nut bosses under the roof (front face at 45 degrees: prints face down)
+            for (p = pod_scr) hull() {
+                translate([p[0] - 5.5, scr_back_y + 7.8, zt - hd_wall - 7]) cube([11, hd_split - scr_back_y - 7.8, 7.01]);
+                translate([p[0] - 5.5, scr_back_y + 0.8, zt - hd_wall - 0.5]) cube([11, 1, 0.51]);
             }
-            // cradle for the HDMI coupler + the cable's plug: two hooks from the back wall
-            for (dx = [-12, 12]) translate([cpl_c[0] + dx - 3, cpl_c[1] - hdmi_cpl[2]/2 - 2.6, cpl_c[2] - hdmi_cpl[1]/2 - 2.5]) difference() {
-                cube([6, g3_y + hd_d - 1 - (cpl_c[1] - hdmi_cpl[2]/2 - 2.6), hdmi_cpl[1] + 5]);
-                translate([-1, 2.3, 2.5]) cube([8, hdmi_cpl[2] + 0.6, hdmi_cpl[1] + 0.5]);
+            // the cover's 4 nut bosses in the frame's corners, up to the split
+            for (c = cov_scr) translate([c[0], hd_split - 12, c[1]]) rotate([-90, 0, 0]) cylinder(d = 9, h = 12);
+            // cradle: two clips on the floor hold the HDMI coupler (the original cable's plug goes into its end)
+            for (dx = [-11, 11]) translate([cpl_c[0] + dx - 3, cpl_c[1] - hdmi_cpl[2]/2 - 1.8, hd_z0 + 1]) difference() {
+                cube([6, hdmi_cpl[2] + 3.6, hdmi_cpl[1] * 0.6 + 1.3]);
+                translate([-1, 1.5, 1.3]) cube([8, hdmi_cpl[2] + 0.6, 40]);
             }
         }
-        // the screen: pocket from the front (glass flush with the frame), its standoffs
-        translate([0, g3_y - 1, scr_cz]) rotate([-90, 0, 0]) linear_extrude(scr[2] + 1 + 0.2) rr(scr[0] + 0.6, scr[1] + 0.6, 2);
+        translate([0, g3_y - 1, scr_cz]) rotate([-90, 0, 0]) linear_extrude(scr[2] + 1 + 0.2) rr(scr[0] + 0.6, scr[1] + 0.6, 2);   // the screen
         for (h = scr_holes) let (q = hole_xz(h)) translate([q[0], 0, q[1]]) {
-            translate([0, scr_back_y - 1, 0]) rotate([-90, 0, 0]) cylinder(d = 6.2, h = 7);               // the standoff (any height up to 6)
-            translate([0, scr_back_y, 0]) rotate([-90, 0, 0]) cylinder(d = 3.4, h = 60, $fn = 16);        // M2.5 or M3 through the boss's floor
-            translate([0, scr_back_y + 8, 0]) rotate([-90, 0, 0]) cylinder(d = 6.4, h = 60, $fn = 24);    // the screw head's well (from the back)
+            translate([0, scr_back_y - 1, 0]) rotate([-90, 0, 0]) cylinder(d = 6.2, h = 1 + scr_standoff_h);   // the standoff; the boss sits on its top
+            translate([0, scr_back_y, 0]) rotate([-90, 0, 0]) cylinder(d = 3.4, h = 60, $fn = 16);        // M2.5 x 6 (UPS kit) or M3 x 6 through a 2 mm floor
+            translate([0, scr_back_y + scr_standoff_h + 2, 0]) rotate([-90, 0, 0]) cylinder(d = 6.4, h = 60, $fn = 24);   // the head's well, from the back
         }
-        // speaker grilles over the screen's speaker boxes; vent slots along the back (top and bottom rows)
+        // the cover's screws: nuts slide in from the inside
+        for (c = cov_scr) translate([c[0], hd_split - 13, c[1]]) {
+            rotate([-90, 0, 0]) cylinder(d = clear_m3, h = 14, $fn = fn_small);
+            translate([c[0] > 0 ? -12 : 0, 4.5 - 0.15, -3.05]) cube([12, 2.7, 6.1]);
+        }
+        // the cables' way down into the neck and the head's 3 screws into v2's coupler (M3 x 12, as v2)
+        translate([0, neck_y, hd_z0 - 1]) cylinder(r = neck_bore_r, h = hd_wall + 2);
+        for (a = head_screw_angles) translate([0, neck_y, hd_z0 - 1]) rotate(a) translate([head_screw_r, 0, 0]) cylinder(d = clear_m3, h = hd_wall + 2, $fn = fn_small);
+        // the camera pod's screws (nuts slide in from the back with the cover off) and the camera cable's hole
+        for (p = pod_scr) {
+            translate([p[0], p[1], zt - 14]) cylinder(d = clear_m3, h = 20, $fn = fn_small);
+            translate([p[0] - 3.05, p[1] - 3.2, zt - hd_wall - 4.4]) cube([6.1, hd_split - p[1] + 4, 2.7]);
+        }
+        translate([0, g3_y + 33, zt - 5]) linear_extrude(10) rr(18, 10, 2);
+    }
+}
+// BACK COVER: grilles over the screen's speakers, vents, a finger slot at the volume wheel; 4 x M3 x 10 into the frame.
+// Prints back face down.
+module v3_head_back() {
+    zt = hd_z0 + hd[1];
+    difference() {
+        union() {
+            intersection() { difference() { head_outer(); head_inner(); } y_slab(hd_split, g3_y + hd_d + 1); }
+            // a lip inside the frame's walls (locates the cover)
+            intersection() {     // only on clear stretches of the walls (the frame's bosses, clips and the coupler are elsewhere)
+                y_slab(hd_split - 3, hd_split + 0.01);
+                difference() { head_shape(hd_wall + 0.3); head_shape(hd_wall + 1.6); }
+                union() {
+                    for (x = [-1, 1]) translate([x * hd[0]/2, 0, scr_cz]) cube([30, 400, 50], center = true);          // ends, mid height
+                    translate([0, 0, hd_z0 + hd[1]]) cube([12, 400, 30], center = true);                               // top, centre
+                    for (x = [-1, 1]) translate([x * 48, 0, hd_z0 + hd[1]]) cube([36, 400, 30], center = true);        // top, either side
+                    translate([48, 0, hd_z0]) cube([36, 400, 30], center = true);                                     // bottom, right
+                }
+            }
+            for (c = cov_scr) translate([c[0], hd_split, c[1]]) rotate([-90, 0, 0]) cylinder(d = 9, h = hd_d - hd_ch);
+        }
         if (detail) {
             for (r = scr_spk) let (xa = scr_pt([r[0], 0])[0], xb = scr_pt([r[1], 0])[0], zc = scr_pt([0, 15])[1])
                 for (gx = [min(xa, xb) + 4 : 4.5 : max(xa, xb) - 4]) for (k = [-2:2])
                     translate([gx + (k % 2 == 0 ? 0 : 2.25), g3_y + hd_d - 8, zc + k * 4.5]) rotate([-90, 0, 0]) cylinder(d = 2.6, h = 12, $fn = 12);
             for (x = [-56:8:56]) for (zz = [scr_cz - 22, scr_cz + 4]) translate([x - 1.6, g3_y + hd_d - 8, zz - 7]) cube([3.2, 12, 14]);
         }
-        // a finger slot at the screen's volume / backlight wheel (port end, back)
-        translate([-scr[0]/2 - 14, g3_y + hd_d - 14, scr_pt([0, scr_ports[0]])[1] - 8]) cube([12, 20, 16]);
-        // the cables' way down into the neck (v2's coupler bore) and the head's 3 screws into the coupler (M3 x 12, as v2)
-        translate([0, neck_y, hd_z0 - 1]) cylinder(r = neck_bore_r, h = hd_wall + 2);
-        for (a = head_screw_angles) translate([0, neck_y, hd_z0 - 1]) rotate(a) translate([head_screw_r, 0, 0]) cylinder(d = clear_m3, h = hd_wall + 2, $fn = fn_small);
-        // camera: the pod's screws (their nuts slide in from the front with the screen out) and its cable hole
-        for (p = pod_scr) {
-            translate([p[0], p[1], zt - 14]) cylinder(d = clear_m3, h = 20, $fn = fn_small);
-            translate([p[0] - 3.05, scr_back_y - 1, zt - hd_wall - 4.4]) cube([6.1, p[1] - scr_back_y + 4.2, 2.7]);
+        translate([-scr[0]/2 - 14, g3_y + hd_d - 14, scr_pt([0, scr_ports[0]])[1] - 8]) cube([12, 20, 16]);          // volume wheel
+        for (c = cov_scr) translate([c[0], 0, c[1]]) {
+            translate([0, hd_split - 1, 0]) rotate([-90, 0, 0]) cylinder(d = clear_m3, h = 40, $fn = fn_small);
+            translate([0, hd_split + 2, 0]) rotate([-90, 0, 0]) cylinder(d = 6.4, h = 40, $fn = 24);              // M3 x 10: head on a 2 mm floor
         }
-        translate([0, g3_y + 33, zt - 5]) linear_extrude(10) rr(18, 10, 2);
+        for (h = scr_holes) let (q = hole_xz(h)) translate([q[0], hd_split - 1, q[1]]) rotate([-90, 0, 0]) cylinder(d = 7, h = 40);   // over the screen's screws
     }
 }
+module v3_head() { v3_head_frame(); v3_head_back(); }
 module screen_dummy3(s = 0) {
     color([0.06, 0.06, 0.08]) translate([0, g3_y + 0.15 + s, scr_cz]) rotate([-90, 0, 0]) linear_extrude(scr[2] - 2*s) rr(scr[0] - 2*s, scr[1] - 2*s, 2);
     for (r = scr_spk) let (xa = scr_pt([r[0], 0])[0], xb = scr_pt([r[1], 0])[0])
         color([0.15, 0.15, 0.17]) translate([min(xa, xb) + s, scr_back_y, scr_pt([0, 28.9])[1] + s]) cube([abs(xb - xa) - 2*s, spk_box_h - s, 27.7 - 2*s]);
-    for (h = scr_holes) let (q = hole_xz(h)) color("#c9a74a") translate([q[0], scr_back_y, q[1]]) rotate([-90, 0, 0]) cylinder(d = 5 - 2*s, h = 4 - s);
+    for (h = scr_holes) let (q = hole_xz(h)) color("#c9a74a") translate([q[0], scr_back_y, q[1]]) rotate([-90, 0, 0]) cylinder(d = 5 - 2*s, h = scr_standoff_h - s);
 }
 // what plugs into the screen, all inside the head: the ribbon HDMI's angled plug, the right-angle USB-C (cable
 // backwards), the coupler with the original cable's plug in its cradle
@@ -484,8 +520,8 @@ module screen_plugs3(s = 0) {
     zh = scr_pt([0, scr_ports[3]])[1]; zu = scr_pt([0, scr_ports[2]])[1];
     color("#c9a74a") translate([xe - fpc_plug[0] + s, g3_y + 1 + s, zh - fpc_plug[1]/2 + s]) cube(fpc_plug - [2*s, 0, 2*s]);
     color("#333") translate([xe - usbc_l[0] + s, g3_y + 1 + s, zu - usbc_l[1]/2 + s]) cube([usbc_l[0] - 2*s, usbc_l[2] - 2*s, usbc_l[1] - 2*s]);
-    color("#111") translate([cpl_c[0] - hdmi_cpl[0]/2 + s, cpl_c[1] - hdmi_cpl[2]/2 + s, cpl_c[2] - hdmi_cpl[1]/2 + s]) cube([hdmi_cpl[0] - 2*s, hdmi_cpl[2] - 2*s, hdmi_cpl[1] - 2*s]);
-    color("#222") translate([cpl_c[0] + hdmi_cpl[0]/2 + s, cpl_c[1] - hdmi_plug[2]/2 + s, cpl_c[2] - hdmi_plug[1]/2 + s]) cube([hdmi_plug[0] - 2*s, hdmi_plug[2] - 2*s, hdmi_plug[1] - 2*s]);
+    color("#111") translate([cpl_c[0] - hdmi_cpl[0]/2 + s, cpl_c[1] - hdmi_cpl[2]/2 + s, cpl_c[2] - hdmi_cpl[1]/2 + s]) cube([hdmi_cpl[0], hdmi_cpl[2], hdmi_cpl[1]] - [2*s, 2*s, 2*s]);
+    color("#222") translate([cpl_c[0] + hdmi_cpl[0]/2 + s, cpl_c[1] - hdmi_plug[2]/2 + s, cpl_c[2] - hdmi_plug[1]/2 + s]) cube([hdmi_plug[0], hdmi_plug[2], hdmi_plug[1]] - [2*s, 2*s, 2*s]);
 }
 
 // -----------------------------------------------------------------------------
@@ -552,9 +588,9 @@ module layout() {
     color(DARK3) v3_ring();
     color(WHITE3) v3_body();
     color([0.85, 0.85, 0.83]) v3_neck_plate();
-    color("#5a6") v3_ups_slider();
+    color(DARK3) v3_ups_slider();
     place_head3(head_angle) {
-        color(WHITE3) v3_head(); screen_dummy3(); screen_plugs3();
+        color(WHITE3) v3_head_frame(); color([0.92, 0.91, 0.88]) v3_head_back(); screen_dummy3(); screen_plugs3();
         color(WHITE3) v3_pod(); color("#aab") place_cam3() camera_bracket();
     }
     for (s = [-1, 1]) { arm_servo3(s); color(WHITE3) place_arm3(s, arm_angle) v3_arm(); }
@@ -567,8 +603,27 @@ else if (part == "v3_ring") v3_ring();
 else if (part == "v3_neck_plate") v3_neck_plate();
 else if (part == "v3_arm") v3_arm();
 else if (part == "v3_head") v3_head();
+else if (part == "v3_head_frame") v3_head_frame();
+else if (part == "v3_head_back") v3_head_back();
 else if (part == "v3_pod") v3_pod();
 else if (part == "v3_ups_slider") v3_ups_slider();
+else if (part == "print") print_v3(which);
+
+// -----------------------------------------------------------------------------
+// PRINT ORIENTATIONS (part = "print", which = name): each part on the bed (z = 0) as it should print
+// -----------------------------------------------------------------------------
+which = "";
+module print_v3(w) {
+    if (w == "body")        translate([0, 0, -sh0]) v3_body();                                           // upright
+    if (w == "ring")        v3_ring();                                                                  // upright
+    if (w == "neck_plate")  translate([0, 0, b_top]) mirror([0, 0, 1]) v3_neck_plate();                // top face down
+    if (w == "head_frame")  translate([0, 0, -g3_y]) rotate([90, 0, 0]) v3_head_frame();              // face down (tree supports under 4 bosses)
+    if (w == "head_back")   translate([0, 0, g3_y + hd_d]) rotate([-90, 0, 0]) v3_head_back();       // back face down
+    if (w == "pod")         translate([0, 0, hd_z0 + hd[1] + pod3[2]]) mirror([0, 0, 1]) v3_pod();    // top down (open bottom up)
+    if (w == "arm_left")    rotate([0, -90, 0]) translate([-arm_gap3, 0, 0]) v3_arm();                // inner face down
+    if (w == "arm_right")   mirror([0, 1, 0]) print_v3("arm_left");
+    if (w == "ups_slider")  translate([0, 0, sl_z0 + sl_h]) mirror([0, 0, 1]) v3_ups_slider();       // top down
+}
 
 echo(str("LittleBot v3: total height ", hd_z0 + hd[1] + pod3[2], " mm; head ", hd[0], " x ", hd[1], " x ", hd_d,
          "; slider wall y ", sl_wall_y, "; charging wall y ", chg_wall_y));
