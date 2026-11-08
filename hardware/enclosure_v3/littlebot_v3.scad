@@ -490,7 +490,7 @@ module v3_head_back() {
                     translate([48, 0, hd_z0]) cube([36, 400, 30], center = true);                                     // bottom, right
                 }
             }
-            for (c = cov_scr) translate([c[0], hd_split, c[1]]) rotate([-90, 0, 0]) cylinder(d = 9, h = hd_d - hd_ch);
+            intersection() { head_shape(0.01); for (c = cov_scr) translate([c[0], hd_split, c[1]]) rotate([-90, 0, 0]) cylinder(d = 9, h = hd_d); }   // inside the cover only
         }
         if (detail) {
             for (r = scr_spk) let (xa = scr_pt([r[0], 0])[0], xb = scr_pt([r[1], 0])[0], zc = scr_pt([0, 15])[1])
@@ -503,7 +503,6 @@ module v3_head_back() {
             translate([0, hd_split - 1, 0]) rotate([-90, 0, 0]) cylinder(d = clear_m3, h = 40, $fn = fn_small);
             translate([0, hd_split + 2, 0]) rotate([-90, 0, 0]) cylinder(d = 6.4, h = 40, $fn = 24);              // M3 x 10: head on a 2 mm floor
         }
-        for (h = scr_holes) let (q = hole_xz(h)) translate([q[0], hd_split - 1, q[1]]) rotate([-90, 0, 0]) cylinder(d = 7, h = 40);   // over the screen's screws
     }
 }
 module v3_head() { v3_head_frame(); v3_head_back(); }
