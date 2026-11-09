@@ -853,9 +853,7 @@ class SettingsCard(Card):
             label, sub = self._row_words(rid)
             if kind == "switch" and self._flashing(rid):
                 surf.blit(art.rounded_rect(r.w + 12, r.h - 8, 20, art.mix(art.WHITE, col, 0.22)), (r.x - 6, r.y + 4))
-            disc = art.circle(ICON_PX // 2 + 6, art.surface(art.mix(art.WHITE, col, 0.28)))
-            art.blit_center(surf, disc, (r.x + 32, r.centery))
-            art.blit_center(surf, _icon(rid, ICON_PX - 6, art.inkier(col, 0.25)), (r.x + 32, r.centery))
+            _badge(surf, rid, col, (r.x + 32, r.centery))
             tx = r.x + 74
             right = (controls.get(f"{rid}-") or controls.get(rid) or r).x if kind != "switch" else r.right - SWITCH_W
             room = right - 14 - tx
@@ -936,7 +934,7 @@ class SettingsCard(Card):
             lit = busy or self._flashing(f"game:{g.id}")
             fill = art.mix(art.WHITE, col, 0.18) if lit else art.WHITE
             surf.blit(art.rounded_rect(r.w, r.h, 28, fill, shadow=5, border=art.inkier(col, 0.25) if lit else
-                                       art.mix(col, art.WHITE, 0.35), border_w=3), r.topleft)
+                                       art.mix(col, art.WHITE, 0.2), border_w=3), r.topleft)
             ic = (r.x + 14 + G_ICON // 2, r.centery)
             art.blit_center(surf, art.circle(G_ICON / 2, art.surface(art.lighten(col, 0.55))), ic)
             art.blit_center(surf, game_icon(g.id, G_ICON - 20, col), ic)
@@ -964,16 +962,16 @@ class SettingsCard(Card):
         room = VIEW.right - 22 - x
         # the parent dashboard
         y = self._about_heading(surf, "dashboard", "The parent dashboard", art.SKY, x, y)
+        where = ("Only on LittleBot itself: LAN access is off" if self.local_only else
+                 "On a phone or computer on the same Wi-Fi")
+        note = art.text(_kit.ellipsize(where, SMALL_PX, room - 70), SMALL_PX, _kit.TEXT_SOFT)
+        surf.blit(note, (x + 74, y - 22))
+        y += note.get_height() - 4
         for u in self.urls:
             chip = art.pill(_kit.ellipsize(u, BODY_PX, room - 90), BODY_PX, art.INK, art.mix(art.WHITE, art.SKY, 0.2),
                             pad=(18, 8), border=art.mix(art.SKY, art.WHITE, 0.3))
             surf.blit(chip, (x + 66, y))
             y += chip.get_height() + 8
-        if self.local_only:
-            note = art.text(_kit.ellipsize("On LittleBot itself only: LAN access is off", SMALL_PX, room - 70),
-                            SMALL_PX, _kit.TEXT_SOFT)
-            surf.blit(note, (x + 68, y))
-            y += note.get_height() + 6
         y += 14
         # the battery
         if self.battery is not None:
@@ -987,21 +985,19 @@ class SettingsCard(Card):
         # how to open these settings
         surf.blit(_divider(VIEW.right - 22 - x), (x, y))
         y += 18
-        disc = art.circle(ICON_PX // 2 + 6, art.surface(art.mix(art.WHITE, art.GRAPE, 0.28)))
-        art.blit_center(surf, disc, (x + 32, y + 30))
-        art.blit_center(surf, _icon("hold", ICON_PX - 6, art.inkier(art.GRAPE, 0.25)), (x + 32, y + 30))
+        _badge(surf, "hold", art.GRAPE, (x + 32, y + 30))
         lines = _kit.wrap("Hold a finger still for 5 seconds anywhere to open these settings", BODY_PX, room - 74)
         block = _kit.text_block(list(lines), BODY_PX, art.INK)
         surf.blit(block, (x + 74, y + max(0, 30 - block.get_height() // 2) if len(lines) == 1 else y + 4))
 
     def _about_heading(self, surf: Any, icon: str, label: str, col: art.Color, x: int, y: int, *,
                        value: str = "", level: float | None = None) -> int:
-        disc = art.circle(ICON_PX // 2 + 6, art.surface(art.mix(art.WHITE, col, 0.28)))
-        art.blit_center(surf, disc, (x + 32, y + 30))
         if level is not None:
+            art.blit_center(surf, art.circle(ICON_PX // 2 + 6, art.surface(art.mix(art.WHITE, col, 0.28))),
+                            (x + 32, y + 30))
             art.blit_center(surf, _battery_icon(ICON_PX - 6, level), (x + 32, y + 30))
         else:
-            art.blit_center(surf, _icon(icon, ICON_PX - 6, art.inkier(col, 0.25)), (x + 32, y + 30))
+            _badge(surf, icon, col, (x + 32, y + 30))
         img = art.text(label, BODY_PX, art.INK)
         surf.blit(img, img.get_rect(midleft=(x + 74, y + 30)))
         if value:
@@ -1030,6 +1026,13 @@ _ROW_COLOURS: dict[str, art.Color] = {"vol": art.SKY, "bright": art.TANGERINE, "
 
 
 # ---------------------------------------------------------------- sprites (cached per theme by art.cached)
+def _badge(surf: pygame.Surface, icon: str, col: art.Color, center: tuple[float, float]) -> None:
+    """A row's icon on a soft disc of its colour: a deeper shade of it on the light disc, the candy colour itself
+    on the dark one (dark mode)."""
+    art.blit_center(surf, art.circle(ICON_PX // 2 + 6, art.surface(art.mix(art.WHITE, col, 0.28))), center)
+    art.blit_center(surf, _icon(icon, ICON_PX - 6, col if art.dark() else art.inkier(col, 0.25)), center)
+
+
 def _divider(w: int) -> pygame.Surface:
     return art.rounded_rect(w, 2, 1, art.mix(art.INK_SOFT, art.CREAM, 0.6))
 
@@ -1158,13 +1161,13 @@ def _icon_gear(s: pygame.Surface, z: float, c: art.Color) -> None:
 
 
 def _icon_pad(s: pygame.Surface, z: float, c: art.Color) -> None:
-    body = pygame.Rect(z * 0.04, z * 0.24, z * 0.92, z * 0.52)
-    pygame.draw.rect(s, c, body, border_radius=int(z * 0.26))
+    body = pygame.Rect(z * 0.02, z * 0.18, z * 0.96, z * 0.64)
+    pygame.draw.rect(s, c, body, border_radius=int(z * 0.3))
     hole = (0, 0, 0, 0)
-    art.capsule(s, hole, (z * 0.2, z * 0.5), (z * 0.38, z * 0.5), z * 0.08)
-    art.capsule(s, hole, (z * 0.29, z * 0.41), (z * 0.29, z * 0.59), z * 0.08)
-    pygame.draw.circle(s, hole, (z * 0.66, z * 0.44), z * 0.055)
-    pygame.draw.circle(s, hole, (z * 0.78, z * 0.56), z * 0.055)
+    art.capsule(s, hole, (z * 0.17, z * 0.5), (z * 0.39, z * 0.5), z * 0.1)
+    art.capsule(s, hole, (z * 0.28, z * 0.39), (z * 0.28, z * 0.61), z * 0.1)
+    pygame.draw.circle(s, hole, (z * 0.66, z * 0.42), z * 0.07)
+    pygame.draw.circle(s, hole, (z * 0.8, z * 0.58), z * 0.07)
 
 
 def _icon_info(s: pygame.Surface, z: float, c: art.Color) -> None:
