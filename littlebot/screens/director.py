@@ -82,7 +82,9 @@ MAX_ITEMS = 16  # one list on a card (a card's own maxItems is usually lower)
 MAX_KEYS = 12  # one object on a card
 MAX_ARGS = 4  # a command's arguments
 MAX_SPEC_CHARS = 3000
-CATALOGUE_LINE_CHARS = 1200
+# A cap on one card type's line in the catalogue, against a runaway description: every built-in card fits whole,
+# its fields and actions included (the 7" cards have more fields; tests/screens/test_director.py checks).
+CATALOGUE_LINE_CHARS = 5000
 NOTE_CHARS = 300
 RECENT_S = 10.0  # the same card shown this recently (by the director or a tool) isn't shown again
 ANSWER_WAIT_S = 25.0  # wait_for_answer: at most this long for LittleBot's answer (live.py HANDOFF_TIMEOUT_S)

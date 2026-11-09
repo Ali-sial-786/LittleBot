@@ -1087,7 +1087,7 @@ class RobotToolbox:
         """The cards for show_on_screen's description: "recipe (title*, steps*); weather (place, day)"."""
         parts = []
         for kind, ct in sorted(self._card_types().items()):
-            names = [f"{n}*" if n in ct.required else n for n in (ct.fields or {})][:8]
+            names = [f"{n}*" if n in ct.required else n for n in (ct.fields or {})][:12]
             parts.append(f"{kind} ({', '.join(names)})" if names else kind)
         return "; ".join(parts)
 

@@ -713,3 +713,22 @@ def test_picture_words_steer_a_cards_picture(words, view):
     got = rule.args.get("view") if rule is not None and rule.action == "picture" else None
     assert got == view
     assert local_rule(words, "weather", card_types()["weather"].actions) is None or view is None  # no picture there
+
+
+async def test_every_built_in_card_reaches_the_model_whole(ctx):
+    """The 7" cards have more fields (details, summary, tips, stats...): none of them, nor a card's actions, may
+    be cut off the catalogue the model sees."""
+    from littlebot.screens.base import card_types
+
+    ctx.privacy.set(cloud_enabled=True)
+    provider = JsonProvider({"do": "none"})
+    d = ScreenDirector(ctx, lambda: provider, note=lambda _n: None, types=card_types)
+    system = d._prompt()
+    assert "7-inch screen" in system and "fill the optional fields that help" in system
+    for kind, ct in card_types().items():
+        line = next(ln for ln in system.splitlines() if ln.startswith(f"- {kind}: "))
+        assert len(line) < director_mod.CATALOGUE_LINE_CHARS, kind
+        for field in ct.fields:
+            assert f'"{field}"' in line, (kind, field)
+        if ct.actions:
+            assert line.endswith("}."), kind  # the actions are the line's end: nothing cut after them

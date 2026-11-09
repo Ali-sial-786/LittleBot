@@ -746,7 +746,8 @@ def test_hardware_example_config_is_valid_and_safe() -> None:
     assert cfg.dashboard.lan_access is False
     assert cfg.dashboard.host == "127.0.0.1"
     assert cfg.display.fullscreen is True
-    assert (cfg.display.width, cfg.display.height) == (480, 320)
+    assert (cfg.display.width, cfg.display.height) == (1024, 600)  # the 7" screen
+    assert cfg.display.output_mode == "1024x600@60"
     assert cfg.audio.speaker.max_volume <= 0.8
 
 
