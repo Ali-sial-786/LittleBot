@@ -5,7 +5,8 @@ of voiced grown-up speech, longer than a quick "stop!"; a parent: "it should loo
 they're shorter" (2026-10-29). So while the voice is audible, the echo-cancelled microphone also goes to Vosk (the
 wake word's offline model, ``wake.model_path``) in grammar mode: only ``STOP_PHRASES``, the wake word's everyday
 ``DISTRACTOR_WORDS`` and ``[unk]`` (anything else). Its words so far (the partial result) are checked every 0.1 s,
-so a stop word counts as soon as it is said, not when the sentence ends.
+so a stop word counts as soon as it is said, not when the sentence ends (if its word confidences are high enough
+and it is not inside a sentence: see MIN_CONFIDENCE).
 
 ``LiveAudio`` only acts on a stop word when the detector saw a sound louder than what is left of the voice's own
 echo when it was said (so the voice saying "wait" can't stop itself), not mostly above
@@ -39,6 +40,18 @@ REC_RATE = 16000
 BATCH_S = 0.1  # the recogniser gets this much at a time; its words so far are checked after each
 QUEUE_FRAMES = 100  # 2 s of 20 ms frames; more waiting (the thread fell behind): the newest are dropped
 HIT_FRESH_S = 3.0  # a stop word said this recently (by the time its audio was heard) can still be taken
+# The words so far have no confidences: a stop phrase in them forces the result out (``finish``), and counts only
+# when each of its words is this sure and at most MAX_LEAD_WORDS of LEAD_WORDS come before it. On the robot
+# (2026-10-31, 117 clips in OpenAI voices): every real "stop", "wait", "shush", "pause" was sure (1.0); 13 everyday
+# sentences showed one in their words so far ("what's the capital of" as "that's enough"); 10 weren't sure, and the
+# other 3 were inside a sentence ("a long story" heard as "a lot stop", "what's the weather" as "what stop").
+MIN_CONFIDENCE = 0.6
+# A one-word stop phrase, this sure. Said over a long answer, "Stop!" comes out of the echo canceller damaged: on the
+# robot (2026-10-31) the news was read on for 38 s after one, as it scored 0.44-0.86 (1.0 alone); the everyday
+# sentences' one-word matches all scored 0.00 (the word gone from the final result).
+MIN_CONFIDENCE_ONE_WORD = 0.4
+LEAD_WORDS = frozenset("hey little lil bot okay ok no oh just please i said um uh alright so and now [unk]".split())
+MAX_LEAD_WORDS = 4
 _RESET = object()
 
 
@@ -54,7 +67,7 @@ class StopWords:
         self._now = now
         self._q: queue.Queue[Any] = queue.Queue(maxsize=QUEUE_FRAMES)
         self._lock = threading.Lock()
-        self._hit: tuple[str, float] | None = None
+        self._hit: tuple[str, float, float] | None = None
         self._pushing = False
         self._stop = threading.Event()
         self.ready = False
@@ -92,8 +105,9 @@ class StopWords:
             except queue.Full:
                 pass
 
-    def take(self) -> tuple[str, float] | None:
-        """(The stop phrase heard since the last call, when the audio it was found in ended), fresh ones only."""
+    def take(self) -> tuple[str, float, float] | None:
+        """(The stop phrase heard since the last call, when the audio it was found in ended, how sure the
+        recogniser was of its words: the lowest word confidence), fresh ones only."""
         with self._lock:
             hit, self._hit = self._hit, None
         if hit is None or self._now() - hit[1] > HIT_FRESH_S:
@@ -141,15 +155,23 @@ class StopWords:
             try:
                 result = rec.accept(dsp.to_int16(pcm).tobytes())
                 words = (str(result.get("text") or "") if result else str(rec.partial() or "")).split()
+                said = match(words, phrases)
+                conf = 1.0
+                finish = getattr(rec, "finish", None)
+                if said is not None and finish is not None:
+                    found = result or finish() or {}
+                    said, conf = sure_how(found, phrases) or (None, 0.0)
+                    if said is None:
+                        log.debug("stop words: not taken: '%s'", found.get("text", ""))
+                        _reset(rec)
             except Exception:  # noqa: BLE001 - one bad batch: carry on
                 log.debug("stop words: recognition failed", exc_info=True)
                 continue
-            said = match(words, phrases)
             if said is not None:
                 log.debug("stop words: '%s' recognised %d ms after its audio", said,
                           int((self._now() - heard_at) * 1000))
                 with self._lock:
-                    self._hit = (said, heard_at)
+                    self._hit = (said, heard_at, conf)
                 self.heard += 1
                 _reset(rec)
 
@@ -161,6 +183,28 @@ def match(words: list[str], phrases: list[tuple[str, tuple[str, ...]]]) -> str |
         n = len(ph)
         if any(tuple(toks[i:i + n]) == ph for i in range(len(toks) - n + 1)):
             return phrase
+    return None
+
+
+def sure(result: dict[str, Any], phrases: list[tuple[str, tuple[str, ...]]]) -> str | None:
+    """The stop phrase in a recogniser result when it is what they said (see MIN_CONFIDENCE), else None."""
+    found = sure_how(result, phrases)
+    return found[0] if found is not None else None
+
+
+def sure_how(result: dict[str, Any], phrases: list[tuple[str, tuple[str, ...]]]) -> tuple[str, float] | None:
+    """:func:`sure`, with how sure: (the phrase, its lowest word confidence)."""
+    words = [w for w in result.get("result") or [] if isinstance(w, dict)]
+    toks = [str(w.get("word", "")).lower() for w in words]
+    for phrase, ph in sorted(phrases, key=lambda p: -len(p[1])):
+        n = len(ph)
+        need = MIN_CONFIDENCE_ONE_WORD if n == 1 else MIN_CONFIDENCE
+        for i in range(len(toks) - n + 1):
+            low = min(float(w.get("conf", 1.0)) for w in words[i:i + n]) if n else 1.0
+            if tuple(toks[i:i + n]) != ph or low < need:
+                continue
+            if i <= MAX_LEAD_WORDS and all(t in LEAD_WORDS for t in toks[:i]):
+                return phrase, low
     return None
 
 

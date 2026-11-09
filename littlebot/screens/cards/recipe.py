@@ -26,6 +26,7 @@ import pygame
 
 from littlebot.games import art
 from littlebot.screens.base import (
+    ADD_PICTURE_ACTION,
     BODY_PX,
     MAX_LINES,
     STEP_PX,
@@ -540,7 +541,21 @@ class RecipeCard(Card):
         if action == "close":
             self.done = True
             return True
+        if action == ADD_PICTURE_ACTION:
+            return self.add_picture(str(args.get("query") or ""))
         return False
+
+    def add_picture(self, query: str = "") -> bool:
+        """The dish's picture beside the ingredients, asked for after the card was made without one ("show me a
+        picture of butter chicken" changed nothing, the robot, 2026-11-03). The ingredients come back if a step was
+        showing, as only they have the picture. False: no picture can be fetched."""
+        if not self.slot.wanted:
+            self.slot = kit.PictureSlot(self.host, kit.clean(query, 80) or self.title)
+            if not self.slot.wanted:
+                return False
+        if self.view != "ingredients" and self.ingredients:
+            self._go(0)
+        return True
 
     def tap(self, x: float, y: float) -> bool:
         ok = self.command("prev" if x < art.W * 0.33 else "next", {})

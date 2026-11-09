@@ -69,6 +69,24 @@ async def test_describe(spec: dict[str, Any], said: str) -> None:
     assert (await make(spec)).describe() == said
 
 
+@pytest.mark.parametrize(("spec", "layout", "shown"), [
+    # the robot, 2026-11-02: a profile with a picture and its facts as items showed the picture and no words
+    ({"layout": "profile", "title": "Fun history facts", "picture_query": "pyramids of Giza",
+      "items": ["The Great Wall is over 21,000 km long", "Egyptians built the pyramids about 4,500 years ago"]},
+     "profile", ["The Great Wall is over 21,000 km long", "Egyptians built the pyramids about 4,500 years ago"]),
+    ({"layout": "profile", "title": "Giraffe", "picture_query": "giraffe", "text": "The tallest animal on land"},
+     "profile", ["The tallest animal on land"]),
+    ({"layout": "profile", "title": "Fun facts", "picture_query": "pyramid", "items": [f"fact {i}" for i in range(6)]},
+     "list", [f"fact {i}" for i in range(6)]),
+])
+async def test_a_profile_shows_its_facts_however_they_came(spec: dict[str, Any], layout: str,
+                                                           shown: list[str]) -> None:
+    card = await make(spec)
+    assert card.layout == layout
+    assert (card.facts if layout == "profile" else card.items) == shown
+    assert preview.surface(card, seconds=1.0).get_size() == (base.W, base.H)
+
+
 @pytest.mark.parametrize("spec", [
     {"layout": "number", "title": "x"},
     {"layout": "list", "items": []},
@@ -118,6 +136,71 @@ async def test_a_comparison_written_as_a_table_still_shows(spec: dict[str, Any],
     card = await make(cleaned)
     assert card.layout == "compare" and card.describe() == said
     preview.surface(card, seconds=1.0)
+
+
+async def test_a_comparison_sent_as_labelled_items_shows_as_columns() -> None:
+    # what the brain sent on the robot (2026-10-31): the director used to drop every item, so no card came up
+    from littlebot.screens.director import clean_spec
+
+    items = [{"label": "Snout", "value": "Alligator: broad and U-shaped. Crocodile: narrow and V-shaped."},
+             {"label": "Teeth", "value": "Alligator: upper teeth hide the lower. Crocodile: both show."},
+             {"label": "Habitat", "value": "Alligator: fresh water. Crocodile: salt water too."}]
+    cleaned, why = clean_spec({"card": "facts", "layout": "compare", "title": "Crocodile or alligator?",
+                               "items": items}, base.card_types())
+    assert cleaned is not None, why
+    card = await make(cleaned)
+    assert card.layout == "compare" and card.rows == ["Snout", "Teeth", "Habitat"]
+    assert card.columns[0] == {"name": "Alligator", "facts": ["broad and U-shaped", "upper teeth hide the lower",
+                                                              "fresh water"]}
+    assert card.columns[1]["name"] == "Crocodile" and card.columns[1]["facts"][2] == "salt water too"
+    preview.surface(card, seconds=1.0)
+
+
+@pytest.mark.parametrize(("title", "items", "names", "first"), [  # what the brain sent on the robot (2026-10-31)
+    ("Lion or tiger: which is bigger?", ["Tiger: largest cat, male up to about 300 kilograms",
+                                         "Lion: male about 190 to 250 kilograms, with a mane"],
+     ["Tiger", "Lion"], ["largest cat", "male up to about 300 kilograms"]),
+    ("Frog or toad?", ["Frogs: smooth, moist skin, long legs, leap far, usually live near water",
+                       "Toads: dry, bumpy skin, short legs, walk or hop short distances, spend more time on land"],
+     ["Frogs", "Toads"], ["smooth, moist skin", "long legs", "leap far", "usually live near water"]),
+    ("Frog or toad?", [{"label": "Frog", "note": "Smooth, moist skin, long legs for leaping, lives near water"},
+                       {"label": "Toad", "note": "Dry, bumpy skin with warts, short legs for walking"}],
+     ["Frog", "Toad"], ["Smooth, moist skin", "long legs for leaping", "lives near water"]),
+    ("Crocodile or alligator?", ["Alligator: wide U-shaped snout, lower teeth hidden when mouth is closed, mostly "
+                                 "freshwater, southern US and China",
+                                 "Crocodile: narrow V-shaped snout, lower teeth visible when mouth is closed"],
+     ["Alligator", "Crocodile"], ["wide U-shaped snout", "lower teeth hidden when mouth is closed",
+                                  "mostly freshwater", "southern US and China"]),
+])
+async def test_a_comparison_sent_as_a_line_for_each_shows_as_columns(title: str, items: list[Any],
+                                                                     names: list[str], first: list[str]) -> None:
+    from littlebot.screens.director import clean_spec
+
+    cleaned, why = clean_spec({"card": "facts", "layout": "compare", "title": title, "items": items},
+                              base.card_types())
+    assert cleaned is not None, why
+    card = await make(cleaned)
+    assert card.layout == "compare" and [c["name"] for c in card.columns] == names
+    assert card.columns[0]["facts"] == first and card.rows == []
+    preview.surface(card, seconds=1.0)
+
+
+async def test_items_that_dont_name_what_is_compared_stay_items() -> None:
+    from littlebot.screens.director import clean_spec
+
+    cleaned, _ = clean_spec({"card": "facts", "layout": "compare", "title": "Which is bigger?",
+                             "items": ["Tiger: up to 300 kg", "Lion: up to 250 kg"]}, base.card_types())
+    assert cleaned is not None and cleaned["items"] == ["Tiger: up to 300 kg", "Lion: up to 250 kg"]
+
+
+async def test_labelled_items_that_are_not_a_comparison_show_as_lines() -> None:
+    from littlebot.screens.director import clean_spec
+
+    cleaned, why = clean_spec({"card": "facts", "title": "Japan", "items": [
+        {"label": "Capital", "value": "Tokyo"}, {"name": "People", "detail": "125 million"}, "An island country"]},
+        base.card_types())
+    assert cleaned is not None, why
+    assert cleaned["items"] == ["Capital: Tokyo", "People: 125 million", "An island country"]
 
 
 async def test_a_comparison_with_names_only_in_the_title_and_values_by_row() -> None:
@@ -236,8 +319,9 @@ async def test_text_fits_and_pages_hold_at_most_max_lines() -> None:
                                    {"name": "B", "facts": [f"value {i}" for i in range(8)]},
                                    {"name": "C", "facts": ["x"]}]})
     assert len(card.pages()) >= 2
-    for page in card.pages():
-        assert sum(card._row_lines(r) for r in page) <= base.MAX_LINES - 1
+    room = kit.PANEL.h - 2 * kit.PAD - facts.DOTS_H - facts.HEAD_H - 6
+    for page in card.pages():  # each page's rows fit under the names
+        assert sum(card._row_h(r) + facts.ROW_GAP for r in page) <= room
     card.command("next", {})
     assert "(page 2 of" in card.describe()
     preview.surface(card, seconds=1)
@@ -250,8 +334,31 @@ async def test_compare_without_row_labels_lines_facts_up() -> None:
     for c in range(3):
         for r in range(2):
             lines = card._cell_lines(c, r)
-            assert len(lines) <= 2 and all(kit.text_w(s, facts.CELL_PX) <= card._col_geometry()[1] - 16
-                                           for s in lines)
+            assert len(lines) <= facts.CELL_LINES and all(
+                kit.text_w(s, card._cell_px()) <= card._col_geometry()[1] - 16 for s in lines)
+
+
+async def test_compare_cells_get_the_room_their_labels_leave_and_show_where_they_are_cut() -> None:
+    # "lower teeth show when mouth is" (closed cut off) with a 150 px label column for "Snout" and "Teeth"; two rows
+    # of two lines a page and the rest of it empty (the robot, 2026-10-31)
+    croc = await make({"layout": "compare", "title": "Crocodile or alligator?", "rows": ["Snout", "Teeth", "Colour"],
+                       "columns": [{"name": "Alligator", "facts": ["broad and U-shaped", "most lower teeth hidden",
+                                                                   "dark, almost black"]},
+                                   {"name": "Crocodile", "facts": ["narrow and V-shaped",
+                                                                   "lower teeth show when mouth is closed",
+                                                                   "lighter olive brown"]}]})
+    assert croc._col_geometry()[2] < facts.LABEL_W  # as wide as "Colour", not 150 px
+    assert " ".join(croc._cell_lines(1, 1)) == "lower teeth show when mouth is closed"
+    assert croc._cell_px() == facts.CELL_PX and len(croc.pages()) == 1  # all three rows on one page
+    long = "Africa and Asia, almost everywhere they can find somewhere to hide from the sun all day long"
+    three = await make({"layout": "compare", "rows": ["Lives in"], "columns": [
+        {"name": "Lion", "facts": ["African grasslands"]}, {"name": "Tiger", "facts": ["Asian forests"]},
+        {"name": "Leopard", "facts": [long]}]})
+    assert three._cell_px() == base.BODY_PX  # a cell too long at CELL_PX: the table one size smaller
+    lines = three._cell_lines(2, 0)
+    assert len(lines) == facts.CELL_LINES and lines[-1].endswith("...")
+    assert all(len(three._cell_lines(c, 0)) <= 2 for c in (0, 1))
+    preview.surface(three, seconds=1)
 
 
 async def test_item_text_size_and_lines() -> None:
@@ -326,7 +433,8 @@ async def test_compare_holds_four_columns_and_eight_rows() -> None:
     card = await make(sample("compare", 2))
     assert [c["name"] for c in card.columns] == ["Lion", "Tiger", "Leopard", "Cheetah"]
     x0, col_w, label_w = card._col_geometry()
-    assert label_w == facts.LABEL_W_NARROW and col_w >= 150
+    widest = max(facts.kit.text_w(r, facts.BODY_PX) for r in card.rows) + 14  # as wide as its labels, no wider
+    assert label_w == min(widest, facts.LABEL_W_NARROW) and col_w >= 150
     assert x0 + 4 * col_w + 3 * facts.COL_GAP <= card.inner.right
     assert card.describe().startswith("The big cats: Lion vs Tiger vs Leopard vs Cheetah: Weight: 190 kg, 220 kg, ")
     five = await make({"layout": "compare", "columns": [{"name": n, "facts": ["1"]} for n in "ABCDE"]})

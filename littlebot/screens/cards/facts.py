@@ -18,8 +18,8 @@
 * ``item``    - one item: "today in history", a quote, a single fact: a kicker line ("24 October 1945"),
   the text as big as fits and an optional picture and note.
 
-Text is at least BODY_PX (labels in the stats tiles SMALL_PX), at most MAX_LINES lines a page; "next" /
-"prev" (or a tap) turn pages.
+Text is at least BODY_PX (labels in the stats tiles SMALL_PX), at most MAX_LINES lines a page (a compare table:
+as many rows as fit, a cell up to three lines); "next" / "prev" (or a tap) turn pages.
 """
 
 from __future__ import annotations
@@ -54,6 +54,7 @@ LIST_GAP = 12
 LIST_GUTTER = 40  # between two columns of a list
 TWO_COLUMNS_FROM = 5  # a list of this many short items goes in two columns (when there is no picture)
 CELL_PX = BODY_PX
+CELL_LINES = 3  # a compare cell's most lines (the last ends in "..." when it goes on)
 HEAD_PX = 38  # a compare column's name
 HEAD_H = 60
 ROW_GAP = 16
@@ -292,6 +293,14 @@ class FactsCard(Card):
         self.status_text = kit.clean(spec.get("status"), 24)
         self.kicker = kit.clean(spec.get("kicker"), 40)
         self.text = kit.clean(spec.get("text"), 200)
+        if self.layout == "profile" and "facts" not in spec:  # (_build's other layouts' tries always set "facts")
+            # its facts sent as "items" or "text": a profile shows only "facts", so "Fun history facts" came as a
+            # picture of a pyramid and no words (the robot, 2026-11-02). More than a profile holds: a list of them.
+            given = kit.str_list(spec.get("items"), max_items=MAX_ITEMS, limit=80) or ([self.text] if self.text else [])
+            if len(given) > 4:
+                self.layout = "list"
+            else:
+                self.facts = given
         self.mood = {"number": "surprised", "score": "happy"}.get(self.layout, "curious")
         wants_pic = self.layout in ("number", "list", "profile", "item")
         self.slot = kit.PictureSlot(self.host, kit.clean(spec.get("picture_query"), 80) if wants_pic else "")
@@ -299,6 +308,8 @@ class FactsCard(Card):
         self.page_t = 0.0
         self._pages: dict[bool, list[Any]] = {}
         self.list_columns = 1  # the list layout: 1 or 2 columns of items (set by pages())
+        self._geometry: tuple[int, int, int] | None = None  # the compare table's columns (_col_geometry)
+        self._cell_size: int | None = None  # ...and its text size (_cell_px)
 
     # ------------------------------------------------------------ geometry
     @property
@@ -362,7 +373,7 @@ class FactsCard(Card):
             n = max((len(c["facts"]) for c in self.columns), default=0)
             n = max(n, len(self.rows))
             counts = [self._row_lines(r) for r in range(n)]
-            heights = [kit.line_h(CELL_PX) * k + ROW_GAP for k in counts]
+            heights = [kit.line_h(self._cell_px()) * k + ROW_GAP for k in counts]
             room = inner.h - self._head_h() - 6 - self._note_h(inner.w)
             pages = kit.pages_by_height(heights, counts, gap=0, room=room, max_lines=MAX_LINES - 1)
             if len(pages) > 1:  # the header row counts as a line; the dots need room
@@ -406,12 +417,16 @@ class FactsCard(Card):
         return [[(i, lines[i]) for i in page] for page in pages]
 
     def _col_geometry(self) -> tuple[int, int, int]:
-        """(x of the first value column, column width, label column width) for the compare table."""
-        inner = self.inner
-        n = max(1, len(self.columns))
-        label_w = (LABEL_W if n <= 3 else LABEL_W_NARROW) if self.rows else 0
-        col_w = (inner.w - label_w - COL_GAP * (n - 1)) // n
-        return inner.x + label_w, col_w, label_w
+        """(x of the first value column, column width, label column width) for the compare table. The label
+        column is as wide as its labels, up to LABEL_W (LABEL_W_NARROW beside four columns): the cells get the rest."""
+        if self._geometry is None:
+            inner = self.inner
+            n = max(1, len(self.columns))
+            widest = LABEL_W if n <= 3 else LABEL_W_NARROW
+            label_w = min(widest, max(kit.text_w(r, BODY_PX) for r in self.rows) + 14) if self.rows else 0
+            col_w = (inner.w - label_w - COL_GAP * (n - 1)) // n
+            self._geometry = (inner.x + label_w, col_w, label_w)
+        return self._geometry
 
     def _head_lines(self) -> int:
         """Lines the column names need (two when a name doesn't fit its column on one)."""
@@ -421,10 +436,23 @@ class FactsCard(Card):
     def _head_h(self) -> int:
         return HEAD_H if self._head_lines() == 1 else HEAD_H + kit.line_h(HEAD_PX) - 4
 
+    def _cell_px(self) -> int:
+        """The table's text size: CELL_PX, or BODY_PX when a cell needs more than two lines at CELL_PX."""
+        if self._cell_size is None:
+            width = self._col_geometry()[1] - 16
+            cells = [f for c in self.columns for f in c["facts"]]
+            self._cell_size = CELL_PX if all(len(kit.wrap(f, CELL_PX, width)) <= 2 for f in cells) else BODY_PX
+        return self._cell_size
+
     def _cell_lines(self, col: int, row: int) -> tuple[str, ...]:
+        """A cell's lines: at most CELL_LINES, the last one ending in "..." when the text goes on."""
         facts = self.columns[col]["facts"]
         text = facts[row] if row < len(facts) else "-"
-        return kit.wrap(text, CELL_PX, self._col_geometry()[1] - 16)[:2]
+        size, width = self._cell_px(), self._col_geometry()[1] - 16
+        lines = kit.wrap(text, size, width)
+        if len(lines) > CELL_LINES:
+            lines = (*lines[:CELL_LINES - 1], kit.ellipsize(" ".join(lines[CELL_LINES - 1:]), size, width))
+        return lines
 
     def _row_lines(self, row: int) -> int:
         label = kit.wrap(self.rows[row], BODY_PX, self._col_geometry()[2] - 14)[:2] if row < len(self.rows) else ()
@@ -438,6 +466,9 @@ class FactsCard(Card):
 
     def _subtitle_h(self) -> int:
         return kit.chip(self.subtitle, art.GRAPE, size=SUBTITLE_PX).get_height() + 16 if self.subtitle else 0
+
+    def _row_h(self, row: int) -> int:
+        return kit.line_h(self._cell_px()) * self._row_lines(row)
 
     # ------------------------------------------------------------ logic
     def update(self, dt: float) -> None:
@@ -630,8 +661,8 @@ class FactsCard(Card):
         inner = self.inner
         x0, col_w, label_w = self._col_geometry()
         rows = self.pages()[self.page]
-        pitch = kit.line_h(CELL_PX)
-        heights = [pitch * self._row_lines(r) for r in rows]
+        size = self._cell_px()
+        heights = [self._row_h(r) for r in rows]
         head_h = self._head_h()
         body_h = sum(heights) + ROW_GAP * len(heights) + 6
         total = head_h + body_h
@@ -657,7 +688,7 @@ class FactsCard(Card):
                 kit.blit_alpha(surf, label, (inner.x, y + 2), fade)
             for c in range(len(self.columns)):
                 x = x0 + c * (col_w + COL_GAP)
-                cell = kit.text_block(self._cell_lines(c, r), CELL_PX, kit.TEXT, align="center")
+                cell = kit.text_block(self._cell_lines(c, r), size, kit.TEXT, align="center")
                 kit.blit_alpha(surf, cell, cell.get_rect(midtop=(x + col_w // 2, y)).topleft, fade)
                 if n < len(rows) - 1:
                     yy = y + h + ROW_GAP // 2 - 2

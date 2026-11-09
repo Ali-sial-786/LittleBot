@@ -1,5 +1,5 @@
 // Fast decisions (littlebot/decide): TypeSafe's Jev, OpenAI's Decisions API or Claude for LittleBot's small multiple-choice
-// calls. The keys stay in .env on the robot; this page only learns whether one is set.
+// calls. The keys stay on the robot (set on the Keys page, or in .env); this page only learns whether one is set.
 
 import { get, put } from '../api.js';
 import { banner, clear, h, icon, switchRow } from '../ui.js';
@@ -82,7 +82,7 @@ export function decidePanel(app) {
       h('span', { class: `badge ${d.has_openai_key ? 'ok' : ''}` }, icon(d.has_openai_key ? 'check' : 'key'), d.has_openai_key ? 'OpenAI key configured' : 'No OpenAI key'),
       h('span', { class: `badge ${d.has_anthropic_key ? 'ok' : ''}` }, icon(d.has_anthropic_key ? 'check' : 'key'), d.has_anthropic_key ? 'Anthropic key configured' : 'No Anthropic key'));
     clear(notices);
-    if (d.provider !== 'off' && d.why_off) notices.append(banner('warn', 'alert', 'Not deciding right now', d.why_off === "TYPESAFE_API_KEY isn't set" || d.why_off === "OPENAI_API_KEY isn't set" ? `${d.why_off}: add it to the .env file on the robot, then restart LittleBot.` : `${d.why_off.charAt(0).toUpperCase()}${d.why_off.slice(1)}.`));
+    if (d.provider !== 'off' && d.why_off) notices.append(banner('warn', 'alert', 'Not deciding right now', /^[A-Z_]+_API_KEY isn't set$/.test(d.why_off) ? `${d.why_off}: add it on the Keys page (More → Keys).` : `${d.why_off.charAt(0).toUpperCase()}${d.why_off.slice(1)}.`));
     for (const [key, f] of Object.entries(d.features || {})) {
       const s = selects[key];
       if (!s) continue;

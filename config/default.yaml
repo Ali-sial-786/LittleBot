@@ -34,13 +34,15 @@ face:
 camera:
   backend: auto          # auto | real | mock | none   (auto: real camera, else mock in simulation/offline)
   device: auto           # auto (first USB camera) | index (0) | /dev/videoN  -- see scripts/check_camera.py --list
-  capture_width: 640
-  capture_height: 480
-  capture_fps: 15
+  capture_width: 1920
+  capture_height: 1080
+  capture_fps: 30
   fourcc: MJPG           # compressed frames: low USB 2.0 bandwidth
   process_width: 320     # detection runs on a 320 px wide copy (CPU budget on the Pi)
   detect_fps: 6.0
   mirror: true           # camera faces the child: image-right => eyes look to the robot's right
+  live_view_fps: 30      # dashboard Camera page frame rate while watched (1-30, at most capture_fps)
+  live_view_width: 1920  # dashboard Camera page picture width (1920 = full 1080p; 1280 if Wi-Fi stutters)
   reconnect_seconds: 3.0
 
 vision:
@@ -119,6 +121,21 @@ claude:  # Anthropic API (pip install -e '.[claude]'); the key in .env or data/a
   first_token_timeout_seconds: 4.0
   web_search: true       # Anthropic's web search for current facts (billed per search)
 
+assistant:  # the fast voice pipeline (docs/ASSISTANT.md): speech-to-text -> Claude -> natural voice, with barge-in
+  pipeline: auto         # auto: the assistant once DEEPGRAM_API_KEY and CARTESIA_API_KEY (or ELEVENLABS_API_KEY) are set,
+                         # else GPT-Live as before | cascade: always the assistant | live: always GPT-Live
+  stt: [deepgram, openai, vosk]                    # first that works (also: cartesia, assemblyai)
+  tts: [cartesia, elevenlabs, openai, local]       # first that works (local: piper / espeak on the robot)
+  follow_up_seconds: 8   # keeps listening this long after an answer: no wake word for the next question
+  deep_model: claude-sonnet-5-5   # think_harder: hard questions go to this model while a short line plays
+  barge_in: true         # talk over LittleBot to interrupt it (needs echo cancelling, like GPT-Live)
+
+skills:  # LittleBot's abilities for both voices (littlebot/skills); each one can be switched off
+  persona: warm          # warm | witty | calm | concise | playful (or by voice: "be more concise")
+  home_assistant_url: ""  # e.g. http://homeassistant.local:8123 (token: HOME_ASSISTANT_TOKEN in .env)
+  music_provider: auto   # auto (Spotify when it's set up and its speaker is ready, else YouTube) | spotify | youtube
+  spotify_client_id: ""  # your app's Client ID from developer.spotify.com (or on the dashboard); docs/SPOTIFY.md
+
 decide:  # fast decision models for small multiple-choice calls (littlebot/decide, docs/DECISIONS.md)
   provider: "off"        # off | jev (TYPESAFE_API_KEY in .env) | openai (OPENAI_API_KEY) | claude (ANTHROPIC_API_KEY)
   jev_model: jev-latest
@@ -143,6 +160,51 @@ browser:
   zoom: 1.25               # pages are this much bigger on the 7" screen ("zoom in" / "zoom out" change it)
   mobile_layout: false     # true: claim to be a phone for sites' phone layout (Google then asks more captchas)
   kiosk: null              # null = full screen on the robot only (a 1024x600 window on a desktop)
+
+mirror:
+  # A phone's screen on LittleBot's screen (docs/MIRRORING.md): an iPhone by AirPlay (uxplay), an Android phone by
+  # scrcpy over Wi-Fi (adb). Only while someone asked for it. Install: scripts/setup_mirroring.sh
+  enabled: true
+  wait_seconds: 90         # the AirPlay receiver stops again if no iPhone starts mirroring by then
+  max_size: 0              # the picture's longer side in pixels; 0 = the screen's
+  fps: 30
+  sound: false             # the phone's sound out of LittleBot's speaker (the wake word and "stop" then hear it too)
+  touch_control: false     # Android: taps on LittleBot's screen work the phone
+
+nanit:
+  # The Nanit baby camera on LittleBot's screen when asked (docs/NANIT.md), through an unofficial bridge.
+  # Set up once on the robot: bash ~/LittleBot/scripts/setup_nanit.sh (you sign in to Nanit there yourself).
+  enabled: true
+  sound: true              # the baby's sounds through the system's sound (the dashboard switch starts from this)
+  max_minutes: 30          # the view closes by itself after this long; 0 = never
+  start_timeout_seconds: 20  # the picture must start by then, else it closes and says why
+
+android:
+  # Android (Waydroid, with Google Play) on LittleBot's screen when asked (docs/ANDROID_ON_PI.md), and only while it
+  # is on the screen: as soon as it isn't, it is shut down and its 1 to 1.5 GB of memory comes back.
+  # Set up once on the robot: scripts/setup_waydroid.sh kernel (then reboot), then scripts/setup_waydroid.sh install.
+  enabled: true
+  off_screen_seconds: 10   # its window closed or behind another window this long: Android is shut down
+  start_timeout_seconds: 180  # its window must be in front by then (the first start takes a minute or two)
+  min_free_mb: 1200        # it starts only with this much memory free
+  min_free_mb_running: 250 # ... and is shut down if free memory falls under this while it runs
+  apps:                    # "open <name>" opens that app in Android: the name -> the Android package
+    aosu: com.glazero.android
+
+capture:
+  # Photos and videos by voice ("take a picture", "record this", "stop recording"), a gallery on the screen and on
+  # the dashboard's Photos page, and a link to send one to a phone (docs/PHOTOS.md). Kept in data/gallery only.
+  enabled: true
+  countdown_seconds: 3     # "3, 2, 1" on the screen before a voice photo (the dashboard's button takes it at once)
+  show_seconds: 8          # the new photo stays on the screen this long
+  photo_width: 1920        # px; the camera's full 1080p picture
+  video_width: 1280        # px (720p); 1920 makes the Pi 5 work much harder for little gain on a phone
+  video_fps: 30
+  video_sound: true        # the microphone's sound in videos (the dashboard switch starts from this; Privacy wins)
+  max_video_minutes: 10    # a recording stops by itself after this long
+  min_free_mb: 1000        # no new photo or video when the storage has less than this free
+  share_hours: 24          # a link sent to a phone works this long (dashboard: "Stop every share link" ends them sooner)
+  push_attach: true        # the phone notification shows a preview, which the ntfy app fetches from LittleBot
 
 power:
   # The battery (docs/POWER.md section 8): an RP2040-Zero battery monitor on a USB port. Without one
@@ -187,13 +249,42 @@ motion:
   homing_speed_factor: 0.4
   release_when_idle_seconds: 0        # >0 de-energises servos after idling this long
   calibration_file: config/calibration.yaml   # written by scripts/calibrate_servos.py (git-ignored)
-  # Per-joint limits (defaults are built in; calibration.yaml overrides them). If you
-  # override `servos` here you must list ALL joints, e.g.:
+  # Per-joint limits (defaults are built in; calibration.yaml overrides them). "head" is the head's
+  # PAN axis (left/right), "head_tilt" its TILT axis (up/down). If you override `servos` here you
+  # must list ALL the joints your robot has (leave out one that is not fitted, e.g. head_tilt):
   # servos:
   #   head:      {channel: 0, neutral: 90,  min_angle: 50, max_angle: 130, max_speed_dps: 60}
   #   left_arm:  {channel: 1, neutral: 20,  min_angle: 10, max_angle: 150, max_speed_dps: 90}
   #   right_arm: {channel: 2, neutral: 160, min_angle: 30, max_angle: 170, max_speed_dps: 90,
   #               inverted: true, positive_toward: min}
+  #   head_tilt: {channel: 3, neutral: 90,  min_angle: 70, max_angle: 110, max_speed_dps: 60}
+  # (each joint also takes max_accel_dps2, min/max_pulse_us and soft_margin_deg: see docs/MOVEMENT.md)
+  # Body language (littlebot/motion/body.py): gaze, nods and small gestures that follow the conversation.
+  # The face parts work without servos; movements stay simulated until real servos are armed.
+  body_language: true
+  body_language_gap_seconds: 1.5   # at most one gesture (and one face nod) this often
+  idle_motion_seconds: 90          # a tiny idle head shift about this often (0 = never)
+  look:                  # look_at(x, y): eyes lead, the head follows
+    camera_on_head: true # the camera sits in the head's top pod (false: fixed to the body)
+    fov_h_deg: 70        # the camera's field of view
+    fov_v_deg: 45
+    follow_offset: 0.15  # the head turns when the target stays this far off-centre (0..0.5 of the view)...
+    follow_after_seconds: 0.4   # ...for this long
+    gain: 0.8            # how much of the offset one head turn takes
+    settle_seconds: 0.6
+    speed: 0.5           # fraction of each head joint's max speed
+  drive:                 # the wheels phase (littlebot/motion/drive.py): nothing calls it yet
+    enabled: false       # commands are refused while false
+    backend: mock        # mock | motor_hat (placeholder: needs physical_enabled + arming, like the servos)
+    max_linear_mps: 0.15
+    max_angular_dps: 60
+    max_linear_accel_mps2: 0.3
+    max_angular_accel_dps2: 180
+    cruise_linear_mps: 0.10
+    cruise_angular_dps: 45
+    watchdog_seconds: 1.0         # an open-ended drive() stops unless re-sent within this long
+    max_duration_seconds: 10
+    wheel_base_m: 0.12
 
 dashboard:
   enabled: true

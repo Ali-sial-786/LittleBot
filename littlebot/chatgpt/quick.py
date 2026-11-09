@@ -45,9 +45,12 @@ monday tuesday wednesday thursday friday saturday sunday a bit while next""".spl
 # ---------------------------------------------------------------- the time
 _TIME = re.compile(r"\b(?:what time|the time|current time|time is it|time it is|what day|which day|day is it|"
                    r"day it is|what date|the date|today'?s date|date is it|what(?:'s| is) today)\b", re.I)
-# Not just "now, here": another place, a time span, an alarm ("what time is it in Tokyo?", "how long until 5?")
-_NOT_TIME = re.compile(r"\bwhat time (?!is it|it is)|\b(?:in|at|for|until|till|til|since|ago|left|when|how long|how many|zones?|timers?|alarms?|"
-                       r"remind\w*|bed\s?time|lunch\s?time|nap\s?time|tea\s?time|dinner\s?time|story\s?time)\b", re.I)
+# Not just "now, here": another place, a time span, an alarm ("what time is it in Tokyo?", "how long until 5?"),
+# the day of something ("what day is the dentist?", "what date is Christmas?": the calendar or the text model)
+_NOT_TIME = re.compile(r"\bwhat time (?!is it|it is)|\b(?:what|which) (?:day|date) (?:is|was|are|will) (?!it\b|today\b)|"
+                       r"\b(?:in|at|for|until|till|til|since|ago|left|when|how long|how many|zones?|timers?|alarms?|"
+                       r"remind\w*|bed\s?time|lunch\s?time|nap\s?time|tea\s?time|dinner\s?time|story\s?time|"
+                       r"calendars?|appointments?|meetings?|schedule)\b", re.I)
 
 # ---------------------------------------------------------------- the volume
 _SOUND = r"(?:it|that|this|the volume|the sound|your volume|your voice|you|yourself|the video|the music)"

@@ -34,6 +34,7 @@ from littlebot.core.service import Service, ServiceStatus
 from littlebot.core.state import RobotState
 from littlebot.power.battery import BatteryGauge, TimeLeft
 from littlebot.power import ups_hat
+from littlebot.power.last_seen import LastSeen
 from littlebot.power.monitor import SerialMonitor, SimulatedMonitor
 from littlebot.power.policy import PowerPolicy, Snapshot, Thresholds
 from littlebot.power.protocol import Reading
@@ -113,6 +114,7 @@ class PowerService(Service):
         self.shutdown_reason: str | None = None
         self._published: tuple[Any, ...] | None = None
         self._published_at = -math.inf
+        self.last_seen = LastSeen.for_context(ctx)  # tells a power cut from a clean stop (last_seen.py)
         self._register_settings()
 
     # ------------------------------------------------------------------ setup
@@ -163,11 +165,12 @@ class PowerService(Service):
             bus.subscribe(Topics.FACE_DOZE, self._on_doze),
             bus.subscribe(Topics.STATE_CHANGED, self._on_state),
         ]
+        await asyncio.to_thread(self.last_seen.check)
+        self._task = self._loop.create_task(self._tick_loop(), name="power")  # (the last sign of life even then)
         if self.source is None:
             self.set_status(ServiceStatus.DISABLED, "no battery (power.monitor: none)")
             return
         self.source.start(self._on_reading, self._on_source_status)
-        self._task = self._loop.create_task(self._tick_loop(), name="power")
         self.set_status(ServiceStatus.RUNNING, "simulated battery" if self.source.kind == "simulated"
                         else "looking for the battery monitor")
 
@@ -183,6 +186,7 @@ class PowerService(Service):
         if pending:
             await asyncio.gather(*pending, return_exceptions=True)
         self._task = None
+        await asyncio.to_thread(self.last_seen.clean)
         self.set_status(ServiceStatus.STOPPED)
 
     # ------------------------------------------------------------------ source callbacks (any thread)
@@ -213,6 +217,7 @@ class PowerService(Service):
         if self.fitted:
             self._try_announce_low()
             self._maybe_publish(self._now())
+        self.last_seen.note(self.latest, self.percent)
         return n
 
     # ------------------------------------------------------------------ state

@@ -26,8 +26,8 @@ Sharing the microphone
     LittleBot itself makes sound (half-duplex) the audio is discarded.
 
 While a video plays
-    It keeps listening (``wake.during_videos``), but the video's own sound reaches the microphone
-    too (there is no echo cancellation), so stricter rules apply: only ``wake.video_phrases``
+    It keeps listening (``wake.during_videos``), but some of the video's own sound may reach the
+    microphone (all of it without echo cancelling), so stricter rules apply: only ``wake.video_phrases``
     count ("hey little bot"), each word needs ``wake.video_min_confidence``, and with
     ``wake.video_duck`` the video is turned down for a moment after a "hey ...". What was heard
     but didn't count is logged ("ignored while a video plays"), to check on the robot.
@@ -52,13 +52,21 @@ Carrying what was said into the call ("Hey LittleBot, what's the weather today?"
     and catches up with real time by shortening the pauses (littlebot/chatgpt/live_audio.py,
     ``CarryFeed``). If the recogniser heard more words after the wake phrase, they are talking:
     no earcon, live voice starts at once. In memory only (littlebot/audio/carry.py); dropped if
-    live voice can't start, doesn't connect, or when the call ends. Not during a video: the
-    video's own sound reaches the microphone too, so nothing is carried then.
+    live voice can't start, doesn't connect, or when the call ends. During a video only with echo
+    cancelling (the video plays through the echo-cancelled speaker, so its sound is taken out of the
+    microphone); without it the soundtrack would be sent as their words, so nothing is carried then.
+
+A second opinion (``wake.oww_mode``)
+    LittleBot's own trained "Hey LittleBot" model (littlebot/audio/oww.py) can score the same sound on its own
+    thread. ``shadow``: it only logs its score for each wake (and its own peaks) in data/wake/shadow.jsonl, with
+    how the chat went; waking is unchanged. ``confirm``: a wake only counts when its score is high enough. If it
+    can't work it switches itself off and Vosk decides alone, as before.
 """
 
 from __future__ import annotations
 
 import asyncio
+import collections
 import contextlib
 import json
 import logging
@@ -86,6 +94,7 @@ log = logging.getLogger("littlebot.wake")
 WAKE_TOPIC = "audio.wake_word"  # {phrase} published when a wake phrase was heard
 CALL_ENDED_TOPIC = "live.call_ended"  # littlebot/chatgpt/live.py CALL_ENDED: {reason}
 FOLLOW_UP = "follow-up"  # the "phrase" of a chat started by a follow-up (no wake word)
+MODEL_PHRASE = "hey little bot"  # the phrase of a wake by the trained model (wake.oww_mode primary): all it knows
 # Calls that ended by themselves (live.py end reasons): a follow-up may come. Not "goodbye", "asked to stop",
 # a safety rule or a hand-over to a video: they meant it to end.
 FOLLOW_UP_AFTER = ("time limit reached", "hung up after", "connection lost")
@@ -98,6 +107,7 @@ MUTED_NOTE_SECONDS = 20.0  # ignoring the microphone (LittleBot making sound) th
 SILENT_NOTE_SECONDS = 30.0  # the microphone giving only silence this long: say so in the log
 SILENT_LEVEL = 1e-4  # RMS below this is silence (a real room is louder, even through noise suppression)
 RELEASE_TIMEOUT = 2.0  # release_mic() waits at most this long for the stream to close
+SLOW_RELEASE_S = 0.2  # a hand-over slower than this is logged (it delays listening after the wake word)
 RETRY_SECONDS = 5.0  # after a microphone error
 AVAILABILITY_RECHECK = 10.0  # look for a newly downloaded model this often
 MIN_LISTEN_SECONDS = 0.3  # a listen that ends sooner is followed by a short pause (no busy loop)
@@ -107,10 +117,26 @@ EARCON_TIMEOUT = 8.0
 # A video was just closed for the chat: its browser lets go of the USB speaker a moment later. The earcon
 # waits (at most this long) until the speaker plays again, or it fails and the speaker counts as unplugged.
 VIDEO_SPEAKER_WAIT_SECONDS = 2.0
-# "Hey LittleBot, what's the weather?" in one breath: the recogniser only reports the wake phrase once the
-# sentence has ended, so the sentence being recognised is kept (in memory, at most this long) and what was
-# said after the wake phrase goes into the call (littlebot/audio/carry.py).
+# "Hey LittleBot, what's the weather?" in one breath: the recogniser's final result only comes once the sentence
+# has ended, so the sentence being recognised is kept (in memory, at most this long) and what was said after the
+# wake phrase goes into the call (littlebot/audio/carry.py).
 PREROLL_MAX_SECONDS = 8.0
+# ``wake.early``: a wake phrase in the words so far is decided at once (the result forced out, with its word
+# confidences), not after the sentence. Whether they go on talking (no earcon then) is known a moment later: at
+# TALK_SPEECH_SECONDS of more speech, or EARCON_QUIET_SECONDS of quiet (they wait for the sound). People pause
+# longer after "hey little bot," than that too: with echo cancelling the earcon then plays while they talk and
+# nothing they say is lost; without it the microphone is deaf while it plays, so it waits longer.
+# On the robot (2026-10-31) 0.35 s of quiet (counted from the wake phrase's end) ran out in the usual 0.3-0.6 s
+# pause before the question: the earcon played over "seventeen" at full volume, the echo canceller couldn't take it
+# out (the microphone clips) and "what's seventeen times twenty three" was heard as "one thirteen times twenty three".
+# EARLY_START (the assistant, with echo cancelling): the call starts listening at once instead, and the decision is
+# made on its microphone; speech-to-text works through what was said before it listened at about real time (on the
+# robot, 2026-10-31, Flux ended a turn ~0.45 s later per 0.45 s of it sent at once), so the question goes in live.
+TALK_SPEECH_SECONDS = 0.08
+EARCON_QUIET_SECONDS = 0.6
+EARCON_QUIET_NO_EC_SECONDS = 0.8
+EARCON_OVER_SPEECH_VOLUME = 0.6  # x the volume: the earcon when they may still go on (it is cancelled out better)
+TALK_WAIT_SECONDS = 1.5  # never longer (a noisy room is neither): then as if they went on
 WAKE_CUT_MARGIN = 0.03  # start the carried words this much before the wake phrase's end (the recogniser's step)
 CARRY_WAIT_SECONDS = 5.0  # after the wake phrase: keep what they say this long at most until live voice takes over
 # Live voice opens its own stream once this one is closed; what is said in between (~0.1-0.3 s) is lost. So
@@ -118,6 +144,9 @@ CARRY_WAIT_SECONDS = 5.0  # after the wake phrase: keep what they say this long 
 # (in a noisy room there may be none: that is what the wait can cost).
 HANDOVER_QUIET_SECONDS = 0.1
 HANDOVER_WAIT_SECONDS = 0.4  # well within RELEASE_TIMEOUT
+RATE_16K = 16000  # the trained model (wake.oww_mode) only hears 16 kHz sound
+OUTCOME_WAIT_SECONDS = 1800.0  # how a chat after a wake went is noted when it ends, if within this long
+AGREE_SECONDS = 3.0  # wake.oww_primary_agree: words Vosk heard this recently count as agreeing with a model wake
 
 # Pauses after which the model is unloaded (they usually last long; ~130 MB back for a video).
 _LONG_PAUSES = {"disabled", "microphone_off", "video", "stopped"}
@@ -168,7 +197,8 @@ class KeywordRecognizer(Protocol):
 
     def reset(self) -> None: ...
 
-    # Optional: ``partial() -> str``, the words of the utterance so far (for ``wake.video_duck``).
+    # Optional: ``partial() -> str``, the words of the utterance so far (for ``wake.video_duck`` and ``wake.early``),
+    # and ``finish() -> dict | None``, the result now as if the utterance ended here (``wake.early``).
 
 
 def normalise_phrase(text: str) -> str:
@@ -198,17 +228,20 @@ def build_grammar(phrases: Sequence[str], *, known: Callable[[str], bool] | None
     return grammar, usable, dropped
 
 
-def match_wake_phrase(result: dict[str, Any], phrases: Sequence[tuple[str, tuple[str, ...]]],
-                      min_confidence: float = 0.0) -> str | None:
-    """The wake phrase heard in a recogniser result (consecutive words, each confident enough)."""
+def _heard_words(result: dict[str, Any]) -> tuple[list[str], list[float]]:
+    """A recogniser result's words and their confidences (1.0 each when it gave no word details)."""
     words = result.get("result")
     if isinstance(words, list) and words:
         items = [w for w in words if isinstance(w, dict)]
-        toks = [str(w.get("word", "")).lower() for w in items]
-        confs = [float(w.get("conf", 1.0)) for w in items]
-    else:
-        toks = str(result.get("text", "")).lower().split()
-        confs = [1.0] * len(toks)
+        return [str(w.get("word", "")).lower() for w in items], [float(w.get("conf", 1.0)) for w in items]
+    toks = str(result.get("text", "")).lower().split()
+    return toks, [1.0] * len(toks)
+
+
+def match_wake_phrase(result: dict[str, Any], phrases: Sequence[tuple[str, tuple[str, ...]]],
+                      min_confidence: float = 0.0) -> str | None:
+    """The wake phrase heard in a recogniser result (consecutive words, each confident enough)."""
+    toks, confs = _heard_words(result)
     for phrase, ph in sorted(phrases, key=lambda p: -len(p[1])):  # "hey little bot" before "hey bot"
         n = len(ph)
         for i in range(len(toks) - n + 1):
@@ -258,6 +291,48 @@ def wake_phrase_end(result: dict[str, Any], words: Sequence[str],
     return None, 0
 
 
+_ENDPOINT_RULE = re.compile(r"^--endpoint\.rule([234])\.min-trailing-silence=.*$", re.M)
+ENDPOINT_STEPS = {"2": 0.0, "3": 0.1, "4": 0.25}  # the model's three "this much silence ends it" rules
+
+
+def tuned_model_dir(src: Path, end_silence: float, root: Path) -> Path:
+    """``src`` (a Vosk model) whose recogniser decides a phrase after ``end_silence`` seconds of silence: a folder in
+    ``root`` with links to the model's files and its own ``conf/model.conf``. ``src`` itself if that can't be made."""
+    conf = src / "conf" / "model.conf"
+    dst = root / f"{src.name}-wake-{int(round(end_silence * 1000))}ms"
+    try:
+        text = conf.read_text(encoding="utf-8")
+        rules = {n: f"--endpoint.rule{n}.min-trailing-silence={end_silence + step:.2f}"
+                 for n, step in ENDPOINT_STEPS.items()}
+        tuned = _ENDPOINT_RULE.sub(lambda m: rules.pop(m.group(1), m.group(0)), text)
+        tuned = tuned.rstrip("\n") + "\n" + "".join(f"{line}\n" for line in rules.values())
+        if (dst / "conf" / "model.conf").is_file() and (dst / "conf" / "model.conf").read_text("utf-8") == tuned:
+            return dst
+        (dst / "conf").mkdir(parents=True, exist_ok=True)
+        for p in src.iterdir():
+            if p.name != "conf" and not (dst / p.name).exists():
+                (dst / p.name).symlink_to(p.resolve(), target_is_directory=p.is_dir())
+        for p in (src / "conf").iterdir():
+            if p.name != "model.conf" and not (dst / "conf" / p.name).exists():
+                (dst / "conf" / p.name).symlink_to(p.resolve())
+        (dst / "conf" / "model.conf").write_text(tuned, encoding="utf-8")
+        return dst
+    except OSError as e:
+        log.warning("wake word: couldn't make the quicker model folder (%s); using the model as it is", e)
+        return src
+
+
+def wake_model_dir(config: Any) -> Path | None:
+    """The model folder the wake word loads (the quicker copy with ``wake.end_silence_seconds``): the stop words load
+    the same one, so the model in memory is shared."""
+    wake = getattr(config, "wake", None)
+    path = resolve_model_path(getattr(wake, "model_path", None))
+    silence = getattr(wake, "end_silence_seconds", None)
+    if path is None or not silence or not model_present(path):
+        return path
+    return tuned_model_dir(path, float(silence), Path(config.data_path) / "models")
+
+
 class VoskKeywordRecognizer:
     """Vosk ``KaldiRecognizer`` restricted to a grammar (wake phrases + distractors + [unk])."""
 
@@ -281,6 +356,14 @@ class VoskKeywordRecognizer:
     def reset(self) -> None:
         self._rec.Reset()
 
+    def finish(self) -> dict[str, Any] | None:
+        """The result now, as if the utterance ended here (what follows starts a new one)."""
+        try:
+            out = json.loads(self._rec.FinalResult() or "{}")
+        except ValueError:
+            return None
+        return out if isinstance(out, dict) else None
+
     def partial(self) -> str:
         try:
             out = json.loads(self._rec.PartialResult() or "{}")
@@ -295,11 +378,13 @@ class WakeWordService(Service):
     name = "wake"
 
     def __init__(self, ctx: Any, *, recognizer_factory: Callable[[int], KeywordRecognizer] | None = None,
-                 allow_simulated_mic: bool = False) -> None:
+                 allow_simulated_mic: bool = False, model_check_factory: Callable[[], Any] | None = None) -> None:
         super().__init__()
         self.ctx = ctx
         self.cfg = ctx.config.wake
         self._factory = recognizer_factory  # None: Vosk
+        self._check_factory = model_check_factory  # None: littlebot/audio/oww.py with the files in data/wake
+        self._oww: Any = None  # the trained model next to Vosk (wake.oww_mode), while it works
         self._allow_sim = allow_simulated_mic
         self.model_path: Path | None = resolve_model_path(self.cfg.model_path)
         self._sample_rate = int(ctx.config.audio.microphone.sample_rate or 16000)
@@ -333,11 +418,13 @@ class WakeWordService(Service):
         self.last_heard: dict[str, Any] | None = None
         self.video_ignored = 0  # phrases heard while a video played that didn't count (stricter rules)
         self.short_ignored = 0  # "hey bot" heard but not sure enough, with nobody in front of the camera
+        self.rescued = 0  # Vosk wasn't sure, the trained model was (wake.oww_mode rescue)
         self.follow_ups = 0
         self._follow_up_until = 0.0  # monotonic: a follow-up (no wake word) counts until then
         self.ducks = 0
         self._duck_until = 0.0
         self._last_partial = ""
+        self._recent_words: collections.deque[tuple[float, tuple[str, ...]]] = collections.deque(maxlen=8)
 
     # ------------------------------------------------------------ lifecycle
     async def start(self) -> None:
@@ -356,6 +443,7 @@ class WakeWordService(Service):
         if audio is not None and hasattr(audio, "attach_background_listener"):
             audio.attach_background_listener(self)
             self._attached = audio
+        self._start_model_check()
         if self._thread is None or not self._thread.is_alive():
             self._thread = threading.Thread(target=self._main, name="littlebot-wake", daemon=True)
             self._thread.start()
@@ -377,6 +465,10 @@ class WakeWordService(Service):
         for s in self._subs:
             s.cancel()
         self._subs.clear()
+        oww, self._oww = self._oww, None
+        if oww is not None:
+            with contextlib.suppress(Exception):
+                await asyncio.to_thread(oww.stop)
         self._recognizer = None
         self._paused, self._listening = "stopped", False
         self.set_status(ServiceStatus.STOPPED)
@@ -390,9 +482,106 @@ class WakeWordService(Service):
         with self._cv:
             self._cv.notify_all()
 
+    # ------------------------------------------- the trained model next to Vosk
+    def _start_model_check(self) -> None:
+        """``wake.oww_mode`` shadow / confirm: start littlebot/audio/oww.py (it loads its files on its own thread)."""
+        mode = getattr(self.cfg, "oww_mode", "off")
+        if mode == "off" or self._oww is not None:
+            return
+        try:
+            if self._check_factory is not None:
+                oww = self._check_factory()
+            else:
+                from littlebot.audio.oww import SHADOW_FILE, WakeModelCheck  # noqa: PLC0415
+
+                folder = Path(self.cfg.oww_model_dir).expanduser()
+                if not folder.is_absolute():
+                    folder = Path(self.ctx.config.data_path) / folder
+                oww = WakeModelCheck(folder, journal=folder / SHADOW_FILE, mode=mode,
+                                     peak_threshold=self.cfg.oww_peak_threshold,
+                                     window_seconds=self.cfg.oww_window_seconds,
+                                     wake_threshold=self.cfg.oww_primary_threshold)
+            oww.start()
+            self._oww = oww
+        except Exception as e:  # noqa: BLE001 - the wake word goes on with Vosk alone
+            log.warning("wake model: switched off (%s: %s); the wake word goes on as before, with Vosk alone",
+                        type(e).__name__, e)
+            self._oww = None
+
+    def _model(self, what: str, *args: Any, **kw: Any) -> Any:
+        """Call ``what`` on the model check; None when it is off. An error switches it off (one warning), never
+        the wake word."""
+        oww = self._oww
+        if oww is None:
+            return None
+        try:
+            if not oww.working:
+                self._oww = None
+                return None
+            return getattr(oww, what)(*args, **kw)
+        except Exception as e:  # noqa: BLE001
+            self._oww = None
+            with contextlib.suppress(Exception):
+                oww.switch_off(f"{what} failed: {type(e).__name__}: {e}")
+            with contextlib.suppress(Exception):
+                oww.stop(0.0)
+            return None
+
+    def _wake_confidence(self, result: dict[str, Any], phrase: str) -> float:
+        """The lowest word confidence of the wake phrase in Vosk's result (1.0 without word details)."""
+        words = dict(self._phrases).get(phrase) or tuple(phrase.split())
+        items = [w for w in result.get("result") or [] if isinstance(w, dict)]
+        toks = [str(w.get("word", "")).lower() for w in items]
+        n = len(words)
+        best = 0.0
+        for i in range(len(toks) - n + 1):
+            if n and tuple(toks[i:i + n]) == tuple(words):
+                best = max(best, min(float(items[j].get("conf", 1.0)) for j in range(i, i + n)))
+        return best if items else 1.0
+
+    def _model_allows(self, result: dict[str, Any], phrase: str, *, early: bool, video: bool) -> tuple[bool, Any]:
+        """Tell the model check about Vosk's wake: (wake or not, the wake's id for the chat's outcome). Only
+        ``confirm`` can say no: when the model's score is below ``wake.oww_threshold``. Without a score (the model
+        is off, loading or slow) Vosk alone decides, as before."""
+        if self._oww is None or phrase == FOLLOW_UP:
+            return True, None
+        conf = self._wake_confidence(result, phrase)
+        if self.cfg.oww_mode == "confirm":
+            score = self._model("score_now", self.cfg.oww_confirm_wait_seconds)
+            if score is not None and score < self.cfg.oww_threshold:
+                log.info("wake word: Vosk heard '%s' (word confidence %.2f) but the wake model's score %.2f is below "
+                         "wake.oww_threshold %.2f: not waking", phrase, conf, score, self.cfg.oww_threshold)
+                self._model("vosk_wake", conf, early=early, video=video, blocked=True, score=score)
+                return False, None
+        return True, self._model("vosk_wake", conf, early=early, video=video)
+
+    async def _model_outcome(self, live: Any, wake_id: Any) -> None:
+        """After the chat a wake started has ended: how it went (a real request, dismissed, nobody spoke), for the
+        model check's journal. Numbers and fixed words only, never what was said."""
+        from littlebot.audio.oww import call_outcome  # noqa: PLC0415
+
+        deadline = time.monotonic() + OUTCOME_WAIT_SECONDS
+        last: dict[str, Any] | None = None
+        while time.monotonic() < deadline:
+            await asyncio.sleep(0.5)
+            try:
+                st = live.status()
+            except Exception:  # noqa: BLE001
+                return
+            if not st.get("active"):
+                last = st.get("last_call") or None
+                break
+        else:
+            return
+        turns = last.get("turns") if isinstance(last, dict) else None
+        secs = last.get("seconds") if isinstance(last, dict) else None
+        self._model("outcome", wake_id, call_outcome(last), turns=turns if isinstance(turns, int) else None,
+                    seconds=float(secs) if isinstance(secs, (int, float)) else None)
+
     # ------------------------------------------------- AudioService hand-over
     def release_mic(self, reason: str) -> None:
         """The AudioService needs the microphone: stop reading and close the stream (blocking)."""
+        t0 = time.monotonic()
         with self._cv:
             self._audio_busy, self._busy_reason = True, reason
             self._cv.notify_all()
@@ -403,6 +592,9 @@ class WakeWordService(Service):
                     log.warning("wake word: microphone not released within %.1fs (%s)", RELEASE_TIMEOUT, reason)
                     break
                 self._cv.wait(remaining)
+        waited = time.monotonic() - t0
+        if waited >= SLOW_RELEASE_S:
+            log.info("wake word: gave the microphone up after %d ms (%s)", int(waited * 1000), reason)
 
     def mic_free(self) -> None:
         with self._cv:
@@ -448,13 +640,9 @@ class WakeWordService(Service):
         return str(p)
 
     def _live_active(self) -> bool:
-        live = self.ctx.live
-        if live is None:
-            return False
-        try:
-            return bool(live.status().get("active"))
-        except Exception:  # noqa: BLE001
-            return False
+        from littlebot.assistant import voice_active  # noqa: PLC0415
+
+        return voice_active(self.ctx)  # GPT-Live or the assistant (littlebot/assistant)
 
     def _pause_reason(self) -> str | None:
         """Why the listener must not listen right now (a PAUSE_TEXT code), or None."""
@@ -551,7 +739,10 @@ class WakeWordService(Service):
     def _vosk_recognizer(self) -> KeywordRecognizer | None:
         assert self.model_path is not None
         t0 = time.monotonic()
-        model = load_model(self.model_path)
+        path = self.model_path
+        if self.cfg.end_silence_seconds:
+            path = tuned_model_dir(path, self.cfg.end_silence_seconds, Path(self.ctx.config.data_path) / "models")
+        model = load_model(path)  # the stop words load the same folder (wake_model_dir): one model in memory
         known = None
         if hasattr(model, "vosk_model_find_word"):
             known = lambda w: model.vosk_model_find_word(w) >= 0  # noqa: E731
@@ -618,6 +809,18 @@ class WakeWordService(Service):
         except Exception:  # noqa: BLE001
             return False
 
+    def _echo_cancelled(self) -> bool:
+        """PipeWire's echo canceller takes LittleBot's own sound out of the microphone (AudioService)."""
+        try:
+            on = getattr(self.ctx.audio, "echo_cancelling", False)
+            return bool(on() if callable(on) else on)
+        except Exception:  # noqa: BLE001
+            return False
+
+    def _earcon_on(self) -> bool:
+        """``assistant.earcon``: the "listen" sound when the wake word is heard (wake.sound)."""
+        return bool(getattr(getattr(self.ctx.config, "assistant", None), "earcon", True))
+
     def _listen(self, inp: Any, rec: KeywordRecognizer) -> bool:
         """Read and recognise until a wake phrase (True) or until something needs the mic (False)."""
         if isinstance(inp, SoundDeviceInput) and inp.status in (dev.STATUS_DISCONNECTED, dev.STATUS_UNAVAILABLE):
@@ -632,6 +835,8 @@ class WakeWordService(Service):
                      "try" if self._mic_failures == 1 else "tries")
         self._mic_failures = 0
         rec.reset()
+        self._model("reset")
+        self._recent_words.clear()
         self._refresh_gain()
         self._listening, self._paused = True, ""
         if not self._listened_once:
@@ -671,6 +876,7 @@ class WakeWordService(Service):
                 if self._muted():  # LittleBot is making sound: never listen to itself
                     if not muted:
                         rec.reset()
+                        self._model("reset")
                         pending, pending_n, muted = [], 0, True
                         heard.clear()
                         muted_since = now
@@ -697,41 +903,90 @@ class WakeWordService(Service):
                 if inp.sample_rate != rec.sample_rate:
                     block = dsp.resample(block, inp.sample_rate, rec.sample_rate)
                 heard.add(self._fed, block)
-                result = rec.accept(dsp.to_int16(block).tobytes())
+                pcm = dsp.to_int16(block)
+                if rec.sample_rate == RATE_16K:
+                    self._model("feed", pcm)  # the trained model scores the same sound (on its own thread)
+                result = rec.accept(pcm.tobytes())
+                del pcm
                 self._fed += len(block)
                 del block
+                self._note_words(result)
                 video = self._video_on()
+                if not video and self._model_woke(inp, heard, rec.sample_rate, rec):
+                    return True
+                early = False
+                if not result and not video and self.cfg.early:
+                    result = self._early_result(rec)
+                    early = bool(result)
+                    self._note_words(result)
                 if not result:
                     if video and self.cfg.video_duck:
                         self._maybe_duck(rec)
                     continue
                 self._last_partial = ""
                 phrase = self._match(result, video)
-                if phrase is None and not video:
+                if phrase is None and not video and not early:
                     phrase = FOLLOW_UP if self._follow_up(result) else None
-                    if phrase is None:
-                        self._note_unsure(result)
+                if phrase is None and not video:
+                    phrase = self._rescue(self._note_unsure(result))
                 if phrase is not None and not self._audio_busy and not self._stop.is_set():
-                    # Not during a video: its soundtrack reaches the microphone and would be sent as their words.
-                    carry = None if video else self._carry_from(heard, result, phrase, rec.sample_rate)
-                    self._detected(phrase, carry)
+                    wake_ok, wake_id = self._model_allows(result, phrase, early=early, video=video)
+                    if not wake_ok:  # wake.oww_mode confirm, and the trained model doesn't agree
+                        heard.decided()
+                        continue
+                    # During a video only with echo cancelling: without it the soundtrack reaches the microphone and
+                    # would be sent as their words. With it (the video plays through the echo-cancelled speaker) the
+                    # microphone was near silent under narration (0.0001 against 0.01; the robot, 2026-10-31), and
+                    # "Hey little bot, stop the video." in one breath had lost "stop the video".
+                    carry = None if video and not self._echo_cancelled() else \
+                        self._carry_from(heard, result, phrase, rec.sample_rate)
+                    self._detected(phrase, carry, early=early, wake_id=wake_id)
                     if carry is not None:
                         self._carry_on(inp, rec.sample_rate, carry)
                     return True
+                if not video and self._model_woke(inp, heard, rec.sample_rate, rec, sync=True):
+                    return True  # Vosk missed it, the model didn't (asked before the sentence is forgotten)
                 heard.decided()  # no wake phrase in that sentence: it is forgotten
             return False
         finally:
             self._listening = False
             pending.clear()
             heard.clear()
+            t_close = time.monotonic()
             with contextlib.suppress(Exception):
                 inp.close()
+            if time.monotonic() - t_close >= SLOW_RELEASE_S:
+                log.info("wake word: closing the microphone took %d ms", int((time.monotonic() - t_close) * 1000))
+
+    def _early_result(self, rec: KeywordRecognizer) -> dict[str, Any] | None:
+        """``wake.early``: the words so far hold a wake phrase: the recogniser's result now (its word confidences
+        decide, as in a final result), not after the rest of their sentence."""
+        partial, finish = getattr(rec, "partial", None), getattr(rec, "finish", None)
+        if partial is None or finish is None:
+            return None
+        try:
+            text = str(partial() or "")
+        except Exception:  # noqa: BLE001
+            return None
+        if text == self._last_partial:
+            return None
+        self._last_partial = text
+        words = text.split()
+        if not any(tuple(words[i:i + len(ph)]) == ph for _, ph in self._phrases
+                   for i in range(len(words) if len(ph) > 1 else 1)):  # "bot" alone only counts first
+            return None
+        try:
+            return finish()
+        except Exception:  # noqa: BLE001 - the final result still comes as before
+            return None
 
     def _match(self, result: dict[str, Any], video: bool) -> str | None:
         """The wake phrase in a final result; while a video plays only the video phrases, more confident."""
         if not video:
             phrase = match_wake_phrase(result, self._phrases, self.cfg.min_confidence)
-            return phrase if phrase is None or len(phrase.split()) > 2 else self._short_ok(result, phrase)
+            if phrase is None or len(phrase.split()) > 2:
+                return phrase
+            return self._single_ok(result, phrase) if len(phrase.split()) == 1 else self._short_ok(result, phrase)
         phrase = match_wake_phrase(result, self._video_phrases, self.cfg.video_min_confidence)
         if phrase is None:
             heard = match_wake_phrase(result, self._phrases, 0.0)
@@ -786,6 +1041,32 @@ class WakeWordService(Service):
                  "front of the camera)", phrase, self.cfg.short_min_confidence)
         return None
 
+    def _single_ok(self, result: dict[str, Any], phrase: str) -> str | None:
+        """"bot" alone: only as the first word heard after a pause ("Bot, what time is it?", not "the bot I
+        made"), sure of it (``wake.short_min_confidence``; a face doesn't make up for it, as "But I..." is heard
+        as an unsure "bot"), and not while Spotify plays (songs say "but" a lot)."""
+        toks, confs = _heard_words(result)
+        if not toks or toks[0] != phrase:
+            why = "not the first word heard"
+        elif confs[0] < self.cfg.short_min_confidence:
+            why = f"word confidence {confs[0]:.2f} below wake.short_min_confidence {self.cfg.short_min_confidence:.2f}"
+        elif self._music_on():
+            why = "music is playing"
+        else:
+            return phrase
+        self.short_ignored += 1
+        log.info("wake word: '%s' ignored (%s)", phrase, why)
+        return None
+
+    def _music_on(self) -> bool:
+        try:
+            from littlebot.skills.spotify import get_spotify  # noqa: PLC0415
+
+            sp = get_spotify(self.ctx)
+            return bool(sp is not None and sp.playing())
+        except Exception:  # noqa: BLE001 - no Spotify: no music to hear
+            return False
+
     def _output_note(self) -> str:
         fn = getattr(self.ctx.audio, "output_note", None)
         try:
@@ -793,16 +1074,86 @@ class WakeWordService(Service):
         except Exception:  # noqa: BLE001 - only for the log
             return "the speaker is busy"
 
-    def _note_unsure(self, result: dict[str, Any]) -> None:
-        """A wake phrase heard, but a word of it below ``wake.min_confidence``: say so in the log (else silent)."""
+    def _note_unsure(self, result: dict[str, Any]) -> str | None:
+        """A wake phrase heard, but not sure enough of it (a word below ``wake.min_confidence``, an unsure "hey bot",
+        "bot" not first): say so in the log (else silent). The phrase heard, or None."""
         heard = match_wake_phrase(result, self._phrases, 0.0)
         if heard is None:
             _note_near_miss(result)
-            return
+            return None
+        self._model("vosk_unsure")
         words = [w for w in result.get("result") or [] if isinstance(w, dict)]
         confs = [float(w.get("conf", 1.0)) for w in words if str(w.get("word", "")).lower() in heard.split()]
         log.info("wake word: heard '%s' but not sure enough (word confidence %.2f, wake.min_confidence %.2f)",
                  heard, min(confs, default=0.0), self.cfg.min_confidence)
+        return heard
+
+    def _model_woke(self, inp: Any, heard: PreRoll, rate: int, rec: KeywordRecognizer | None = None, *,
+                    sync: bool = False) -> bool:
+        """``wake.oww_mode: primary``: the trained model's score went over ``wake.oww_primary_threshold``: the call
+        starts as for Vosk's early wake, with what was said from where the phrase ended (Vosk is the backup).
+        ``sync``: first let the model score the sound so far (Vosk is about to forget that sentence).
+        ``wake.oww_primary_agree``: only with a second opinion (``_second_opinion``)."""
+        if getattr(self.cfg, "oww_mode", "off") != "primary" or self._audio_busy or self._stop.is_set():
+            return False
+        if sync:
+            self._model("score_now", self.cfg.oww_confirm_wait_seconds)
+        agree = (lambda: self._second_opinion(rec)) if getattr(self.cfg, "oww_primary_agree", True) else None
+        hit = self._model("take_wake", agree=agree)
+        if hit is None:
+            return False
+        ago, _score, wake_id = hit
+        carry = self._carry_at(heard, max(0, self._fed - int(ago)), rate, MODEL_PHRASE)
+        self._detected(MODEL_PHRASE, carry, early=True, wake_id=wake_id)
+        self._carry_on(inp, rate, carry)
+        return True
+
+    def _note_words(self, result: dict[str, Any] | None) -> None:
+        """Keep the words of a recogniser result a moment (``_second_opinion``)."""
+        if result:
+            self._recent_words.append((time.monotonic(), tuple(_heard_words(result)[0])))
+
+    def _second_opinion(self, rec: KeywordRecognizer | None) -> str | None:
+        """What else says a model wake is real: Vosk heard a word of a wake phrase ("little", "lil", "bot"), sure
+        of it or not, in its words so far or in the last AGREE_SECONDS; or someone's face is in front of the camera
+        (``wake.short_face_seconds``). None: nothing did. On its own the model woke LittleBot about 50 times in a
+        day on a cricket game, the TV and the room's noise, nobody speaking after (the robot, 2026-11-03), and
+        Vosk heard nothing of a wake phrase in those; it does hear part of one when someone says it."""
+        words = {w for _, ph in self._phrases for w in ph} - {"hey"}
+        heard: list[str] = []
+        partial = getattr(rec, "partial", None)
+        if partial is not None:
+            with contextlib.suppress(Exception):
+                heard = str(partial() or "").split()
+        now = time.monotonic()
+        heard += [w for t, toks in self._recent_words if now - t <= AGREE_SECONDS for w in toks]
+        if words.intersection(heard):
+            return "Vosk"
+        if self._face_seen(self.cfg.short_face_seconds):
+            return "a face"
+        return None
+
+    def _face_seen(self, seconds: float) -> bool:
+        """Someone's face was in front of the camera in the last ``seconds`` (False without a camera)."""
+        seen = getattr(getattr(self.ctx, "vision", None), "face_seen_within", None)
+        try:
+            return bool(seen(seconds)) if seen is not None else False
+        except Exception:  # noqa: BLE001 - no camera: nobody seen
+            return False
+
+    def _rescue(self, heard: str | None) -> str | None:
+        """``wake.oww_mode: rescue``: Vosk heard ``heard`` but wasn't sure of it; a high enough score of the trained
+        model just before wakes it all the same ("hey little bot" heard as an unsure "hey bot" while the model
+        scored 0.79; the robot, 2026-11-02). Not while music plays (songs say "but" a lot)."""
+        if heard is None or getattr(self.cfg, "oww_mode", "off") != "rescue" or self._music_on():
+            return None
+        score = self._model("score_now", self.cfg.oww_confirm_wait_seconds, self.cfg.oww_rescue_seconds)
+        if score is None or score < self.cfg.oww_rescue_threshold:
+            return None
+        self.rescued += 1
+        log.info("wake word: Vosk wasn't sure of '%s', but the wake model's score is %.2f (wake.oww_rescue_threshold "
+                 "%.2f): waking", heard, score, self.cfg.oww_rescue_threshold)
+        return heard
 
     def _maybe_duck(self, rec: KeywordRecognizer) -> None:
         """``wake.video_duck``: the words so far end in "hey": turn the video down while the rest is said."""
@@ -844,9 +1195,16 @@ class WakeWordService(Service):
         words = dict(self._phrases).get(phrase) or tuple(phrase.split())
         end, after = wake_phrase_end(result, words, self.cfg.min_confidence)
         cut = None if end is None else max(0, int((end - WAKE_CUT_MARGIN) * rate))
+        return self._carry_at(heard, cut, rate, phrase, kept_talking=after > 0 or phrase == FOLLOW_UP)
+
+    def _carry_at(self, heard: PreRoll, cut: int | None, rate: int, phrase: str, *,
+                  kept_talking: bool = False) -> SpeechCarry:
+        """The carry: what was heard before sample ``cut`` is the wake phrase, the rest is what they said after."""
         carry = SpeechCarry(rate, phrase=phrase, quiet_level=self._quiet_level(),
-                            kept_talking=after > 0 or phrase == FOLLOW_UP, keep_voice=self._voices_on())
-        carry.keep_wake_phrase(heard.before(cut))  # who said it (littlebot/voices/call.py); only with keep_voice
+                            kept_talking=kept_talking, keep_voice=self._voices_on())
+        before = heard.before(cut)
+        carry.keep_wake_phrase(before)  # who said it (littlebot/voices/call.py); only with keep_voice
+        carry.keep_phrase(before)  # the assistant's speech-to-text hears it whole, then takes it off the words
         for block in heard.since(cut):
             carry.add(block)
         heard.clear()
@@ -874,6 +1232,9 @@ class WakeWordService(Service):
                 now = time.monotonic()
                 if self._audio_busy:  # hand it over at a pause (or while LittleBot's own sound is left out anyway)
                     asked = now if asked is None else asked
+                    if carry.taker_listens:
+                        when = " at once (the call's microphone was open already)"
+                        break
                     if muted or carry.quiet_s >= HANDOVER_QUIET_SECONDS:
                         if now - asked >= 0.05:
                             when = f" at a pause ({int((now - asked) * 1000)} ms after it asked)"
@@ -898,14 +1259,18 @@ class WakeWordService(Service):
                         why = "the microphone was closed"
                         break
                     continue
-                muted = self._muted()
-                if muted:  # LittleBot's own sound (the earcon) is never carried
+                # LittleBot's own sound (the earcon) is never carried; with echo cancelling it is taken out of the
+                # microphone already, and the earcon can play while they go on with their question
+                muted = self._muted() and not self._echo_cancelled()
+                if muted:
                     continue
                 if self._gain != 1.0:
                     chunk = np.clip(chunk * self._gain, -1.0, 1.0)
                 if inp.sample_rate != rate:
                     chunk = dsp.resample(chunk, inp.sample_rate, rate)
                 carry.add(chunk)
+                if rate == RATE_16K:
+                    self._model("feed", dsp.to_int16(chunk))  # the model's score just after the wake (shadow)
         finally:
             done = time.monotonic()
             if not why:
@@ -934,9 +1299,10 @@ class WakeWordService(Service):
             audio._publish_device("microphone")  # noqa: SLF001 - keep the dashboard's device status fresh
 
     # ------------------------------------------------------------ detection
-    def _detected(self, phrase: str, carry: SpeechCarry | None = None) -> None:
+    def _detected(self, phrase: str, carry: SpeechCarry | None = None, *, early: bool = False,
+                  wake_id: Any = None) -> None:
         """Runs in the listener thread (which then keeps ``carry`` filled until live voice takes the
-        microphone): hand over to the loop."""
+        microphone): hand over to the loop. ``early``: heard in the words so far (``wake.early``)."""
         loop = self._loop
         if loop is None or loop.is_closed():
             if carry is not None:
@@ -946,17 +1312,19 @@ class WakeWordService(Service):
             self._triggered = True
         self.triggers += 1
         self.last_heard = {"phrase": phrase, "at": time.time(), "result": "starting", "detail": None}
-        log.info("wake word heard (phrase=%s)", phrase)
+        log.info("wake word heard (phrase=%s%s)", phrase, ", before the sentence ended" if early else "")
         try:
-            asyncio.run_coroutine_threadsafe(self._handle(phrase, carry), loop)
+            asyncio.run_coroutine_threadsafe(self._handle(phrase, carry, early=early, wake_id=wake_id), loop)
         except RuntimeError:  # loop closed meanwhile
             if carry is not None:
                 carry.drop("no event loop")
             with self._cv:
                 self._triggered = False
 
-    async def _handle(self, phrase: str, carry: SpeechCarry | None = None) -> None:
+    async def _handle(self, phrase: str, carry: SpeechCarry | None = None, *, early: bool = False,
+                      wake_id: Any = None) -> None:
         ctx = self.ctx
+        outcome_noted = wake_id is None
         entered = False
         video: str | None = None
         started = False
@@ -967,26 +1335,50 @@ class WakeWordService(Service):
             with contextlib.suppress(Exception):
                 entered = ctx.state.state != RobotState.LISTENING and ctx.state.transition(RobotState.LISTENING,
                                                                                           "wake word")
-            if carry is not None and carry.kept_talking:
+            from littlebot.assistant import voice_front  # noqa: PLC0415
+
+            live = voice_front(ctx)  # the assistant (assistant.pipeline) or GPT-Live
+            earcon_volume: float | None = None
+            sound = self.cfg.sound if self._earcon_on() else ""
+            deciding = carry is not None and early and not carry.kept_talking and bool(sound)
+            # EARLY_START: the assistant listens at once, while it is not known yet whether they go on talking, and
+            # plays the earcon itself if they wait for it (_earcon_in_call)
+            later = (deciding and video is None and live is not None and self._echo_cancelled()
+                     and callable(getattr(live, "play_earcon", None)))
+            if deciding and not later:
+                ec = self._echo_cancelled()
+                quiet = EARCON_QUIET_SECONDS if ec else EARCON_QUIET_NO_EC_SECONDS
+                carry.kept_talking = await self._talk_goes_on(carry, quiet)
+                earcon_volume = EARCON_OVER_SPEECH_VOLUME if ec else None  # they may start as it plays
+            if later:
+                carry.levels_wanted = True  # the call's microphone says how loud they are once it took over
+            elif not sound:
+                pass  # no earcon at all (assistant.earcon off): the face shows it is listening
+            elif carry is not None and carry.kept_talking:
                 # They asked in the same breath and wait for the answer, not for a sound; a sound now would also
                 # hide what they say next (half-duplex). The face shows it is listening.
-                log.info("wake word: no earcon, they kept talking (%.1f s said after the wake phrase)", carry.lead_s)
+                log.info("wake word: no earcon, they kept talking (%.1f s said after the wake phrase)", carry.seconds)
             else:
                 if video is not None:
                     await self._speaker_free()
-                await self._play(self.cfg.sound)
-            live = ctx.live
+                await self._play(sound, volume=earcon_volume)
             if live is None:
                 res: dict[str, Any] = {"ok": False, "error": "unavailable",
                                        "detail": "Live voice isn't available on this robot."}
             else:
-                log.info("wake word: starting live voice")
+                log.info("wake word: starting %s", "the assistant" if live is getattr(ctx, "assistant", None)
+                         else "live voice")
                 res = await live.start_session(parent_present=True, carry=carry)
             if res.get("ok"):
                 started = True  # the call has the carry now (it drops it when it ends)
                 log.info("wake word: live voice started; connecting")
                 self._note("started")
+                if later:
+                    self._spawn(self._earcon_in_call(live, carry))
                 self._spawn(self._watch_connect(live))
+                if not outcome_noted:
+                    outcome_noted = True
+                    self._spawn(self._model_outcome(live, wake_id))
                 if video is not None or self._video_held():
                     self._spawn(self._after_video_chat(live, paused_now=video is not None))
                 return
@@ -1014,6 +1406,8 @@ class WakeWordService(Service):
             if video is not None:
                 await self._resume_video("live voice failed")
         finally:
+            if not outcome_noted:
+                self._model("outcome", wake_id, "not_started")
             if carry is not None and not started:
                 carry.drop("live voice did not start")
             with self._cv:
@@ -1021,6 +1415,38 @@ class WakeWordService(Service):
                 self._relisten_note = True
                 self._cooldown_until = time.monotonic() + float(self.cfg.cooldown_seconds)
                 self._cv.notify_all()
+
+    @staticmethod
+    async def _talk_goes_on(carry: SpeechCarry, quiet: float = EARCON_QUIET_SECONDS) -> bool:
+        """Heard early: do they go on talking after the wake phrase (more speech in the carry), or wait for the
+        sound (``quiet`` seconds of quiet)? Not counting the wake phrase's own tail (carry.TAIL_SECONDS)."""
+        start = carry.talk_seconds
+        deadline = time.monotonic() + TALK_WAIT_SECONDS
+        while (carry.is_open or (getattr(carry, "levels_wanted", False) and not carry.dropped)) \
+                and time.monotonic() < deadline:
+            if carry.talk_seconds - start >= TALK_SPEECH_SECONDS:
+                return True
+            if carry.quiet_s >= quiet:
+                return False
+            await asyncio.sleep(0.02)
+        return carry.talk_seconds - start >= TALK_SPEECH_SECONDS or time.monotonic() >= deadline
+
+    async def _earcon_in_call(self, live: Any, carry: SpeechCarry) -> None:
+        """EARLY_START: the assistant listens already; the earcon through its own speaker stream once they wait for
+        it (never when they go on talking)."""
+        try:
+            carry.kept_talking = await self._talk_goes_on(carry, EARCON_QUIET_SECONDS)
+        finally:
+            carry.levels_wanted = False
+        if carry.dropped:
+            return
+        if carry.kept_talking:
+            log.info("wake word: no earcon, they kept talking (the assistant was listening already)")
+            return
+        played = False
+        with contextlib.suppress(Exception):
+            played = bool(live.play_earcon(self.cfg.sound, volume=EARCON_OVER_SPEECH_VOLUME))
+        log.info("wake word: they waited: earcon %s", "played by the assistant" if played else "not played (no call)")
 
     async def _watch_connect(self, live: Any) -> None:
         """Live voice connects in the background: an "uhoh" if that fails, so the child knows."""
@@ -1149,8 +1575,9 @@ class WakeWordService(Service):
         elif took >= 300:
             log.info("wake word: the speaker was free %d ms after the video closed", took)
 
-    async def _play(self, name: str, what: str = "earcon") -> bool:
-        """Play ``name`` and log whether it was heard (and if not, why). Never raises, never hangs."""
+    async def _play(self, name: str, what: str = "earcon", *, volume: float | None = None) -> bool:
+        """Play ``name`` (``volume``: x the volume) and log whether it was heard (and if not, why). Never raises,
+        never hangs."""
         audio = self.ctx.audio
         if not name:
             return False
@@ -1158,7 +1585,8 @@ class WakeWordService(Service):
             log.warning("wake word: %s '%s' not played (no audio system)", what, name)
             return False
         try:
-            ok = bool(await asyncio.wait_for(audio.play_sound(name), EARCON_TIMEOUT))
+            play = audio.play_sound(name) if volume is None else audio.play_sound(name, volume=volume)
+            ok = bool(await asyncio.wait_for(play, EARCON_TIMEOUT))
         except asyncio.CancelledError:
             raise
         except asyncio.TimeoutError:
@@ -1244,7 +1672,16 @@ class WakeWordService(Service):
             "ducks": self.ducks,
             "triggers": self.triggers,
             "last_heard": dict(self.last_heard) if self.last_heard else None,
+            "wake_model": self._model_status(),
         }
+
+    def _model_status(self) -> dict[str, Any] | None:
+        """The trained model next to Vosk (wake.oww_mode), for the status page; None while it is off."""
+        oww = self._oww
+        try:
+            return dict(oww.status()) if oww is not None else None
+        except Exception:  # noqa: BLE001 - only for the status
+            return None
 
 
 def _speaker_note(audio: Any) -> str:

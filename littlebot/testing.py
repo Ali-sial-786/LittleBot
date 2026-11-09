@@ -101,6 +101,17 @@ class FakeAudio(_Recorder):
             self.bus.publish(Topics.AUDIO_SPEECH_FINISHED, {"text": text, "interrupted": False}, source="audio")
         return True
 
+    async def play_speech(self, samples: Any, sample_rate: int, text: str = "", *, wait: bool = True) -> bool:
+        self._rec("play_speech", text, sample_rate=sample_rate)
+        self.spoken.append(text)
+        await asyncio.sleep(0)
+        return True
+
+    def sound_samples(self, name: str) -> Any:
+        import numpy as np  # noqa: PLC0415
+
+        return (np.zeros(480, dtype=np.float32), 48000)
+
     async def play_sound(self, name: str, *, wait: bool = True, volume: float | None = None) -> bool:
         self._rec("play_sound", name, wait=wait, volume=volume)
         self.sounds.append(name)
@@ -162,12 +173,18 @@ class FakeMotion(_Recorder):
         self.estop = False
 
     def gestures(self) -> list[str]:
-        return ["wave", "look_left", "look_right", "raise_arms", "celebrate", "dance", "shake", "neutral"]
+        from littlebot.core.interfaces import GESTURE_NAMES  # noqa: PLC0415
+
+        return list(GESTURE_NAMES)
 
     async def run_gesture(self, name: str, *, priority: int | None = None, owner: str | None = None) -> bool:
         self._rec("run_gesture", name)
         await asyncio.sleep(0)
         return not self.estop and name in self.gestures()
+
+    def look_at(self, x: float, y: float, *, priority: int | None = None, owner: str | None = None) -> bool:
+        self._rec("look_at", x, y)
+        return not self.estop
 
     async def move_joint(self, joint: str, angle: float, *, speed_dps: float | None = None,
                          priority: int | None = None, owner: str | None = None) -> bool:
@@ -194,6 +211,7 @@ class FakeMotion(_Recorder):
             "head": {"angle": 90.0, "target": 90.0, "min": 50.0, "max": 130.0, "neutral": 90.0, "channel": 0, "position": 0.0},
             "left_arm": {"angle": 20.0, "target": 20.0, "min": 10.0, "max": 150.0, "neutral": 20.0, "channel": 1, "position": 0.0},
             "right_arm": {"angle": 160.0, "target": 160.0, "min": 30.0, "max": 170.0, "neutral": 160.0, "channel": 2, "position": 0.0},
+            "head_tilt": {"angle": 90.0, "target": 90.0, "min": 70.0, "max": 110.0, "neutral": 90.0, "channel": 3, "position": 0.0},
         }
         return {"backend": "fake", "physical_enabled": False, "armed": False, "estop": self.estop,
                 "moving": False, "gesture": None, "simulation_only": True, "reason": "fake motion",
@@ -372,8 +390,11 @@ class _FakeStream:
             await asyncio.sleep(self.turn["delay"])
         if self.turn.get("error") is not None:
             raise self.turn["error"]
-        for piece in self.pieces:
+        for i, piece in enumerate(self.pieces):
             yield SimpleNamespace(type="text", text=piece)
+            if self.turn.get("search_after") == i + 1:  # Anthropic's own web search starts here
+                yield SimpleNamespace(type="content_block_start", content_block={"type": "server_tool_use",
+                                                                                 "id": "srv1", "name": "web_search"})
         for call_id, name, _args in self.turn.get("tools", ()):
             yield SimpleNamespace(type="content_block_start", content_block={"type": "tool_use", "id": call_id,
                                                                              "name": name})
@@ -432,8 +453,196 @@ def make_test_context(*, fakes: bool = True, **config_overrides: Any) -> RobotCo
 
     ctx.extras["chatgpt_auth"] = ChatGPTAuth(Path(tempfile.gettempdir()) / f"littlebot-test-{uuid.uuid4().hex}" /
                                              "chatgpt_auth.json")
+    # ... nor a real Spotify sign-in (littlebot/skills/spotify.py reads this path instead of data/)
+    ctx.extras["spotify_token_file"] = Path(tempfile.gettempdir()) / f"littlebot-test-{uuid.uuid4().hex}" / \
+        "spotify_token.json"
+    # ... nor a real Google Calendar sign-in (littlebot/skills/agenda.py)
+    ctx.extras["google_calendar_token_file"] = Path(tempfile.gettempdir()) / f"littlebot-test-{uuid.uuid4().hex}" / \
+        "google_calendar.json"
+    # ... nor the real phones' notification topics (littlebot/skills/push.py)
+    ctx.extras["phone_topic_dir"] = Path(tempfile.gettempdir()) / f"littlebot-test-{uuid.uuid4().hex}"
+    # ... nor the real doorbell hook's secret (littlebot/skills/doorbell.py)
+    ctx.extras["doorbell_hook_token_file"] = Path(tempfile.gettempdir()) / f"littlebot-test-{uuid.uuid4().hex}" / \
+        "doorbell_hook_token"
+    # ... nor the real Nanit bridge's folder (littlebot/nanit: the camera list, whether a sign-in exists)
+    ctx.extras["nanit_dir"] = Path(tempfile.gettempdir()) / f"littlebot-test-{uuid.uuid4().hex}" / "nanit"
+    # ... nor the real last sign of life (littlebot/power/last_seen.py)
+    ctx.extras["power_last_file"] = Path(tempfile.gettempdir()) / f"littlebot-test-{uuid.uuid4().hex}" / \
+        "power_last.json"
+    # ... nor the real list of jokes told (littlebot/assistant/jokes.py)
+    ctx.extras["jokes_told_file"] = Path(tempfile.gettempdir()) / f"littlebot-test-{uuid.uuid4().hex}" / \
+        "jokes_told.json"
     if fakes:
         ctx.face = FakeFace(ctx.bus)
         ctx.audio = FakeAudio(ctx.bus)
         ctx.motion = FakeMotion()
     return ctx
+
+
+# ---------------------------------------------------------------------------
+# The assistant (littlebot/assistant): call audio, speech-to-text and text-to-speech fakes
+# ---------------------------------------------------------------------------
+
+class FakeCallAudio:
+    """Stands in for ``chatgpt.live_audio.LiveAudio`` in assistant sessions: silence from the "microphone",
+    whatever is played kept in ``played`` (and heard at once: nothing stays queued)."""
+
+    barge_in_on = False
+
+    def __init__(self) -> None:
+        import numpy as np  # noqa: PLC0415
+
+        self._np = np
+        self.opened = self.closed = False
+        self.played: list[tuple[int, int]] = []  # (samples, rate) per play_pcm call
+        self.cues: list[tuple[int, int]] = []  # (samples, rate) per play_cue call (sounds that leave the mic open)
+        self.heard_words: list[tuple[str, bool]] = []
+        self.thinking = 0
+        self.muted = False
+        self.dropped = 0
+        self.interrupted = False
+        self.voice_held = False  # (interrupted, and not decided yet)
+        self.asides: list[str] = []  # "yeah"s said over the held voice that let it play on
+        self.speaking = False
+        self.queued_s = 0.0
+        self.mouth = (0.0, "closed")
+        self.level = 0.0
+        self.on_change: Any = None
+
+    def open(self, loop: Any) -> None:
+        self.opened = True
+
+    def close(self) -> None:
+        self.closed = True
+
+    def reopen(self) -> None:
+        pass
+
+    def stalled(self) -> str | None:
+        return None
+
+    async def read_frame(self) -> Any:
+        await asyncio.sleep(0.01)
+        return self._np.zeros(960, dtype=self._np.int16)
+
+    def play_pcm(self, samples: Any, rate: int = 48000) -> None:
+        self.played.append((len(samples), int(rate)))
+
+    def play_cue(self, samples: Any, rate: int = 48000) -> None:
+        self.cues.append((len(samples), int(rate)))
+
+    def play_thinking(self) -> bool:
+        self.thinking += 1
+        return True
+
+    def setup_barge_in(self, **hooks: Any) -> None:
+        self.on_change = hooks.get("on_change")
+
+    def barge_in_heard(self, text: str, final: bool, *, aside: bool = False) -> str | None:
+        if aside and self.voice_held:  # LiveAudio: the held voice waits, then plays on
+            if final:
+                self.voice_held = self.interrupted = False
+                self.asides.append(text)
+                if self.on_change is not None:
+                    self.on_change("carried_on", {"reason": "aside"})
+                return "aside"
+            return None
+        self.heard_words.append((text, final))
+        return None
+
+    def mute(self) -> None:
+        self.muted = True
+
+    def unmute(self) -> None:
+        self.muted = False
+
+    def drop_voice(self) -> None:
+        self.dropped += 1
+
+
+class FakeSTTStream:
+    def __init__(self, provider: "FakeSTT", on_event: Any) -> None:
+        self.provider = provider
+        self.on_event = on_event
+        self.fed = 0
+        self.closed = False
+        self.resets = 0
+        self.finished = 0
+
+    async def feed(self, samples: Any) -> None:
+        self.fed += len(samples)
+
+    async def finish(self) -> None:
+        self.finished += 1
+
+    async def reset(self) -> None:
+        self.resets += 1
+
+    async def aclose(self) -> None:
+        self.closed = True
+
+
+class FakeSTT:
+    """A speech-to-text provider driven by the test: ``say("text")`` is a whole turn (start, words, end)."""
+
+    streaming = True
+
+    def __init__(self, name: str = "fake-stt", *, fail_open: bool = False) -> None:
+        self.name = name
+        self.fail_open = fail_open
+        self.stream: FakeSTTStream | None = None
+
+    def missing(self) -> str | None:
+        return None
+
+    async def open(self, on_event: Any) -> FakeSTTStream:
+        if self.fail_open:
+            from littlebot.assistant.speech import SpeechError  # noqa: PLC0415
+
+            raise SpeechError("network")
+        self.stream = FakeSTTStream(self, on_event)
+        return self.stream
+
+    def say(self, text: str) -> None:
+        from littlebot.assistant.speech import STTEvent  # noqa: PLC0415
+
+        assert self.stream is not None, "no stream open"
+        self.stream.on_event(STTEvent("start_of_turn"))
+        self.stream.on_event(STTEvent("partial", text))
+        self.stream.on_event(STTEvent("end_of_turn", text))
+
+    def event(self, kind: str, text: str = "") -> None:
+        """One event as it is (``eager_end_of_turn``, ``turn_resumed``, ``end_of_turn`` ...)."""
+        from littlebot.assistant.speech import STTEvent  # noqa: PLC0415
+
+        assert self.stream is not None, "no stream open"
+        self.stream.on_event(STTEvent(kind, text))
+
+
+class FakeTTS:
+    """Text-to-speech that makes 10 ms of silence per character (48 kHz) and remembers what it was asked."""
+
+    name = "fake-tts"
+    sample_rate = 48000
+    last_provider = "fake-tts"
+
+    def __init__(self) -> None:
+        self.said: list[str] = []
+
+    def missing(self) -> str | None:
+        return None
+
+    async def stream(self, text: str) -> Any:
+        import numpy as np  # noqa: PLC0415
+
+        self.said.append(text)
+        yield np.zeros(max(1, len(text)) * 480, dtype=np.float32)
+
+    async def warm(self) -> None:
+        pass
+
+    async def aclose(self) -> None:
+        pass
+
+    def describe(self) -> dict[str, Any]:
+        return {"providers": [self.name]}

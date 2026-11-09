@@ -88,6 +88,17 @@ def _obj(props: dict[str, Any] | None = None, required: tuple[str, ...] = ()) ->
 _STR = {"type": "string"}
 _PERCENT = {"type": "integer", "minimum": 0, "maximum": 100}
 
+
+def _screen_games() -> str:
+    """The on-screen games by id and name, for start_game's description: without them the assistant's brain saw only
+    start_voice_game's list and said "I don't have a game for that one" to rock paper scissors, then played it out
+    loud with picks of its own (the robot, 2026-10-31)."""
+    try:
+        from littlebot.games.catalog import GAMES  # noqa: PLC0415 - metadata only, no pygame
+    except Exception:  # noqa: BLE001
+        return ""
+    return ", ".join(f"{g.id} ({g.name})" for g in GAMES)
+
 TOOLS: tuple[_Tool, ...] = (
     _Tool("get_robot_status", "LittleBot's own status right now: what it is doing, CPU temperature, CPU load, "
           "memory, how long it has been running, Wi-Fi, which devices work (camera, microphone, speaker, screen, "
@@ -115,14 +126,14 @@ TOOLS: tuple[_Tool, ...] = (
           _obj({"activity": {**_STR, "description": "activity id or name"}}, ("activity",))),
     _Tool("stop_activity", "Stop the activity that is running.", _obj()),
     _Tool("get_volume", "LittleBot's speaker and video volume, in percent.", _obj()),
-    _Tool("set_volume", "Set the volume in percent (it is capped at the safe maximum).",
+    _Tool("set_volume", "Set the volume in percent (it is capped at the safe maximum). Returns the new volume.",
           _obj({"percent": {**_PERCENT, "description": "0 to 100"},
                 "what": {"type": "string", "enum": ["all", "speaker", "video"], "description": "default all"}},
                ("percent",))),
-    _Tool("volume_up", "Make LittleBot louder (default one step of 10 percent).",
-          _obj({"step": {**_PERCENT, "description": "percent, default 10"}})),
-    _Tool("volume_down", "Make LittleBot quieter (default one step of 10 percent).",
-          _obj({"step": {**_PERCENT, "description": "percent, default 10"}})),
+    _Tool("volume_up", "Make LittleBot louder (default one step of 10 percent). Returns the new volume: no need "
+          "to check it first.", _obj({"step": {**_PERCENT, "description": "percent, default 10"}})),
+    _Tool("volume_down", "Make LittleBot quieter (default one step of 10 percent). Returns the new volume: no "
+          "need to check it first.", _obj({"step": {**_PERCENT, "description": "percent, default 10"}})),
     _Tool("set_face", "Show a face or face animation on LittleBot's screen, e.g. happy, surprised, sleepy, wink, "
           "spin_eyes, peekaboo, hearts, confetti.", _obj({"face": _STR}, ("face",))),
     _Tool("go_to_sleep", "Put LittleBot to sleep (sleepy face, quiet) once you have said good night.", _obj()),
@@ -144,26 +155,38 @@ TOOLS: tuple[_Tool, ...] = (
           "('keep watching', 'go back to the video') carries on once you have finished speaking.", _obj()),
     _Tool("list_games", "The games LittleBot can play.", _obj()),
     _Tool("start_game", "Start one of LittleBot's on-screen games by id or name (you can keep talking while it "
-          "runs).", _obj({"game": {**_STR, "description": "game id or name"}}, ("game",))),
+          f"runs): {_screen_games()}. The game plays itself: in rock paper scissors it reads their hand with the "
+          "camera or hears their move, picks for you and says who won, so never play it out loud or make up a pick.",
+          _obj({"game": {**_STR, "description": "game id or name"}}, ("game",))),
     _Tool("stop_game", "Stop the game that is running.", _obj()),
-    _Tool("look_through_camera", "Take one photo with LittleBot's camera (only if a grown-up allows it) and say "
-          "what is in it, to answer a question like 'what am I holding?'.",
+    _Tool("look_through_camera", "Take one new photo with LittleBot's camera (only if a grown-up allows it) and say "
+          "what is in it, to answer a question like 'what am I holding?'. Call it EVERY time they ask what you see, "
+          "what is there or what they are holding, even if you looked a moment ago or it failed before: an earlier "
+          "photo is old (things move), so never answer from it.",
           _obj({"question": _STR}, ("question",)), modes=("chat",)),
-    _Tool("get_weather", "The real weather from a weather service: now (temperature, feels-like, conditions, wind) "
-          "and the forecast (high, low, conditions, chance of rain or snow, wind, sunrise and sunset) for today, "
-          "tomorrow or the next days. Call it for EVERY question about the weather, the temperature outside, rain, "
-          "snow, sun, wind, or what to wear outside, instead of guessing or saying you don't know. Without a place it "
-          "is the weather at home; for somewhere else give the place, e.g. 'Paris' or 'Springfield, Illinois'.",
+    _Tool("get_weather", "The real weather from a weather service: now (temperature, feels-like, conditions, wind), "
+          "the next 12 hours in three-hour blocks (next_hours), and the forecast (high, low, conditions, chance of "
+          "rain or snow, wind, sunrise and sunset) for today, tomorrow or the next days; with hourly, also the hour "
+          "by hour (the next 24 hours one by one, and a few hours across each day). Call it for EVERY question "
+          "about the weather, the temperature outside, rain, snow, sun, wind, or what to wear outside, instead of "
+          "guessing or saying you don't know. Without a place it is the weather at home; for somewhere else give "
+          "the place, e.g. 'Paris' or 'Springfield, Illinois'.",
           _obj({"place": {**_STR, "description": "a city or town; leave out for home"},
                 "days": {"type": "integer", "minimum": 1, "maximum": 7,
-                         "description": "days of forecast: 1 today, 2 (default) today and tomorrow, up to 7"}})),
+                         "description": "days of forecast: 1 today, 2 (default) today and tomorrow, up to 7"},
+                "hourly": {"type": "boolean",
+                           "description": "true for hour by hour: 'the hourly forecast', 'will it rain at 3?', "
+                                          "'this afternoon', 'tonight', 'when will it stop raining?'"},
+                "day": {**_STR, "description": "the day they asked about, for the card on the screen: 'tomorrow', "
+                                               "'Saturday', 'the day after tomorrow'; leave out for today or now"}})),
     _Tool("get_time", "The current time, date and day of the week where LittleBot is (or in another place). Call it "
           "for 'what time is it?', 'what day is it?', 'what's the date?' or how long until something, instead of "
           "guessing.", _obj({"place": {**_STR, "description": "a city, for the time somewhere else; leave out for "
                                                             "here"}})),
     _Tool("show_on_screen", "Show an info card on LittleBot's 7-inch screen while your answer is said: the gist and "
-          "the useful details (a forecast, a word's meaning, key points, a recipe with its ingredients and steps, a "
-          "timer, a sum, a list or a comparison), not your words. A timer card is a real "
+          "the useful details (a forecast, a word's meaning, a person, place or animal with its picture, key points, a "
+          "recipe with its ingredients and steps, a timer, a sum, a list or a comparison), not your words. A timer "
+          "card is a real "
           "timer: it counts down, chimes and tells them when it is done, so \"set a timer\" is this card (never say "
           "you can't set one). Cards (* required):",
           _obj({"card": {**_STR, "description": "the card's kind"},
@@ -171,7 +194,8 @@ TOOLS: tuple[_Tool, ...] = (
     _Tool("change_card", "Change the card that is on LittleBot's screen now, instead of making a new one, when they "
           "ask: its picture full screen or zoomed (action picture, args {\"view\": \"fill\" | \"in\" | \"out\" | "
           "\"back\"}: fill for \"show the picture full screen\" or \"make it bigger\", back for the whole card "
-          "again), the next or previous step or point (next, prev), or close it (close); also a timer running off "
+          "again; on a recipe with no picture yet, picture adds the dish's: args {\"query\": \"the dish\"}), the "
+          "next or previous step or point (next, prev), or close it (close); also a timer running off "
           "the screen (add, pause, resume, cancel). Only what they ask for: \"how long is left?\" changes nothing "
           "(LittleBot's note says what the timers are). Card on the screen:",
           _obj({"action": {**_STR, "description": "picture, next, prev, close, or another of the card's actions"},
@@ -197,7 +221,8 @@ TOOLS: tuple[_Tool, ...] = (
 )
 TOOL_NAMES = frozenset(t.name for t in TOOLS)
 SCREEN_TOOL = "show_on_screen"  # offered only while the screen can show cards (RobotToolbox.specs)
-CARD_TOOL = "change_card"  # offered only while a card is on the screen
+CARD_TOOL = "change_card"  # offered only while a card is on the screen (always with specs(stable=True))
+STABLE_CARD_NOTE = "see the turn's context (none there: there is no card to change)."
 BROWSER_TOOLS = frozenset({"search_in_browser", "browser"})  # offered only while ctx.browser can open
 BATTERY_TOOL = "battery"  # offered only while a battery monitor is fitted (littlebot/power)
 
@@ -227,6 +252,34 @@ def _json(data: Any) -> str:
     return json.dumps(data, ensure_ascii=False, separators=(",", ":"), default=str)
 
 
+def _from_home(tz: str | None, home: str | None) -> str:
+    """How far time zone ``tz`` is from home (``home``, else the robot's own clock): "13 hours ahead of home",
+    "5½ hours behind home", "the same time as home"; "" when either zone is unknown."""
+    import datetime as dt  # noqa: PLC0415
+    from zoneinfo import ZoneInfo  # noqa: PLC0415
+
+    now = dt.datetime.now(dt.timezone.utc)
+    try:
+        there = now.astimezone(ZoneInfo(str(tz))).utcoffset()
+    except (ValueError, KeyError, OSError):
+        return ""
+    try:
+        here = now.astimezone(ZoneInfo(home)).utcoffset() if home else None
+    except (ValueError, KeyError, OSError):
+        here = None  # info.timezone isn't a real zone: the robot's own clock
+    if here is None:
+        here = now.astimezone().utcoffset()
+    if there is None or here is None:
+        return ""
+    minutes = int((there - here).total_seconds() // 60)
+    if minutes == 0:
+        return "the same time as home"
+    hours, rest = divmod(abs(minutes), 60)
+    frac = {0: "", 30: "½", 15: "¼", 45: "¾"}.get(rest)
+    amount = f"{hours}{frac}" if frac is not None else f"{hours}:{rest:02d}"
+    return f"{amount} {'hour' if amount == '1' else 'hours'} {'ahead of' if minutes > 0 else 'behind'} home"
+
+
 def _norm(text: Any) -> str:
     return re.sub(r"[^a-z0-9]+", " ", str(text or "").lower().replace("'", "")).strip()
 
@@ -244,15 +297,18 @@ class RobotToolbox:
         self.defer = bool(defer)
         self.calls: list[str] = []  # tool names in the order they ran (never their arguments)
         self.done: list[str] = []  # short confirmations of what was done or queued
+        self.failed: list[str] = []  # the tools whose call said error (a final tool's error is never seen)
         self.pending: list[Pending] = []
         self._found: list[dict[str, Any]] = []  # the last search results (titles for play_youtube)
         self._opened_browser = False  # search_in_browser ran in this turn: a card doesn't take its place
         self._going_up: set[asyncio.Task[Any]] = set()  # cards still going up after their tool call answered
 
     # ------------------------------------------------------------ the model's side
-    def specs(self) -> list[dict[str, Any]]:
+    def specs(self, *, stable: bool = False) -> list[dict[str, Any]]:
         """Tool specs for ``ChatGPTProvider.reply(tools=...)``: LittleBot's functions, then OpenAI's web
-        search (``WEB_SEARCH``) when ``chatgpt.web_search`` is on."""
+        search (``WEB_SEARCH``) when ``chatgpt.web_search`` is on. ``stable``: the same list whatever is on the
+        screen (change_card always, the card itself in ``card_now()`` for the turn's context), so a model's prompt
+        cache, which starts with the tools, still holds after a card came up (the assistant's brain)."""
         out: list[dict[str, Any]] = []
         for t in TOOLS:
             if self.mode not in t.modes:
@@ -263,6 +319,10 @@ class RobotToolbox:
                     out.append({"name": t.name, "description": f"{t.description} {cards}.", "parameters": t.parameters})
                 continue
             if t.name == CARD_TOOL:  # with what the card on the screen (and a timer behind it) is and can do
+                if stable:
+                    out.append({"name": t.name, "description": f"{t.description} {STABLE_CARD_NOTE}",
+                                "parameters": t.parameters})
+                    continue
                 card = self._card_now()
                 if card:
                     out.append({"name": t.name, "description": f"{t.description} {card}.", "parameters": t.parameters})
@@ -272,9 +332,17 @@ class RobotToolbox:
             if t.name == BATTERY_TOOL and self._power() is None:
                 continue
             out.append({"name": t.name, "description": t.description, "parameters": t.parameters})
+        hub = self._skills()
+        if hub is not None:  # memory, reminders, lists, smart home, voice games ... (littlebot/skills)
+            names = {o["name"] for o in out}
+            out.extend(s for s in _safe(hub.specs) or [] if s.get("name") not in names)
         if self.web_search:
             out.append(dict(WEB_SEARCH))
         return out
+
+    def _skills(self) -> Any:
+        hub = getattr(self.ctx, "skills", None)
+        return hub if hub is not None and hasattr(hub, "specs") else None
 
     @property
     def web_search(self) -> bool:
@@ -287,6 +355,16 @@ class RobotToolbox:
     async def run(self, name: str, arguments: str | dict[str, Any] | None = None) -> str:
         """Run one tool call; returns what to tell the model. Never raises (except cancellation)."""
         tool = next((t for t in TOOLS if t.name == name and self.mode in t.modes), None)
+        hub = self._skills()
+        if tool is None and hub is not None and _safe(lambda: hub.owns(name)):
+            self.calls.append(str(name))
+            result = await hub.run(name, arguments)
+            if self.defer:  # music asked for: it starts after the turn, like a video (littlebot/skills/takeover.py)
+                from littlebot.skills import takeover  # noqa: PLC0415
+
+                for p in takeover.claim(self.ctx):
+                    self._queue(p.label, p.run, takeover=bool(getattr(p, "takeover", True)))
+            return result
         if tool is None:
             return _err(f"there is no tool called {str(name)[:40]}")
         if isinstance(arguments, dict):
@@ -307,6 +385,8 @@ class RobotToolbox:
             log.warning("tool %s crashed", tool.name, exc_info=True)
             result = _err("the action failed")
         log.info("tool %s (%s) -> %s", tool.name, self.mode, result.split(":", 1)[0] if result else "")
+        if result.startswith("error"):
+            self.failed.append(tool.name)
         return result
 
     # ------------------------------------------------------------ after the turn
@@ -993,6 +1073,11 @@ class RobotToolbox:
             why = (_safe(games.status) or {}).get("last_error")
             return _err(f"the game '{name}' couldn't start" + (f": {str(why)[:160]}" if why else ""))
         self.done.append(f"the game '{name}' started")
+        game = (_safe(games.status) or {}).get("game") or {}
+        how, intro = str(game.get("how") or ""), str(game.get("intro") or "")
+        if how:  # how it's played and that it calls each round itself: one short sentence (a long one is talked over)
+            say = f'say only "{intro[:120]}"' if intro else "say it's on and how to play in one short sentence"
+            return _ok(f"the game '{name}' started on the screen. {how[:600]} Now {say}.")
         return _ok(f"the game '{name}' started on the screen")
 
     async def _stop_game(self, args: dict[str, Any]) -> str:
@@ -1028,9 +1113,17 @@ class RobotToolbox:
             days = max(1, min(7, int(args.get("days") or 2)))
         except (TypeError, ValueError):
             days = 2
-        card = self._soon(self._weather_card(place, days))  # goes up while the forecast is fetched
+        day = " ".join(str(args.get("day") or "").split())[:40] or None
+        if day and day.lower() in ("today", "now", "tonight"):
+            day = None
+        if day:
+            days = max(days, 2) if day.lower() == "tomorrow" else 7  # "Saturday": the week, to find it in
+        hourly = bool(args.get("hourly"))
+        # The card goes up while the forecast is fetched: the day asked about ("tomorrow" used to show today's).
+        card = self._soon(self._weather_card(place, days, view="hours" if hourly else ("day" if day else None),
+                                             day=day))
         try:
-            report = await get_weather(self.ctx).report(place, days=days)
+            report = await get_weather(self.ctx).report(place, days=days, hourly=hourly)
         except WeatherError as e:
             card.cancel()
             return _err(f"{e}. Say so briefly; don't guess the weather.")
@@ -1061,6 +1154,10 @@ class RobotToolbox:
             # info.timezone isn't a real zone: the robot's own clock
             log.warning("info.timezone %r is not a known time zone; using the robot's own", str(tz)[:60])
             out = now_info(None)
+        if where:  # worked out here: the brain guessed "nine hours ahead" for Tokyo, 13 from Hamilton (2026-10-31)
+            diff = _from_home(tz, getattr(info, "timezone", "") or None)
+            if diff:
+                out = {**out, "compared_with_home": diff}
         return _json({**({"place": where} if where else {}), **out})
 
     # ------------------------------------------------------------ the screen's info cards (littlebot/screens)
@@ -1078,7 +1175,7 @@ class RobotToolbox:
         try:
             from littlebot.screens.base import card_types  # noqa: PLC0415
 
-            return card_types()
+            return card_types(offered_only=True)
         except Exception:  # noqa: BLE001 - no cards is fine
             log.debug("no card types", exc_info=True)
             return {}
@@ -1124,6 +1221,10 @@ class RobotToolbox:
         except Exception:  # noqa: BLE001
             return str(getattr(card, "title", ""))[:80]
 
+    def card_now(self) -> str:
+        """What change_card can change now (see ``_card_now``), for the turn's context with ``specs(stable=True)``."""
+        return self._card_now()
+
     def _card_now(self) -> str:
         """For change_card's description: "explain (Alexander the Great), with a picture; actions: picture, next,
         close", then any timer running behind it. Empty: no card is up or behind (the tool isn't offered)."""
@@ -1140,7 +1241,7 @@ class RobotToolbox:
         return ". ".join(parts)
 
     async def _change_card(self, args: dict[str, Any]) -> str:
-        from littlebot.screens.base import PICTURE_ACTION  # noqa: PLC0415
+        from littlebot.screens.base import ADD_PICTURE_ACTION, PICTURE_ACTION  # noqa: PLC0415
 
         screens, card = self._card_up()
         action = str(args.get("action") or "").strip().lower()
@@ -1167,6 +1268,16 @@ class RobotToolbox:
                            "stop the timer, use change_card with cancel")
             return _ok("the card is off the screen; the face is back")
         if action == PICTURE_ACTION and PICTURE_ACTION not in acts:
+            if getattr(getattr(card, "slot", None), "loading", False):
+                self.done.append("the card's picture is on its way")
+                return _ok("its picture is still coming; it shows in a moment")
+            what = " ".join(str(given.get("query") or "").split())[:80] or str(getattr(card, "title", "") or "")
+            # a card made without a picture it has room for (a recipe) gets one: they asked for it, and as a final
+            # tool an error here was never heard ("Let me find a picture of butter chicken", then nothing; the
+            # robot, 2026-11-03)
+            if callable(getattr(card, "add_picture", None)) and screens.command(ADD_PICTURE_ACTION, {"query": what}):
+                self.done.append(f"the {card.kind} card shows a picture of {what}")
+                return _ok(f"a picture of {what} is coming up on the {card.kind} card. Say so in a few words.")
             return _err("the card on the screen has no picture showing; just say so")
         if action == PICTURE_ACTION:
             given = {"view": str(given.get("view") or "fill")}
@@ -1195,9 +1306,15 @@ class RobotToolbox:
             clean, why = director.clean_spec(spec, self._card_types(), relaxed)
             if clean is None:
                 return {"ok": False, "error": "invalid", "detail": why}
-            shown = _maybe_await(screens.show(clean, source="tool"))
-            result = await asyncio.wait_for(shown, director.SHOW_TIMEOUT_S)
-            return result if isinstance(result, dict) else {"ok": bool(result)}
+            result = await asyncio.wait_for(_maybe_await(screens.show(clean, source="tool")), director.SHOW_TIMEOUT_S)
+            result = result if isinstance(result, dict) else {"ok": bool(result)}
+            instead = director.text_instead(clean, self._card_types(), relaxed, spec) \
+                if result.get("error") == "no_card" else None
+            if instead is not None:  # a card the screen couldn't make: its text, rather than no card
+                result = await asyncio.wait_for(_maybe_await(screens.show(instead, source="tool")),
+                                                director.SHOW_TIMEOUT_S)
+                result = result if isinstance(result, dict) else {"ok": bool(result)}
+            return result
         except asyncio.CancelledError:
             raise
         except Exception:  # noqa: BLE001 - a card that can't be shown is simply not shown

@@ -55,6 +55,9 @@ class CameraDevice(abc.ABC):
         self.frames_read = 0
         self.open_count = 0
         self.release_count = 0
+        # Decode the next frame while the consumer works on this one (a USB camera's reader thread): set while
+        # frames are wanted back to back (the live view at 30 fps), so decoding never halves the rate.
+        self.prefetch = False
 
     @abc.abstractmethod
     def open(self) -> None:
@@ -444,7 +447,7 @@ class OpenCVCamera(CameraDevice):
 
     def __init__(self, device: int | str = "auto", width: int = 640, height: int = 480, fps: float = 15,
                  fourcc: str = "MJPG", *, open_timeout: float = 5.0, stall_seconds: float = 3.0,
-                 buffer_size: int = 1) -> None:
+                 buffer_size: int = 3) -> None:
         super().__init__()
         self.requested = {"device": device, "width": int(width), "height": int(height), "fps": float(fps),
                           "fourcc": (fourcc or "").upper()}
@@ -589,6 +592,9 @@ class OpenCVCamera(CameraDevice):
                 frame, self._frame = self._frame, None  # hand over; keep no reference
                 self._taken_seq = self._seq
                 self.frames_read += 1
+                if self.prefetch:  # decode the next one meanwhile (on the reader thread)
+                    self._want = True
+                    self._cancelled = False
                 return frame
             return None
 
@@ -674,4 +680,4 @@ def create_camera(cfg: Any, kind: str, *, clock: Callable[[], float] = time.mono
         h = max(48, int(round(w * cfg.capture_height / max(1, cfg.capture_width))))
         return MockCamera(w, h, face=True if cfg.mock_face else None, clock=clock)
     return OpenCVCamera(cfg.device, cfg.capture_width, cfg.capture_height, cfg.capture_fps, cfg.fourcc,
-                        stall_seconds=cfg.stall_seconds)
+                        stall_seconds=cfg.stall_seconds, buffer_size=int(getattr(cfg, "buffers", 3) or 3))

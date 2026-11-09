@@ -21,7 +21,7 @@ A game owns the screen: it acquires ``Resource.SCREEN`` and ``FACE`` + ``AUDIO_O
 mid-game). It ends on STOP ALL, on preemption (a video, an activity, the parent), when the robot
 goes to sleep, or when its time is up (after a short finale); the face comes back afterwards.
 
-Voice exception: when a conversation (``conversation`` / ``live_voice`` lease owners) holds the
+Voice exception: when a conversation (``conversation`` / ``live_voice`` / ``assistant`` lease owners) holds the
 face / speaker - e.g. a voice tool starts a game in the middle of a reply - the game takes only
 the screen and *shares* the rest, so the reply is not cut off; the robot state is left to the
 conversation. A live voice call that starts during a game likewise takes the face / speaker
@@ -53,9 +53,10 @@ log = logging.getLogger("littlebot.games")
 OWNER = "games"
 GAME_STARTED = "game.started"  # {id, name, source, limit_seconds, shared}
 GAME_FINISHED = "game.finished"  # {id, name, reason, completed, duration_seconds, summary, score}
-GAME_NEWS = "game.news"  # {id, name, text}: what a game wants said (a Rock Paper Scissors round's result)
+GAME_NEWS = "game.news"  # {id, name, text, say}: what a game wants said (a Rock Paper Scissors round's result):
+# ``text`` for a voice that words it itself (GPT-Live), ``say`` the ready words (the assistant says them as they are)
 
-VOICE_OWNERS = frozenset({"conversation", "live_voice"})
+VOICE_OWNERS = frozenset({"conversation", "live_voice", "assistant"})  # assistant: littlebot/assistant/session.py
 SHARABLE = (Resource.FACE, Resource.AUDIO_OUT)
 MIN_MINUTES, MAX_MINUTES = 0.5, 15.0
 WATCH_PERIOD = 0.25  # s, session watchdog (time limit, headless driving, lease upgrade)
@@ -167,10 +168,11 @@ class _Host:
     def child_gaze(self) -> tuple[float, float] | None:
         return self.svc.child_gaze()
 
-    def tell(self, text: str) -> None:
+    def tell(self, text: str, say: str = "") -> None:
         s = self.svc._session
         if s is not None and not s.ended:
-            self.svc._publish(GAME_NEWS, {"id": s.info.id, "name": s.info.name, "text": str(text)[:300]})
+            self.svc._publish(GAME_NEWS, {"id": s.info.id, "name": s.info.name, "text": str(text)[:400],
+                                          "say": str(say or "")[:300]})
 
     def hands_ready(self) -> bool:
         from littlebot.games import hand_sign  # noqa: PLC0415

@@ -49,6 +49,7 @@ IP_RETRY_S = 120.0  # after every IP service failed, don't ask again for this lo
 IP_KEY = "info:ip_location"  # database key/value store
 MAX_DAYS = 7
 NEXT_HOURS = 4  # three-hour blocks after the current hour in the report
+HOUR_BY_HOUR = 24  # report(hourly=True): the next this many hours one by one
 HOURS_AHEAD = MAX_DAYS * 24  # hourly data from the current hour on (the report's next hours, a screen card's days)
 DAY_HOURS = (6, 9, 12, 15, 18, 21)  # the hours across a day in ``outlook()`` (the weather card)
 
@@ -275,11 +276,14 @@ class WeatherService:
         return None
 
     # ------------------------------------------------------------ for the tools
-    async def report(self, place: str | None = None, *, days: int = 2) -> dict[str, Any]:
+    async def report(self, place: str | None = None, *, days: int = 2, hourly: bool = False) -> dict[str, Any]:
         """The weather now and the forecast (``days``: 1 = today, 2 = and tomorrow, up to 7), at home or
-        at ``place``. Raises WeatherError; never takes longer than ``info.timeout_seconds``."""
+        at ``place``; ``hourly`` adds the hour by hour (``"hour_by_hour"``: the next ``HOUR_BY_HOUR`` hours one by
+        one, and a few hours across each forecast day). Raises WeatherError; never takes longer than
+        ``info.timeout_seconds``."""
         days = max(1, min(MAX_DAYS, int(days)))
-        return await self._bounded(self._report(str(place or "").strip()[:100] or None, days))
+        return await self._bounded(self._report(str(place or "").strip()[:100] or None, days, hours=hourly,
+                                                hour_by_hour=hourly))
 
     async def outlook(self, place: str | None = None) -> dict[str, Any]:
         """``report(place, days=7)`` for the screen's weather card (littlebot/screens/cards/weather.py): each
@@ -319,7 +323,8 @@ class WeatherService:
             log.info("weather: no answer within %.1f s (it carries on for next time)", self.cfg.timeout_seconds)
             raise WeatherError("timeout") from None
 
-    async def _report(self, place: str | None, days: int, *, hours: bool = False) -> dict[str, Any]:
+    async def _report(self, place: str | None, days: int, *, hours: bool = False,
+                      hour_by_hour: bool = False) -> dict[str, Any]:
         t0 = self._now()
         if place:
             source = "asked"
@@ -335,7 +340,7 @@ class WeatherService:
         units = temperature_units(self._units_choice(), home.country_code if home else None)
         wind = wind_units(units, home.country_code if home else None)
         data = await self._forecast(where, units, wind)
-        out = summarize(data, where, units=units, wind=wind, days=days, day_hours=hours)
+        out = summarize(data, where, units=units, wind=wind, days=days, day_hours=hours, hour_by_hour=hour_by_hour)
         out["location_from"] = ("the place asked for" if source == "asked" else
                                 f"home, {SOURCE_DETAIL.get(source, source)}")
         log.info("weather: answered in %d ms (%s)", int((self._now() - t0) * 1000), source)
@@ -581,9 +586,10 @@ IP_SERVICES: tuple[tuple[str, Callable[[dict[str, Any]], Place | None]], ...] = 
 
 # ---------------------------------------------------------------- the report
 def summarize(data: dict[str, Any], place: Place, *, units: str, wind: str, days: int = 2,
-              day_hours: bool = False) -> dict[str, Any]:
+              day_hours: bool = False, hour_by_hour: bool = False) -> dict[str, Any]:
     """Open-Meteo's answer as a short report for the model (rounded numbers, plain words); ``day_hours``
-    adds a few hours across each forecast day (``outlook()``)."""
+    adds a few hours across each forecast day (``outlook()``), ``hour_by_hour`` the next ``HOUR_BY_HOUR`` hours
+    one by one."""
     cur = data.get("current") if isinstance(data.get("current"), dict) else {}
     daytime = cur.get("is_day") != 0
     now: dict[str, Any] = {
@@ -604,6 +610,7 @@ def summarize(data: dict[str, Any], place: Place, *, units: str, wind: str, days
         "now": {k: v for k, v in now.items() if v is not None},
         "forecast": _days(data.get("daily"), days, data.get("hourly") if day_hours else None),
         "next_hours": _hours(data.get("hourly")),
+        "hour_by_hour": _each_hour(data.get("hourly")) if hour_by_hour else None,
         "source": SOURCE,
     }
     return {k: v for k, v in out.items() if v not in (None, [], "")}
@@ -693,6 +700,33 @@ def _day_hours(hourly: Any, date: _dt.date, *, first: bool) -> list[dict[str, An
         }
         if hour["temperature"] is not None:
             out.append({k: v for k, v in hour.items() if v is not None})
+    return out
+
+
+def _each_hour(hourly: Any, count: int = 0) -> list[dict[str, Any]]:
+    """The next ``count`` (``HOUR_BY_HOUR``) hours one by one after the current hour: time, temperature,
+    conditions, chance of rain or snow."""
+    if not isinstance(hourly, dict) or not isinstance(hourly.get("time"), list):
+        return []
+    times = hourly["time"]
+
+    def col(key: str) -> list[Any]:
+        v = hourly.get(key)
+        return v if isinstance(v, list) else []
+
+    temps, chances, codes, light = (col("temperature_2m"), col("precipitation_probability"), col("weather_code"),
+                                    col("is_day"))
+    out = []
+    for i in range(1, min(len(times), 1 + (count or HOUR_BY_HOUR))):
+        code = codes[i] if i < len(codes) and isinstance(codes[i], (int, float)) else None
+        hour = {
+            "time": _clock(times[i]),
+            "temperature": _round(temps[i]) if i < len(temps) else None,
+            "conditions": conditions(int(code), day=(light[i] != 0) if i < len(light) else True)
+            if code is not None else None,
+            "chance_of_rain_or_snow_percent": _round(chances[i]) if i < len(chances) else None,
+        }
+        out.append({k: v for k, v in hour.items() if v is not None})
     return out
 
 

@@ -1,0 +1,1486 @@
+"""The voice session end to end with fakes: wake -> words -> brain -> voice -> follow-up -> end."""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+from typing import Any
+
+import pytest
+
+from littlebot.assistant import events as ev
+from littlebot.assistant.service import AssistantService
+from littlebot.brain.providers.base import ProviderReply
+from littlebot.core.state import RobotState
+from littlebot.testing import FakeCallAudio, FakeSTT, FakeTTS, make_test_context
+
+
+class Scripted:
+    """A brain provider: answers each question with the next script (strings stream; tuples run a tool)."""
+
+    name = "claude"
+    model = "fake"
+
+    def __init__(self, *scripts: list[Any], delay: float = 0.0) -> None:
+        self.scripts = list(scripts)
+        self.delay = delay
+        self.questions: list[str] = []
+        self.asked: list[str] = []  # the whole last message (with its context note)
+
+    async def reply(self, messages: list[dict[str, str]], *, system: str, max_tokens: int, timeout: float,
+                    tools: Any = None, run_tool: Any = None, max_tool_rounds: int = 6, effort: Any = None,
+                    on_delta: Any = None, final_tools: Any = ()) -> ProviderReply:
+        self.questions.append(messages[-1]["content"].split("\n")[-1])
+        self.asked.append(messages[-1]["content"])
+        script = self.scripts.pop(0) if self.scripts else ["Okay."]
+        if self.delay:
+            await asyncio.sleep(self.delay)
+        for step in script:
+            if isinstance(step, tuple):
+                await run_tool(step[0], step[1])
+            elif on_delta is not None:
+                on_delta(step)
+        return ProviderReply(text="".join(s for s in script if isinstance(s, str)))
+
+
+def _service(provider: Any, **cfg: Any) -> tuple[AssistantService, FakeSTT, FakeTTS, FakeCallAudio]:
+    assistant = {"pipeline": "cascade", "follow_up_seconds": 0.4, "first_words_seconds": 2.0, **cfg}
+    ctx = make_test_context(assistant=assistant)
+    ctx.privacy.set(cloud_enabled=True)
+    stt, tts, audio = FakeSTT(), FakeTTS(), FakeCallAudio()
+    from littlebot.assistant.agent import Brain
+
+    svc = AssistantService(ctx, audio_factory=lambda: audio, stt_factory=lambda: stt,
+                           tts_factory=lambda: tts, brain=Brain(ctx, provider=provider))
+    ctx.assistant = svc
+    return svc, stt, tts, audio
+
+
+async def _wait(pred: Any, timeout: float = 3.0) -> None:
+    for _ in range(int(timeout / 0.01)):
+        if pred():
+            return
+        await asyncio.sleep(0.01)
+    raise AssertionError("timed out waiting")
+
+
+async def test_a_question_answered_then_follow_up_then_end() -> None:
+    brain = Scripted(["[happy] Sunny and 12 degrees.", " Want tomorrow too"], ["Tomorrow is rainy."])
+    svc, stt, tts, audio = _service(brain, follow_up_seconds=0.5)
+    await svc.start()
+    phases: list[str] = []
+    svc.ctx.bus.subscribe(ev.PHASE, lambda e: phases.append(e.get("phase")))
+    res = await svc.start_session(parent_present=True)
+    assert res["ok"] and res["active"]
+    await _wait(lambda: stt.stream is not None and svc.status().get("phase") == "listening")
+    assert svc.ctx.state.state == RobotState.LISTENING
+    stt.say("what's the weather")
+    await _wait(lambda: len(tts.said) == 2)
+    assert tts.said == ["Sunny and 12 degrees.", "Want tomorrow too"]
+    await _wait(lambda: any(c[0] == "set_expression" and c[1][0] == "happy" for c in svc.ctx.face.calls))
+    await _wait(lambda: svc.status().get("phase") == "listening" and len(svc.history) == 1)
+    stt.say("and tomorrow")  # a follow-up: no wake word
+    await _wait(lambda: "Tomorrow is rainy." in tts.said)
+    assert brain.questions == ["what's the weather", "and tomorrow"]
+    await _wait(lambda: not svc.status()["active"], timeout=3)
+    assert svc.last_call["turns"] == 2 and svc.last_call["ended_reason"] == "no follow-up"
+    assert audio.opened and audio.closed and stt.stream.closed
+    assert {"thinking", "speaking", "listening"} <= set(phases)
+    assert svc.ctx.state.state == RobotState.IDLE
+    msgs = svc.history.messages()
+    assert msgs[0] == {"role": "user", "content": "what's the weather"}
+    await svc.stop()
+
+
+async def test_speech_to_text_listens_for_the_names_just_said() -> None:
+    brain = Scripted(["The Great Wall of China is about 21,000 kilometres long."], ["Sure."])
+    svc, stt, tts, _ = _service(brain, follow_up_seconds=0.5)
+    svc.brain.talked_today()
+    await svc.start()
+    await svc.start_session()
+    await _wait(lambda: stt.stream is not None)
+    asked: list[list[str]] = []
+
+    async def set_keyterms(terms: list[str]) -> None:
+        asked.append(list(terms))
+
+    stt.stream.set_keyterms = set_keyterms
+    stt.say("how long is the great wall")
+    await _wait(lambda: asked)
+    assert asked[0][0] == svc.ctx.config.robot_name and "Great Wall of China" in asked[0]
+    await svc.stop()
+
+
+async def test_the_next_turn_knows_what_the_tools_really_did() -> None:
+    # The history kept only the words, so a turn later the brain said "I should correct myself: I said the volume
+    # was at 60 percent, but I never actually checked it" (the robot, 2026-10-31).
+    brain = Scripted([("set_volume", '{"percent": 60}'), "Done, it's at 60 percent."], ["Sure."])
+    svc, stt, tts, _ = _service(brain, follow_up_seconds=0.5)
+    svc.brain.talked_today()  # (the first chat of the day would greet first)
+    await svc.start()
+    await svc.start_session()
+    await _wait(lambda: stt.stream is not None)
+    stt.say("could you make it sixty")  # (not an instant intent: the brain answers)
+    await _wait(lambda: "Done, it's at 60 percent." in tts.said and len(svc.history) == 1)
+    assert "really did" not in brain.asked[0]
+    stt.say("and tell me a joke")
+    await _wait(lambda: len(brain.asked) == 2)
+    note = brain.asked[1].split("\n")[0]
+    assert note.startswith("[Context for this turn") and "really did" in note
+    assert 'after "could you make it sixty": set_volume:' in note
+    assert [m["content"] for m in svc.history.messages()][:2] == ["could you make it sixty",
+                                                                  "Sure. Done, it's at 60 percent."]  # words only
+    await svc.stop()
+
+
+@pytest.mark.parametrize("backup", [True, False])
+async def test_an_answer_said_without_a_card_gets_one_made_while_it_is_said(backup: bool) -> None:
+    answer = "Push the switch firmly to off, then back on. If it trips again, call an electrician."
+    brain = Scripted([answer], [("get_time", '{"place": "Tokyo"}'), "It's 2:52 in the morning in Tokyo."],
+                     [("pause_video", "{}"), "Okay, it's paused for you whenever you're ready."],
+                     ["Sure, here's another fact for you: the moon is drifting away."])
+    svc, stt, tts, _ = _service(brain, follow_up_seconds=0.5, card_backup=backup)
+    svc.brain.talked_today()
+
+    class Screen:  # (the card itself is the brain's: test_brain.py)
+        current: Any = None
+
+        def describe(self) -> str:
+            return "a facts card: Tokyo" if self.current else ""
+
+        def timers_now(self) -> str:
+            return ""
+    screen = svc.ctx.screens = Screen()
+    asked: list[tuple[str, str, str]] = []
+
+    async def card_after(question: str, said: str, box: Any, *, showing: str, still: Any) -> str:
+        asked.append((question, said, showing))
+        assert still()  # this turn's own toolbox, and no card came up meanwhile
+        screen.current = object()
+        assert not still()
+        return "ok: on the screen now: a card"
+    svc.brain.card_after = card_after
+    await svc.start()
+    await svc.start_session()
+    await _wait(lambda: stt.stream is not None)
+    stt.say("how do I reset a tripped breaker")
+    await _wait(lambda: len(svc.history) == 1)
+    stt.say("what time is it in tokyo")  # a tool that put no card up: one is made too
+    await _wait(lambda: len(svc.history) == 2)
+    stt.say("could you hold it a moment")  # a pause: never a card
+    await _wait(lambda: len(svc.history) == 3)
+    stt.say("tell me another one")  # the screen shows a card: the backup is told which
+    await _wait(lambda: len(svc.history) == 4)
+    if backup:
+        assert [q for q, _, _ in asked] == ["how do I reset a tripped breaker", "what time is it in tokyo",
+                                            "tell me another one"]
+        assert asked[0][1] == answer and asked[0][2] == "" and asked[2][2] == "a facts card: Tokyo"
+    else:
+        assert asked == []
+    await svc.stop()
+
+
+def test_a_card_change_that_failed_still_gets_a_backup_card() -> None:
+    """"Show me a picture of butter chicken" over a recipe: change_card failed unheard, and as a card change it got
+    no backup card either (the robot, 2026-11-03)."""
+    from types import SimpleNamespace
+
+    from littlebot.assistant.session import VoiceSession
+
+    me = SimpleNamespace(ctx=SimpleNamespace(screens=SimpleNamespace(current="the recipe")),
+                         cfg=SimpleNamespace(card_backup=True), _quiet_end=False,
+                         svc=SimpleNamespace(brain=SimpleNamespace(card_after=None)))
+    result = SimpleNamespace(tools=["change_card"], silent=False, error=None)
+    assert VoiceSession._card_missing(me, result, SimpleNamespace(failed=["change_card"], pending=[]), "the recipe")
+    assert not VoiceSession._card_missing(me, result, SimpleNamespace(failed=[], pending=[]), "the recipe")
+
+
+def test_the_tools_note_covers_the_recent_turns_and_goes_with_them() -> None:
+    from littlebot.assistant.service import DONE_TURNS, History
+
+    clock = [0.0]
+    h = History(turns=10, minutes=5, now=lambda: clock[0])
+    assert h.done_note() == ""
+    h.add("hi", "Hello!")
+    assert h.done_note() == ""  # no tools: no note
+    for i in range(DONE_TURNS + 1):
+        h.add(f"q{i}", "Done.", [f"tool{i}: ok"])
+    note = h.done_note()
+    assert "tool0" not in note and f"tool{DONE_TURNS}: ok" in note
+    clock[0] = 6 * 60
+    assert h.done_note() == "" and h.messages() == []  # forgotten with the words
+
+
+def test_the_tools_note_never_has_the_context_notes_separator_in_it() -> None:
+    # The context notes are joined with "; ": a tool's result with one in it ran into the next note (the robot,
+    # 2026-11-06). The question is cut between words.
+    from littlebot.assistant.service import History
+
+    h = History(turns=10, minutes=5, now=lambda: 0.0)
+    h.add("Can you tell me what's on my calendar for the whole of this week please; thanks", "One event.",
+          ["close_baby_camera: ok: closed; your face is back"])
+    note = h.done_note()
+    assert ";" not in note
+    assert 'after "Can you tell me what\'s on my calendar for the whole of this...": close_baby_camera: ok: closed, ' \
+           "your face is back" in note
+
+
+def test_an_answer_they_talked_over_has_no_marker_the_brain_could_copy() -> None:
+    # Kept as "... (interrupted)", it taught the brain to write "(interrupted)" itself and stop (2026-11-06): it is
+    # told in front of their next words instead.
+    from littlebot.assistant.service import CUT_CONTEXT, CUT_NOTE, History
+
+    h = History(turns=10, minutes=5, now=lambda: 0.0)
+    h.add("what do you see", "Sorry, my camera", cut=True)
+    assert h.cut_note() == CUT_CONTEXT  # the very next turn is told too: its own words aren't kept yet
+    h.add("try again", "It shows a chair.")
+    assert [m["content"] for m in h.messages()] == ["what do you see", "Sorry, my camera", CUT_NOTE + "try again",
+                                                    "It shows a chair."]
+    assert h.cut_note() == ""  # that answer was heard in full
+
+
+async def test_an_instant_command_is_in_the_tools_note_for_the_next_turns() -> None:
+    # "How did you send it?" after the instant "Sent to your phone." got "I hadn't actually called the tool for it",
+    # and the photo was sent again (the robot, 2026-11-06).
+    from littlebot.assistant.session import _intent_done
+
+    assert _intent_done("intent:send_photo", "Sent to your phone.") == [
+        'send_photo_to_phone: done by your instant command, and you said "Sent to your phone."']
+    assert _intent_done("intent:thanks", "You're welcome!") == [] and _intent_done("brain", "Hi") == []
+    svc, stt, tts, _ = _service(Scripted(["Done."]), follow_up_seconds=3)
+    await svc.start()
+    await svc.start_session()
+    await _wait(lambda: stt.stream is not None)
+    stt.say("turn the volume down a bit")
+    await _wait(lambda: len(svc.history) == 1)
+    assert 'after "turn the volume down a bit": set_volume: done by your instant command, and you said "Quieter."' \
+        in svc.history.done_note()
+    await svc.stop_session("test")
+
+
+async def test_thanks_ends_the_session_without_the_brain() -> None:
+    brain = Scripted()
+    svc, stt, tts, _ = _service(brain, follow_up_seconds=5)
+    await svc.start()
+    await svc.start_session()
+    await _wait(lambda: stt.stream is not None)
+    stt.say("thank you")
+    await _wait(lambda: not svc.status()["active"])
+    assert brain.questions == [] and len(tts.said) == 1
+    assert svc.last_call["ended_reason"].startswith("said intent:thanks")
+
+
+async def test_the_rest_of_thanks_bye_does_not_cut_the_goodbye_off() -> None:
+    # "Thanks, bye" came as "Thanks." and "bought.": the second cut the goodbye off and the brain answered it
+    # (the robot, 2026-10-31).
+    brain = Scripted()
+    svc, stt, tts, _ = _service(brain, follow_up_seconds=5)
+    svc._tts = SlowTTS()
+    await svc.start()
+    await svc.start_session()
+    await _wait(lambda: stt.stream is not None)
+    stt.say("Thanks.")
+    await asyncio.sleep(0.05)
+    stt.say("bought.")
+    await _wait(lambda: not svc.status()["active"])
+    assert brain.questions == [] and svc.last_call["ended_reason"].startswith("said intent:thanks")
+
+
+async def test_a_real_question_while_it_says_goodbye_is_answered() -> None:
+    brain = Scripted(["Rain tomorrow."])
+    svc, stt, tts, _ = _service(brain, follow_up_seconds=0.3)
+    svc._tts = SlowTTS()
+    await svc.start()
+    await svc.start_session()
+    await _wait(lambda: stt.stream is not None)
+    stt.say("Thanks.")
+    await asyncio.sleep(0.05)
+    stt.say("and what about tomorrow")
+    await _wait(lambda: bool(brain.questions))
+    assert brain.questions[0].endswith("and what about tomorrow")  # (with "Thanks." if the goodbye hadn't started)
+    await _wait(lambda: not svc.status()["active"])
+    assert not svc.last_call["ended_reason"].startswith("said intent")
+
+
+@pytest.mark.parametrize("log_words", [False, True])
+async def test_the_words_are_logged_only_when_asked_for_testing(log_words: bool, caplog: Any) -> None:
+    caplog.set_level(logging.INFO, logger="littlebot.assistant")
+    svc, stt, _tts, _ = _service(Scripted(["Paris."]), follow_up_seconds=5, log_words=log_words)
+    await svc.start()
+    await svc.start_session()
+    await _wait(lambda: stt.stream is not None)
+    stt.say("what is the capital of france")
+    await _wait(lambda: "assistant turn:" in caplog.text)
+    assert ("what is the capital of france" in caplog.text) is log_words
+    assert ("said 'Paris.'" in caplog.text) is log_words
+    await svc.stop_session("test")
+
+
+async def test_stop_ends_quietly() -> None:
+    svc, stt, tts, _ = _service(Scripted(), follow_up_seconds=5)
+    await svc.start()
+    await svc.start_session()
+    await _wait(lambda: stt.stream is not None)
+    stt.say("never mind")
+    await _wait(lambda: not svc.status()["active"])
+    assert tts.said == []
+
+
+async def test_more_words_while_thinking_join_the_question() -> None:
+    brain = Scripted(["first"], ["Both at once."], delay=0.3)
+    svc, stt, tts, _ = _service(brain, follow_up_seconds=0.3)
+    await svc.start()
+    await svc.start_session()
+    await _wait(lambda: stt.stream is not None)
+    stt.say("what's the capital of")
+    await asyncio.sleep(0.05)
+    stt.say("Australia")
+    await _wait(lambda: "Both at once." in tts.said or "first" in tts.said)
+    assert brain.questions[-1] == "what's the capital of Australia"
+    await _wait(lambda: not svc.status()["active"])
+
+
+async def test_barge_in_cuts_the_answer() -> None:
+    brain = Scripted(["One. ", "Two. ", "Three."], ["Okay, new topic."], delay=0.0)
+    svc, stt, tts, audio = _service(brain, follow_up_seconds=0.4)
+    await svc.start()
+    await svc.start_session()
+    await _wait(lambda: stt.stream is not None)
+    stt.say("count")
+    await _wait(lambda: len(tts.said) >= 1)
+    audio.interrupted = True
+    audio.on_change("interrupted", {})
+    stt.say("actually stop counting and change topic")
+    await _wait(lambda: audio.heard_words)  # their words confirm the barge-in
+    assert audio.heard_words[0][0].startswith("actually")
+    audio.on_change("heard", {})
+    audio.interrupted = False
+    await _wait(lambda: "Okay, new topic." in tts.said)
+    await _wait(lambda: not svc.status()["active"])
+
+
+async def test_a_word_or_two_of_its_own_voice_heard_back_do_not_cut_it_off() -> None:
+    # "One sec." came back through the microphone, the cut-in detector fired on it and its words confirmed the
+    # cut-in: the weather answer was never said (the robot, 2026-10-31).
+    brain = Scripted(["One sec. ", "Sunny all day."])
+    svc, stt, tts, audio = _service(brain, follow_up_seconds=0.4)
+    await svc.start()
+    await svc.start_session()
+    await _wait(lambda: stt.stream is not None)
+    stt.say("what's the weather")
+    await _wait(lambda: len(tts.said) >= 1)
+    audio.interrupted = True
+    audio.on_change("interrupted", {})
+    stt.event("partial", "One sec.")  # its own voice
+    await asyncio.sleep(0.1)
+    assert audio.heard_words == []
+    stt.event("partial", "Stop.")  # theirs, even if the answer had said "stop"
+    await _wait(lambda: audio.heard_words == [("Stop.", False)])
+    session = svc._session
+    assert session is not None and session._echo_of_me("sec", short=True)
+    assert not session._echo_of_me("sec")  # a turn of theirs: "and tomorrow" after "... and 12 degrees" is theirs
+    assert not session._echo_of_me("cloudy", short=True) and not session._echo_of_me("Yes.", short=True)
+    assert not session._echo_of_me("one cloud", short=True)
+    await svc.stop_session("test")
+
+
+async def test_a_takeover_ends_the_session_and_runs_after() -> None:
+    brain = Scripted(["Going to sleep now.", ("go_to_sleep", "{}")])
+    svc, stt, tts, _ = _service(brain, follow_up_seconds=5)
+    await svc.start()
+    await svc.start_session()
+    await _wait(lambda: stt.stream is not None)
+    stt.say("go to sleep for a bit")
+    await _wait(lambda: not svc.status()["active"])
+    assert svc.last_call["ended_reason"].startswith("handing over")
+    await _wait(lambda: svc.ctx.state.state == RobotState.SLEEPING)
+
+
+async def test_music_starts_under_the_answer_and_the_session_ends_after_it() -> None:
+    # "play 80s music" waited for the answer to be said (4-5 s), then played turned down through the follow-up wait
+    # (~8 s more) (the robot, 2026-11-02)
+    from types import SimpleNamespace
+
+    from littlebot.assistant import session as S
+
+    ran: list[str] = []
+
+    class Item:
+        def __init__(self, label: str, takeover: bool) -> None:
+            self.label, self.takeover = label, takeover
+
+        async def run(self) -> bool:
+            ran.append(self.label)
+            return True
+
+    box = SimpleNamespace(pending=[Item("music spotify", False), Item("video abc", True)])
+    me = SimpleNamespace(_music_after=False)
+    S.VoiceSession._start_quiet(me, box)  # type: ignore[arg-type]
+    assert [p.label for p in box.pending] == ["video abc"]  # a take-over still waits for the answer
+    assert me._music_after is True
+    await asyncio.wait_for(asyncio.gather(*S._QUIET_STARTS), 2.0)
+    assert ran == ["music spotify"]
+    other = SimpleNamespace(pending=[Item("note", False)])
+    me2 = SimpleNamespace(_music_after=False)
+    S.VoiceSession._start_quiet(me2, other)  # type: ignore[arg-type]
+    assert me2._music_after is False and other.pending == []
+    await asyncio.wait_for(asyncio.gather(*S._QUIET_STARTS), 2.0)
+
+
+def test_the_brain_hears_which_words_may_be_misheard() -> None:
+    from types import SimpleNamespace
+
+    from littlebot.assistant import session as S
+
+    me = SimpleNamespace(turns=3, _cut_in_at=None, _now=lambda: 0.0, _unsure=("eighty",))
+    notes = S.VoiceSession._turn_notes(me, None)  # type: ignore[arg-type]
+    assert len(notes) == 1 and '"eighty"' in notes[0] and "most likely said" in notes[0]
+    me._unsure = ()
+    assert S.VoiceSession._turn_notes(me, None) == []  # type: ignore[arg-type]
+    me.turns = 0
+    assert S.VoiceSession._turn_notes(me, None) == []  # type: ignore[arg-type]
+    me.turns, me._unsure = 1, ("Kubla",)
+    first = S.VoiceSession._turn_notes(me, None)  # type: ignore[arg-type]
+    assert len(first) == 2 and "after your wake word" in first[1]
+
+
+async def test_no_words_after_the_wake_word() -> None:
+    svc, stt, _, _ = _service(Scripted(), first_words_seconds=2.0)
+    clock = [0.0]
+    svc.now = lambda: clock[0]
+    await svc.start()
+    await svc.start_session()
+    await _wait(lambda: stt.stream is not None)
+    clock[0] = 3.0
+    await _wait(lambda: not svc.status()["active"])
+    assert svc.last_call["ended_reason"] == "no words after the wake word"
+    assert svc.last_call["heard_user"] is False
+
+
+async def test_announce_in_a_session_and_outside() -> None:
+    svc, stt, tts, _ = _service(Scripted(), follow_up_seconds=1.0)
+    await svc.start()
+    from littlebot.skills.base import announce
+
+    announce(svc.ctx, "The egg timer is done.")
+    await _wait(lambda: "The egg timer is done." in svc.ctx.audio.spoken)  # no session: the speaker
+    await svc.start_session()
+    await _wait(lambda: stt.stream is not None)
+    announce(svc.ctx, "Time to call mom.")
+    await _wait(lambda: "Time to call mom." in tts.said)
+    await svc.stop_session("test")
+
+
+async def test_pipeline_choice() -> None:
+    ctx = make_test_context()
+    svc = AssistantService(ctx)
+    assert ctx.config.assistant.pipeline == "auto" and not svc.use_cascade()
+    assert "GPT-Live until DEEPGRAM_API_KEY" in svc.pipeline_reason()
+    from pydantic import SecretStr
+
+    ctx.config.deepgram_api_key = SecretStr("dg")
+    ctx.config.cartesia_api_key = SecretStr("ca")
+    assert svc.use_cascade() and "Cartesia" in svc.pipeline_reason()
+    assert "dg" not in str(svc.status()) and "ca\"" not in str(svc.status())
+
+
+async def test_the_first_session_is_made_ready_in_the_background() -> None:
+    # On the robot the first session after a restart imported anthropic on the event loop (~1.2 s): the question
+    # said right after "Hey LittleBot" was lost meanwhile. Start-up now loads it all in the background.
+    import sys
+
+    from littlebot.assistant import service as service_mod
+
+    svc, _stt, tts, _audio = _service(Scripted())
+    await svc.preload()
+    assert svc._tts is tts
+    assert all(m in sys.modules for m in ("littlebot.brain.text_model", "littlebot.assistant.session"))
+    await svc.start()
+    task = svc._preloading
+    assert task is not None and not task.done()
+    await svc.stop()
+    await asyncio.sleep(0)
+    assert task.cancelled()
+    assert service_mod._import_all(("littlebot.no_such_module",)) == ["littlebot.no_such_module"]
+
+
+async def test_the_call_audio_opens_before_the_wake_word_lets_go_of_the_microphone() -> None:
+    # The wake word's carry ends when it lets go of the microphone; the call's microphone used to open ~150 ms
+    # later on the robot, and words said in between were lost. Now it opens first, and what it heard before the
+    # wake word let go (already in the carry) is dropped.
+    import numpy as np
+
+    from littlebot.audio.carry import SpeechCarry
+
+    svc, stt, _tts, audio = _service(Scripted())
+    order: list[str] = []
+    opened = audio.open
+    audio.open = lambda loop: (order.append("call audio open"), opened(loop))[-1]
+    kept: list[float] = []
+    audio.flush_input = lambda keep_s=0.0: (order.append("flush"), kept.append(keep_s))
+    let_go_at_once: list[bool] = []
+
+    async def suspend(owner: str) -> None:
+        let_go_at_once.append(carry.taker_listens)  # the call listens already: no waiting for a pause
+        order.append("wake word lets go")
+
+    svc.ctx.audio.suspend = suspend
+    svc.ctx.audio.resume = lambda owner: order.append("back")
+    carry = SpeechCarry(16000, phrase="hey little bot")
+    carry.add(np.full(1600, 0.1, dtype=np.float32))
+    carry.seal("test")
+    await svc.start()
+    await svc.start_session(carry=carry)
+    await _wait(lambda: stt.stream is not None and stt.stream.fed >= 1600)
+    assert order[:3] == ["call audio open", "wake word lets go", "flush"] and let_go_at_once == [True]
+    assert 0.0 < kept[0] < 5.0  # what the call heard since the carry ended is kept
+    await svc.stop_session("test")
+
+
+async def test_started_before_the_earcon_it_tells_the_wake_word_how_loud_they_are_and_can_play_it() -> None:
+    # wakeword EARLY_START: the session listens at once; the wake word decides on its earcon from the call's
+    # microphone, and the session plays it if they wait (leaving the microphone open).
+    import numpy as np
+
+    from littlebot.audio.carry import SpeechCarry
+
+    svc, _stt, _tts, _ = _service(Scripted([]), follow_up_seconds=5)
+    carry = SpeechCarry(16000, phrase="hey little bot")
+    carry.add(np.full(1600, 0.1, dtype=np.float32))
+    carry.seal("test")
+    carry.levels_wanted = True
+    await svc.start()
+    assert svc.play_earcon("listen") is False  # no session yet
+    await svc.start_session(carry=carry)
+    await _wait(lambda: carry.quiet_s >= 0.1)  # the call's (quiet) microphone
+    speech = carry.speech_seconds
+    assert svc.play_earcon("listen", volume=0.6) is True
+    audio = svc._session.audio
+    assert audio.cues and audio.played == []  # a cue, not the voice: the microphone stays open
+    carry.levels_wanted = False
+    quiet = carry.quiet_s
+    await asyncio.sleep(0.1)
+    assert carry.quiet_s == quiet and carry.speech_seconds == speech  # only while the wake word wants them
+    await svc.stop_session("test")
+
+
+async def test_the_wake_phrase_goes_first_and_is_taken_off_the_words() -> None:
+    # Decided early, the carry started in the middle of "bot": "Hey little bot, who was Kublai Khan?" was heard as
+    # "not who was Kublai Khan." and answered as a correction (the robot, 2026-10-31).
+    import numpy as np
+
+    from littlebot.audio.carry import SpeechCarry
+
+    brain = Scripted(["He was a Mongol emperor."])
+    svc, stt, _tts, _ = _service(brain, follow_up_seconds=5)
+    carry = SpeechCarry(16000, phrase="hey little bot")
+    carry.keep_phrase([np.full(8000, 0.2, dtype=np.float32)])
+    carry.add(np.full(1600, 0.1, dtype=np.float32))
+    carry.seal("test")
+    await svc.start()
+    await svc.start_session(carry=carry)
+    await _wait(lambda: stt.stream is not None and stt.stream.fed >= 9600)  # the wake phrase, then the rest
+    assert carry.take_phrase().size == 0  # handed over once
+    stt.say("Hey, little bot.")  # their pause after it: a turn of its own, and nothing to answer
+    await asyncio.sleep(0.1)
+    assert brain.questions == [] and svc.status()["active"]
+    stt.say("Hey, little bot. Who was Kublai Khan?")
+    await _wait(lambda: bool(brain.questions))
+    assert brain.questions == ["Who was Kublai Khan?"]
+    await svc.stop_session("test")
+
+
+async def test_a_loose_likeness_of_the_wake_phrase_is_taken_off_only_their_first_words() -> None:
+    import numpy as np
+
+    from littlebot.audio.carry import SpeechCarry
+
+    brain = Scripted(["Okay."], ["Sitting."])
+    svc, stt, tts, _ = _service(brain, follow_up_seconds=5)
+    carry = SpeechCarry(16000, phrase="hey little bot")
+    carry.keep_phrase([np.full(8000, 0.2, dtype=np.float32)])
+    carry.add(np.full(1600, 0.1, dtype=np.float32))
+    carry.seal("test")
+    await svc.start()
+    await svc.start_session(carry=carry)
+    await _wait(lambda: stt.stream is not None and stt.stream.fed >= 9600)
+    stt.say("little dots. Remind me to check the oven.")
+    await _wait(lambda: "Okay." in tts.said)
+    stt.say("Little dog, sit.")  # a later turn: their own words
+    await _wait(lambda: len(brain.questions) == 2)
+    assert brain.questions == ["Remind me to check the oven.", "Little dog, sit."]
+    await svc.stop_session("test")
+
+
+@pytest.mark.parametrize("said,question", [
+    ("Hey, little bot. What time is it?", "What time is it?"), ("hey little bot what's the weather", "What's the weather"),
+    ("Little bot, stop.", "Stop."), ("Hey Littlebot!", ""), ("Hey lil bot.", ""), ("Okay, little bot, next song", "Next song"),
+    ("What's a little bot?", "What's a little bot?"), ("a little bit louder", "a little bit louder"),
+    ("bot. Who was Kublai Khan?", "Who was Kublai Khan?"), ("Hey bot, what time is it", "What time is it"),
+    ("Bottles of water", "Bottles of water"), ("a little bot who was Kublai Khan.", "Who was Kublai Khan."),
+    ("a little bit more", "a little bit more"),
+    # misheard after "hey" (the robot, 2026-10-31), but never in a sentence of theirs
+    ("Hey, little bug.", ""), ("Hey little bought, what time is it", "What time is it"),
+    ("A little bug is on the wall.", "A little bug is on the wall."), ("Hey, a little bug!", "Hey, a little bug!"),
+    ("middle butt, set the volume to one hundred percent.", "Set the volume to one hundred percent."),
+    ("Little butt, what's that", "What's that"), ("The middle button", "The middle button"),
+    ("Little but strong", "Little but strong"), ("Middle school starts at eight", "Middle school starts at eight"),
+])
+def test_the_wake_phrase_is_no_part_of_the_question(said: str, question: str) -> None:
+    from littlebot.assistant.session import _heard
+
+    assert _heard(said) == question
+    assert _heard(said, phrase_first=True) == question  # the looser first-turn rule takes no more off these
+
+
+@pytest.mark.parametrize("said,question", [
+    ("little dots. Remind me in three minutes to check the oven.", "Remind me in three minutes to check the oven."),
+    ("Hey, middle bod, what time is it?", "What time is it?"), ("Little dog, sit.", "Sit."),
+    ("A little bit. Louder", "A little bit. Louder"), ("little dots", "little dots"),
+    ("Middle school starts at eight", "Middle school starts at eight"), ("little bit louder", "little bit louder"),
+])
+def test_after_the_wake_phrases_own_sound_a_looser_likeness_of_it_is_taken_off(said: str, question: str) -> None:
+    from littlebot.assistant.session import _heard
+
+    assert _heard(said, phrase_first=True) == question
+
+
+def test_what_was_said_with_the_wake_word_goes_without_its_long_pauses() -> None:
+    # Speech-to-text works through it at about real time: 2.5 s of it delayed the end of their turn by ~2 s.
+    import numpy as np
+
+    from littlebot.assistant.session import CARRY_PAUSE_S, _squeeze_quiet
+
+    rng = np.random.default_rng(3)
+    word = (0.2 * rng.standard_normal(4800)).astype(np.float32)  # 0.3 s
+    quiet = np.full(16000, 0.001, dtype=np.float32)  # 1 s
+    out = _squeeze_quiet(np.concatenate([word, quiet, word, quiet[:1600], word]), 16000, 0.015)
+    # the long pause down to CARRY_PAUSE_S (give or take a 20 ms frame), the short one (0.1 s) as it was
+    assert abs(len(out) - (3 * 4800 + round(CARRY_PAUSE_S * 16000) + 1600)) <= 320
+    assert np.array_equal(out[:4800], word) and np.array_equal(out[-4800:], word)
+
+
+async def test_typed_chat_uses_the_same_brain() -> None:
+    svc, _, _, _ = _service(Scripted(["Paris is the capital of France."]))
+    out = await svc.handle_text("capital of france?")
+    assert out["reply"] == "Paris is the capital of France." and out["error"] is None
+    out = await svc.handle_text("volume 20")
+    assert out["provider"] == "intent" and out["reply"] == "Volume 20."
+
+
+async def test_voice_front_falls_back_to_gpt_live_without_speech_to_text() -> None:
+    from littlebot.assistant import voice_front
+
+    svc, stt, _, _ = _service(Scripted())
+    svc.ctx.live = object()
+    assert voice_front(svc.ctx) is svc
+    svc._stt_factory = lambda: None
+    assert voice_front(svc.ctx) is svc.ctx.live
+
+
+async def test_an_early_answer_is_said_only_once_the_turn_really_ends() -> None:
+    brain = Scripted(["Lima is the capital of Peru."])
+    svc, stt, tts, audio = _service(brain, follow_up_seconds=0.3)
+    await svc.start()
+    await svc.start_session()
+    await _wait(lambda: stt.stream is not None)
+    stt.event("start_of_turn")
+    stt.event("eager_end_of_turn", "what's the capital of Peru")
+    await _wait(lambda: brain.questions == ["what's the capital of Peru"])  # the brain started early
+    await asyncio.sleep(0.1)
+    # ...and its voice is made already (heard the moment the turn ends), but nothing reached the speaker
+    assert tts.said == ["Lima is the capital of Peru."] and audio.played == []
+    stt.event("end_of_turn", "What's the capital of Peru?")
+    await _wait(lambda: len(audio.played) > 0)
+    assert len(brain.questions) == 1 and tts.said == ["Lima is the capital of Peru."]  # no second request
+    await _wait(lambda: not svc.status()["active"])
+    assert svc.last_call["turns"] == 1
+
+
+async def test_quiet_after_probably_done_ends_their_turn_at_once() -> None:
+    # Flux alone waited 1.6 s after "who was Kublai Khan" with the answer ready (the robot, 2026-10-31).
+    brain = Scripted(["He was a Mongol emperor."], ["Lima."])
+    svc, stt, tts, audio = _service(brain, follow_up_seconds=5)
+    await svc.start()
+    await svc.start_session()
+    await _wait(lambda: stt.stream is not None)
+    stt.event("start_of_turn")
+    stt.event("partial", "who was Kublai Khan")
+    stt.event("eager_end_of_turn", "who was Kublai Khan")
+    await _wait(lambda: stt.stream.finished == 1, timeout=1.5)  # asked to end the turn now
+    stt.event("end_of_turn", "Who was Kublai Khan?")
+    await _wait(lambda: len(audio.played) > 0)
+    # more words after "probably done": no forcing (they went on)
+    stt.event("start_of_turn")
+    stt.event("partial", "what's the capital of")
+    stt.event("eager_end_of_turn", "what's the capital of")
+    await asyncio.sleep(0.1)
+    stt.event("partial", "what's the capital of Peru")
+    await asyncio.sleep(0.6)
+    assert stt.stream.finished == 1
+    await svc.stop_session("test")
+
+
+async def test_an_early_answer_is_dropped_when_they_go_on() -> None:
+    brain = Scripted(["The weather today is sunny.", ("set_volume", '{"percent": 10}')],
+                     ["Tomorrow it rains."], delay=0.05)
+    svc, stt, tts, _ = _service(brain, follow_up_seconds=0.3)
+    await svc.start()
+    await svc.start_session()
+    await _wait(lambda: stt.stream is not None)
+    stt.event("start_of_turn")
+    stt.event("eager_end_of_turn", "what's the weather")
+    await _wait(lambda: len(brain.questions) == 1)
+    stt.event("turn_resumed")
+    stt.event("end_of_turn", "what's the weather tomorrow")
+    await _wait(lambda: "Tomorrow it rains." in tts.said)
+    await _wait(lambda: len(svc.history.messages()) >= 2)
+    said = [m["content"] for m in svc.history.messages() if m["role"] == "assistant"]
+    assert said == ["Tomorrow it rains."]  # the dropped answer was never heard (its voice may have been made)
+    assert brain.questions[-1] == "what's the weather tomorrow"
+    assert svc.ctx.settings.get("audio.volume") != 0.1  # the dropped answer's tool never ran
+
+
+async def test_stop_or_snooze_while_an_alarm_rings() -> None:
+    brain = Scripted()
+    svc, stt, tts, _ = _service(brain, follow_up_seconds=0.5)
+
+    class Ringing:
+        name = "reminders"
+
+        def __init__(self) -> None:
+            self.rings = [1]
+            self.calls: list[str] = []
+
+        def ringing(self) -> list[int]:
+            return self.rings
+
+        def snooze(self) -> list[int]:
+            self.calls.append("snooze")
+            return self.rings
+
+        def snooze_minutes(self) -> int:
+            return 9
+
+        def stop_ringing(self) -> list[int]:
+            self.calls.append("stop")
+            return self.rings
+
+    class Hub:
+        def __init__(self, skill: Ringing) -> None:
+            self.skill = skill
+
+        def get(self, name: str) -> Ringing | None:
+            return self.skill if name == "reminders" else None
+
+        def specs(self) -> list:
+            return []
+
+        def prompt_notes(self) -> str:
+            return ""
+
+        def context_notes(self) -> str:
+            return ""
+
+    rem = Ringing()
+    svc.ctx.skills = Hub(rem)
+    await svc.start()
+    await svc.start_session()
+    await _wait(lambda: stt.stream is not None)
+    stt.say("snooze")
+    await _wait(lambda: "Snoozed for 9 minutes." in tts.said)
+    stt.say("I'm up")
+    await _wait(lambda: "Okay, it's off." in tts.said)
+    assert rem.calls == ["snooze", "stop"] and brain.questions == []
+    await svc.stop_session("test")
+
+
+async def test_an_alarm_wakes_littlebot_up() -> None:
+    svc, _, _, _ = _service(Scripted())
+    await svc.start()
+    svc.ctx.state.transition(RobotState.SLEEPING, "test")
+    from littlebot.skills.base import announce
+
+    announce(svc.ctx, "Good morning! It's 7.", kind="alarm", urgent=True)
+    assert svc.ctx.state.state == RobotState.IDLE
+    await _wait(lambda: "Good morning! It's 7." in svc.ctx.audio.spoken)
+
+
+async def test_voice_games_are_played_without_the_brain() -> None:
+    from littlebot.games.voice.skill import VoiceGames
+    from littlebot.skills.hub import SkillHub
+
+    brain = Scripted()
+    svc, stt, tts, _ = _service(brain, follow_up_seconds=3)
+    svc.ctx.skills = SkillHub(svc.ctx, [VoiceGames(svc.ctx)])
+    await svc.ctx.skills.start()
+    await svc.start()
+    await svc.start_session()
+    await _wait(lambda: stt.stream is not None)
+    stt.say("let's play trivia")
+    await _wait(lambda: len(tts.said) >= 1)
+    assert svc.ctx.skills.get("voice_games").active is not None
+    said = len(tts.said)
+    stt.say("B")
+    await _wait(lambda: len(tts.said) > said)
+    assert brain.questions == []  # the start and the answer were handled on the robot
+    await svc.stop_session("test")
+
+
+async def test_moves_in_the_game_on_the_screen_go_to_it_and_it_says_who_won() -> None:
+    from littlebot.games.service import GamesService
+
+    brain = Scripted()
+    svc, stt, tts, _ = _service(brain, follow_up_seconds=5)
+    games = svc.ctx.games = GamesService(svc.ctx)
+    await svc.start()
+    assert await games.start("rps", source="test")
+    await svc.start_session()
+    await _wait(lambda: stt.stream is not None)
+    stt.say("Go!")  # no camera: it says how to play instead
+    await _wait(lambda: any(s.startswith("Say rock, paper or scissors") for s in tts.said))
+    said = len(tts.said)
+    stt.say("Rock!")
+    await _wait(lambda: any(w in " ".join(tts.said[said:]) for w in ("win", "draw")), timeout=6.0)
+    assert "rock" in " ".join(tts.said[said:]).lower()
+    assert brain.questions == []  # the brain never made up a pick of its own
+    stt.say("play some jazz")  # not a move: for the brain
+    await _wait(lambda: brain.questions == ["play some jazz"])
+    assert "Rock Paper Scissors is on your screen" in brain.asked[-1]  # it knows the game calls the rounds
+    games.stop()
+    await svc.stop_session("test")
+
+
+class SlowTTS(FakeTTS):
+    """Two seconds of voice per sentence, streamed in 50 ms pieces (a real answer takes a while to say)."""
+
+    async def stream(self, text: str) -> Any:
+        import numpy as np
+
+        self.said.append(text)
+        for _ in range(40):
+            await asyncio.sleep(0.05)
+            yield np.ones(2400, dtype=np.float32) * 0.1
+
+
+async def test_a_barge_in_mid_sentence_cancels_the_turns_take_over_and_records_it_once() -> None:
+    brain = Scripted(["Going to sleep now, goodnight.", ("go_to_sleep", "{}")])
+    svc, stt, _, audio = _service(brain, follow_up_seconds=5)
+    svc._tts = SlowTTS()
+    await svc.start()
+    await svc.start_session()
+    await _wait(lambda: stt.stream is not None)
+    stt.say("could you have a little nap please")
+    await _wait(lambda: len(audio.played) >= 3)
+    audio.on_change("heard", {})  # what LiveAudio does once their words confirm the barge-in
+    await asyncio.sleep(0.5)
+    assert svc.status()["active"] is True
+    assert svc.ctx.state.state != RobotState.SLEEPING
+    assert svc.history.messages()[-1]["content"].startswith("Going to sleep")  # the words they heard, no marker
+    assert len(svc.history) == 1 and svc.history._items[-1][-1] is True  # told in front of their next words
+    note = svc.history.done_note()  # the next answer knows the nap was asked for but never happened
+    assert 'after "could you have a little nap please": go_to_sleep:' in note and "did NOT start" in note
+    assert not svc.brain.first_today()  # an answer heard in part was talk today: no second "Good morning"
+    await svc.stop_session("test")
+
+
+async def test_a_long_answer_is_not_cut_by_a_timeout_and_unsaid_news_is_kept() -> None:
+    brain = Scripted(["One. ", "Two. ", "Three."])
+    svc, stt, _, audio = _service(brain, follow_up_seconds=0.3)
+    svc._tts = SlowTTS()
+    await svc.start()
+    await svc.start_session()
+    await _wait(lambda: stt.stream is not None)
+    stt.say("count to three slowly")
+    from littlebot.skills.base import announce
+
+    await _wait(lambda: len(audio.played) >= 2)
+    announce(svc.ctx, "The egg timer is done.")
+    await _wait(lambda: not svc.status()["active"], timeout=15)
+    assert svc._tts.said == ["One.", "Two.", "Three.", "The egg timer is done."]
+
+
+async def test_the_brain_is_told_who_is_talking_by_voice() -> None:
+    from littlebot.voices.service import Heard, VoiceMatch
+
+    class Voices:
+        threshold = 0.5
+        improved = 0
+
+        def blocked_reason(self) -> str | None:
+            return None
+
+        async def analyse(self, samples: Any, rate: int, **kw: Any) -> Heard:
+            assert rate == 16000 and len(samples) > 0
+            m = VoiceMatch(person_id=1, name="Ali", role="dad", score=0.8, is_child=False, margin=0.3)
+            return Heard("ok", 2.5, m, 1, 0.8, 0.4, True)
+
+        def improve(self, heard: Heard) -> bool:
+            self.improved += 1
+            return True
+
+    brain = Scripted(["Hi!"], ["Sure."])
+    svc, stt, tts, _ = _service(brain, follow_up_seconds=2)
+    svc.ctx.voices = Voices()
+    seen: list[str] = []
+    real = svc.brain.build_messages
+
+    def spy(text: str, history: Any, toolbox: Any = None, *, extra: Any = None) -> Any:
+        seen.append(" ".join(extra or []))
+        return real(text, history, toolbox, extra=extra)
+
+    svc.brain.build_messages = spy
+    await svc.start()
+    await svc.start_session()
+    await _wait(lambda: stt.stream is not None)
+    await asyncio.sleep(0.2)  # some microphone audio to recognise
+    stt.say("hello")
+    await _wait(lambda: "Hi." in tts.said)  # "!" is softened to "." for the voice
+    await _wait(lambda: svc._session is not None and svc._session.speaker is not None)
+    stt.say("what's up")
+    await _wait(lambda: "Sure." in tts.said)
+    assert "the person talking is Ali (dad)" in seen[1]  # recognised in the background: known by the next turn
+    assert svc.ctx.voices.improved >= 1  # a sure turn sharpens their voiceprint
+    await svc.stop_session("test")
+
+
+async def test_saying_who_you_are_teaches_littlebot_your_voice() -> None:
+    from littlebot.voices.service import Heard
+
+    class People:
+        def people(self) -> list[dict[str, Any]]:
+            return [{"id": 2, "name": "Sara", "role": "mum"}]
+
+        def person(self, pid: int) -> dict[str, Any] | None:
+            return {"id": 2, "name": "Sara", "role": "mum"} if pid == 2 else None
+
+    class Store:
+        people = People()
+
+    class Voices:
+        threshold = 0.5
+        store = Store()
+        claimed: list[int] = []
+
+        def blocked_reason(self) -> str | None:
+            return None
+
+        async def analyse(self, samples: Any, rate: int, **kw: Any) -> Heard:
+            return Heard("nobody", 2.2, one_voice=True)
+
+        def keep_claimed(self, person_id: int, heard: Heard) -> dict[str, Any]:
+            self.claimed.append(person_id)
+            return {"ok": True, "reason": "claimed", "first": True}
+
+        def improve(self, heard: Heard) -> bool:
+            return False
+
+    svc, stt, tts, _ = _service(Scripted(["Nice to meet you, Sara!"], ["Sure."]), follow_up_seconds=2)
+    svc.ctx.voices = Voices()
+    await svc.start()
+    await svc.start_session()
+    await _wait(lambda: stt.stream is not None)
+    await asyncio.sleep(0.2)
+    stt.say("Hi, I'm Sara")
+    await _wait(lambda: svc.ctx.voices.claimed == [2])
+    who = svc._session.speaker
+    assert who is not None and who.name == "Sara" and who.sure
+    await svc.stop_session("test")
+
+
+async def test_for_one_person_the_voice_first_then_a_look_with_the_camera(monkeypatch: Any) -> None:
+    """"Send it to my phone" (littlebot/skills/camera.py): the voice check of the turn just heard is waited for;
+    when the voice can't tell, the camera looks."""
+    from types import SimpleNamespace
+
+    from littlebot.assistant import who as who_mod
+    from littlebot.voices.service import Heard, VoiceMatch
+
+    class Voices:
+        threshold = 0.5
+        sure = True
+
+        def blocked_reason(self) -> str | None:
+            return None
+
+        async def analyse(self, samples: Any, rate: int, **kw: Any) -> Heard:
+            await asyncio.sleep(0.3)  # slower than the answer
+            if not self.sure:
+                return Heard("nobody", 2.0, one_voice=True)
+            m = VoiceMatch(person_id=1, name="Ali", role="dad", score=0.8, is_child=False, margin=0.3)
+            return Heard("ok", 2.5, m, 1, 0.8, 0.4, True)
+
+        def improve(self, heard: Heard) -> bool:
+            return False
+
+    looks: list[int] = []
+
+    async def look(ctx: Any) -> list[Any]:
+        looks.append(1)
+        return [SimpleNamespace(id=2, name="Sara", role="mum")]
+
+    monkeypatch.setattr(who_mod, "look_now", look)
+    svc, stt, tts, _ = _service(Scripted(["Hi!"], ["Sure."]), follow_up_seconds=3)
+    svc.ctx.voices = Voices()
+    await svc.start()
+    await svc.start_session()
+    await _wait(lambda: stt.stream is not None)
+    await asyncio.sleep(0.2)
+    stt.say("hello")
+    await _wait(lambda: svc._session is not None and svc._session._identifying is not None)
+    who = await svc.identify_speaker()
+    assert who is not None and who.name == "Ali" and who.sure and looks == []
+    await _wait(lambda: "Hi." in tts.said)
+    svc._session.who.reset()
+    svc.ctx.voices.sure = False
+    first = svc._session._identifying
+    stt.say("what's up")
+    await _wait(lambda: svc._session._identifying is not first)
+    who = await svc.identify_speaker()
+    assert who is not None and who.name == "Sara" and who.how == "face" and looks == [1]
+    await svc.stop_session("test")
+
+
+async def test_outside_a_session_gpt_lives_voice_recognition_says_who() -> None:
+    svc, _stt, _tts, _ = _service(Scripted(["Hi!"]))
+    assert await svc.identify_speaker() is None  # no voice heard, and face recognition is off
+    svc.ctx.bus.publish("voice.speaker", {"person_id": None, "name": None, "is_child": None, "score": 0.4})
+    assert await svc.identify_speaker() is None  # unsure
+    svc.ctx.bus.publish("voice.speaker", {"person_id": 2, "name": "Sara", "role": "mum", "is_child": False,
+                                          "score": 0.8})
+    who = await svc.identify_speaker()
+    assert who is not None and who.name == "Sara" and who.sure and who.how == "voice"
+
+
+async def test_who_is_here_tool_says_what_it_knows() -> None:
+    brain = Scripted([("who_is_here", "{}"), "I can't tell yet."])
+    svc, stt, tts, _ = _service(brain, follow_up_seconds=1)
+    results: list[str] = []
+    real = svc.brain.respond
+
+    async def spy(*a: Any, **kw: Any) -> Any:
+        tools = kw.get("extra_tools") or {}
+        assert "who_is_here" in tools
+        results.append(await tools["who_is_here"][1]({}))
+        return await real(*a, **kw)
+
+    svc.brain.respond = spy
+    await svc.start()
+    await svc.start_session()
+    await _wait(lambda: stt.stream is not None)
+    stt.say("do you know who I am")
+    await _wait(lambda: "I can't tell yet." in tts.said)
+    assert "voice recognition is off" in results[0] and "Camera:" in results[0]
+    await svc.stop_session("test")
+
+
+async def test_pause_and_next_go_to_spotify_when_it_plays() -> None:
+    class Spotify:
+        name = "spotify"
+        actions: list[str] = []
+
+        def playing(self) -> bool:
+            return True
+
+        def paused(self) -> bool:
+            return False
+
+        async def command(self, action: str, percent: Any = None) -> tuple[bool, str]:
+            self.actions.append(action)
+            return True, "Done."
+
+    class Hub:
+        sp = Spotify()
+
+        def get(self, name: str) -> Any:
+            return self.sp if name == "spotify" else None
+
+        def specs(self) -> list:
+            return []
+
+        def prompt_notes(self) -> str:
+            return ""
+
+        def context_notes(self) -> str:
+            return ""
+
+    brain = Scripted()
+    svc, stt, tts, _ = _service(brain, follow_up_seconds=3)
+    svc.ctx.skills = Hub()
+    await svc.start()
+    await svc.start_session()
+    await _wait(lambda: stt.stream is not None)
+    stt.say("next song")
+    await _wait(lambda: Hub.sp.actions == ["next"])
+    assert brain.questions == [] and tts.said == []  # the music changing is the answer
+    await _wait(lambda: not svc.status()["active"])
+
+
+async def test_a_turn_without_words_does_not_keep_the_session_open() -> None:
+    svc, stt, _, _ = _service(Scripted(), first_words_seconds=2.0)
+    clock = [0.0]
+    svc.now = lambda: clock[0]
+    await svc.start()
+    await svc.start_session()
+    await _wait(lambda: stt.stream is not None)
+    stt.event("start_of_turn")  # a noise: speech-to-text starts a turn and never ends it
+    await asyncio.sleep(0.1)
+    clock[0] = 3.0
+    await asyncio.sleep(0.3)
+    assert svc.status()["active"]  # still within the no-words grace
+    clock[0] = 5.0
+    await _wait(lambda: not svc.status()["active"])
+    assert svc.last_call["ended_reason"] == "no words after the wake word"
+
+
+async def test_its_own_voice_heard_back_is_not_a_turn() -> None:
+    brain = Scripted(["The Roman Empire lasted for centuries."], ["Sure."])
+    svc, stt, tts, _ = _service(brain, follow_up_seconds=3)
+    await svc.start()
+    await svc.start_session()
+    await _wait(lambda: stt.stream is not None)
+    stt.say("tell me about rome")
+    await _wait(lambda: len(tts.said) == 1)
+    await asyncio.sleep(0.1)
+    stt.say("the Roman Empire lasted for centuries")  # its own voice leaking back
+    await asyncio.sleep(0.3)
+    assert brain.questions == ["tell me about rome"]
+    stt.say("end the call")
+    await _wait(lambda: not svc.status()["active"])
+    assert svc.last_call["ended_reason"] == "said stop"  # without a word
+    assert len(tts.said) == 1
+    assert svc.ctx.state.state == RobotState.SLEEPING  # told to stop: asleep at once (the owner, 2026-11-03)
+
+
+async def test_its_own_words_said_well_before_their_turn_began_are_theirs() -> None:
+    # "Turn the volume down a bit" said 1.3 s after LittleBot's "Turning the volume down a bit." had ended was
+    # ignored as its own voice heard back (the robot, 2026-10-31).
+    brain = Scripted(["Done."])
+    svc, stt, tts, _ = _service(brain, follow_up_seconds=3)
+    await svc.start()
+    await svc.start_session()
+    await _wait(lambda: stt.stream is not None)
+    session = svc._session
+    now = session._now()
+    session._said.append((now - 5.0, "Turning the volume down a bit."))  # began 5 s ago, about 2 s long
+    assert session._echo_of_me("turn the volume down a bit")  # when their turn began isn't known: as before
+    assert session._echo_of_me("turning the volume down a bit", since=now - 4.0)  # began while it was said
+    assert not session._echo_of_me("turn the volume down a bit", since=now - 0.5)  # began well after it ended
+    stt.say("turn the volume down a bit")
+    await _wait(lambda: "Quieter." in tts.said)  # answered (an instant intent since 2026-10-31)
+    await svc.stop_session("test")
+
+
+async def test_stop_word_ends_wait_word_only_quiets() -> None:
+    svc, stt, tts, audio = _service(Scripted(["A long answer."]), follow_up_seconds=3)
+    await svc.start()
+    await svc.start_session()
+    await _wait(lambda: stt.stream is not None)
+    audio.on_change("stop_word", {"said": "wait"})
+    await asyncio.sleep(0.2)
+    assert svc.status()["active"] and audio.dropped == 1
+    assert audio.cues == []
+    audio.on_change("stop_word", {"said": "stop"})
+    await _wait(lambda: not svc.status()["active"])
+    assert svc.last_call["ended_reason"] == "they said stop"
+    assert audio.cues == [(480, 48000)]  # the short "stopped listening" sound (FakeAudio's samples)
+    assert svc.ctx.state.state == RobotState.SLEEPING
+
+
+async def test_only_one_voice_ever_talks() -> None:
+    svc, stt, _, audio = _service(Scripted(["The answer."]), follow_up_seconds=3)
+    svc._tts = SlowTTS()
+    await svc.start()
+    await svc.start_session()
+    await _wait(lambda: stt.stream is not None)
+    session = svc._session
+    from littlebot.skills.base import announce
+
+    announce(svc.ctx, "Your timer is done. It rang a minute ago.")
+    await _wait(lambda: len(audio.played) >= 2)  # the announcement is talking
+    stt.say("what was the answer")  # they start a new question over it
+    await _wait(lambda: "The answer." in svc._tts.said)
+    talking = [v for v in session._mouths if v.busy]
+    assert len(talking) <= 1  # the announcement was stopped for the answer
+    await svc.stop_session("test")
+
+
+async def test_the_brain_is_told_the_first_turn_and_a_cut_in_are_for_it() -> None:
+    """On the robot words said right after cutting in were twice answered with [silent] (2026-10-31)."""
+    brain = Scripted(["Hi there."], ["One. ", "Two. ", "Three."], ["Okay."], ["Sure."])
+    svc, stt, _, audio = _service(brain, follow_up_seconds=5)
+    seen: list[str] = []
+    real = svc.brain.build_messages
+
+    def spy(text: str, history: Any, toolbox: Any = None, *, extra: Any = None) -> Any:
+        seen.append(" ".join(extra or []))
+        return real(text, history, toolbox, extra=extra)
+
+    svc.brain.build_messages = spy
+    await svc.start()
+    await svc.start_session()
+    await _wait(lambda: stt.stream is not None)
+    stt.say("hello")
+    await _wait(lambda: len(seen) == 1)
+    # the first turn after the wake word: for it, unless it is plainly the TV (election night, 2026-11-03)
+    assert "almost always for you" in seen[0] and "goes off by mistake on the TV" in seen[0]
+    await _wait(lambda: svc._session is not None and not svc._session._answering())
+    svc._tts = SlowTTS()
+    stt.say("count to three")
+    await _wait(lambda: len(seen) == 2)
+    assert "for you" not in seen[1]  # an ordinary follow-up: the brain decides
+    await _wait(lambda: svc._session._voice is not None and bool(svc._session._voice.heard))
+    audio.on_change("heard", {})  # they talked over it
+    stt.say("what about tomorrow")
+    await _wait(lambda: len(seen) == 3)
+    assert "talked over you" in seen[2]
+    await svc.stop_session("test")
+
+
+async def test_a_short_cut_in_waits_for_the_rest_of_what_they_say() -> None:
+    """"No." just after cutting in got "Understood." while they were only starting (the robot, 2026-11-02): its
+    answer is made but not said, and what they say next joins it as one turn."""
+    brain = Scripted(["One. ", "Two. ", "Three."], ["Understood."], ["The other one is blue."])
+    svc, stt, _, audio = _service(brain, follow_up_seconds=5)
+    svc._tts = SlowTTS()
+    await svc.start()
+    await svc.start_session()
+    await _wait(lambda: stt.stream is not None)
+    stt.say("count to three")
+    session = svc._session
+    await _wait(lambda: session._voice is not None and bool(session._voice.heard))
+    audio.on_change("heard", {})  # they talked over it
+    stt.say("no")
+    await _wait(lambda: len(brain.questions) == 2)  # its answer is made at once ...
+    await asyncio.sleep(0.4)
+    assert not session._voice.heard  # ... but not said
+    stt.say("I meant the other one")
+    await _wait(lambda: len(brain.questions) == 3)
+    assert brain.questions[-1] == "no I meant the other one"
+    await _wait(lambda: session._voice is not None and bool(session._voice.heard))
+    said = " ".join(m["content"] for m in svc.history.messages() if m["role"] == "assistant")
+    assert "Understood" not in said and session._voice.heard[0].startswith("The other one")
+    await svc.stop_session("test")
+
+
+async def test_a_turn_cut_off_mid_sentence_waits_for_the_rest() -> None:
+    """"So then what did they" ended on the quiet limit and got 'Probably "So then what did they use it for?"'
+    (the robot, 2026-11-02): its answer waits CUT_OFF_HOLD_S, and the rest joins it."""
+    from littlebot.assistant.speech import STTEvent
+
+    brain = Scripted(["Half an answer."], ["For laundry."], ["Sure."])
+    svc, stt, _, _ = _service(brain, follow_up_seconds=5)
+    await svc.start()
+    await svc.start_session()
+    await _wait(lambda: stt.stream is not None)
+    session = svc._session
+    stt.event("start_of_turn")
+    stt.stream.on_event(STTEvent("end_of_turn", "so then what did they", cut_off=True))
+    await _wait(lambda: len(brain.questions) == 1)
+    await asyncio.sleep(0.3)
+    assert session._voice is not None and not session._voice.heard  # not said yet
+    stt.say("use it for")
+    await _wait(lambda: len(brain.questions) == 2)
+    assert brain.questions[-1] == "so then what did they use it for"
+    await _wait(lambda: session._voice is not None and session._voice.heard == ["For laundry."])
+    assert session._held is None
+    await svc.stop_session("test")
+
+
+async def test_an_answer_waits_while_they_are_still_talking() -> None:
+    """"Hello, bot." was answered over "Can you tell me the difference between Google and ...": its voice shut the
+    microphone on the rest, and the fragment's turn then cut the answer off (the robot, 2026-11-02). Their new words
+    keep it quiet; the end of their turn joins both into one question."""
+    brain = Scripted(["Hi Ali."], ["Google makes Android, Apple the iPhone."], delay=0.1)
+    svc, stt, _, _ = _service(brain, follow_up_seconds=5)
+    await svc.start()
+    await svc.start_session()
+    await _wait(lambda: stt.stream is not None)
+    session = svc._session
+    stt.say("so I was wondering")
+    stt.event("start_of_turn")
+    stt.event("partial", "can you tell me")  # they go on before its answer is heard
+    await _wait(lambda: len(brain.questions) == 1)
+    await asyncio.sleep(0.4)
+    assert session._voice is not None and not session._voice.heard  # quiet while they talk
+    stt.event("end_of_turn", "can you tell me the difference between Google and Apple?")
+    await _wait(lambda: len(brain.questions) == 2)
+    assert brain.questions[-1] == "so I was wondering can you tell me the difference between Google and Apple?"
+    await _wait(lambda: session._voice is not None and bool(session._voice.heard))
+    assert session._voice.heard[0].startswith("Google makes")
+    said = " ".join(m["content"] for m in svc.history.messages() if m["role"] == "assistant")
+    assert "Hi Ali" not in said
+    await svc.stop_session("test")
+
+
+async def test_a_yes_in_a_pause_of_its_answer_does_not_cut_it_off() -> None:
+    """A "Yes." nobody said, heard in a pause between its sentences, cut the answer about Kublai Khan off (the
+    robot, 2026-11-02): words like that, with more still to say and nobody cutting in, are no new turn."""
+    brain = Scripted(["One. ", "Two. ", "Three."], ["Five."])
+    svc, stt, _, _ = _service(brain, follow_up_seconds=5)
+    svc._tts = SlowTTS()
+    await svc.start()
+    await svc.start_session()
+    await _wait(lambda: stt.stream is not None)
+    stt.say("count to three")
+    session = svc._session
+    await _wait(lambda: session._voice is not None and bool(session._voice.heard))
+    voice = session._voice
+    stt.say("yes")
+    await asyncio.sleep(0.3)
+    assert len(brain.questions) == 1 and session._voice is voice and voice.more_to_say  # it talks on
+    stt.say("no, count to five")  # a real turn still cuts in
+    await _wait(lambda: len(brain.questions) == 2)
+    assert brain.questions[-1] == "no, count to five"
+    await svc.stop_session("test")
+
+
+async def test_a_yeah_said_over_its_voice_lets_it_talk_on() -> None:
+    """A "Yeah." said over the voice dropped the answer about Alexander the Great (the robot, 2026-11-03): the
+    voice is held when someone cuts in, and words like that let it play on where it stopped."""
+    brain = Scripted(["One. ", "Two. ", "Three."], ["Five."])
+    svc, stt, _, audio = _service(brain, follow_up_seconds=5)
+    svc._tts = SlowTTS()
+    await svc.start()
+    await svc.start_session()
+    await _wait(lambda: stt.stream is not None)
+    stt.say("count to three")
+    session = svc._session
+    await _wait(lambda: session._voice is not None and bool(session._voice.heard))
+    voice = session._voice
+    audio.interrupted = audio.voice_held = True
+    audio.on_change("interrupted", {})
+    stt.event("start_of_turn")
+    stt.event("partial", "Yeah.")
+    await asyncio.sleep(0.1)
+    assert audio.heard_words == [] and audio.voice_held  # not confirmed: the voice waits
+    stt.event("end_of_turn", "Yeah.")
+    await _wait(lambda: audio.asides == ["Yeah."])
+    assert not audio.interrupted and len(brain.questions) == 1 and session._voice is voice and voice.more_to_say
+    audio.interrupted = audio.voice_held = True  # a real cut-in still drops it
+    audio.on_change("interrupted", {})
+    stt.event("partial", "Yeah, count")
+    await _wait(lambda: audio.heard_words == [("Yeah, count", False)])
+    await svc.stop_session("test")
+
+
+async def test_a_question_that_stops_on_and_waits_for_the_rest() -> None:
+    """ "Can you tell me the difference between Kublai Khan and" was answered after 0.8 s with a card about Kublai
+    Khan alone (the robot, 2026-11-02): a turn ending on a word like "and" waits for them longer."""
+    brain = Scripted(["Just Kublai."], ["Both Khans."])
+    svc, stt, _, _ = _service(brain, follow_up_seconds=5)
+    await svc.start()
+    await svc.start_session()
+    await _wait(lambda: stt.stream is not None)
+    stt.say("tell me the difference between Kublai Khan and")
+    await asyncio.sleep(1.3)  # thinking of the name
+    stt.say("Genghis Khan")
+    await _wait(lambda: len(svc.history) == 1)
+    assert brain.questions[-1] == "tell me the difference between Kublai Khan and Genghis Khan"
+    assert svc.history.messages() == [{"role": "user", "content": brain.questions[-1]},
+                                      {"role": "assistant", "content": "Both Khans."}]
+    await svc.stop_session("test")
+
+
+async def test_a_joke_told_before_is_named_when_they_ask_for_another() -> None:
+    brain = Scripted(["Why did the robot go on a diet? It had too many bytes!"], ["A new one."])
+    svc, stt, _, _ = _service(brain, follow_up_seconds=5)
+    await svc.start()
+    await svc.start_session()
+    await _wait(lambda: stt.stream is not None)
+    stt.say("tell me a joke")
+    await _wait(lambda: svc.jokes._items)
+    stt.say("what's the capital of France")
+    await _wait(lambda: len(brain.asked) == 2)
+    assert "jokes you already told" not in brain.asked[-1]  # only for a joke
+    stt.say("tell me another joke")
+    await _wait(lambda: len(brain.asked) == 3)
+    assert "too many bytes" in brain.asked[-1] and "jokes you already told" in brain.asked[-1]
+    await svc.stop_session("test")
+
+
+def test_hello_bot_is_the_wake_phrase_not_a_question() -> None:
+    from littlebot.assistant.session import _heard
+
+    assert _heard("Hello, bot.") == ""
+    assert _heard("Hello, little bot. What time is it?").lower().startswith("what time")
+
+
+async def test_a_noise_does_not_keep_the_answer_waiting() -> None:
+    brain = Scripted(["Sunny all day."], delay=0.1)
+    svc, stt, _, _ = _service(brain, follow_up_seconds=5)
+    await svc.start()
+    await svc.start_session()
+    await _wait(lambda: stt.stream is not None)
+    session = svc._session
+    stt.say("what is the weather like")
+    stt.event("start_of_turn")  # a sound, but no words and nothing loud
+    await _wait(lambda: session._voice is not None and session._voice.heard == ["Sunny all day."])
+    await svc.stop_session("test")
+
+
+async def test_a_short_cut_in_is_answered_once_they_stay_quiet(monkeypatch: pytest.MonkeyPatch) -> None:
+    from littlebot.assistant import session as session_mod
+
+    monkeypatch.setattr(session_mod, "CUT_IN_HOLD_S", 0.4)
+    brain = Scripted(["One. ", "Two. ", "Three."], ["The red one."])
+    svc, stt, _, audio = _service(brain, follow_up_seconds=5)
+    svc._tts = SlowTTS()
+    await svc.start()
+    await svc.start_session()
+    await _wait(lambda: stt.stream is not None)
+    stt.say("count to three")
+    session = svc._session
+    await _wait(lambda: session._voice is not None and bool(session._voice.heard))
+    audio.on_change("heard", {})
+    stt.say("which one")
+    await _wait(lambda: len(brain.questions) == 2)
+    await asyncio.sleep(0.2)
+    assert not session._voice.heard
+    stt.event("end_of_turn", "")  # a noise: still waiting
+    await _wait(lambda: bool(session._voice.heard), timeout=2.0)
+    assert session._voice.heard == ["The red one."] and len(brain.questions) == 2
+    stt.say("and the blue one")  # not just after cutting in: answered at once
+    await _wait(lambda: len(brain.questions) == 3)
+    assert session._held is None and session._gate is None
+    await svc.stop_session("test")
+
+
+async def test_told_to_stop_in_its_own_words_the_brain_ends_the_call_without_a_word() -> None:
+    """"Please don't talk anymore" isn't an instant intent: the brain calls end_conversation, and whatever it
+    writes after that is never said (asked for on the robot, 2026-10-31)."""
+    brain = Scripted([("end_conversation", "{}"), "Okay, I'll stop talking now."])
+    svc, stt, tts, audio = _service(brain, follow_up_seconds=5)
+    await svc.start()
+    await svc.start_session()
+    await _wait(lambda: stt.stream is not None)
+    stt.say("please don't talk anymore")
+    await _wait(lambda: not svc.status()["active"])
+    assert svc.last_call["ended_reason"] == "asked to stop"
+    assert tts.said == []
+    assert len(audio.cues) == 1 and svc.ctx.state.state == RobotState.SLEEPING
+
+
+async def test_told_to_stop_while_a_video_is_on_it_stays_awake() -> None:
+    """"Stop" ended the chat, not the video they are watching: the sound, but no sleep."""
+    svc, stt, _, audio = _service(Scripted(), follow_up_seconds=5)
+    svc.ctx.media = type("M", (), {"status": staticmethod(lambda: {"state": "paused"})})()
+    await svc.start()
+    await svc.start_session()
+    await _wait(lambda: stt.stream is not None)
+    stt.say("stop talking")
+    await _wait(lambda: not svc.status()["active"])
+    assert svc.last_call["ended_reason"] == "said stop" and len(audio.cues) == 1
+    assert svc.ctx.state.state == RobotState.IDLE
+
+
+async def test_told_to_stop_while_android_is_on_it_stays_awake() -> None:
+    """Android shuts down when LittleBot sleeps: "stop" ended the chat, not what they are using."""
+    svc, stt, _, audio = _service(Scripted(), follow_up_seconds=5)
+    svc.ctx.android = type("A", (), {"active": True})()
+    await svc.start()
+    await svc.start_session()
+    await _wait(lambda: stt.stream is not None)
+    stt.say("stop talking")
+    await _wait(lambda: not svc.status()["active"])
+    assert len(audio.cues) == 1 and svc.ctx.state.state == RobotState.IDLE

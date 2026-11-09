@@ -436,7 +436,8 @@ async def test_status_contract_and_protocol(make_ctx):
     svc.process_once()
     st = svc.status()
     assert expected <= set(st) and json.loads(json.dumps(st)) == st
-    assert st["resolution"] == "320x240" and isinstance(st["gaze"], dict)
+    cc = svc.cam_cfg  # the mock camera: process_width wide, in the configured capture shape (16:9 for 1080p)
+    assert st["resolution"] == f"320x{round(320 * cc.capture_height / cc.capture_width)}" and isinstance(st["gaze"], dict)
     st["gaze"]["x"] = 99  # callers get a copy
     assert svc.status()["gaze"]["x"] != 99
     await svc.stop()

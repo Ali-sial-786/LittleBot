@@ -32,8 +32,8 @@ Privacy:
 
 Cost on a Pi 5: SFace needs ~110 MB of RAM once loaded. A 4 GB board keeps it while recognition is on; a
 2 GB one only while it is used (dropped, and given back to the system (littlebot/core/memory.py), after
-``UNLOAD_IDLE_S`` without use). Switched off, it is always dropped. One check (YuNet on a 640x480 photo, then SFace
-for each face) took ~0.1 s per face on an x86 VM, so expect ~0.2-0.3 s on the Pi; it runs in a worker
+``UNLOAD_IDLE_S`` without use). Switched off, it is always dropped. One check (a full-size photo, YuNet on a 960 px copy, then SFace
+on each face lined up from the full photo) took ~0.1 s per face on an x86 VM, so expect ~0.2-0.3 s on the Pi; it runs in a worker
 thread every ``CHECK_EVERY_S`` (3 s) during a live call, and never otherwise.
 
 Babies' faces change quickly: take new samples every month or so (``RETAKE_DAYS``). Each sample is
@@ -72,12 +72,18 @@ MATCH_MARGIN = 0.08  # ...and at least this much closer to them than to the next
 DETECT_SCORE = 0.8  # YuNet's confidence before a face is compared at all
 SAMPLE_SCORE = 0.9  # a sample needs a clear, frontal face
 FLOOR_SCORE = 0.6  # weaker detections are ignored (they only help say "come closer")
-MIN_FACE_PX = 48  # narrower faces (in a 640 px photo) are too small to tell apart
-SAMPLE_MIN_FACE_PX = 72  # about an arm's length from the camera
-PHOTO_WIDTH = 640
+MIN_FACE_PX = 48  # narrower faces (camera pixels) are too small to tell apart
+# Quality before comparing (facing(), sharp()): most wrong or missed matches are turned or blurred faces.
+MAX_TURN = 0.35  # the nose at most this far (in eye distances) off the middle of the eyes: roughly 35 degrees
+MIN_SHARPNESS = 20.0  # variance of the Laplacian of the lined-up face; a sharp one is in the hundreds
+SAMPLE_MIN_FACE_PX = 72  # camera pixels: an arm's length at 640x480, a few metres at 1080p
+# 2026-11-06: the photo is the camera's full picture (1920 px from a 1080p camera). YuNet finds the faces on a
+# DETECT_WIDTH copy (cheaper), and SFace lines each one up from the full picture, so a face three times
+# further away (at 1080p) still has the pixels to be told apart. The pixel limits above are camera pixels.
+PHOTO_WIDTH = 1920
+DETECT_WIDTH = 960
 PHOTO_QUALITY = 90
 PHOTO_TIMEOUT_S = 3.0
-WARM_MAX_AGE_S = 1.5  # a live call's warm photo is used when at most this old
 PREVIEW_WIDTH = 320
 MAX_PEOPLE = 12
 MAX_SAMPLES = 10  # per person; the oldest goes when a new one would make more
@@ -420,34 +426,74 @@ class FaceEngine:
         if not (hasattr(cv2, "FaceDetectorYN") and hasattr(cv2, "FaceRecognizerSF")):
             raise FacesUnavailable("old_opencv")
         with quiet_opencv():
-            self._det = cv2.FaceDetectorYN.create(str(detector_model), "", (PHOTO_WIDTH, 480), FLOOR_SCORE, 0.3, 10)
+            self._det = cv2.FaceDetectorYN.create(str(detector_model), "", (640, 480), FLOOR_SCORE, 0.3, 10)
             self._rec = cv2.FaceRecognizerSF.create(str(recogniser_model), "")
-        self._size = (PHOTO_WIDTH, 480)
+        self._size = (640, 480)
         self._lock = threading.Lock()
         # A broken or wrong model fails here (FaceRecognition then says so), not in the middle of a call.
-        self.look(np.zeros((480, PHOTO_WIDTH, 3), np.uint8))
+        self.look(np.zeros((480, 640, 3), np.uint8))
         as_features(self._rec.feature(np.full((112, 112, 3), 128, np.uint8)))
 
     def look(self, image: np.ndarray, *, min_score: float = DETECT_SCORE, min_px: int = MIN_FACE_PX) -> list[SeenFace]:
-        """Every face YuNet finds (largest first); the clear, big-enough ones with their numbers."""
+        """Every face YuNet finds (largest first); the clear, big-enough ones with their numbers. YuNet looks at a
+        ``DETECT_WIDTH`` copy; each face is lined up from the full ``image`` (sizes are in its pixels)."""
         h, w = image.shape[:2]
+        scale = min(1.0, DETECT_WIDTH / max(1, w))
+        small = image
+        if scale < 1.0:
+            cv2 = get_cv2()
+            small = cv2.resize(image, (max(1, round(w * scale)), max(1, round(h * scale))), interpolation=cv2.INTER_AREA)
+        sh, sw = small.shape[:2]
         with self._lock:
-            if (w, h) != self._size:
-                self._det.setInputSize((w, h))
-                self._size = (w, h)
-            _, rows = self._det.detect(image)
+            if (sw, sh) != self._size:
+                self._det.setInputSize((sw, sh))
+                self._size = (sw, sh)
+            _, rows = self._det.detect(small)
+            del small
             out: list[SeenFace] = []
             for row in (np.asarray(rows) if rows is not None else ()):
+                row = np.array(row, dtype=np.float32)
+                row[:-1] /= scale  # box and landmarks in the full picture's pixels (the score stays)
                 score, width = float(row[-1]), int(round(float(row[2])))
                 features = None
-                if score >= min_score and width >= min_px:
+                if score >= min_score and width >= min_px and facing(row):
                     crop = self._rec.alignCrop(image, row)
-                    features = as_features(self._rec.feature(crop))
+                    if sharp(crop):  # a blurred face (moving, out of focus) is not compared: never a wrong guess
+                        features = as_features(self._rec.feature(crop))
                     del crop
                 box = (float(row[0]) / w, float(row[1]) / h, float(row[2]) / w, float(row[3]) / h)
                 out.append(SeenFace(box, score, width, features))
         out.sort(key=lambda f: f.width_px, reverse=True)
         return out
+
+
+def facing(row: Any) -> bool:
+    """YuNet's landmarks say the face looks at the camera, more or less (the nose between the eyes, not out past
+    one of them): a face turned well away matches poorly, so it isn't compared (nor kept as a sample)."""
+    try:
+        r = np.asarray(row, dtype=np.float32).reshape(-1)
+        if r.size < 15:
+            return True
+        eye_r, eye_l, nose = r[4:6], r[6:8], r[8:10]
+        eyes = float(abs(eye_l[0] - eye_r[0]))
+        if eyes < 1.0:
+            return False
+        return abs(float(nose[0]) - float(eye_r[0] + eye_l[0]) / 2) / eyes <= MAX_TURN
+    except Exception:  # noqa: BLE001 - can't tell: compare it as before
+        return True
+
+
+def sharp(crop: Any) -> bool:
+    """The lined-up 112x112 face is sharp enough to recognise (variance of its Laplacian, the usual blur test)."""
+    cv2 = get_cv2()
+    try:
+        img = np.asarray(crop)
+        if cv2 is None or img.ndim < 2 or img.shape[0] < 16:
+            return True
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if img.ndim == 3 else img
+        return float(cv2.Laplacian(gray, cv2.CV_64F).var()) >= MIN_SHARPNESS
+    except Exception:  # noqa: BLE001 - can't tell: compare it as before
+        return True
 
 
 def decode_jpeg(jpeg: bytes) -> np.ndarray:
@@ -614,16 +660,9 @@ class FaceRecognition:
 
     # -- photos
     async def _photo(self, *, fresh: bool) -> bytes:
-        """A live call's warm photo when recent (no extra work for the camera), else one new still."""
+        """One new still at the camera's full size. (A live call's warm photo is only 640 px wide: too small
+        to tell faces apart from across the room, so it isn't used here. ``fresh`` is kept for callers.)"""
         vision = self.ctx.vision
-        latest = None if fresh else getattr(vision, "latest_photo", None)
-        if latest is not None:
-            try:
-                got = latest(max_age=WARM_MAX_AGE_S)
-            except Exception:  # noqa: BLE001
-                got = None
-            if got and got[0]:
-                return got[0]
         try:
             return await vision.capture_photo(max_width=PHOTO_WIDTH, quality=PHOTO_QUALITY, timeout=PHOTO_TIMEOUT_S)
         except Exception as e:  # noqa: BLE001 - PhotoUnavailable(reason) or a broken camera

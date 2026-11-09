@@ -21,7 +21,7 @@ from littlebot.core.interfaces import (
     ActivityAPI, AudioAPI, BrainAPI, FaceAPI, MediaAPI, MotionAPI, SystemMonitorAPI, VisionAPI,
 )
 from littlebot.core.runtime import AsyncRuntime
-from littlebot.core.settings import Settings, build_defaults
+from littlebot.core.settings import Settings, build_defaults, link_config
 from littlebot.core.state import StateManager
 from littlebot.core.storage import Database
 from littlebot.safety.policy import AgePolicy
@@ -50,10 +50,16 @@ class RobotContext:
     games: Any = None  # on-screen games (littlebot.games.service.GamesService)
     screens: Any = None  # info cards over the face (littlebot.screens.service.ScreenService)
     browser: Any = None  # Google on the screen when a grown-up asks (littlebot.browser.service.BrowserView)
+    mirror: Any = None  # a phone's screen on the screen when asked (littlebot.mirror.service.MirrorService)
+    nanit: Any = None  # the Nanit baby camera on the screen when asked (littlebot.nanit.service.NanitService)
+    android: Any = None  # Android (Waydroid) while it's on the screen (littlebot.android.service.AndroidService)
+    capture: Any = None  # photos and videos by voice, the gallery (littlebot.capture.service.CaptureService)
     live: Any = None  # live voice (littlebot.chatgpt.live.LiveVoiceService)
     wake: Any = None  # wake word, "Hey LittleBot" (littlebot.audio.wakeword.WakeWordService)
     voices: Any = None  # the family's voices, opt-in (littlebot.voices.service.VoiceRecognition; get_voices(ctx))
     power: Any = None  # the battery, when a monitor is fitted (littlebot.power.service.PowerService)
+    skills: Any = None  # memory, reminders, lists, briefings, smart home, voice games ... (littlebot.skills.hub.SkillHub)
+    assistant: Any = None  # the fast voice pipeline (littlebot.assistant.service.AssistantService)
     extras: dict[str, Any] = field(default_factory=dict)
 
     def age_policy(self) -> AgePolicy:
@@ -77,6 +83,7 @@ def build_core_context(
         db_path = cfg.data_path / "littlebot.db"
     db = Database(db_path)
     settings = Settings(db, bus, build_defaults(cfg))
+    link_config(settings, cfg, bus)  # the voice and its models chosen on the dashboard
     if monitor is None:
         from littlebot.hardware.system import SystemMonitor
 

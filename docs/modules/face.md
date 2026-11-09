@@ -108,6 +108,15 @@ person who stays and keeps still lets it doze again. Waking is gentle: the lids 
 a small stretch and yawn, a soft double blink. Off with `face.doze_enabled` (dashboard: Face page,
 "Dozing and sleep", which also sets `system.sleep_after_idle_minutes`, the real sleep).
 
+Screen off (the same timer, `DozeTimer.update_screen`): after `face.screen_off_after_seconds` (180;
+0 = never, else at least 30) with nothing happening, in IDLE and in SLEEPING (going to sleep is
+not "something happening", and the SLEEPING state doesn't keep the screen on), `face.screen_off`
+turns True, `face.screen` `{on, reason}` is published and the display loop switches the robot
+screen's signal off with `wlopm` (fullscreen on the robot only; not the desktop simulator), draws
+nothing and runs at 4 fps for events. The awake reasons above light it again; a touch on the dark
+screen only lights it (`FaceController.activity`). The screen is switched on when the window opens
+and closes. About 0.4 W saved; see [POWER.md](../POWER.md) section 8.4.
+
 One-shot animations: bounce (squash, hop, stretch, land; "wheee" mouth), wiggle, nod, shake,
 spin_eyes (dizzy roll; a little "ooh"), sparkle, hearts, zzz, confetti, peek (duck down with
 eyes shut, rise with a bounce and pop open wide with an open-mouthed "boo!"). The mouth moves

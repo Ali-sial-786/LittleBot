@@ -3,18 +3,26 @@
 from __future__ import annotations
 
 from littlebot.dashboard.routes.activity_routes import router as activities
+from littlebot.dashboard.routes.assistant_routes import router as assistant
 from littlebot.dashboard.routes.ai_routes import router as ai
+from littlebot.dashboard.routes.android_routes import router as android
 from littlebot.dashboard.routes.auth_routes import router as auth
 from littlebot.dashboard.routes.browser_routes import router as browser
+from littlebot.dashboard.routes.calendar_routes import router as calendar
 from littlebot.dashboard.routes.camera_routes import router as camera
+from littlebot.dashboard.routes.capture_routes import router as capture  # also /share/{token} (no login: a secret)
 from littlebot.dashboard.routes.chatgpt_routes import router as chatgpt
 from littlebot.dashboard.routes.decide_routes import router as decide
 from littlebot.dashboard.routes.device_routes import router as devices
+from littlebot.dashboard.routes.doorbell_routes import router as doorbell  # also /hooks/doorbell (no login: a secret)
 from littlebot.dashboard.routes.face_routes import router as face
 from littlebot.dashboard.routes.games_routes import router as games
 from littlebot.dashboard.routes.info_routes import router as info
+from littlebot.dashboard.routes.keys_routes import router as keys
 from littlebot.dashboard.routes.media_routes import router as media
+from littlebot.dashboard.routes.mirror_routes import router as mirror
 from littlebot.dashboard.routes.motion_routes import router as motion
+from littlebot.dashboard.routes.nanit_routes import router as nanit
 from littlebot.dashboard.routes.people_routes import router as people
 from littlebot.dashboard.routes.power_routes import router as power
 from littlebot.dashboard.routes.privacy_routes import router as privacy
@@ -23,8 +31,11 @@ from littlebot.dashboard.routes.robot_routes import router as robot
 from littlebot.dashboard.routes.screens_routes import router as screens
 from littlebot.dashboard.routes.sim_routes import router as sim
 from littlebot.dashboard.routes.voice_routes import router as voice_lines
+from littlebot.dashboard.routes.voice_setup_routes import router as voice_setup
+from littlebot.dashboard.routes.wake_clip_routes import router as wake_clips
 
-ROUTERS = (auth, robot, face, camera, activities, games, screens, browser, media, profile, people, ai, chatgpt, decide,
-           info, privacy, devices, motion, sim, voice_lines, power)
+ROUTERS = (auth, robot, assistant, voice_setup, face, camera, activities, games, screens, browser, media, profile, people,
+           ai, chatgpt, decide, info, privacy, devices, motion, sim, voice_lines, power, doorbell, keys, calendar,
+           mirror, nanit, android, wake_clips, capture)
 
 __all__ = ["ROUTERS"]

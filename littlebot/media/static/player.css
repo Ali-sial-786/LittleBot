@@ -86,6 +86,143 @@ html, body {
 @keyframes pulse { 0%, 100% { opacity: 0.25; transform: scale(0.85); } 50% { opacity: 0.9; transform: scale(1); } }
 @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
 
+/* ------------------------------------------------------------------ music: a now-playing screen
+   The player keeps its own box (at least 200x200 px, 16:9) in the bottom-left corner and nothing is drawn over
+   it; LittleBot's eyes bob to the music above it, the title, channel and equaliser bars sit beside it. */
+:root {
+  --np-bg: #0b1426;
+  --np-eye: #5ad2ff;
+  --np-player-w: max(356px, 50vw);
+  --np-player-h: max(200px, 28.125vw);
+  --np-gap: 4vw;
+}
+#music-view {
+  display: none;
+  position: fixed;
+  top: 0; right: 0; bottom: 0; left: 0;
+  z-index: 1;
+  background: radial-gradient(circle at 28% 30%, #16294a 0%, var(--np-bg) 62%);
+  color: #e6f6ff;
+}
+body.music #music-view { display: block; animation: fade-in 0.6s ease-out; }
+body.music #stage {
+  z-index: 2;
+  top: auto; right: auto;
+  left: var(--np-gap);
+  bottom: 5vh;
+  width: var(--np-player-w);
+  height: var(--np-player-h);
+  box-shadow: 0 0 0 3px rgba(90, 210, 255, 0.28), 0 0 5vmin rgba(90, 210, 255, 0.22);
+}
+
+.np-eyes {
+  position: absolute;
+  left: var(--np-gap);
+  top: 3vh;
+  width: var(--np-player-w);
+  height: calc(100vh - 5vh - var(--np-player-h) - 6vh);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: min(9vw, 15vh);
+  animation: np-bob 0.9s ease-in-out infinite;
+}
+.np-eye {
+  display: block;
+  width: min(11vw, 18vh);
+  height: min(16vw, 27vh);
+  border-radius: 42% / 36%;
+  background: radial-gradient(ellipse at 34% 28%, #ffffff 0 9%, transparent 10%), var(--np-eye);
+  box-shadow: 0 0 3.5vmin rgba(90, 210, 255, 0.55);
+  transform-origin: 50% 60%;
+  animation: np-blink 5.2s ease-in-out infinite;
+}
+.np-eye:nth-child(2) { animation-delay: 0.04s; }
+
+.np-info {
+  position: absolute;
+  left: calc(var(--np-gap) * 2 + var(--np-player-w));
+  right: var(--np-gap);
+  top: 6vh;
+  bottom: 5vh;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  min-width: 0;
+}
+.np-label {
+  margin: 0 0 1.5vh;
+  font-size: clamp(12px, 3.4vmin, 20px);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--np-eye);
+}
+.np-title {
+  margin: 0;
+  font-size: clamp(18px, 6.4vmin, 44px);
+  font-weight: 700;
+  line-height: 1.15;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow-wrap: break-word;
+}
+.np-channel {
+  margin: 1.5vh 0 0;
+  font-size: clamp(13px, 4vmin, 24px);
+  color: #8fb3cc;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.np-bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 1.2vw;
+  height: min(26vh, 22vw);
+}
+.np-bars span {
+  flex: 1;
+  height: 100%;
+  border-radius: 1vmin 1vmin 0.4vmin 0.4vmin;
+  background: linear-gradient(to top, var(--np-eye), #ff8fc7);
+  transform-origin: bottom;
+  animation: np-eq 0.9s ease-in-out infinite alternate;
+}
+.np-bars span:nth-child(1) { animation-duration: 0.82s; animation-delay: -0.2s; }
+.np-bars span:nth-child(2) { animation-duration: 0.61s; animation-delay: -0.5s; }
+.np-bars span:nth-child(3) { animation-duration: 0.95s; animation-delay: -0.1s; }
+.np-bars span:nth-child(4) { animation-duration: 0.72s; animation-delay: -0.7s; }
+.np-bars span:nth-child(5) { animation-duration: 0.58s; animation-delay: -0.3s; }
+.np-bars span:nth-child(6) { animation-duration: 0.88s; animation-delay: -0.6s; }
+.np-bars span:nth-child(7) { animation-duration: 0.67s; animation-delay: -0.4s; }
+.np-bars span:nth-child(8) { animation-duration: 0.79s; animation-delay: -0.9s; }
+.np-bars span:nth-child(9) { animation-duration: 0.63s; animation-delay: -0.15s; }
+
+/* paused: the bars rest low and the eyes doze, nothing moves */
+body.music.paused .np-eyes, body.music.paused .np-bars span { animation-play-state: paused; }
+body.music.paused .np-bars span { transform: scaleY(0.12); animation: none; }
+body.music.paused .np-eye { transform: scaleY(0.35); animation: none; opacity: 0.8; }
+
+/* a small window (a 480x320 preview): the player centred at the bottom, eyes and title in the band above it */
+@media (max-width: 600px) {
+  body.music #stage { left: calc((100vw - var(--np-player-w)) / 2); }
+  .np-eyes { left: 2vw; top: 2vh; width: 36vw; height: calc(100vh - 5vh - var(--np-player-h) - 4vh); gap: 6vw; }
+  .np-eye { width: 9vw; height: min(13vw, 22vh); }
+  .np-info { left: 40vw; right: 3vw; top: 2vh; bottom: auto; height: calc(100vh - 5vh - var(--np-player-h) - 4vh);
+             justify-content: center; }
+  .np-label, .np-bars { display: none; }
+  .np-title { font-size: 17px; -webkit-line-clamp: 2; }
+  .np-channel { margin-top: 0.5vh; font-size: 13px; }
+}
+
+@keyframes np-bob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-2.6vh); } }
+@keyframes np-blink { 0%, 92%, 100% { transform: scaleY(1); } 95% { transform: scaleY(0.12); } }
+@keyframes np-eq { from { transform: scaleY(0.14); } to { transform: scaleY(1); } }
+
 @media (prefers-reduced-motion: reduce) {
   .screen.visible, .dots span { animation: none; }
+  .np-eyes, .np-eye, .np-bars span { animation: none; }
+  .np-bars span { transform: scaleY(0.5); }
 }

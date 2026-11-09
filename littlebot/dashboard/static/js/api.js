@@ -56,6 +56,30 @@ export async function api(path, { method = 'GET', body, signal, timeout = 20000 
   return data;
 }
 
+// A file sent as it is (a recording): the body is the file, not JSON. Same errors as api().
+export async function upload(path, file, { timeout = 300000 } = {}) {
+  const headers = { Accept: 'application/json', 'Content-Type': file.type || 'application/octet-stream' };
+  if (csrfToken) headers['X-CSRF-Token'] = csrfToken;
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), timeout);
+  let res;
+  try {
+    res = await fetch(`/api${path}`, { method: 'POST', headers, body: file, credentials: 'same-origin', cache: 'no-store', signal: ctl.signal });
+  } catch (e) {
+    throw new ApiError(0, FRIENDLY[0], 'network');
+  } finally {
+    clearTimeout(timer);
+  }
+  let data = null;
+  try { data = await res.json(); } catch { data = null; }
+  if (!res.ok) {
+    const detail = (data && typeof data.detail === 'string' && data.detail) || (res.status === 413 ? 'That file is too big.' : FRIENDLY[res.status]) || `Upload failed (${res.status}).`;
+    if (res.status === 401 && data && data.code === 'auth_required' && unauthorizedHandler) unauthorizedHandler();
+    throw new ApiError(res.status, detail, data && data.code, data);
+  }
+  return data;
+}
+
 export const get = (p, o) => api(p, { ...o, method: 'GET' });
 export const post = (p, body, o) => api(p, { ...o, method: 'POST', body });
 export const put = (p, body, o) => api(p, { ...o, method: 'PUT', body });

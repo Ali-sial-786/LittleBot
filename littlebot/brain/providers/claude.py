@@ -17,8 +17,9 @@ live voice's hand-offs (with their tool calls) can use either (``text.provider``
   (``cache_control`` on the system block: tools are cached with it);
 * never logs a prompt, an answer or the key; errors carry only a status and a short label.
 
-The key (``ANTHROPIC_API_KEY``: .env, or data/anthropic_api_key with mode 0600) is passed in as a SecretStr and
-only ever given to the SDK client. Refusals (``stop_reason: refusal``) come back as an empty answer with that
+The key (``ANTHROPIC_API_KEY``: the dashboard's Keys page, .env, or data/anthropic_api_key with mode 0600) is passed
+in as a SecretStr (a ``core.keys.LiveKey``: a key changed on the dashboard gets a new client) and only ever given to
+the SDK client. Refusals (``stop_reason: refusal``) come back as an empty answer with that
 stop reason: the callers' checks then say "not sure" (no other model is asked to answer what Claude declined).
 
 Tested here with a fake client only (tests/brain/test_claude_provider.py), not against the real API.
@@ -84,18 +85,22 @@ class ClaudeProvider(BaseProvider):
     def __init__(self, *, api_key: SecretStr | str | None, model: str | None, effort: str = "low",
                  thinking: str = "adaptive", max_tokens: int = 2048, first_token_timeout: float = 4.0,
                  web_search: bool = True, web_search_max_uses: int = 2, base_url: str = "https://api.anthropic.com",
-                 purpose: str = "", client: Any = None, allowed: Callable[[], str | None] | None = None) -> None:
+                 purpose: str = "", client: Any = None, allowed: Callable[[], str | None] | None = None,
+                 first_round_timeout: float | None = None) -> None:
         self._key = api_key if isinstance(api_key, SecretStr) else SecretStr(str(api_key or ""))
         self.model = str(model or "")
         self.effort = effort
         self.thinking = thinking
         self.max_tokens = int(max_tokens)
         self.first_token_timeout = float(first_token_timeout)
+        # the first request's first word only (none of a tool's result yet): a caller that knows how quick it is
+        self.first_round_timeout = float(first_round_timeout) if first_round_timeout else None
         self.web_search = bool(web_search)
         self.web_search_max_uses = int(web_search_max_uses)
         self.base_url = base_url
         self.purpose = purpose
         self._client = client  # injected (tests) or made on first use
+        self._client_key: str | None = None  # the key a client made here was made with
         self._allowed = allowed  # () -> why requests may not go now ("offline", "cloud_off") or None
         self._no_web_search = False  # the account refused Anthropic's web search: not offered again
         self._must_think = False  # the model refused thinking "disabled" (not a Haiku-class one): never sent again
@@ -125,11 +130,14 @@ class ClaudeProvider(BaseProvider):
         return {**super().describe(), "has_key": bool(_secret(self._key)), "missing": self.missing()}
 
     def _get_client(self) -> Any:
+        key = _secret(self._key)
+        if self._client is not None and self._client_key is not None and self._client_key != key:
+            self._client = None  # the key was changed on the dashboard (a LiveKey): a client with the new one
         if self._client is None:
             import anthropic  # noqa: PLC0415
 
-            self._client = anthropic.AsyncAnthropic(api_key=_secret(self._key), base_url=self.base_url,
-                                                    max_retries=0, timeout=30.0)
+            self._client = anthropic.AsyncAnthropic(api_key=key, base_url=self.base_url, max_retries=0, timeout=30.0)
+            self._client_key = key
         return self._client
 
     async def warm(self, timeout: float = 5.0) -> bool:
@@ -141,6 +149,32 @@ class ClaudeProvider(BaseProvider):
             return True
         except Exception:  # noqa: BLE001 - best effort
             return False
+
+    async def prime(self, *, system: str, tools: list[dict[str, Any]] | None = None, timeout: float = 6.0) -> bool:
+        """Cache the prompt (tools and system, as ``reply`` sends them with ``effort="minimal"``) before the first
+        question: one token of answer, so it costs about what that question's own cache write would have. A cold
+        prompt (19k tokens) took 1.3 s to its first word, a cached one 0.6 s (Haiku, the robot, 2026-11-03)."""
+        if self.missing() or self._blocked():
+            return False
+        timer = CallTimer(self.name, "prime")
+        kwargs = self.build_request([{"role": "user", "content": "(getting ready)"}], system=system, tools=tools,
+                                    effort="minimal")
+        kwargs["max_tokens"] = 1
+        try:
+            msg = await asyncio.wait_for(self._get_client().messages.create(**kwargs), timeout)
+        except asyncio.TimeoutError:
+            timer.done(self.model, result="timeout")
+            return False
+        except Exception as e:  # noqa: BLE001 - best effort
+            timer.done(self.model, result=_mapped(e).kind)
+            return False
+        timer.first_at = timer.first_at or time.monotonic()
+        usage = getattr(msg, "usage", None)
+        timer.done(self.model, tokens_in=sum(_int(getattr(usage, k, 0)) for k in (
+            "input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens")),
+                   tokens_out=_int(getattr(usage, "output_tokens", 0)),
+                   cache_read=_int(getattr(usage, "cache_read_input_tokens", 0)))
+        return True
 
     async def aclose(self) -> None:
         client, self._client = self._client, None
@@ -261,8 +295,9 @@ class ClaudeProvider(BaseProvider):
                     run_tool: ToolRunner | None = None, max_tool_rounds: int = MAX_TOOL_ROUNDS,
                     detail: str | None = None, effort: str | None = None,
                     on_delta: Callable[[str], Any] | None = None,
-                    final_tools: Collection[str] = ()) -> ProviderReply:
-        """As ``ChatGPTProvider.reply``. ``timeout`` bounds each request; ``first_token_timeout`` its first word."""
+                    final_tools: Collection[str] = (), on_search: Callable[[], Any] | None = None) -> ProviderReply:
+        """As ``ChatGPTProvider.reply``. ``timeout`` bounds each request; ``first_token_timeout`` its first word.
+        ``on_search``: called when a server tool (web search) starts, which no ``run_tool`` announces."""
         del detail  # ChatGPT's image detail: Claude sizes images itself
         why = self.missing() or self._blocked()
         if why:
@@ -276,7 +311,9 @@ class ClaudeProvider(BaseProvider):
         try:
             while True:
                 try:
-                    msg = await self._stream(kwargs, timer, on_delta, timeout)
+                    first_word = self.first_round_timeout if self.first_round_timeout and not rounds and not pauses \
+                        else self.first_token_timeout
+                    msg = await self._stream(kwargs, timer, on_delta, timeout, on_search, first_word=first_word)
                 except _WebSearchRefused:
                     self._no_web_search = True
                     log.warning("claude: the account refused web search; asking again without it")
@@ -334,8 +371,11 @@ class ClaudeProvider(BaseProvider):
                              stop_reason="max_tokens" if stop == "max_tokens" else "end_turn")
 
     async def _stream(self, kwargs: dict[str, Any], timer: CallTimer, on_delta: Callable[[str], Any] | None,
-                      timeout: float) -> Any:
-        """One streamed request: its final message. Words go to ``on_delta`` as they come."""
+                      timeout: float, on_search: Callable[[], Any] | None = None, *,
+                      first_word: float | None = None) -> Any:
+        """One streamed request: its final message. Words go to ``on_delta`` as they come. ``first_word``: its
+        first word's limit (``first_token_timeout`` by default)."""
+        first_word = self.first_token_timeout if first_word is None else float(first_word)
         first = asyncio.Event()
         start = time.monotonic()
 
@@ -353,15 +393,20 @@ class ClaudeProvider(BaseProvider):
                     elif kind in ("content_block_start", "input_json") and _is_tool_start(event):
                         timer.first()
                         first.set()
+                        if on_search is not None and kind == "content_block_start" and \
+                                _get(getattr(event, "content_block", None), "type") == "server_tool_use":
+                            try:
+                                on_search()
+                            except Exception:  # noqa: BLE001 - a listener never breaks the answer
+                                log.debug("on_search listener failed", exc_info=True)
                 return await stream.get_final_message()
 
         task = asyncio.ensure_future(run())
         waiter = asyncio.ensure_future(first.wait())
         try:
-            done, _ = await asyncio.wait({task, waiter}, timeout=self.first_token_timeout,
-                                         return_when=asyncio.FIRST_COMPLETED)
+            done, _ = await asyncio.wait({task, waiter}, timeout=first_word, return_when=asyncio.FIRST_COMPLETED)
             if task not in done and not first.is_set():
-                raise ProviderTimeoutError(f"claude: no first word within {self.first_token_timeout:g}s")
+                raise ProviderTimeoutError(f"claude: no first word within {first_word:g}s")
             left = max(0.1, timeout - (time.monotonic() - start))
             return await asyncio.wait_for(asyncio.shield(task), left)
         except asyncio.TimeoutError:

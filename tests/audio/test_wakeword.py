@@ -19,6 +19,7 @@ from littlebot.audio.errors import AudioDeviceError
 from littlebot.audio.stt import MockSTT
 from littlebot.audio.tts import MockTTS
 from littlebot.audio.wakeword import WakeWordService, build_grammar, match_wake_phrase, normalise_phrase
+from littlebot.core.config import WakeConfig
 from littlebot.core.events import collect
 from littlebot.core.service import ServiceStatus
 from littlebot.core.state import RobotState
@@ -152,6 +153,10 @@ async def until(pred, timeout: float = 4.0, what: str = "") -> None:
 
 
 # ------------------------------------------------------------------ fixtures
+# These tests use "hey bot" for a two-word phrase (no longer a default one, see WakeConfig.phrases).
+WITH_HEY_BOT = ["hey little bot", "hey littlebot", "hey lil bot", "hey bot", "lil bot", "little bot"]
+
+
 @pytest.fixture
 async def rig():
     """Real AudioService (mock speaker, exclusive mock mic) + WakeWordService with a fake recogniser."""
@@ -159,7 +164,7 @@ async def rig():
 
     async def _make(*, error: str | None = None, connect: bool = True, start_wake: bool = True, **cfg: Any):
         cfg.setdefault("wake", {})
-        cfg["wake"] = {"cooldown_seconds": 0.3, **cfg["wake"]}
+        cfg["wake"] = {"cooldown_seconds": 0.3, "phrases": WITH_HEY_BOT, **cfg["wake"]}
         ctx = make_test_context(fakes=False, **cfg)
         from littlebot.audio.service import AudioService
 
@@ -464,6 +469,26 @@ def test_preroll_keeps_only_the_sentence_being_recognised():
     assert pre.since(None) == []
 
 
+def test_the_end_of_the_wake_phrase_in_the_carry_is_not_going_on_talking():
+    # On the robot (2026-10-31) the carry started inside "bot": ~0.3 s more of it, louder than a pause, took a bare
+    # "hey little bot" for going on talking, and no earcon played.
+    from littlebot.audio.carry import TAIL_SECONDS, SpeechCarry
+
+    c = SpeechCarry(16000, quiet_level=0.01)
+    c.add(np.full(int(TAIL_SECONDS * 16000), 0.1, dtype=np.float32))  # the rest of "bot"
+    c.add(np.zeros(3200, dtype=np.float32))
+    assert c.speech_seconds == pytest.approx(TAIL_SECONDS) and c.talk_seconds == 0.0
+    c.add(np.full(1600, 0.1, dtype=np.float32))  # then the question
+    assert c.talk_seconds == pytest.approx(0.1)
+    c.seal("the assistant took the microphone")
+    c.heard(0.1, 0.2)  # what the assistant's microphone heard after it (wakeword EARLY_START)
+    c.heard(0.001, 0.1)
+    assert c.talk_seconds == pytest.approx(0.3) and c.quiet_s == pytest.approx(0.1) and c.seconds < 0.7
+    c.drop("over")
+    c.heard(0.1, 1.0)
+    assert c.talk_seconds == pytest.approx(0.3)  # nothing once dropped
+
+
 def test_speech_carry_is_handed_over_once_and_dropping_forgets_it():
     from littlebot.audio.carry import SpeechCarry
 
@@ -510,6 +535,124 @@ async def test_only_the_wake_phrase_plays_the_earcon_and_still_carries(rig):
     assert "sound:listen" in _sounds(r.out) and not carry.kept_talking
     await until(lambda: not carry.is_open, what="the microphone handed over")
     assert carry.state == "sealed" and carry.lead_s <= 0.5 + wakeword.WAKE_CUT_MARGIN + 0.15
+    # the wake phrase too, for the assistant's speech-to-text (memory only, once, dropped with the rest)
+    assert carry.take_phrase().size > 0 and carry.take_phrase().size == 0
+    carry.keep_phrase([np.ones(160, dtype=np.float32)])
+    carry.drop("test")
+    assert carry.take_phrase().size == 0
+
+
+def _finish_early(r: Any, conf: float = 1.0) -> list[str]:
+    """Give the fake recogniser ``finish`` (VoskKeywordRecognizer's result forced out): returns the words so far
+    it was asked for, as the result."""
+    asked: list[str] = []
+
+    def finish() -> dict[str, Any]:
+        text, r.rec.partial_text = r.rec.partial_text, ""
+        asked.append(text)
+        return {"text": text, "result": [{"word": w, "conf": conf} for w in text.split()]}
+
+    r.rec.finish = finish
+    return asked
+
+
+async def test_heard_before_the_sentence_ended_and_they_go_on_no_earcon(rig, caplog):
+    caplog.set_level(logging.INFO, logger="littlebot.wake")
+    r = await rig()
+    await _listening(r)
+    asked = _finish_early(r)
+    r.mic.set_level(0.1)  # they go on with their question
+    r.rec.partial_text = "hey little bot"  # no final result: the sentence goes on
+    await until(lambda: r.live.calls, what="live voice started")
+    assert asked == ["hey little bot"]
+    assert "wake word heard (phrase=hey little bot, before the sentence ended)" in caplog.text
+    assert "sound:listen" not in _sounds(r.out) and r.live.carries[0].kept_talking
+    assert "wake word: no earcon, they kept talking" in caplog.text
+
+
+async def test_heard_before_the_sentence_ended_then_quiet_plays_the_earcon(rig):
+    r = await rig()
+    await _listening(r)
+    _finish_early(r)
+    r.rec.partial_text = "hey little bot"  # then quiet: they wait for the sound
+    t0 = time.monotonic()
+    await until(lambda: r.live.calls, what="live voice started")
+    assert "sound:listen" in _sounds(r.out) and not r.live.carries[0].kept_talking
+    assert time.monotonic() - t0 >= wakeword.EARCON_QUIET_SECONDS - 0.1
+
+
+async def test_early_only_for_a_wake_phrase_and_still_word_confidence_decides(rig, caplog):
+    caplog.set_level(logging.INFO, logger="littlebot.wake")
+    r = await rig()
+    await _listening(r)
+    asked = _finish_early(r, conf=0.1)
+    r.rec.partial_text = "just a little bit"
+    await asyncio.sleep(0.3)
+    assert asked == []  # not a wake phrase: the sentence goes on
+    r.rec.partial_text = "hey little bot"
+    await until(lambda: asked, what="decided early")
+    await asyncio.sleep(0.3)
+    assert not r.live.calls and "heard 'hey little bot' but not sure enough" in caplog.text
+    r.ctx.config.wake.early = False
+    r.rec.partial_text = "hey little bot"
+    await asyncio.sleep(0.3)
+    assert asked == ["hey little bot"]  # switched off: only final results
+
+
+async def test_bot_alone_wakes_only_first_sure_and_without_music(rig, caplog, monkeypatch):
+    caplog.set_level(logging.INFO, logger="littlebot.wake")
+    r = await rig(wake={"phrases": ["hey little bot", "hey bot", "bot"]})
+    await _listening(r)
+    r.rec.say("did you see the bot")  # in the middle of a sentence
+    await until(lambda: "'bot' ignored (not the first word heard)" in caplog.text, what="the mid-sentence line")
+    r.ctx.vision = type("V", (), {"face_seen_within": staticmethod(lambda _s: True)})()
+    r.rec.say("bot i wanted that", conf=0.6)  # "But I wanted that": an unsure "bot"; a face doesn't make up for it
+    await until(lambda: "'bot' ignored (word confidence 0.60 below" in caplog.text, what="the unsure line")
+    import littlebot.skills.spotify as spotify
+
+    monkeypatch.setattr(spotify, "get_spotify", lambda _ctx: type("S", (), {"playing": lambda self: True})())
+    r.rec.say("bot what time is it")
+    await until(lambda: "'bot' ignored (music is playing)" in caplog.text, what="the music line")
+    assert r.live.calls == [] and r.wake.short_ignored == 3
+    monkeypatch.setattr(spotify, "get_spotify", lambda _ctx: None)
+    r.rec.say("bot what time is it", conf=0.8)
+    await until(lambda: r.live.calls, what="live voice started")
+    assert "wake word heard (phrase=bot)" in caplog.text
+
+
+async def test_bot_alone_is_decided_early_only_as_the_first_word(rig):
+    r = await rig(wake={"phrases": ["hey little bot", "bot"]})
+    await _listening(r)
+    asked = _finish_early(r)
+    r.rec.partial_text = "did you see the bot"
+    await asyncio.sleep(0.3)
+    assert asked == []  # the sentence goes on
+    r.rec.partial_text = "bot"
+    await until(lambda: r.live.calls, what="live voice started")
+    assert asked == ["bot"]
+
+
+def test_bot_and_hey_bot_are_default_wake_phrases():
+    _, usable, _ = build_grammar(WakeConfig().phrases)
+    assert {"lil bot", "hey lil bot", "hey bot", "bot"} <= {p for p, _ in usable}
+    assert normalise_phrase("Lilbot") == "lil bot" and normalise_phrase("hey lilbot") == "hey lil bot"
+
+
+async def test_a_call_already_listening_gets_the_microphone_at_once(rig, caplog):
+    caplog.set_level(logging.INFO, logger="littlebot.wake")
+    r = await rig()
+    await _listening(r)
+    r.mic.set_level(0.1)  # still talking: otherwise the hand-over waits for their next pause
+    start = r.live.start_session
+
+    async def listening_start(**kw: Any) -> dict[str, Any]:
+        kw["carry"].taker_listens = True  # the assistant's call audio opened beside the wake word
+        return await start(**kw)
+
+    r.live.start_session = listening_start
+    r.rec.say("hey little bot what is the weather", wake_ended_ago=0.6)
+    await until(lambda: r.live.carries and not r.live.carries[0].is_open, what="the microphone handed over")
+    assert "at once (the call's microphone was open already)" in caplog.text
 
 
 async def test_without_word_times_the_whole_sentence_is_carried(rig):
@@ -552,6 +695,161 @@ async def test_what_littlebot_plays_while_carrying_is_never_carried(rig):
     await until(lambda: not carry.is_open, what="the microphone handed over")
     assert carry.seconds - held < 0.1  # nothing heard while it played was kept (else ~0.6 s more)
     await play
+
+
+async def test_with_echo_cancelling_what_they_say_over_the_earcon_is_carried(rig, monkeypatch):
+    # On the robot (2026-10-31) the earcon played in their pause after "hey little bot," and the start of
+    # "who was Kublai Khan?" was dropped with it; the echo canceller takes the earcon out of the microphone anyway.
+    from littlebot.audio.service import AudioService
+
+    r = await rig()
+    monkeypatch.setattr(AudioService, "echo_cancelling", property(lambda self: True))
+    r.live.take_mic_after = 0.6
+    r.out.time_scale = 1.0
+    await _listening(r)
+    r.rec.say("hey little bot what is that", wake_ended_ago=0.3)
+    await until(lambda: r.live.carries, what="live voice started")
+    carry = r.live.carries[0]
+    play = asyncio.ensure_future(r.audio.play_sound("chime"))
+    await until(lambda: r.audio.mic_muted(), what="the sound plays")
+    held = carry.seconds
+    await until(lambda: not carry.is_open, what="the microphone handed over")
+    assert carry.seconds - held >= 0.3  # what they said meanwhile was kept
+    await play
+
+
+def _earcon_volumes(r: Any, monkeypatch: Any) -> list[Any]:
+    """Echo cancelling on; the volume each sound is asked for (None: the voice's)."""
+    from littlebot.audio.service import AudioService
+
+    monkeypatch.setattr(AudioService, "echo_cancelling", property(lambda self: True))
+    volumes: list[Any] = []
+    play = r.audio.play_sound
+
+    async def spy(name: str, **kw: Any) -> bool:
+        volumes.append(kw.get("volume"))
+        return await play(name, **kw)
+
+    monkeypatch.setattr(r.audio, "play_sound", spy)
+    return volumes
+
+
+async def test_with_echo_cancelling_their_pause_before_the_question_plays_no_earcon(rig, monkeypatch):
+    # On the robot (2026-10-31) 0.35 s of quiet ran out in the pause after "hey little bot,": the earcon played over
+    # "seventeen" at full volume and "what's seventeen times twenty three" was heard as "one thirteen times ...".
+    r = await rig()
+    volumes = _earcon_volumes(r, monkeypatch)
+    await _listening(r)
+    _finish_early(r)
+    r.rec.partial_text = "hey little bot"  # heard in their pause...
+    await asyncio.sleep(0.4)
+    r.mic.set_level(0.1)  # ...then the question
+    await until(lambda: r.live.calls, what="live voice started")
+    assert "sound:listen" not in _sounds(r.out) and r.live.carries[0].kept_talking and volumes == []
+
+
+async def test_with_echo_cancelling_the_earcon_they_may_talk_over_is_quieter(rig, monkeypatch):
+    r = await rig()
+    volumes = _earcon_volumes(r, monkeypatch)
+    await _listening(r)
+    _finish_early(r)
+    r.rec.partial_text = "hey little bot"  # and quiet: they wait for the sound
+    await until(lambda: r.live.calls, what="live voice started")
+    assert "sound:listen" in _sounds(r.out) and volumes == [wakeword.EARCON_OVER_SPEECH_VOLUME]
+
+
+class EarlyLive(FakeLive):
+    """The assistant (wakeword EARLY_START): it plays the earcon itself, and once it has the microphone it tells the
+    carry how loud they are (session._pump)."""
+
+    def __init__(self, ctx: Any, mic: Any) -> None:
+        super().__init__(ctx)
+        self.mic = mic
+        self.earcons: list[tuple[str, Any]] = []
+
+    def play_earcon(self, name: str, *, volume: float | None = None) -> bool:
+        self.earcons.append((name, volume))
+        return True
+
+    async def _run(self) -> None:
+        await super()._run()
+        carry = self.carries[-1]
+        while carry is not None and carry.levels_wanted and self.active:
+            carry.heard(self.mic.noise_level, 0.02)
+            await asyncio.sleep(0.02)
+
+
+async def _early(rig: Any, monkeypatch: Any) -> Any:
+    from littlebot.audio.service import AudioService
+
+    r = await rig()
+    monkeypatch.setattr(AudioService, "echo_cancelling", property(lambda self: True))
+    r.live = r.ctx.live = EarlyLive(r.ctx, r.mic)
+    return r
+
+
+async def test_the_assistant_listens_at_once_and_plays_the_earcon_when_they_wait(rig, monkeypatch, caplog):
+    # Flux works through what it is sent at about real time: the 0.45 s spent deciding on the earcon, sent at
+    # once afterwards, ended their turn ~0.45 s later (the robot, 2026-10-31).
+    caplog.set_level(logging.INFO, logger="littlebot.wake")
+    r = await _early(rig, monkeypatch)
+    await _listening(r)
+    _finish_early(r)
+    r.rec.partial_text = "hey little bot"  # and quiet: they wait for the sound
+    await until(lambda: r.live.calls, what="the assistant started")
+    carry = r.live.carries[0]
+    assert r.live.earcons == [] and carry.levels_wanted  # listening before it is known whether they go on
+    await until(lambda: r.live.earcons, what="the earcon")
+    assert r.live.earcons == [("listen", wakeword.EARCON_OVER_SPEECH_VOLUME)]
+    assert "sound:listen" not in _sounds(r.out)  # through the assistant's speaker stream, not the wake word's
+    assert not carry.kept_talking and not carry.levels_wanted
+    assert "earcon played by the assistant" in caplog.text
+
+
+async def test_the_assistant_listens_at_once_and_plays_no_earcon_when_they_go_on(rig, monkeypatch, caplog):
+    caplog.set_level(logging.INFO, logger="littlebot.wake")
+    r = await _early(rig, monkeypatch)
+    await _listening(r)
+    _finish_early(r)
+    r.rec.partial_text = "hey little bot"  # heard in their pause...
+    await until(lambda: r.live.calls, what="the assistant started")
+    carry = r.live.carries[0]
+    r.mic.set_level(0.1)  # ...then the question, into the assistant's microphone
+    await until(lambda: not carry.levels_wanted, what="decided")
+    assert carry.kept_talking and r.live.earcons == [] and "sound:listen" not in _sounds(r.out)
+    assert "no earcon, they kept talking (the assistant was listening already)" in caplog.text
+
+
+async def test_with_the_earcon_off_no_sound_is_played_and_nothing_waits_for_it(rig, monkeypatch, caplog):
+    caplog.set_level(logging.INFO, logger="littlebot.wake")
+    r = await _early(rig, monkeypatch)
+    r.ctx.config.assistant.earcon = False
+    await _listening(r)
+    _finish_early(r)
+    r.rec.partial_text = "hey little bot"  # and quiet: they would have waited for the sound
+    await until(lambda: r.live.calls, what="the assistant started")
+    await asyncio.sleep(wakeword.EARCON_QUIET_SECONDS + 0.2)
+    assert r.live.earcons == [] and "sound:listen" not in _sounds(r.out)
+    assert not r.live.carries[0].levels_wanted and "earcon played" not in caplog.text
+
+
+async def test_with_the_earcon_off_the_wake_phrase_alone_plays_nothing(rig):
+    r = await rig()
+    r.ctx.config.assistant.earcon = False
+    await _listening(r)
+    r.rec.say("hey little bot")
+    await until(lambda: r.live.calls, what="live voice started")
+    assert "sound:listen" not in _sounds(r.out)
+
+
+async def test_without_echo_cancelling_the_earcon_is_decided_before_the_assistant_starts(rig, monkeypatch):
+    r = await rig()
+    r.live = r.ctx.live = EarlyLive(r.ctx, r.mic)  # no echo cancelling: the microphone can't hear over the sound
+    await _listening(r)
+    _finish_early(r)
+    r.rec.partial_text = "hey little bot"  # and quiet
+    await until(lambda: r.live.calls, what="the assistant started")
+    assert "sound:listen" in _sounds(r.out) and r.live.earcons == [] and not r.live.carries[0].levels_wanted
 
 
 def test_while_they_talk_the_microphone_is_handed_over_at_their_next_pause():
@@ -700,8 +998,9 @@ async def test_wake_enabled_defaults_on():
     ctx = make_test_context()
     try:
         assert ctx.settings.get("wake.enabled") is True
-        assert ctx.config.wake.phrases == ["hey little bot", "hey littlebot", "hey lil bot", "hey bot", "lil bot",
-                                           "little bot"]
+        assert ctx.config.wake.phrases == ["hey little bot", "hey littlebot", "hey lil bot", "lil bot", "little bot",
+                                           "hey bot", "bot"]
+        assert ctx.config.wake.end_silence_seconds == 0.25 and ctx.config.wake.early is True
         assert ctx.config.wake.min_confidence == 0.35
     finally:
         ctx.db.close()
@@ -933,3 +1232,46 @@ async def test_real_input_backend_is_shared_never_opened_twice(fake_sd):
         await audio.stop()
         ctx.db.close()
     assert not any(s.active for s in fake_sd.in_streams)
+
+
+def test_a_quicker_model_folder_decides_after_a_short_silence(tmp_path) -> None:
+    # The model's own rules wait 0.5-1.0 s of silence before deciding a phrase: "hey little bot" was heard 0.73 s
+    # (1.4 s live) after it was said. A linked copy with its own conf decides after end_silence_seconds.
+    src = tmp_path / "vosk-model-small-en-us-0.15"
+    (src / "am").mkdir(parents=True)
+    (src / "am" / "final.mdl").write_bytes(b"model")
+    (src / "conf").mkdir()
+    (src / "conf" / "mfcc.conf").write_text("--sample-frequency=16000\n")
+    (src / "conf" / "model.conf").write_text("--beam=10.0\n--endpoint.rule2.min-trailing-silence=0.5\n"
+                                             "--endpoint.rule3.min-trailing-silence=0.75\n"
+                                             "--endpoint.rule4.min-trailing-silence=1.0\n")
+    try:
+        (tmp_path / "probe").symlink_to(src / "am")
+    except OSError:
+        pytest.skip("no symlinks here")
+    dst = wakeword.tuned_model_dir(src, 0.15, tmp_path / "data" / "models")
+    assert dst != src and (dst / "am" / "final.mdl").read_bytes() == b"model"
+    assert (dst / "conf" / "mfcc.conf").is_file()
+    conf = (dst / "conf" / "model.conf").read_text()
+    assert "--beam=10.0" in conf and "rule2.min-trailing-silence=0.15" in conf
+    assert "rule3.min-trailing-silence=0.25" in conf and "rule4.min-trailing-silence=0.40" in conf
+    assert (src / "conf" / "model.conf").read_text().count("=0.5\n") == 1  # the model itself is untouched
+    assert wakeword.tuned_model_dir(src, 0.15, tmp_path / "data" / "models") == dst  # made once
+    assert wakeword.tuned_model_dir(tmp_path / "missing", 0.15, tmp_path / "data" / "models") == tmp_path / "missing"
+
+
+def test_the_stop_words_load_the_wake_words_model_folder(tmp_path) -> None:
+    # The stop words used to load the original folder: a second model in memory (~130 MB) at every conversation.
+    from types import SimpleNamespace
+
+    src = tmp_path / "model"
+    (src / "conf").mkdir(parents=True)
+    (src / "conf" / "model.conf").write_text("--endpoint.rule2.min-trailing-silence=0.5\n")
+    try:
+        (tmp_path / "probe").symlink_to(src / "conf")
+    except OSError:
+        pytest.skip("no symlinks here")
+    cfg = SimpleNamespace(wake=SimpleNamespace(model_path=str(src), end_silence_seconds=0.15), data_path=tmp_path)
+    assert wakeword.wake_model_dir(cfg) == wakeword.tuned_model_dir(src, 0.15, tmp_path / "models") != src
+    cfg.wake.end_silence_seconds = None
+    assert wakeword.wake_model_dir(cfg) == src

@@ -12,7 +12,7 @@ rounded, candy-coloured style; LittleBot's own eyes host every game.
 | Memory Lights | `memory` | 3 years+ | Simon-style: four pads (circle, heart, star, diamond) light up with tones; copy the pattern, one step longer each round. A mistake shows the right pad and starts again; best round is kept. |
 | Tic-Tac-Toe | `tictactoe` | 4 years+ | You are X. LittleBot always takes a win in front of it, otherwise plays perfectly only some of the time: it gets cleverer when you win and gentler when you lose. Who starts alternates. |
 | Reaction Race | `reaction` | 4 years+ | LittleBot's round face goes red ("Wait..."), then green - tap! Shows milliseconds; five tries per round with best and average. Tapping early says "Too soon!" and doesn't count. |
-| Rock Paper Scissors | `rps` | 4 years+ | With the camera on: tap Go (or say "go"), show rock, paper or scissors to the camera on "Shoot!" and LittleBot reads your hand on the robot (nothing is sent or kept; it asks you to tap what you showed when it can't tell). Without the camera or the hand models: tap a choice. LittleBot's own pick is random, made at the reveal. |
+| Rock Paper Scissors | `rps` | 4 years+ | With the camera on: tap Go (or say "go"), show rock, paper or scissors to the camera on "Shoot!" and LittleBot reads your hand on the robot (nothing is sent or kept). When it can't tell, it says why ("I couldn't see your hand") and asks what you showed; a move said as you show it counts too. Without the camera or the hand models: tap or say a choice. First to 3 wins the match ("Match point!", a celebration, then "go" for a rematch). LittleBot locks its pick in as the countdown starts, before it sees yours: at random, or in **tricky mode** ("tricky mode" / "easy mode") it learns your habits (what you play after a win or a loss, what you play most) and tries to beat them. In a voice chat it says each result itself ("I saw rock. Paper wraps rock: I win! 2 to 1 to me."). |
 
 The little-ones games need no reading and reward every tap (nothing is ever "wrong"). They also
 play by themselves, so a baby who only watches still sees bubbles pop and animals peek. They are
@@ -34,7 +34,14 @@ pop bubbles side by side. Sounds are LittleBot's gentle built-in effects at the 
   read on the robot (`littlebot/games/hand_sign.py`, ~30 ms each here), and the sign counts once two
   frames in a row agree. On TensorFlow's rock-paper-scissors test pictures (372 rendered hands) all were
   read right; made smaller, turned 25 degrees, mirrored or darker, 96-100% right, the rest "not sure",
-  none wrong. Not yet tried with the real camera and real hands.
+  none wrong. On the robot with real hands (23-24 October 2026, 21 rounds) it read a sign in 20; the
+  camera has been unplugged since, so the game is played by tap and voice until it is back.
+* **In the fast voice** (`littlebot/assistant`): while a game is on, words that are only a move or "go"
+  ("Rock!", "I'll go with paper", "one more time", "tricky mode") go straight to the game, never to the
+  brain (which would make up its own pick); anything else ("play some jazz") is answered as usual. The
+  game's ready words (`game.news`'s `say`) are said as they are, and the brain is told how the game is
+  played and the score. The voice chat shares the face and speaker with the game, both ways: starting a
+  game in a chat, or saying "Hey LittleBot" during a game, keeps the game on the screen.
 
 Each game ends by itself (babies' games after 3 minutes, the others after 5 unless a length is
 chosen; always between 30 s and 15 min): a short finale (confetti, LittleBot's happy eyes, a
@@ -139,8 +146,10 @@ always instant. Sounds that matter even when a little late (the giggle after "Mo
 
 `host.child_gaze()` returns where LittleBot should look to look at the child (from
 `vision.faces`, fresh for 2 s) - used by Follow the Star. Recognised speech (`audio.utterance`
-events) is passed to the running game's `hear(text)`: Rock Paper Scissors picks "rock", "paper"
-or "scissors" from it. Games never start listening themselves.
+events, and the fast voice's turns) is passed to the running game's `hear(text)`: Rock Paper Scissors
+takes "rock", "paper" or "scissors" when that is all the words say. `host.tell(note, say=...)` gives a
+voice chat what to say: the note for GPT-Live, which words it itself, and the ready words for the fast
+voice. Games never start listening themselves.
 
 ## Adding a game
 
@@ -160,3 +169,49 @@ come out thinner than their round caps; use `art.capsule`.
 
 Cost on a desktop CPU: 0.6-2.5 ms per frame (update + draw); expect roughly 3-4x on the Pi 5,
 well inside the 33 ms of a 30 fps frame. Colour Burst spends a few ms generating each new splash.
+
+# Voice games (for grown-ups and the family)
+
+Played by talking, with a card on the screen: **Trivia**, **Hangman**, **Twenty Questions**, **Riddles** and
+**Would You Rather** (`littlebot/games/voice`). Say "let's play trivia", "quiz me on history", "play hard
+science trivia", "let's play hangman with animals", "give me a riddle", "how about twenty questions" or "let's
+play would you rather". "Hint", "skip" / "I give up", "repeat", "what's my score" and "stop the game" work in
+every game; "play again" (or "yes" to "Want another round?") starts another. "What's my high score in
+trivia?" reads the scores. The toddler touch games above are separate and unchanged.
+
+| Game | id | How it plays |
+|---|---|---|
+| Trivia | `trivia` | `voice_games.trivia_questions` (10) questions, A to D, read out briefly; instant right/wrong with the answer and a one-line fun fact. 10 points a right answer, +5 from the third in a row, half after a fifty-fifty hint. Topics: general, science, history, geography, sports, movies, music, food, Canada, tech, or any topic when the text model writes the questions; easy / medium / hard. |
+| Hangman | `hangman` | Five words a round, six lives each; the card shows the blanks, the letters tried and the hearts. "E", "is there an S", "T as in Tom", or the whole word. |
+| Twenty Questions | `twenty_questions` | LittleBot thinks of an animal, food, thing, vehicle or something in nature; you ask yes/no questions (the AI answers them honestly, it knows the secret), guesses are judged on the robot. Fewer questions, higher score. |
+| Riddles | `riddles` | Five riddles; any short answer is a guess; a hint comes by itself after two misses, the answer after three. |
+| Would You Rather | `would_you_rather` | Five pairs; LittleBot reacts with its own pick and the household tally ("most people here pick flying, 3 to 1"). Tap a side or say it. No score. |
+
+**Fast.** The new voice pipeline gives the person's words to the running game first
+(`VoiceGames.handle_utterance`): "B", "Paris" or "is there an E" are judged on the robot and the reply is spoken
+straight away, with no model call. Only words that aren't a move ("this one's hard!") go to the AI, which sees the
+game in its context. GPT-Live plays through the tools instead (`start_voice_game`, `game_answer`, `game_hint`,
+`game_skip`, `stop_voice_game`, `game_scores`), whose results carry the exact words to say. Answers are matched
+forgivingly (`answers.py`): "bee", "option b", "the second one", "two", "jupitor", "da vinci", "nineteen
+sixty nine".
+
+**Questions.** With `voice_games.use_model_questions` on, Claude set up and the cloud allowed, Trivia asks the text
+model for the whole round in one structured call (6 s at most; a built-in topic starts with a bank question and
+switches to the model's as they arrive). Otherwise, and whenever the model fails, the offline bank
+(`assets/games/trivia.json`, 113 checked questions) is used. Recently asked questions, words, riddles and
+pairs are remembered so a new round doesn't repeat them.
+
+**Scores** live in the robot's database (`voice_game_scores`: game, score, out_of, best_streak, played_at;
+`voice_game_seen`; `voice_game_votes`). Nothing said is stored.
+
+**Settings** (`voice_games:` in config): `enabled`, `trivia_questions`, `use_model_questions`, `hangman_words`,
+`riddles_per_round`, `would_you_rather_per_round`, `sounds`.
+
+**Cards** (internal, never offered to the AI): `quiz` (the question and four tappable tiles, green / red on an
+answer), `word_game` (blanks, letters tried, hearts) and `game_board` (riddles, would you rather, twenty questions),
+in a night-time game-show look (navy, cyan, white). They follow the live game; a tap answers and the reply is
+spoken through `assistant.announce`.
+
+Adding a voice game: subclass `littlebot.games.voice.base.VoiceGame` (`_begin`, `move`, `hint`, `skip`,
+`describe`, `card_spec`), add it to `GAMES` in `littlebot/games/voice/skill.py`, and test it with
+`tests/games/voice_game_helpers.py`.

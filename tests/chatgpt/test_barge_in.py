@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import logging
+import re
 from typing import Any
 
 import numpy as np
@@ -268,7 +269,7 @@ class Match:  # what ctx.voices.identify returns (littlebot/voices)
     is_child: bool
 
 
-SPEECH_START = 50  # frames: the voice plays alone for 1 s first (the echo is measured)
+SPEECH_START = 80  # frames: the voice plays alone for 1.6 s first (past ONSET_GUARD_S; the echo is measured)
 
 
 class Call:
@@ -370,6 +371,28 @@ async def test_cutting_in_stops_the_voice_and_sends_them_from_their_first_word(c
         audio.close()
 
 
+async def test_for_the_assistant_what_they_said_over_the_voice_comes_at_once(call):
+    # The assistant's speech-to-text takes audio faster than real time: the pre-roll at real time left it 400 ms
+    # behind the microphone after a cut-in (the robot, 2026-10-31).
+    audio, c = call()
+    audio.burst_preroll = True
+    try:
+        await c.warm_up()
+        cut = await c.talk_over(0.6)
+        assert cut is not None
+        k = SPEECH_START + cut  # the frame read when it decided (no tick before the voice here)
+        burst = c.sent[k]
+        assert len(burst) > FRAME and len(burst) % FRAME == 0  # the pre-roll and the frame just read, together
+        first = next(i for i, m in enumerate(c.mics) if np.array_equal(m, burst[:FRAME]))
+        n = len(burst) // FRAME
+        assert all(np.array_equal(burst[j * FRAME:(j + 1) * FRAME], c.mics[first + j]) for j in range(n))
+        assert first + n - 1 == k  # caught up: what follows is the microphone as it is read
+        assert all(np.array_equal(c.sent[j], c.mics[j]) for j in range(k + 1, len(c.sent)))
+        assert audio.input_behind_s() < FRAME_S
+    finally:
+        audio.close()
+
+
 async def test_their_words_drop_the_rest_of_that_turn_and_the_next_one_plays(call):
     audio, c = call()
     try:
@@ -409,6 +432,27 @@ async def test_oops_go_ahead_asks_the_voice_to_carry_on(call):
         audio.close()
 
 
+async def test_a_yeah_over_the_voice_keeps_it_held_then_it_plays_on(call):
+    # "Yeah." said over the voice dropped the answer about Alexander the Great (the robot, 2026-11-03)
+    audio, c = call()
+    try:
+        await c.warm_up()
+        await c.talk_over(0.5)
+        assert audio.voice_held and audio._out_queued > 0
+        assert audio.barge_in_heard("Yeah", False, aside=True) is None
+        assert audio.voice_held and c.events == ["interrupted"]  # still deciding: nothing dropped
+        assert audio.barge_in_heard("Yeah.", True, aside=True) == "aside"
+        assert c.events == ["interrupted", "carried_on"] and not audio.interrupted and audio._out_queued > 0
+        for _ in range(6):
+            await c.tick()
+        assert all(p.any() for p in c.played[-3:])  # it plays on
+        await c.talk_over(0.5)
+        assert audio.barge_in_heard("Yeah, but", False) is None  # more than that: dropped as before
+        assert c.events[-1] == "heard" and audio._out_queued == 0 and not audio.voice_held
+    finally:
+        audio.close()
+
+
 async def test_drop_voice_empties_what_was_held_and_listens(call):
     audio, c = call()
     try:
@@ -428,7 +472,7 @@ async def test_a_false_alarm_lets_the_held_voice_play_on(call, caplog):
     audio, c = call()
     try:
         await c.warm_up()
-        cut = await c.talk_over(0.5)
+        cut = await c.talk_over(1.2)  # someone talking on for a while after it stopped (past ECHO_GONE_S), no words
         assert cut is not None
         k = SPEECH_START + 1 + cut
         while "carried_on" not in c.events:
@@ -447,6 +491,73 @@ async def test_a_false_alarm_lets_the_held_voice_play_on(call, caplog):
         j = next(i for i, v in enumerate(c.voice[:c.vi]) if np.allclose(now, v.astype(np.float32) / 32768 * 0.5, atol=1e-4))
         assert c.vi - j >= 50
         assert audio.barge_in_heard("go ahead", True) is None  # too late for that
+    finally:
+        audio.close()
+
+
+async def test_quiet_the_moment_the_voice_stopped_is_its_own_echo_and_it_carries_on_soon(call, caplog):
+    """On the robot (2026-10-31) its own voice leaking through held the answer 2.5 s: a person goes on talking once
+    the voice stops; an echo (or a bump) ends with it."""
+    caplog.set_level(logging.INFO, logger="littlebot.chatgpt.live")
+    audio, c = call()
+    try:
+        await c.warm_up()
+        cut = await c.talk_over(0.5, until_interrupted=True)  # the sound stops as the voice is held
+        assert cut is not None
+        k = len(c.sent)
+        while "carried_on" not in c.events:
+            await c.tick()
+            assert len(c.sent) - k < 250, "never carried on"
+        held = len(c.sent) - k
+        assert 0.7 / FRAME_S <= held <= 1.0 / FRAME_S  # ECHO_HOLD_S, not live_barge_in_false_alarm_ms
+        assert "its own echo" in caplog.text and audio.false_alarms == 1
+        assert not audio.interrupted and audio.speaking
+    finally:
+        audio.close()
+
+
+async def test_a_cue_plays_but_leaves_the_microphone_open(call):
+    """The wake word's earcon played by the assistant (wakeword EARLY_START): they may talk over it."""
+    audio, c = call()
+    try:
+        tone = (0.3 * np.sin(2 * np.pi * 880 * np.arange(int(0.3 * RATE)) / RATE)).astype(np.float32)
+        audio.play_cue(tone, RATE)
+        u = voiced(120, 0.02, 0.08)
+        for _ in range(10):
+            sent = await c.tick(voice=False, user=u)
+            assert np.array_equal(sent, c.mics[-1])  # the microphone stays open
+        assert max(float(np.abs(p).max()) for p in c.played) > 0.1  # and it played
+        assert not audio.speaking and audio.barge_ins == 0 and c.events == []
+    finally:
+        audio.close()
+
+
+async def test_the_voice_leaking_through_as_it_starts_after_a_silence_never_interrupts(call):
+    """On the robot (2026-10-31) the echo canceller let the first words of an answer through for a moment, loud and
+    at a grown-up's pitch (the voice is ~190 Hz), 0.3-0.8 s after the speaker played them: held as a false alarm.
+    Someone who goes on talking past ONSET_GUARD_S still cuts in."""
+    audio, c = call()
+    try:
+        await c.warm_up()
+        for _ in range(80):  # that answer was said; 1.6 s of quiet before the next one
+            await c.tick(voice=False)
+        leak = frames_of(voiced(190, 0.5, 0.2, seed=3))  # much louder than the echo the detector measured
+        for i in range(50):  # the next answer's first second, its echo leaking through 0.3-0.8 s in
+            await c.tick(user=leak[i - 15] if 15 <= i < 15 + len(leak) else None)
+        assert not audio.interrupted and c.events == [] and audio.barge_ins == 0
+        assert await c.talk_over(0.8) is not None  # a person, after it: as usual
+    finally:
+        audio.close()
+
+
+async def test_someone_who_goes_on_talking_is_still_waited_for(call):
+    audio, c = call()
+    try:
+        await c.warm_up()
+        cut = await c.talk_over(2.0, until_interrupted=True)
+        assert cut is not None
+        await c.talk_over(1.0)  # they go on talking, no words yet
+        assert audio.interrupted and "carried_on" not in c.events
     finally:
         audio.close()
 
@@ -610,6 +721,69 @@ async def test_a_stop_word_in_a_babys_squeal_does_not(call, caplog):
         audio.close()
 
 
+@pytest.mark.parametrize("said,conf,stops", [("stop", 1.0, True), ("stop", 0.7, False), ("hang on", 1.0, False)])
+async def test_a_very_sure_stop_stops_it_however_high_it_reads(call, caplog, said, conf, stops):
+    # Over a long answer the echo canceller took the low half off a parent's 101 Hz "stop!": it read 571-608 Hz and
+    # the news was read on for 38 s (the robot, 2026-10-31). The voice's own "hang on" still can't stop it.
+    caplog.set_level(logging.INFO, logger="littlebot.chatgpt.live")
+    audio, c = call()
+    words = FakeStopWords()
+    audio.setup_barge_in(on_change=lambda what, info: c.events.append(what), stop_words=words)
+    try:
+        await c.warm_up()
+        for u in frames_of(voiced(600.0, 0.16, 0.08, seed=13)):
+            await c.tick(user=u)
+        said_at = c.clock.t
+        for i in range(10):
+            if i == 3:
+                words.hit = (said, said_at, conf)
+            await c.tick()
+        assert c.events == (["interrupted", "stop_word"] if stops else [])
+        if not stops:
+            assert f"heard '{said}', but it sounded like a child or its own voice (6" in caplog.text
+            assert f"{conf:.2f} sure" in caplog.text
+    finally:
+        audio.close()
+
+
+@pytest.mark.parametrize("conf,stops", [(0.7, False), (1.0, True)])
+async def test_a_stop_word_at_the_voices_own_pitch_is_its_echo_unless_sure(call, caplog, conf, stops):
+    # OpenAI's voice (about 200 Hz, under live_barge_in_max_pitch_hz) stopped itself mid-answer: "no stop" heard at
+    # 200 Hz with nobody talking (the robot, 2026-10-31). The test's voice plays at 210 Hz.
+    caplog.set_level(logging.INFO, logger="littlebot.chatgpt.live")
+    audio, c = call()
+    words = FakeStopWords()
+    audio.setup_barge_in(on_change=lambda what, info: c.events.append(what), stop_words=words)
+    try:
+        await c.warm_up()
+        for u in frames_of(voiced(205.0, 0.16, 0.08, seed=13)):  # its echo leaking through, louder than measured
+            await c.tick(user=u)
+        said_at = c.clock.t
+        for i in range(10):
+            if i == 3:
+                words.hit = ("no stop", said_at, conf)
+            await c.tick()
+        assert c.events == (["interrupted", "stop_word"] if stops else [])
+        if not stops:
+            assert "heard 'no stop' at the voice's own pitch (2" in caplog.text and "0.70 sure" in caplog.text
+    finally:
+        audio.close()
+
+
+async def test_a_stop_says_how_sure_and_the_voices_own_pitch(call, caplog):
+    caplog.set_level(logging.INFO, logger="littlebot.chatgpt.live")
+    audio, c = call()
+    words = FakeStopWords()
+    audio.setup_barge_in(on_change=lambda what, info: c.events.append(what), stop_words=words)
+    try:
+        await c.warm_up()
+        await short_word(c, words)  # a grown-up at 120 Hz over the 210 Hz voice
+        line = next(r.getMessage() for r in caplog.records if "interrupted: they said" in r.getMessage())
+        assert "0.00 sure" in line and re.search(r"the voice's own 2[01]\d Hz", line), line
+    finally:
+        audio.close()
+
+
 async def test_a_shouted_stop_higher_than_a_grown_ups_pitch_still_stops_it(call, caplog):
     # on the robot (2026-10-29) the parent's "stop!" had no frame at a grown-up's pitch: turned down three times
     caplog.set_level(logging.INFO, logger="littlebot.chatgpt.live")
@@ -622,6 +796,21 @@ async def test_a_shouted_stop_higher_than_a_grown_ups_pitch_still_stops_it(call,
         assert c.events == ["interrupted", "stop_word"]
         assert "live voice: interrupted: they said 'stop' (recognised in " in caplog.text and " pitch 0 Hz" not in \
             caplog.text
+    finally:
+        audio.close()
+
+
+async def test_a_shh_is_never_judged_by_its_pitch(call, caplog):
+    # on the robot (2026-10-31) a parent's "shh" measured 579 Hz (a hiss has no real pitch) and was turned down
+    caplog.set_level(logging.INFO, logger="littlebot.chatgpt.live")
+    audio, c = call()
+    words = FakeStopWords()
+    audio.setup_barge_in(on_change=lambda what, info: c.events.append(what), stop_words=words)
+    try:
+        await c.warm_up()
+        await short_word(c, words, "shh", f0=480.0)
+        assert c.events == ["interrupted", "stop_word"]
+        assert "they said 'shh'" in caplog.text
     finally:
         audio.close()
 
@@ -718,6 +907,53 @@ async def test_stop_words_finds_the_phrase_in_the_words_so_far():
     finally:
         words.close()
     assert match("so hold on a second".split(), phrases) == "hold on" and match(["holding"], phrases) is None
+
+
+class SureRecognizer(FakeRecognizer):
+    """Also forces its result out (VoskKeywordRecognizer.finish), with word confidences."""
+
+    def __init__(self, partials: list[str], results: list[dict[str, Any]]) -> None:
+        super().__init__(partials)
+        self.results = list(results)
+
+    def finish(self) -> dict[str, Any] | None:
+        return self.results.pop(0) if self.results else None
+
+
+def _result(*words: tuple[str, float]) -> dict[str, Any]:
+    return {"text": " ".join(w for w, _ in words), "result": [{"word": w, "conf": c} for w, c in words]}
+
+
+async def test_a_stop_word_counts_only_when_sure_and_not_inside_a_sentence():
+    import time
+
+    from littlebot.chatgpt.stop_words import StopWords, sure
+
+    phrases = [("stop", ("stop",)), ("that's enough", ("that's", "enough"))]
+    # heard on the robot (2026-10-31) while it answered: "what's the capital of Australia" as "that's enough"
+    assert sure(_result(("what", 1.0), ("the", 0.6), ("that's", 0.3), ("enough", 0.4)), phrases) is None
+    assert sure(_result(("tell", 1.0), ("me", 1.0), ("a", 1.0), ("lot", 1.0), ("stop", 0.92)), phrases) is None
+    assert sure(_result(("what", 1.0), ("stop", 1.0)), phrases) is None
+    assert sure(_result(("okay", 1.0), ("stop", 1.0)), phrases) == "stop"
+    assert sure(_result(("hey", 1.0), ("little", 1.0), ("bot", 1.0), ("that's", 0.9), ("enough", 1.0)),
+                phrases) == "that's enough"
+    # one word, damaged by the echo canceller over a long answer (the robot, 2026-10-31: 0.44-0.86), still counts
+    assert sure(_result(("stop", 0.5)), phrases) == "stop"
+    assert sure(_result(("stop", 0.3)), phrases) is None and sure(_result(("stop", 0.0)), phrases) is None
+    assert sure(_result(("that's", 0.5), ("enough", 0.5)), phrases) is None  # two words: as sure as before
+    rec = SureRecognizer(["", "that's enough", "", "stop"],
+                         [_result(("what", 1.0), ("that's", 0.3), ("enough", 0.4)), _result(("stop", 1.0))])
+    words = StopWords(lambda: (rec, phrases), rate=RATE)
+    try:
+        for _ in range(25):  # five batches of 0.1 s
+            words.push(np.zeros(FRAME, dtype=np.int16))
+        deadline = time.monotonic() + 3
+        while words.heard == 0 and time.monotonic() < deadline:
+            await asyncio.sleep(0.01)
+        hit = words.take()
+        assert hit is not None and hit[0] == "stop" and words.heard == 1 and not rec.results
+    finally:
+        words.close()
 
 
 def test_no_stop_words_without_the_speech_model(tmp_path):

@@ -326,7 +326,7 @@ CONTROL_WORDS = re.compile(r"\b(?:activit(?:y|ies)|games?|videos?|youtube|cartoo
 INFO_WORDS = re.compile(r"\b(?:weather|forecasts?|hourly|rain(?:ing|y)?|snow(?:ing|y)?|sunny|umbrella|windy|"
                         r"humid(?:ity)?|degrees|(?:hot|cold|warm|chilly) (?:outside|out there)|"
                         r"what time|what(?:'s| is) the time|time is it|what day|what date|(?:the|today'?s) date|"
-                        r"news|headlines?|scores?)\b", re.I)
+                        r"news|headlines?|scores?|calendars?|appointments?|meetings?|agenda|schedule)\b", re.I)
 CHECK_WINDOW = 320  # characters of a reply in progress checked at a time
 # The voice sometimes says the person's part ("Hi LittleBot, it's Ali, can you look up the weather?"): a line that
 # greets LittleBot by name gets this note (not "LittleBot here!").
@@ -413,6 +413,14 @@ forget one, delegate "forget: <the fact>". Never say you'll remember something w
 The client knows live information: the weather (now, today, tomorrow, anywhere), the time and the date, and \
 things that change, like news, sports scores or opening hours. For these, always delegate the question to the \
 client in plain words (for example "what's the weather today" or "what time is it"), never guess or say you can't know.
+
+LittleBot can also do these, so delegate the request in plain words and say the result: reminders and alarms \
+("remind me at 6 to call mom", "wake me at 7", "what are my reminders?"), lists ("add milk to the shopping list", \
+"what's on my to-do list?"), the morning or evening briefing and the news headlines, music ("play some jazz"), \
+the smart home when it is set up ("turn off the kitchen lights"), routines ("when I say good night, ..."), \
+voice games (trivia, hangman, 20 questions, riddles, would you rather: "let's play trivia"; while one runs, \
+delegate each of their answers as "game answer: <what they said>"), its personality ("be more concise") and \
+interpreter mode ("translate to Urdu"). Never say you can't do these.
 
 You have an animated face on a screen (big cartoon eyes). Faces you can make: {faces}. When someone asks you \
 to make a face, wink, spin your eyes or play peekaboo, delegate it to the client as "face: <name>" (for example \
@@ -1288,11 +1296,11 @@ class LiveCall:
                 hooks["voice_said"] = self._voice_said_lately  # its own "hang on" heard back isn't them
             if "stop_words" in params and getattr(self.audio, "barge_in_on", False) and \
                     getattr(self.cfg, "live_stop_words", False):
+                from littlebot.audio.wakeword import wake_model_dir  # noqa: PLC0415
                 from littlebot.chatgpt.live_audio import RATE  # noqa: PLC0415
                 from littlebot.chatgpt.stop_words import StopWords  # noqa: PLC0415
 
-                wake = getattr(self.ctx.config, "wake", None)
-                hooks["stop_words"] = StopWords.from_model(getattr(wake, "model_path", None), rate=RATE)
+                hooks["stop_words"] = StopWords.from_model(wake_model_dir(self.ctx.config), rate=RATE)
             setup(**hooks)
 
     def _voice_said_lately(self) -> str:
@@ -1770,6 +1778,12 @@ class LiveCall:
             get_decider(self.ctx).compare("routing", mine=mine, theirs=str(answer.value), answer=answer)
 
     def _remember(self, what: str, fact: str) -> str:
+        hub = getattr(self.ctx, "skills", None)
+        memory = hub.get("memory") if hub is not None and hasattr(hub, "get") else None
+        if memory is not None and memory.available():  # the assistant's memory (littlebot/skills/memory.py)
+            self._spawn(self._remember_skill(memory, what, fact))
+            return ("Done: LittleBot forgets that now." if what == "forget"
+                    else f"Saved: LittleBot will remember this from now on: {fact[:200]}.")
         from littlebot.brain import remembered  # noqa: PLC0415
 
         try:
@@ -1785,6 +1799,15 @@ class LiveCall:
             return "LittleBot couldn't write that down. Say so briefly."
         log.info("live voice: remembering a note (%d kept)", len(remembered.notes(self.ctx.settings)))
         return f"Saved: LittleBot will remember this in every chat from now on: {note}."
+
+    async def _remember_skill(self, memory: Any, what: str, fact: str) -> None:
+        try:
+            res = await memory.run("forget" if what == "forget" else "remember",
+                                   {"query": fact} if what == "forget" else {"fact": fact})
+        except Exception:  # noqa: BLE001
+            log.warning("live voice: the memory skill failed", exc_info=True)
+            return
+        log.info("live voice: memory %s -> %s", what, str(res).split(":", 1)[0])
 
     async def _deliver(self, delegation_id: str, task: "asyncio.Task[str]", kind: str,
                        early: "_Early | None" = None) -> None:

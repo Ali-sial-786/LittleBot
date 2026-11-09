@@ -23,6 +23,10 @@
  *  - never draws anything over a live player and never blocks player functionality
  *    (YouTube Required Minimum Functionality / Developer Policies III.I.6): the calm screens
  *    below are only shown while no player exists
+ *  - music (item.presentation === 'music', from the music skill): the player shrinks to a box in the
+ *    corner (at least 200x200 px, still fully visible, nothing over it) and a now-playing screen fills
+ *    the rest: the title, the channel, LittleBot's bobbing eyes and equaliser bars (pure CSS), resting
+ *    while the player is paused. The video itself is never hidden or separated from its sound.
  */
 (function () {
   'use strict';
@@ -93,6 +97,26 @@
       var el = $('screen-' + n);
       if (el) { el.classList.toggle('visible', n === name); }
     });
+    showMusic(name === 'video' && !!st.item && st.item.presentation === 'music');
+  }
+
+  // Music: the now-playing screen around the (smaller, never covered) player while it exists.
+  function showMusic(on) {
+    var body = document.body;
+    if (!body) { return; }
+    if (on) {
+      var title = $('np-title');
+      var channel = $('np-channel');
+      if (title) { title.textContent = String(st.item.title || ''); }
+      if (channel) { channel.textContent = String(st.item.channel || ''); }
+    } else {
+      body.classList.remove('paused');
+    }
+    body.classList.toggle('music', on);
+  }
+
+  function setPaused(paused) {
+    if (document.body) { document.body.classList.toggle('paused', !!paused); }
   }
 
   function isHidden() { return document.visibilityState === 'hidden'; }
@@ -358,6 +382,7 @@
 
   function onStateChange(s) {
     if (s !== PS.PLAYING) { st.confirmed = false; }
+    if (s === PS.PLAYING || s === PS.PAUSED) { setPaused(s === PS.PAUSED); }
     if (s === PS.PLAYING) {
       st.started = true;
       st.confirmed = false;
@@ -555,6 +580,7 @@
         hasPlayer: !!st.player, playerReady: st.playerReady, volume: st.volume, apiState: st.apiState,
         verifying: st.pendingSince !== null, playlistIds: st.playlistIds ? st.playlistIds.length : 0,
         idsAcked: st.idsAcked, pageId: PAGE_ID, owner: st.owner, deferred: !!st.deferred,
+        music: !!(document.body && document.body.classList.contains('music')),
         events: st.events.slice()
       };
     }

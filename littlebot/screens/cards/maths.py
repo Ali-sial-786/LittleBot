@@ -41,16 +41,17 @@ SOFT_INK: art.Color = art.mix(art.INK_SOFT, art.INK, 0.35)
 
 # ---------------------------------------------------------------- a tiny arithmetic parser (no eval)
 _WORDS = (
+    (r"\bsquare root of\b|\bsqrt\b|√", "√"),  # (before "of")
     (r"\bmultiplied by\b|\btimes\b|×|\*", "*"), (r"\bdivided by\b|\bover\b|÷", "/"), (r"\bplus\b", "+"),
     (r"\bminus\b|−|–", "-"), (r"\bsquared\b", "^2"), (r"\bcubed\b", "^3"), (r"\bto the power of\b|\*\*", "^"),
     (r"\bpercent\b", "%"), (r"\bof\b", "*"),
 )
-_TOKEN = re.compile(r"\s*(\d+(?:\.\d+)?|\.\d+|[-+*/^%()])")
+_TOKEN = re.compile(r"\s*(\d+(?:\.\d+)?|\.\d+|[-+*/^%()√])")
 
 
 class _Parser:
     """expr := term (+|- term)*; term := power (*|/ power)*; power := unary (^ power)?;
-    unary := - unary | atom %*; atom := number | ( expr )."""
+    unary := - unary | √ unary | atom %*; atom := number | ( expr )."""
 
     def __init__(self, tokens: list[str]) -> None:
         self.tokens, self.i = tokens, 0
@@ -100,6 +101,12 @@ class _Parser:
         if self.peek() == "+":
             self.take()
             return self.unary()
+        if self.peek() == "√":
+            self.take()
+            v = self.unary()
+            if v < 0:
+                raise ValueError("square root of a negative number")
+            return math.sqrt(v)
         v = self.atom()
         while self.peek() == "%":
             self.take()
@@ -345,7 +352,10 @@ class MathsCard(Card):
         steps = spec.get("steps") or []
         self.steps = [typeset(str(s))[:60] for s in (steps if isinstance(steps, list) else [steps])
                       if str(s).strip()][:MAX_STEPS]
-        self.conversion = evaluate(self.expression) is None
+        # "Converting" only for one ("√1764" was titled "Converting" on the robot, 2026-10-31)
+        left = self.expression.split("=")[0]
+        self.conversion = evaluate(self.expression) is None and (
+            _quantity(left) is not None or re.search(r"\s(?:in|to|into|as)\s", left) is not None)
         also = spec.get("also") or []
         given = [typeset(str(a))[:40] for a in (also if isinstance(also, list) else [also]) if str(a).strip()]
         self.also = given[:MAX_ALSO] if given else (equivalents(str(spec.get("expression") or ""), self.result)

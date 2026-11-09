@@ -27,15 +27,19 @@ stored, sent anywhere, or used for identification. The exceptions:
   service, and it is dropped the moment keeping it warm stops, the check fails, the
   camera closes or video playback pauses vision.
 * ``live_view_frame``: while a logged-in parent watches the dashboard's Camera page, the
-  thread also JPEG-encodes a small copy (``LIVE_VIEW_WIDTH`` px) of the frames it reads
-  anyway, at most ``LIVE_VIEW_MAX_FPS``, AFTER detection, and keeps only the newest one in
+  thread also JPEG-encodes a copy (``camera.live_view_width``, 1920 px) of the frames it reads
+  anyway, at most ``camera.live_view_fps`` (30), AFTER detection, and keeps only the newest one in
   memory for that page. It is a separate slot from the warm photo (other size, no AI
   consent involved), never written anywhere or logged, and dropped as soon as the last
   viewer stops asking (``LIVE_VIEW_IDLE`` s), privacy turns the camera off, the camera is
   lost or a video pauses vision. Viewers hold no lease and never change detection: they
-  only raise the read rate to ``LIVE_VIEW_MIN_FPS`` when vision itself reads less (robot
-  asleep). Start and stop are logged and published (``vision.live_view``) so the robot's
+  only raise the read rate to ``camera.live_view_fps`` when vision itself reads less.
+  Start and stop are logged and published (``vision.live_view``) so the robot's
   screen shows a camera sign while anyone watches.
+* ``add_frame_sink``: while someone asked LittleBot to record a video (littlebot/capture), the thread hands every
+  frame it reads to that one recorder (``fn(frame, now)``, which must only keep a reference and return), reading at
+  least the recorder's frame rate meanwhile. Nothing is kept here; the recorder writes the video the person asked
+  for and nothing else. ``remove_frame_sink`` ends it (the recording stopping, privacy, the camera lost).
 """
 
 from __future__ import annotations
@@ -70,9 +74,11 @@ WARM_EVERY = 0.5  # keep_photo_warm: seconds between refreshes (~5 ms of encodin
 WARM_WIDTH = 640
 WARM_QUALITY = 75
 # Dashboard live view (live_view_frame): small, modest-quality frames, only while someone watches.
-LIVE_VIEW_MAX_FPS = 8.0  # frames encoded per second at most (vision reads 6/s, 10/s with gestures on)
-LIVE_VIEW_MIN_FPS = 5.0  # while watched, frames are read at least this often (the sleeping robot reads 1.5/s)
-LIVE_VIEW_WIDTH = 480  # 480x360: sharp on a phone, ~15-25 KB per frame
+# camera.live_view_fps (default 30 = the camera's capture rate): while watched, frames are read and encoded this
+# often (vision alone reads 6/s, 1.5/s asleep); detection keeps its own rate. ~5 ms per frame on a Pi 5.
+LIVE_VIEW_MAX_FPS = 30.0  # the default when the config doesn't say
+LIVE_VIEW_MIN_FPS = LIVE_VIEW_MAX_FPS
+LIVE_VIEW_WIDTH = 1920  # camera.live_view_width default: the full 1080p picture (~150 KB per frame at quality 60)
 LIVE_VIEW_QUALITY = 60
 LIVE_VIEW_IDLE = 3.0  # a viewer that has not asked for a frame for this long has gone
 LIVE_VIEW_MAX_AGE = 1.0  # an older frame is never handed out
@@ -197,6 +203,9 @@ class VisionService(Service):
         self._view_rate = RateMeter(window=3.0)
         self._view_ms: float | None = None
         self._view_bytes = 0
+        # frame sinks (a video being recorded, littlebot/capture): owner -> (fn(frame, now), frames per second)
+        self._sinks: dict[str, tuple[Callable[[Any, float], None], float]] = {}
+        self._sink_errors = 0
         self._refresh_snapshot(self._clock())
 
     # ------------------------------------------------------------------ setup
@@ -243,8 +252,25 @@ class VisionService(Service):
         if self.gestures_active:
             rate = max(rate, float(self.vis_cfg.gesture_fps))
         if self._viewers:  # someone watches the live view: a smooth enough picture (detection keeps its own rate)
-            rate = max(rate, LIVE_VIEW_MIN_FPS)
+            rate = max(rate, self.live_view_fps)
+        sinks = self._sinks
+        if sinks:  # a video is being recorded: every frame it needs (detection keeps its own rate)
+            rate = max(rate, *(fps for _fn, fps in sinks.values()))
         return 1.0 / rate
+
+    @property
+    def live_view_width(self) -> int:
+        try:
+            return min(1920, max(160, int(getattr(self.cam_cfg, "live_view_width", LIVE_VIEW_WIDTH))))
+        except (TypeError, ValueError):
+            return LIVE_VIEW_WIDTH
+
+    @property
+    def live_view_fps(self) -> float:
+        try:
+            return min(30.0, max(1.0, float(getattr(self.cam_cfg, "live_view_fps", LIVE_VIEW_MAX_FPS))))
+        except (TypeError, ValueError):
+            return LIVE_VIEW_MAX_FPS
 
     @property
     def detect_interval(self) -> float:
@@ -659,20 +685,20 @@ class VisionService(Service):
         return {"viewers": n, "fps": round(self._view_rate.rate(now), 1) if n else 0.0,
                 "encode_ms": round(self._view_ms, 1) if n and self._view_ms is not None else None,
                 "frame_kb": round(self._view_bytes / 1024, 1) if n and self._view_bytes else None,
-                "max_fps": LIVE_VIEW_MAX_FPS, "width": LIVE_VIEW_WIDTH}
+                "max_fps": self.live_view_fps, "width": self.live_view_width}
 
     def _refresh_live_view(self, frame: Any, now: float) -> None:
         """Vision thread, after detection: encode ``frame`` for the live view when one is due."""
         if not self._viewers or now < self._view_next:
             return
-        self._view_next = self._advance(self._view_next, 1.0 / LIVE_VIEW_MAX_FPS, now)
+        self._view_next = self._advance(self._view_next, 1.0 / self.live_view_fps, now)
         t0 = time.perf_counter()
         cv2 = get_cv2()
         try:
             h, w = frame.shape[:2]
-            # 640 -> 480 px: bilinear looks the same at 0.75x and costs ~1/5 of INTER_AREA (which uses 2 threads)
-            img = frame if w <= LIVE_VIEW_WIDTH else cv2.resize(
-                frame, (LIVE_VIEW_WIDTH, max(1, round(h * LIVE_VIEW_WIDTH / w))), interpolation=cv2.INTER_LINEAR)
+            # smaller than the camera's picture: bilinear (~1/5 of INTER_AREA's cost, which uses 2 threads)
+            vw = self.live_view_width
+            img = frame if w <= vw else cv2.resize(frame, (vw, max(1, round(h * vw / w))), interpolation=cv2.INTER_LINEAR)
             if _looks_dim(img):  # cheap check on a few pixels first; brighten_if_dark decides exactly
                 img = brighten_if_dark(img)
             ok, buf = cv2.imencode(".jpg", img, [int(cv2.IMWRITE_JPEG_QUALITY), LIVE_VIEW_QUALITY])
@@ -695,6 +721,41 @@ class VisionService(Service):
         self._view_bytes = len(data)
         for _vid, fut in waiters:
             _resolve(fut, (data, seq))
+
+    # ------------------------------------------------------------ frame sinks (recording a video)
+    def add_frame_sink(self, owner: str, fn: Callable[[Any, float], None], fps: float = 30.0) -> None:
+        """Hand every frame read from now on to ``fn(frame, now)`` on the vision thread, reading at least ``fps`` a
+        second. ``fn`` must be quick (keep a reference, return) and never raise; the frame is the camera's own
+        picture (BGR, full size). The same ``owner`` again replaces its sink. Privacy, a lost camera or a video
+        playing simply stop the frames coming; ``remove_frame_sink`` ends it."""
+        if not self.ctx.privacy.camera_enabled or not self._camera_allowed:
+            raise PhotoUnavailable("camera_off", "camera turned off in privacy settings")
+        if self._kind == "none":
+            raise PhotoUnavailable("no_camera", "disabled in config (camera.backend: none)")
+        with self._lock:
+            self._sinks = {**self._sinks, str(owner): (fn, min(60.0, max(1.0, float(fps))))}
+        self._next_frame_at = min(self._next_frame_at, self._clock())
+        self._wake.set()
+
+    def remove_frame_sink(self, owner: str) -> bool:
+        """No more frames for ``owner``. True if it had a sink."""
+        with self._lock:
+            had = str(owner) in self._sinks
+            self._sinks = {k: v for k, v in self._sinks.items() if k != str(owner)}
+        self._wake.set()
+        return had
+
+    def _feed_sinks(self, frame: Any, now: float) -> None:
+        """Vision thread: the frame to every sink (a broken sink is dropped after a few errors)."""
+        for owner, (fn, _fps) in list(self._sinks.items()):
+            try:
+                fn(frame, now)
+            except Exception:  # noqa: BLE001 - a recorder must never break vision
+                self._sink_errors += 1
+                if self._sink_errors <= 3:
+                    self.log.exception("frame sink %s failed", owner)
+                if self._sink_errors >= 30:
+                    self.remove_frame_sink(owner)
 
     def face_seen_within(self, seconds: float) -> bool:
         """Someone's face was in front of the camera in the last ``seconds`` (the wake word's "hey bot" check)."""
@@ -781,6 +842,9 @@ class VisionService(Service):
         return nxt if nxt > now else now + interval  # keep the average rate, never burst to catch up
 
     def _capture(self, cam: CameraDevice, now: float) -> bool:
+        # While someone watches the live view, frames are wanted back to back: the camera decodes the next one
+        # while this thread works on the current one (1080p: ~20 ms decode + ~25 ms of work > 33 ms a frame).
+        cam.prefetch = bool(self._viewers) or bool(self._sinks)
         try:
             frame = cam.read(timeout=self._read_timeout)
         except Exception as e:  # noqa: BLE001
@@ -801,6 +865,8 @@ class VisionService(Service):
             self._serve_photos(frame)
         if self._warm_owners:
             self._refresh_warm(frame, now)
+        if self._sinks:
+            self._feed_sinks(frame, now)
         small = resize_to_width(frame, int(self.cam_cfg.process_width))
         view = frame if self._viewers else None  # encoded for the live view after detection, never before
         del frame  # never keep full frames around
@@ -1022,6 +1088,7 @@ class VisionService(Service):
             "robot_state": self._robot_state,
             "photo_warm": bool(self._warm_owners),  # a live conversation keeps one recent photo in memory
             "live_view": self._live_view_status(now),  # the dashboard's Camera page (who watches, no images)
+            "recording": sorted(self._sinks),  # who is recording a video (littlebot/capture), no images
         }
         with self._lock:
             self._snapshot = snap

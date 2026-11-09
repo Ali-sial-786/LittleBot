@@ -1,6 +1,6 @@
 // Camera: a live view from LittleBot's camera, for the logged-in parent only.
-// The page asks for one small JPEG after another (each request waits for the next new frame), draws it on a
-// canvas and lets it go: nothing is saved, on the robot or here. LittleBot shows a small camera sign on its own
+// The page opens one stream that carries JPEG after JPEG (falling back to one request per frame), draws the
+// newest on a canvas and lets it go: nothing is saved, on the robot or here. LittleBot shows a small camera sign on its own
 // screen while anyone watches. The view stops when you press Stop, leave the page, switch apps or lock the phone.
 
 import { get } from '../api.js';
@@ -42,6 +42,7 @@ export default {
     let seq = 0;
     let state = 'idle';
     let inflight = null; // AbortController of the pending frame request
+    let canStream = true; // the robot has /api/camera/stream (an older one answers 404: one request per frame)
     let waitTimer = null, wakeWait = null;
     let info = null;
     const stamps = [];
@@ -145,12 +146,67 @@ export default {
       if (bmp.close) bmp.close();
     }
 
+    // One response carrying frame after frame (8 bytes: length and sequence number, big-endian; then the JPEG), so
+    // there is no round trip per frame. Draws the newest complete frame and skips any that piled up meanwhile.
+    // Returns the number of frames shown, or null if this robot can't stream (the page then asks frame by frame).
+    async function streamFrames() {
+      const ctl = new AbortController();
+      inflight = ctl;
+      let timer = setTimeout(() => ctl.abort(), FRAME_TIMEOUT_MS);
+      const kick = () => { clearTimeout(timer); timer = setTimeout(() => ctl.abort(), FRAME_TIMEOUT_MS); };
+      let shown = 0;
+      try {
+        const res = await fetch(`/api/camera/stream?viewer=${viewer}&after=${seq}`, { credentials: 'same-origin', cache: 'no-store', signal: ctl.signal });
+        if (res.status === 404 || res.status === 405) return null;
+        if (!res.ok) return 0; // the plain request that follows says why
+        if (!res.body || !(res.headers.get('content-type') || '').startsWith('application/octet-stream')) return null;
+        const reader = res.body.getReader();
+        let buf = new Uint8Array(0);
+        for (;;) {
+          const { value, done } = await reader.read();
+          if (done || !running || document.hidden) break;
+          kick();
+          const joined = new Uint8Array(buf.length + value.length);
+          joined.set(buf);
+          joined.set(value, buf.length);
+          buf = joined;
+          let newest = null;
+          while (buf.length >= 8) {
+            const dv = new DataView(buf.buffer, buf.byteOffset, 8);
+            const len = dv.getUint32(0);
+            if (buf.length < 8 + len) break;
+            newest = { jpeg: buf.slice(8, 8 + len), n: dv.getUint32(4) };
+            buf = buf.slice(8 + len);
+          }
+          if (!newest) continue;
+          try {
+            await draw(new Blob([newest.jpeg], { type: 'image/jpeg' }));
+          } catch { continue; } // one broken frame: wait for the next
+          seq = newest.n;
+          if (state !== 'live') { show('live'); setTimeout(refresh, 400); } // "Watching now" right away
+          tick();
+          shown += 1;
+        }
+        reader.cancel().catch(() => {});
+      } catch { /* aborted (Stop, page hidden) or the connection dropped */ } finally {
+        clearTimeout(timer);
+        if (inflight === ctl) inflight = null;
+      }
+      return shown;
+    }
+
     // ------------------------------------------------------------- frame loop
     async function loop() {
       if (looping) return;
       looping = true;
       try {
         while (running && !document.hidden) {
+          if (canStream) {
+            const shown = await streamFrames();
+            if (!running || document.hidden) break;
+            if (shown === null) canStream = false;
+            // the stream ended or didn't start: the plain request below brings a frame, or says why there is none
+          }
           const ctl = new AbortController();
           inflight = ctl;
           const timer = setTimeout(() => ctl.abort(), FRAME_TIMEOUT_MS);

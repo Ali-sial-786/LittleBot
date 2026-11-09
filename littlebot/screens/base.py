@@ -52,6 +52,8 @@ PICTURE_ACTION = "picture"
 PICTURE_ACTION_HELP = ("the picture full screen or zoomed: {\"view\": \"fill\" | \"in\" | \"out\" | \"back\"} (back: "
                        "the whole card again)")
 PICTURE_ZOOMS = (1.0, 1.5, 2.25, 3.0)  # fill the screen, then "in" steps (the picture's middle)
+# A card with room for a picture it was made without (a recipe: ``add_picture``) gets one: {"query": "the dish"}
+ADD_PICTURE_ACTION = "add_picture"
 # Where the presenter's eyes sit by default: top-left, (x, y, w, h) on the canvas. A card may move it
 # (presenter_box) but keeps it on screen: the eyes are what make it LittleBot presenting.
 PRESENTER_BOX = (16, 12, 184, 106)
@@ -153,6 +155,9 @@ class CardType:
     build: Builder
     required: tuple[str, ...] = ()
     actions: dict[str, str] = field(default_factory=dict)
+    # False: shown only by LittleBot's own code (a voice game's quiz card, a reminder ringing), never offered to
+    # the AI's show_on_screen or the screen director.
+    offered: bool = True
 
 
 _TYPES: dict[str, CardType] = {}
@@ -163,11 +168,12 @@ def register(card_type: CardType) -> CardType:
     return card_type
 
 
-def card_types() -> dict[str, CardType]:
-    """Every registered card type (importing littlebot.screens.cards registers the built-in ones)."""
+def card_types(*, offered_only: bool = False) -> dict[str, CardType]:
+    """Every registered card type (importing littlebot.screens.cards registers the built-in ones);
+    ``offered_only``: the ones the AI may ask for (not the internal ones, ``CardType.offered``)."""
     import littlebot.screens.cards  # noqa: F401, PLC0415
 
-    return dict(_TYPES)
+    return {k: v for k, v in _TYPES.items() if v.offered or not offered_only}
 
 
 async def build(spec: dict[str, Any], ctx: Any, host: CardHost) -> Card | None:

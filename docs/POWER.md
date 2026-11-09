@@ -187,6 +187,18 @@ safe to unplug. The Pi 5's power button also works: a short press starts a clean
 shutdown (on the desktop it may first show the shutdown menu - press again; the app then
 receives SIGTERM from systemd); holding it down forces power off - emergencies only.
 
+**Telling a power cut afterwards.** The Pi keeps no journal across a restart, so a cut leaves
+no trace of its own. LittleBot writes its last sign of life to `data/power_last.json` once a
+minute (the time, the battery's percent, the pack's and each cell's volts, the charger) and
+marks it clean when it stops. At the next start, if the last run never stopped and the Pi
+started after it, the log says `power: the power was cut at about ...` with that last reading
+(`littlebot/power/last_seen.py`). Each cold start also shows up as `the Pi reports
+under-voltage since boot` and the echo canceller being moved back to the speaker. On
+2026-11-02 the robot cut out six times in a day when it was picked up or bumped, full and on
+the UPS HAT (E), with nothing in the log before: the HAT powers the Pi through spring pogo
+pins underneath, so check that all four standoffs are screwed tight and the Pi can't shift on
+the pins, and that the cells sit firmly in their holders.
+
 ## 7. Battery and child safety
 
 - Use a branded power bank with over-current/over-temperature protection; never a
@@ -300,6 +312,17 @@ battery is said out loud and whether it shuts down when empty, in the Battery ca
 (`power.low_percent`, `power.critical_percent`, `power.announce_low`,
 `power.shutdown_when_empty`); they apply at once. Everything else is in the `power:` section
 of the config (`littlebot/core/config.py`, `PowerConfig`).
+
+**The screen goes dark after 3 minutes of nothing happening** (`face.screen_off_after_seconds`,
+180; 0 = never; dashboard: Face page, "Dozing and sleep"), in IDLE and while asleep. LittleBot
+switches the screen's HDMI signal off (`wlopm --off HDMI-A-1`) and stops drawing the face; the
+wake word keeps listening. "Hey LittleBot", a chat, a card, a video, a game, someone walking in
+or moving in front of the camera, or a touch lights it again at once (the first touch on the
+dark screen only lights it: no giggle). The log says `face: screen off (...)` / `face: screen on
+(...)`. Measured on the robot (2026-11-03, UPS HAT readings, three rounds of 15 s): about
+**0.4 W less** (6.95 W on, 6.56 W off). The MPI3508's backlight itself stays lit: the only way to
+switch that off is the button on the back of the screen (long press 3 s, per LCDwiki), which
+LittleBot can't press. The screen is switched back on whenever LittleBot starts or stops.
 
 ### 8.5 The power-off
 

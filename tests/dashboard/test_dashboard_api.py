@@ -141,15 +141,19 @@ async def test_face_blink_gaze_animation(authed, dctx):
 async def test_face_doze_and_sleep_settings(authed, dctx):
     info = (await authed.get("/api/face")).json()
     assert info["sleep"] == {"doze_enabled": True, "doze_after_seconds": 30, "awake_on_arrival_seconds": 20,
+                             "screen_off_after_seconds": 180,
                              "sleep_after_idle_minutes": dctx.settings.get("system.sleep_after_idle_minutes"),
-                             "dozing": False}
+                             "dozing": False, "screen_off": False}
     r = await authed.put("/api/face/sleep", json={"doze_enabled": False, "doze_after_seconds": 45,
-                                                  "awake_on_arrival_seconds": 25, "sleep_after_idle_minutes": 15})
+                                                  "awake_on_arrival_seconds": 25, "screen_off_after_seconds": 0,
+                                                  "sleep_after_idle_minutes": 15})
     assert r.status_code == 200
     assert r.json()["sleep"]["doze_after_seconds"] == 45
     assert dctx.settings.get("face.doze_enabled") is False
     assert dctx.settings.get("face.awake_on_arrival_seconds") == 25
+    assert dctx.settings.get("face.screen_off_after_seconds") == 0
     assert dctx.settings.get("system.sleep_after_idle_minutes") == 15
+    assert (await authed.put("/api/face/sleep", json={"screen_off_after_seconds": 99999})).status_code == 422
     assert (await authed.put("/api/face/sleep", json={})).status_code == 422
     assert (await authed.put("/api/face/sleep", json={"doze_after_seconds": 2})).status_code == 422
     assert (await authed.put("/api/face/sleep", json={"awake_on_arrival_seconds": 99999})).status_code == 422
@@ -522,7 +526,7 @@ async def test_vision_endpoints(authed, dctx, fakes):
 async def test_motion_info_is_simulation_only(authed):
     info = (await authed.get("/api/motion")).json()
     assert info["simulation_only"] is True and info["physical_enabled"] is False and info["armed"] is False
-    assert "wave" in info["gestures"] and set(info["servos"]) == {"head", "left_arm", "right_arm"}
+    assert "wave" in info["gestures"] and set(info["servos"]) == {"head", "head_tilt", "left_arm", "right_arm"}
     assert info["reason"] == "fake motion"  # the motion module's own explanation is passed through
     assert info["status"]["joints"]["left_arm"]["position"] == 0.0
 

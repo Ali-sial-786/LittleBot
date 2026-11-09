@@ -176,12 +176,13 @@ async def test_starting_a_game_stops_a_running_activity(svc, ctx):
 
 
 # ------------------------------------------------------------------ voice sharing
-async def test_game_started_mid_conversation_shares_face_and_speaker(svc, ctx, clock):
-    voice = ctx.arbiter.acquire("live_voice", [Resource.FACE, Resource.AUDIO_OUT, Resource.MICROPHONE], Priority.PARENT)
+@pytest.mark.parametrize("who", ["live_voice", "assistant"])  # GPT-Live, and the fast voice (assistant/session.py)
+async def test_game_started_mid_conversation_shares_face_and_speaker(svc, ctx, clock, who):
+    voice = ctx.arbiter.acquire(who, [Resource.FACE, Resource.AUDIO_OUT, Resource.MICROPHONE], Priority.PARENT)
     ctx.state.transition(RobotState.SPEAKING, "live voice")
     assert await svc.start("bubbles", source="voice")
     snap = holders(ctx)
-    assert snap["screen"] == OWNER and snap["face"] == "live_voice" and snap["audio_out"] == "live_voice"
+    assert snap["screen"] == OWNER and snap["face"] == who and snap["audio_out"] == who
     assert svc.status()["shared"] is True
     assert ctx.state.state == RobotState.SPEAKING  # the conversation keeps its state
     voice.release()
@@ -195,9 +196,10 @@ async def test_game_started_mid_conversation_shares_face_and_speaker(svc, ctx, c
     assert ctx.state.state == RobotState.IDLE
 
 
-async def test_live_voice_during_a_game_keeps_the_game_on_screen(svc, ctx):
+@pytest.mark.parametrize("who", ["live_voice", "assistant"])
+async def test_live_voice_during_a_game_keeps_the_game_on_screen(svc, ctx, who):
     await svc.start("memory")
-    voice = ctx.arbiter.acquire("live_voice", [Resource.FACE, Resource.AUDIO_OUT, Resource.MICROPHONE], Priority.PARENT)
+    voice = ctx.arbiter.acquire(who, [Resource.FACE, Resource.AUDIO_OUT, Resource.MICROPHONE], Priority.PARENT)
     assert voice is not None
     assert svc.active and svc.status()["shared"] is True
     assert holders(ctx)["screen"] == OWNER

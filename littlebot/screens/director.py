@@ -521,6 +521,37 @@ def _clean(value: Any, schema: dict[str, Any], depth: int = 0) -> Any:
         out = _as(value, str(k), schema, depth)
         if out is not _DROP:
             return out
+    if schema.get("type"):  # the right thing in another shape (steps as one string, text as a list): reshaped
+        for k in kinds:
+            reshaped = _reshaped(value, str(k), schema)
+            if reshaped is not _DROP:
+                out = _as(reshaped, str(k), schema, depth)
+                if out is not _DROP:
+                    return out
+    return _DROP
+
+
+_NUMBERED = re.compile(r"(?:^|\s+)\d+[.)]\s+")  # "1. Mix the flour 2. Fry them"
+_LINES = re.compile(r"\s*(?:\n+|;\s+)\s*")  # lines, or "a; b"
+
+
+def _reshaped(value: Any, kind: str, schema: dict[str, Any]) -> Any:
+    """``value`` in the shape ``kind`` asks for, when the model sent the same thing in another one (a list as
+    one string, a text as a list or a record, "true" as a word); ``_DROP`` when there is no such shape."""
+    if kind == "array" and isinstance(value, str):
+        text = value.strip()
+        pieces = _NUMBERED.split(text) if re.match(r"1[.)]\s", text) else _LINES.split(text)
+        return [p.strip() for p in pieces if p.strip()] or _DROP
+    if kind == "array" and isinstance(value, dict):
+        items = schema.get("items") if isinstance(schema.get("items"), dict) else {}
+        if items.get("type") == "object":
+            return [value]
+        return [t for t in (f"{k}: {v}" if isinstance(v, (str, int, float)) else _any_text(v)
+                            for k, v in value.items()) if t] or _DROP
+    if kind == "string" and isinstance(value, (list, tuple, dict)):
+        return _any_text(value) or _DROP
+    if kind == "boolean" and isinstance(value, str) and value.strip().lower() in ("true", "yes", "false", "no"):
+        return value.strip().lower() in ("true", "yes")
     return _DROP
 
 
@@ -639,12 +670,134 @@ def _as_facts(kind: str, spec: dict[str, Any], types: dict[str, Any]) -> tuple[s
     if layout not in layouts:
         layout = named or ("compare" if spec.get("columns") else "list" if spec.get("items") else
                            "number" if spec.get("value") else "score" if spec.get("teams") else "item")
-    return "facts", {**spec, "card": "facts", "layout": layout}
+    spec = {**spec, "card": "facts", "layout": layout}
+    items = spec.get("items")
+    if layout == "compare" and isinstance(items, list) and items and not spec.get("columns") and not spec.get("rows"):
+        # a comparison sent as items, as the brain often does (the robot, 2026-10-31): labelled rows naming each
+        # of them ({"label": "Snout", "value": "Alligator: broad. Crocodile: narrow."}), or a line for each
+        # ("Tiger: largest cat, up to 300 kg"); shown as a profile of cut-off lines before
+        table = _labelled_rows(items) if any(isinstance(i, dict) for i in items) else None
+        columns = table[0] if table else _subject_columns(items, str(spec.get("title") or ""))
+        if columns:
+            spec["columns"], spec["rows"] = (table if table else (columns, []))
+            spec.pop("items")
+            items = None
+    if isinstance(items, list) and any(isinstance(i, dict) for i in items):
+        # items as records: the strings-only items dropped them all and no card came (2026-10-31)
+        spec["items"] = [t for t in (_record_text(i) for i in items) if t]
+    return "facts", spec
+
+
+_ROW_LABELS = ("label", "row", "aspect", "feature", "category", "name", "title", "key")
+_ROW_VALUES = ("value", "text", "detail", "details", "fact", "facts", "note", "notes", "description", "difference",
+               "summary")
+# "Alligator: broad and U-shaped. Crocodile: narrow and V-shaped." -> the name and what follows it, each
+_NAMED = re.compile(r"([A-Z][\w'’ -]{0,28}?)\s*:\s*(.+?)(?=[.;,]?\s+[A-Z][\w'’ -]{0,28}?\s*:\s|[.;]?\s*$)", re.S)
+
+
+def _record_text(record: Any) -> str:
+    """One labelled record as a line: "Snout: Alligator: broad ...", a plain string as it is."""
+    if isinstance(record, str):
+        return record
+    if not isinstance(record, dict):
+        return ""
+    label = next((str(record[k]) for k in _ROW_LABELS if isinstance(record.get(k), str)), "")
+    value = next((str(record[k]) for k in _ROW_VALUES if isinstance(record.get(k), (str, int, float))), "")
+    return f"{label}: {value}" if label and value else label or value
+
+
+def _any_text(value: Any) -> str:
+    """The text in ``value`` as one line: a record labelled ("Snout: broad") or else its texts joined, a list's
+    entries joined; "" when there is none."""
+    if isinstance(value, bool) or value is None:
+        return ""
+    if isinstance(value, (str, int, float)):
+        return str(value)
+    if isinstance(value, dict):
+        return _record_text(value) or " ".join(t for t in (_any_text(v) for v in value.values()) if t)
+    if isinstance(value, (list, tuple)):
+        return " ".join(t for t in (_any_text(v) for v in value) if t)
+    return ""
+
+
+def _subject_columns(items: list[Any], title: str) -> list[dict[str, Any]] | None:
+    """Items that each describe one of the two or three things the title compares ("Tiger: largest cat, up to
+    300 kg", {"label": "Frog", "note": "smooth skin, long legs"}) as compare columns, their facts in short points;
+    None when they don't."""
+    low = title.lower()
+    columns: list[dict[str, Any]] = []
+    for item in items:
+        name, colon, rest = _record_text(item).partition(":")
+        name = " ".join(name.split())
+        if not colon or not rest.strip() or not name or len(name) > 24 or name.lower().rstrip("s") not in low:
+            return None
+        columns.append({"name": name, "facts": _points(rest)})
+    if not 2 <= len(columns) <= 3 or len({c["name"].lower() for c in columns}) < len(columns):
+        return None
+    return columns
+
+
+def _points(text: str, most: int = 4) -> list[str]:
+    """One line of facts as short points: split at sentences, semicolons and commas, a short piece kept with the
+    next ("Smooth, moist skin")."""
+    out: list[str] = []
+    for piece in (p.strip(" .") for p in re.split(r";\s*|,\s+|\.\s+", text.strip())):
+        if not piece:
+            continue
+        if out and len(out[-1]) < 8:
+            out[-1] = f"{out[-1]}, {piece}"
+        else:
+            out.append(piece)
+    return out[:most]
+
+
+def _labelled_rows(items: list[Any]) -> tuple[list[dict[str, Any]], list[str]] | None:
+    """Labelled rows that each name the same two or three things ("Alligator: ... Crocodile: ...") as compare
+    columns [{"name", "facts"}] and row labels; None when they don't."""
+    names: list[str] = []
+    rows: list[tuple[str, dict[str, str]]] = []
+    for record in items:
+        if not isinstance(record, dict):
+            return None
+        label = next((str(record[k]) for k in _ROW_LABELS if isinstance(record.get(k), str)), "")
+        value = next((str(record[k]) for k in _ROW_VALUES if isinstance(record.get(k), str)), "")
+        pairs = {" ".join(n.split()).lower(): (" ".join(n.split()), v.strip(" .;")) for n, v in _NAMED.findall(value)}
+        if not label or not 2 <= len(pairs) <= 3:
+            return None
+        if not names:
+            names = [shown for shown, _ in pairs.values()]
+        if set(pairs) != {n.lower() for n in names}:
+            return None
+        rows.append((label, {k: v for k, (_, v) in pairs.items()}))
+    if len(rows) < 1:
+        return None
+    columns = [{"name": n, "facts": [facts[n.lower()] for _, facts in rows]} for n in names]
+    return columns, [label for label, _ in rows]
 
 
 def clean_spec(spec: Any, types: dict[str, Any], relaxed: Any = ()) -> tuple[dict[str, Any] | None, str]:
     """A card spec fit for ``ScreenService.show``: a known kind, only its fields (and a title), each of the
-    right type and size, the required ones there, every word within the safety rules. Else (None, why)."""
+    right type and size, the required ones there, every word within the safety rules. Else (None, why).
+
+    However the model sends it, a card with text in it is shown (the parent's ask, 2026-10-31): a string or a
+    list, a kind missing what it needs, or an unknown kind becomes a facts card of its text (text_card), and one
+    too long is shortened. Only the safety rules, or nothing at all to show, keep it off the screen."""
+    out, why = _cleaned(spec, types)
+    if out is None and "facts" in types:
+        fallback = text_card(spec)
+        if fallback is not None:
+            log.info("screen: a card that couldn't be used as sent (%s) is shown as a facts card of its text", why)
+            out, _ = _cleaned(fallback, types)
+    if out is None:
+        return None, why
+    broken = unsafe(_texts(out), relaxed)
+    if broken:
+        return None, f"blocked by the safety rules ({broken[0]})"
+    return out, ""
+
+
+def _cleaned(spec: Any, types: dict[str, Any]) -> tuple[dict[str, Any] | None, str]:
+    """clean_spec without the fallback and the safety check."""
     if not isinstance(spec, dict):
         return None, "not an object"
     kind = str(spec.get("card") or spec.get("kind") or "").strip().lower()[:40]
@@ -655,6 +808,11 @@ def clean_spec(spec: Any, types: dict[str, Any], relaxed: Any = ()) -> tuple[dic
         return None, f"unknown card {re.sub(r'[^a-z0-9_ -]', '', kind)[:40]!r}"
     fields = ct.fields if isinstance(ct.fields, dict) else {}
     allowed = {"title": {"type": "string", "maxLength": 80}, **fields}
+    for name in [n for n in spec if n not in allowed]:  # a field under a near name ("meaning" for "meanings")
+        near = next((f for f in (f"{name}s", name[:-1] if name.endswith("s") else "")
+                     if f in allowed and f not in spec), None)
+        if near:
+            spec = {**spec, near: spec[name]}
     out: dict[str, Any] = {"card": kind}
     for name, schema in allowed.items():
         if name == "card" or name not in spec:
@@ -665,12 +823,91 @@ def clean_spec(spec: Any, types: dict[str, Any], relaxed: Any = ()) -> tuple[dic
     missing = [f for f in ct.required if out.get(f) in (None, "", [], {})]
     if missing:
         return None, f"missing {', '.join(missing)[:80]}"
-    if len(json.dumps(out, ensure_ascii=False)) > MAX_SPEC_CHARS:
-        return None, "too long"
-    broken = unsafe(_texts(out), relaxed)
-    if broken:
-        return None, f"blocked by the safety rules ({broken[0]})"
+    if kind == "facts" and not set(out) - {"card", "layout", "title", "ordered"}:  # its text under other names
+        return None, "nothing to show"
+    while len(json.dumps(out, ensure_ascii=False)) > MAX_SPEC_CHARS:
+        if not _shorten(out):
+            return None, "too long"
     return out, ""
+
+
+def _shorten(value: Any) -> bool:
+    """One step shorter: the last entry off the biggest list, else the longest text cut by a third. False when
+    there is nothing left to shorten."""
+    lists: list[list[Any]] = []
+    texts: list[tuple[Any, Any]] = []  # (its container, its key or index)
+
+    def walk(v: Any) -> None:
+        pairs = v.items() if isinstance(v, dict) else enumerate(v) if isinstance(v, list) else ()
+        if isinstance(v, list) and len(v) > 1:
+            lists.append(v)
+        for k, child in pairs:
+            if isinstance(child, str) and len(child) > 40:
+                texts.append((v, k))
+            walk(child)
+    walk(value)
+    if lists:
+        max(lists, key=lambda v: len(json.dumps(v, ensure_ascii=False))).pop()
+        return True
+    if texts:
+        box, key = max(texts, key=lambda p: len(p[0][p[1]]))
+        text = box[key]
+        box[key] = text[:len(text) * 2 // 3].rstrip(" ,;:-") + "…"
+        return True
+    return False
+
+
+# Not text to show on a text card: what kind of card, how it looks, where its picture comes from
+_NOT_SHOWN = {"card", "kind", "layout", "title", "picture_query", "ordered", "view", "style", "color", "colour",
+              "icon", "emoji", "id"}
+
+
+def text_card(spec: Any) -> dict[str, Any] | None:
+    """A facts card of the text in ``spec`` (a list of it, or one item when there is one), for a card that couldn't
+    be used as sent; None when there is no text in it to show. Short words alone ("Hamilton", "week") are
+    settings, not text to show: a text needs two words, or to be in a list."""
+    title = ""
+    pieces: list[str] = []
+    if isinstance(spec, str):
+        pieces = [spec]
+    elif isinstance(spec, (list, tuple)):
+        pieces = [_any_text(v) for v in spec]
+    elif isinstance(spec, dict):
+        title = spec["title"] if isinstance(spec.get("title"), str) else ""
+        for key, value in spec.items():
+            if str(key).lower() in _NOT_SHOWN:
+                continue
+            if isinstance(value, str) and len(value.split()) >= 2:
+                pieces.append(value)
+            elif isinstance(value, str) and not title and value.strip():
+                title = value  # a word on its own ("ephemeral"): what the card is about
+            elif isinstance(value, (list, tuple)):
+                pieces += [_any_text(v) for v in value]
+            elif isinstance(value, dict):
+                pieces.append(_any_text(value))
+    texts = list(dict.fromkeys(" ".join(_CONTROL_CHARS.sub(" ", p).split()) for p in pieces))
+    texts = [t for t in texts if t][:MAX_ITEMS]
+    if not texts:
+        return None
+    card: dict[str, Any] = {"card": "facts", "title": title}
+    if len(texts) == 1:
+        card.update(layout="item", text=texts[0])
+    else:
+        card.update(layout="list", items=texts, ordered=False)
+    return card
+
+
+def text_instead(spec: dict[str, Any], types: dict[str, Any], relaxed: Any = (),
+                 sent: Any = None) -> dict[str, Any] | None:
+    """The facts card of a checked ``spec``'s text, for a card the screen couldn't make from it ("no_card"); None
+    when there is no text, or it is that card already. ``sent``: the spec as the model sent it (its text may be
+    under names the card doesn't take: {"card": "answer", "answer": {...}})."""
+    fallback = (text_card(sent) if sent is not None else None) or text_card(spec)
+    clean = clean_spec(fallback, types, relaxed)[0] if fallback is not None else None
+    if clean is None or clean == spec:
+        return None
+    log.info("screen: a %s card the screen couldn't make is shown as a facts card of its text", spec.get("card"))
+    return clean
 
 
 def clean_args(args: Any, relaxed: Any = ()) -> dict[str, Any] | None:
@@ -995,7 +1232,7 @@ class ScreenDirector:
             return {"ok": False, "error": "invalid", "detail": why}
         if self._up_already(clean):
             return {"ok": True, "showing": self._describe(), "already": True}
-        result = await self._show(clean, source)
+        result = await self._show(clean, source, sent=spec)
         if result.get("ok"):
             self._last_tool_card = self._now()  # the director doesn't put up a second card for the same answer
         return result
@@ -1267,7 +1504,7 @@ class ScreenDirector:
         if after and after != before:
             self._tell(CHANGED_NOTE.format(what=after[:NOTE_CHARS]))
 
-    async def _show(self, spec: dict[str, Any], source: str) -> dict[str, Any]:
+    async def _show(self, spec: dict[str, Any], source: str, sent: Any = None) -> dict[str, Any]:
         try:
             result = await asyncio.wait_for(_maybe_await(self.screens.show(spec, source=source)), SHOW_TIMEOUT_S)
         except asyncio.CancelledError:
@@ -1278,6 +1515,10 @@ class ScreenDirector:
             log.warning("screen: showing a %s card failed", spec.get("card"), exc_info=True)
             return {"ok": False, "error": "failed"}
         result = result if isinstance(result, dict) else {"ok": bool(result)}
+        if result.get("error") == "no_card":
+            instead = text_instead(spec, self._types(), self._relaxed(), sent)
+            if instead is not None:
+                return await self._show(instead, source)
         if result.get("ok"):
             kind = str(spec.get("card"))
             self._last_shown = (kind, _place(spec), self._now())
@@ -1486,7 +1727,7 @@ class ScreenDirector:
             return self._types_fn()
         from littlebot.screens.base import card_types  # noqa: PLC0415
 
-        return card_types()
+        return card_types(offered_only=True)
 
     def _actions(self, kind: str | None) -> dict[str, Any]:
         ct = self._types().get(kind) if kind else None

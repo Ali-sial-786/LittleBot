@@ -8,8 +8,9 @@ Layering (later wins):
   5. an explicit --config file
   6. environment variables  LITTLEBOT__<SECTION>__<KEY>=value
 
-Secrets (API keys) are never stored in YAML: they come from the environment
-or a git-ignored `.env` file and are exposed as `SecretStr`.
+Secrets (API keys) are never stored in YAML: they come from the dashboard's
+Keys page (data/keys/), the environment or a git-ignored `.env` file
+(littlebot/core/keys.py) and are exposed as `SecretStr`.
 
 Runtime, parent-editable settings (privacy toggles, volume, child profile...)
 live in the SQLite-backed `Settings` store (core/settings.py), which uses the
@@ -73,7 +74,7 @@ class DisplayConfig(_Section):
     # Screen mode to request from the Wayland compositor before going fullscreen, e.g.
     # "1024x600@60" (None = leave the desktop's mode alone). See docs/DISPLAY_SETUP.md.
     output_mode: str | None = None
-    output_name: str = "HDMI-A-1"  # the Pi 5's HDMI0 port
+    output_name: str = "auto"  # the screen's port: auto = the HDMI port it is plugged into (or e.g. "HDMI-A-1")
     # SDL video driver to prefer, e.g. "wayland" (None = SDL's own choice, which is X11 via
     # Xwayland under labwc). An SDL_VIDEODRIVER environment variable always wins.
     video_driver: str | None = None
@@ -94,9 +95,9 @@ class FaceConfig(_Section):
 class CameraConfig(_Section):
     backend: DeviceBackend = "auto"
     device: int | str = 0  # index or /dev/videoN path
-    capture_width: int = 640
+    capture_width: int = 640  # config/default.yaml and pi.yaml ask for 1920x1080
     capture_height: int = 480
-    capture_fps: int = 15
+    capture_fps: int = 30
     process_width: int = 320  # frames are downscaled to this width before detection
     detect_fps: float = 6.0  # detection rate (CPU budget)
     mirror: bool = True  # camera faces the child: image-right means "look to my right"
@@ -104,8 +105,13 @@ class CameraConfig(_Section):
     # --- added by vision (all optional, defaults keep previous behaviour) ---
     fourcc: str = "MJPG"  # requested pixel format; MJPG keeps USB 2.0 bandwidth low ("" = driver default)
     stall_seconds: float = 3.0  # no frame for this long => treated as disconnected
+    # V4L2 buffers: with 1, a frame that arrives while the reader still holds the last one is dropped, so a
+    # 30 fps camera gives 15. The reader grabs continuously, so 3 adds no lag.
+    buffers: int = 3
     fixture: str | None = None  # dev aid: image / video / directory used instead of a real camera
     mock_face: bool = False  # mock camera draws a slowly moving synthetic face (demos)
+    live_view_fps: float = 30.0  # dashboard live view frame rate while watched (1-30; up to capture_fps)
+    live_view_width: int = 1920  # dashboard live view picture width (160-1920; 1920 = full 1080p)
 
 
 class VisionConfig(_Section):
@@ -200,13 +206,29 @@ class WakeConfig(_Section):
     # ("hey bot") trigger by mistake more often (e.g. on "hey but"): remove it here if that happens.
     # "lil bot" / "little bot": the "hey" is sometimes not heard (on the robot, 2026-10-29); like "hey bot" they
     # need short_min_confidence.
-    phrases: list[str] = Field(default_factory=lambda: ["hey little bot", "hey littlebot", "hey lil bot", "hey bot",
-                                                         "lil bot", "little bot"])
+    # "hey bot" and "bot" are back by the parent's choice (2026-11-02), knowing the cost: "Hey Bob, can you grab
+    # that?" was heard as "hey bot" by two of eleven voices (2026-10-31), and "Hey, but that's mine!" by all eight
+    # espeak voices tried (2026-11-02). "bot" alone only counts as the first word after a pause, sure of it (see
+    # short_min_confidence), and not while Spotify plays: "But I wanted..." was heard as "bot" at 0.41-0.69, and
+    # "Bot, what time is it?" at 0.72-0.83 in American voices (British ones were heard as "bought"). Remove
+    # either here if it wakes by mistake.
+    phrases: list[str] = Field(default_factory=lambda: ["hey little bot", "hey littlebot", "hey lil bot", "lil bot",
+                                                         "little bot", "hey bot", "bot"])
     model_path: str = "models/vosk-model-small-en-us-0.15"  # scripts/download_models.py vosk-en
+    # Silence after a phrase before the recogniser decides it (null: the model's own 0.5-1.0 s). Measured on the
+    # robot (2026-10-31: 48 phrases in the laptop's voices, 77 in eleven OpenAI voices and three styles): 0.25 s
+    # heard "hey little bot" 0.51 s after it was said instead of 0.73 s, catching as many (85 of 87) with no more
+    # false alarms; 0.15 s was quicker still (0.44 s) but missed one and heard "hey Bob" as "hey bot" once more.
+    end_silence_seconds: float | None = Field(default=0.25, ge=0.05, le=2.0)
+    # Decide a wake phrase as soon as the words so far hold it, not after their sentence ("hey little bot, what's
+    # the weather" was heard 2 s after "bot"). On the robot (2026-10-31, the 77 phrases above): as many caught
+    # (55 of 55) and no false alarms (0 of 22), 0.25 s before the speech ended instead of 0.51 s after it.
+    early: bool = True
     # per word; higher = fewer false triggers. 0.35: on the robot "hey lil bot" was missed at 0.49 (2026-10-29)
     min_confidence: float = Field(default=0.35, ge=0.0, le=1.0)
     # Two-word phrases ("hey bot") are what triggers by mistake most: they need this word confidence, or
     # a face in front of the camera within short_face_seconds (someone is there, likely talking to it).
+    # One-word phrases ("bot") need this confidence whoever is in front of the camera.
     short_min_confidence: float = Field(default=0.7, ge=0.0, le=1.0)
     short_face_seconds: float = Field(default=10.0, ge=0.0)
     # Follow-up: this soon after a chat ended by itself (time limit, quiet, a lost connection; not "goodbye" or
@@ -236,6 +258,29 @@ class WakeConfig(_Section):
     # wake word heard the video itself, so the call ends and the video carries on (0 = wait for the call's
     # own idle hang-up).
     video_no_words_seconds: float = Field(default=15.0, ge=0.0)
+    # --- LittleBot's own trained "Hey LittleBot" model (littlebot/audio/oww.py, docs/WAKE_TRAINING.md) ---
+    # A second check next to Vosk. off: not loaded. shadow: it scores the same microphone sound and logs its score
+    # for every Vosk wake (and its own peaks) in data/wake/shadow.jsonl, changing nothing about waking. confirm:
+    # Vosk only wakes LittleBot when the model's best score in the last oww_window_seconds is at least
+    # oww_threshold. rescue: as shadow, and when Vosk heard a wake phrase but wasn't sure of it ("hey bot" at 0.55,
+    # "... bot" not first), a model score of at least oww_rescue_threshold in the last oww_rescue_seconds wakes it
+    # (7 first tries missed on the robot, 2026-11-02, had both). primary: the model's own score of at least
+    # oww_primary_threshold wakes it, with Vosk (min_confidence) as the backup (the owner's choice, 2026-11-02).
+    # Anything wrong with it (files, onnxruntime) switches it off with one warning: then Vosk alone, as before.
+    oww_mode: Literal["off", "shadow", "confirm", "rescue", "primary"] = "off"
+    oww_primary_threshold: float = Field(default=0.45, ge=0.05, le=1.0)
+    # primary: the model's score wakes LittleBot only with a second opinion: Vosk heard a word of a wake phrase
+    # ("little", "lil", "bot", even unsure) in the same few seconds, or someone's face is in front of the camera.
+    # Alone it woke LittleBot ~50 times in a day on a cricket game, the TV and the room's noise, with nobody
+    # speaking after (the robot, 2026-11-03). false: the model alone wakes it, as before.
+    oww_primary_agree: bool = True
+    oww_rescue_threshold: float = Field(default=0.7, ge=0.0, le=1.0)
+    oww_rescue_seconds: float = Field(default=5.0, gt=0.0, le=9.0)  # a Vosk result comes after their sentence
+    oww_threshold: float = Field(default=0.5, ge=0.0, le=1.0)  # confirm: Vosk's wake counts at this score or more
+    oww_peak_threshold: float = Field(default=0.5, ge=0.0, le=1.0)  # a score this high with no Vosk wake is logged
+    oww_window_seconds: float = Field(default=2.0, gt=0.0, le=5.0)  # the sound before Vosk's wake that is looked at
+    oww_confirm_wait_seconds: float = Field(default=0.3, ge=0.0, le=1.0)  # confirm: wait this long for the model
+    oww_model_dir: str = "wake"  # in the data folder (data/wake): hey_little_bot.onnx and the two feature models
 
 
 class AIConfig(_Section):
@@ -378,6 +423,196 @@ class ClaudeConfig(_Section):
     key_file: str = "anthropic_api_key"  # under data_dir; read only when no other user can read it (chmod 600)
 
 
+class AssistantConfig(_Section):
+    """The fast voice pipeline (littlebot/assistant, docs/ASSISTANT.md): streaming speech-to-text with end-of-turn
+    detection -> one brain call that talks, uses tools, sets the face and puts cards up -> streaming text-to-speech,
+    with barge-in and a follow-up window. GPT-Live stays as the fallback (``pipeline: auto``)."""
+
+    # auto: the assistant when a streaming STT key (Deepgram) and a fast TTS key (Cartesia or ElevenLabs) are set,
+    # else GPT-Live as before; cascade: always the assistant (with what is there: OpenAI or local speech); live:
+    # always GPT-Live.
+    pipeline: Literal["auto", "cascade", "live"] = "auto"
+    # Speech-to-text, first that works: deepgram (streaming, end-of-turn built in), cartesia (Ink 2, the same kind;
+    # not a default), assemblyai (Universal-3.6 Pro, the same kind; not a default), openai (after LittleBot's own
+    # end-of-turn), vosk (on the robot, offline).
+    stt: list[Literal["deepgram", "cartesia", "assemblyai", "openai", "vosk"]] = Field(
+        default_factory=lambda: ["deepgram", "openai", "vosk"])
+    # Other streaming services fed the same sound in every chat, to compare: what each heard is logged side by side
+    # (needs log_words; scripts/stt_compare.py lists the differences) and they change nothing. One name, a list
+    # ([cartesia, assemblyai]), or "" = off.
+    stt_shadow: list[Literal["deepgram", "cartesia", "assemblyai"]] = Field(default_factory=list)
+    cartesia_stt_model: str = "ink-2"
+    assemblyai_stt_model: str = "universal-3-6-pro"
+    # AssemblyAI ends a turn after this much quiet even when the words don't read as finished (Deepgram's 3000 ms
+    # made three of twenty turns end 3-4 s late on the robot, 2026-11-02; its own 1280 still ended them ~1.5 s after
+    # the voice stopped; 560 ended them ~0.8 s after, which cut some sentences off mid-way: this ends them ~1 s after,
+    # and more words before the answer starts still join the turn)
+    assemblyai_max_turn_silence_ms: int = Field(default=750, ge=200, le=10000)
+    # Its first words come this long after speech starts (its default 500): 0 confirms a barge-in soonest; raise it
+    # if fillers or noise stop LittleBot too often
+    assemblyai_interruption_delay_ms: int = Field(default=0, ge=0, le=2000)
+    assemblyai_continuous_partials: bool = True  # words every second or so while they talk on without a pause
+    deepgram_model: str = "flux-general-en"
+    # Flux: how sure the turn ended. On the robot (2026-10-31, 18 phrases in OpenAI voices streamed at real time):
+    # 0.6 ended turns 0.1-0.25 s sooner than 0.7 (up to 0.6 s on "and divide that by four."), every phrase whole;
+    # 0.55 cut "Hey little bot. Add milk and eggs to my shopping list." after "Hey little bot."
+    deepgram_eot_threshold: float = Field(default=0.6, ge=0.5, le=0.9)
+    deepgram_eot_timeout_ms: int = Field(default=3000, ge=500, le=10000)  # Flux: a turn ends after this much quiet
+    # Words Flux listens harder for (its keyterm prompting), with the robot's own name added: "A little louder,
+    # please." came as "A little leopard, please." and started a leopard video (the robot, 2026-10-31).
+    deepgram_keyterms: list[str] = Field(default_factory=lambda: ["louder", "quieter", "volume"])
+    # Also the family's names, Spotify playlists and artists, smart-home devices and names from the last few turns,
+    # fresh for each chat and after every turn (littlebot/assistant/keyterms.py). False: only the words above.
+    personal_keyterms: bool = True
+    # Flux's "probably done" signal: the brain starts then, and its first sentence is made into voice (heard, and its
+    # tools run, only once the turn really ended; if they go on talking it is dropped). On the robot's clips
+    # (2026-10-31): 0.3 came a median 0.01 s after their speech ended (0.4: 0.16 s), the turn's end 0.29 s after it,
+    # so the answer is nearly ready when the turn ends; it also fires after "Hey little bot." (dropped). None: off.
+    deepgram_eager_eot_threshold: float | None = Field(default=0.3, ge=0.3, le=0.9)
+    openai_stt_model: str = "gpt-4o-mini-transcribe"
+    language: str = "en"
+    # Text-to-speech, first that works: cartesia (fastest first audio), elevenlabs, openai, local (piper / espeak).
+    tts: list[Literal["cartesia", "elevenlabs", "openai", "local"]] = Field(
+        default_factory=lambda: ["cartesia", "elevenlabs", "openai", "local"])
+    cartesia_model: str = "sonic-3"
+    # "Tessa": an emotive voice Cartesia recommends for companions (soft, warm; follows the emotion below). The
+    # earlier default, "Katie" (f786b574-daa5-4673-aa0c-cbe3e8534c02), sounded too forceful on the robot.
+    cartesia_voice: str = "6ccbfb76-1fc6-48f7-b71d-91ac6298247b"
+    # 0.6-1.5 (1.0 normal), or slowest | slow | normal | fast | fastest. Normal: Tessa is unhurried as she is
+    # (0.92 was tried on the robot, 2026-10-31, and put back).
+    cartesia_speed: float | Literal["slowest", "slow", "normal", "fast", "fastest"] = 1.0
+    # The voice's emotion when a sentence has no mood of its own (calm, content, ... from Cartesia's list; null:
+    # read from the words). Sentences the brain tags [happy], [sad] ... get a matching gentle one.
+    cartesia_emotion: str | None = "calm"
+    # Words the voices say wrong, respelled for them (whole words, any case): on the robot Cartesia said "Genghis"
+    # as "Genga" (2026-10-31). Add your own in config/local.yaml (e.g. a name: {"Siobhan": "Shivawn"}).
+    pronunciations: dict[str, str] = Field(default_factory=lambda: {"Genghis": "Jenghis"})
+    # Cartesia requests open at once (the free plan allows 2; one is left for a sentence just cut off, which
+    # Cartesia still counts for a moment). Raise it on a paid plan only if sentences ever wait for each other.
+    cartesia_concurrency: int = Field(default=1, ge=1, le=20)
+    # Cartesia over its websocket (one kept-open connection; the HTTP stream if it fails): on the robot
+    # (2026-11-03) its first sound came at about 200 ms against 335 ms over HTTP.
+    cartesia_websocket: bool = True
+    elevenlabs_model: str = "eleven_flash_v2_5"
+    elevenlabs_voice: str = "cgSgspJ2msm6clMCkdW9"  # "Jessica": warm, conversational
+    openai_tts_model: str = "gpt-4o-mini-tts"
+    openai_tts_voice: str = "coral"
+    tts_first_audio_timeout_seconds: float = Field(default=2.5, ge=0.3, le=10.0)  # then the next TTS is asked
+    # The brain: claude.model (Haiku 5.5) with claude.fallback_models then ChatGPT (littlebot/brain/text_model.py).
+    max_reply_tokens: int = Field(default=400, ge=64, le=4000)
+    # No first word (or tool) from the brain's first request by then: the next model is asked. On the robot
+    # (2026-10-31) 115 answers began within 1.26 s (median 0.63 s) and one stalled: claude.first_token_timeout_seconds
+    # (4 s, still for the rounds after a tool's result) left 5 s of silence.
+    brain_first_word_seconds: float = Field(default=2.0, ge=0.5, le=30.0)
+    reply_timeout_seconds: float = Field(default=20.0, ge=3.0, le=120.0)
+    # think_harder: hard questions go to this model (adaptive thinking) while a short line plays. None: off.
+    deep_model: str | None = "claude-sonnet-5-5"
+    deep_timeout_seconds: float = Field(default=45.0, ge=5.0, le=180.0)
+    # Turn-taking without a streaming STT: quiet this long after speech ends the turn (shorter after a complete
+    # sentence, longer after "and", "um" ...).
+    end_of_turn_ms: int = Field(default=650, ge=200, le=3000)
+    max_turn_seconds: float = Field(default=30.0, ge=3.0, le=120.0)
+    # After an answer LittleBot keeps listening this long for a follow-up (no wake word needed), then the
+    # session ends. 0: one question per wake word.
+    follow_up_seconds: float = Field(default=8.0, ge=0.0, le=60.0)
+    first_words_seconds: float = Field(default=7.0, ge=2.0, le=30.0)  # after the wake word, wait this long for words
+    session_minutes: float = Field(default=20.0, ge=1.0, le=240.0)
+    history_turns: int = Field(default=12, ge=0, le=60)  # earlier exchanges sent with each question
+    history_minutes: float = Field(default=15.0, ge=0.0, le=240.0)  # kept in memory (RAM only) between sessions
+    barge_in: bool = True  # talk over LittleBot to interrupt it (needs echo cancelling, as GPT-Live's)
+    thinking_sound: bool = True  # a soft sound while a slow tool runs
+    earcon: bool = True  # a short sound when the wake word is heard (skipped when they keep talking)
+    expressions: bool = True  # the brain's [happy] / [curious] tags drive the face sentence by sentence
+    # An answer with facts said without a card (the brain skips one on some how-to and number questions): a short
+    # second request makes one from the answer while it is being said (no wait; a cheap Haiku call).
+    card_backup: bool = True
+    log_timings: bool = True  # one "assistant turn:" line per answer (stt, brain, first audio; never the words)
+    # For testing only (off: what is said is never written anywhere): the words heard and said go in the log too.
+    log_words: bool = False
+
+    @field_validator("stt_shadow", mode="before")
+    @classmethod
+    def _one_or_more(cls, v: Any) -> Any:  # "cartesia" (as before) = [cartesia]; "" or none = off
+        if v is None or v == "":
+            return []
+        if isinstance(v, str):
+            return [v]
+        return list(dict.fromkeys(v)) if isinstance(v, (list, tuple)) else v
+
+
+class SkillsConfig(_Section):
+    """LittleBot's skills (littlebot/skills): tools for both voices. Each one can be switched off here."""
+
+    memory: bool = True  # remember / recall / forget facts about the family (SQLite, on the robot only)
+    memory_prompt_facts: int = Field(default=40, ge=0, le=200)  # the most recent facts sent with every question
+    reminders: bool = True  # reminders and alarms ("remind me at 6 to call mom", "wake me at 7")
+    reminder_snooze_minutes: int = Field(default=9, ge=1, le=60)
+    alarm_ring_seconds: int = Field(default=60, ge=5, le=600)
+    lists: bool = True  # shopping, to-do and any named list
+    messages: bool = True  # "tell Amara her lunch is in the fridge": given when she next talks to LittleBot
+    baby_log: bool = True  # feeds, diapers, sleep and medicine by voice ("when did she last eat?")
+    persona: str = "warm"  # warm | witty | calm | concise | playful (or changed by voice: "be more concise")
+    briefing: bool = True  # "good morning": weather, reminders, lists, headlines
+    news_feeds: list[str] = Field(default_factory=lambda: [  # RSS or Atom; a briefing takes their top stories in turns
+        "https://www.cbc.ca/webfeed/rss/rss-topstories",
+        "https://www.cbc.ca/webfeed/rss/rss-canada-hamiltonnews",  # home (Hamilton, Ontario)
+        "https://feeds.bbci.co.uk/news/world/rss.xml",
+    ])
+    news_items: int = Field(default=5, ge=1, le=15)
+    routines: bool = True  # "when I say good night, turn off the lights and set an alarm for 7"
+    translator: bool = True
+    translator_idle_minutes: float = Field(default=15.0, ge=1.0, le=240.0)  # interpreter mode ends after this long quiet
+    music: bool = True  # "play some jazz": YouTube audio with a now-playing screen
+    # Where "play some jazz" plays from (littlebot/skills/music.py): auto = Spotify when it is connected and the
+    # robot's Spotify receiver is visible (docs/SPOTIFY.md), else YouTube; "play it on YouTube" always works.
+    music_provider: Literal["auto", "spotify", "youtube"] = "auto"
+    # Spotify (littlebot/skills/spotify.py; needs Spotify Premium): the Client ID of the owner's app on
+    # developer.spotify.com (not a secret; the dashboard can set it too). The sign-in is kept in
+    # data/spotify_token.json (chmod 600). Plays on the robot's own Spotify Connect receiver
+    # (scripts/setup_spotify.sh), found by this name.
+    spotify: bool = True
+    spotify_client_id: str = ""
+    spotify_device_name: str = "LittleBot"
+    spotify_duck_percent: int = Field(default=20, ge=0, le=100)  # music volume while someone talks to LittleBot
+    spotify_explicit: bool = False  # False: never pick a song marked explicit (set the account's own filter too)
+    spotify_timeout_seconds: float = Field(default=6.0, gt=0, le=30)
+    # Home Assistant (smart home): its address, e.g. http://homeassistant.local:8123; the long-lived access token
+    # goes in .env (HOME_ASSISTANT_TOKEN) or data/home_assistant_token (chmod 600). Empty: no smart-home tools.
+    home_assistant_url: str = ""
+    home_timeout_seconds: float = Field(default=5.0, gt=0, le=30)
+    # Calendar (littlebot/skills/agenda.py, docs/CALENDAR.md): Google Calendar (see, add, move and cancel events;
+    # connected with scripts/setup_calendar.py) and/or calendars' secret iCal addresses (see only; CALENDAR_ICS_URL
+    # in .env or data/calendar_ics_url, chmod 600, several separated by spaces). Neither set up: no calendar tools.
+    calendar: bool = True
+    calendar_default: str = ""  # the calendar new events go on, by name ("" = the main Google calendar)
+    calendar_timeout_seconds: float = Field(default=6.0, gt=0, le=30)
+    # Heads-ups (littlebot/skills/heads_up.py): LittleBot speaks up by itself when something is coming, and sends it
+    # to the family's phones too once scripts/setup_phone.py has set up ntfy (NTFY_TOPIC / data/ntfy_topic). The
+    # parent can change these by voice ("stop telling me about the weather"); the defaults are here.
+    heads_up: bool = True
+    heads_up_calendar_minutes: int = Field(default=30, ge=0, le=240)  # before an event with a time (0: none)
+    heads_up_weather: bool = True  # rain, snow or storms expected within a few hours
+    heads_up_quiet_hours: str = "21:30-07:00"  # nothing said out loud then (the phone still gets it); "" = never
+    ntfy_server: str = "https://ntfy.sh"  # or your own ntfy server
+    # Doorbell and camera alerts (littlebot/skills/doorbell.py, docs/DOORBELL.md): a secret web address a phone or
+    # Home Assistant calls when the doorbell rings or a camera sees someone; LittleBot says it. Off: no address, no
+    # tools. What is said changes by voice ("stop telling me about motion") or on the dashboard.
+    doorbell: bool = True
+
+
+class VoiceGamesConfig(_Section):
+    """Voice + screen games for grown-ups and the family (littlebot/games/voice): trivia, hangman, 20 questions,
+    riddles, would you rather. Scores are kept on the robot."""
+
+    enabled: bool = True
+    trivia_questions: int = Field(default=10, ge=3, le=30)  # per round
+    use_model_questions: bool = True  # fresh trivia from the text model; off (or no model): the built-in bank
+    hangman_words: int = Field(default=5, ge=1, le=20)  # per round
+    riddles_per_round: int = Field(default=5, ge=1, le=20)
+    would_you_rather_per_round: int = Field(default=5, ge=1, le=20)
+    sounds: bool = True  # a chime for right / wrong answers when the skill speaks for itself (tools, card taps)
+
+
 class InfoConfig(_Section):
     """Live information for the tools: the weather (Open-Meteo, no key) and the time (littlebot/info).
 
@@ -473,6 +708,118 @@ class BrowserConfig(_Section):
     extra_args: list[str] = Field(default_factory=list)  # more Chromium switches (e.g. --renderer-process-limit=2)
 
 
+class MirrorConfig(_Section):
+    """Phone screen mirroring on LittleBot's screen (littlebot/mirror, docs/MIRRORING.md): an iPhone through AirPlay
+    (UxPlay) or an Android phone through scrcpy over Wi-Fi (adb wireless debugging), only while someone asked for it.
+
+    The parent's switch (dashboard Assistant page: ``mirror.enabled``) can turn it off; ``enabled: false`` here
+    switches the feature off whatever the parent chose. A program that isn't installed makes that phone kind
+    "not installed" (scripts/setup_mirroring.sh says what to install)."""
+
+    enabled: bool = True
+    uxplay_command: str = "uxplay"  # a name on PATH or an absolute path
+    scrcpy_command: str = "scrcpy"
+    adb_command: str = "adb"
+    airplay_name: str = Field(default="LittleBot", min_length=1, max_length=40)  # what the iPhone's list shows
+    # The AirPlay receiver waits this long for an iPhone to start mirroring, then stops again (it isn't left open on
+    # the Wi-Fi). Android: scrcpy starts at once, or not at all.
+    wait_seconds: float = Field(default=90.0, ge=15.0, le=600.0)
+    # The longer side of the phone's picture in pixels; 0 = the screen's longer side (display.width / height).
+    max_size: int = Field(default=0, ge=0, le=1920)
+    fps: int = Field(default=30, ge=5, le=60)
+    android_bit_rate_mbps: float = Field(default=4.0, ge=0.5, le=20.0)  # scrcpy's --video-bit-rate
+    # The phone's sound out of LittleBot's speaker (beside the voice, never through its speaker lease). Off: the
+    # wake word and "stop" hear the room, not the phone.
+    sound: bool = False
+    # Android only: taps on LittleBot's touch screen work the phone. Off: only the phone itself controls it
+    # (a child tapping the robot's screen can't use a grown-up's phone).
+    touch_control: bool = False
+    video_sink: str = "waylandsink"  # UxPlay's GStreamer video sink (-vs): waylandsink | autovideosink | kmssink ...
+    extra_uxplay_args: list[str] = Field(default_factory=list)
+    extra_scrcpy_args: list[str] = Field(default_factory=list)
+
+
+class NanitConfig(_Section):
+    """The Nanit baby camera on LittleBot's screen (littlebot/nanit, docs/NANIT.md), when a grown-up asks.
+
+    An unofficial community bridge (indiefan/home_assistant_nanit, built and signed in by scripts/setup_nanit.sh,
+    run by the systemd user unit ``littlebot-nanit.service``) asks the camera to send its picture to the robot;
+    ffplay shows it full screen. Not set up: the voice and the dashboard say how. The parent's switch
+    (``nanit.enabled``, dashboard Assistant page) can turn it off; ``enabled: false`` here switches it off whatever
+    the parent chose."""
+
+    enabled: bool = True
+    ffplay_command: str = "ffplay"  # a name on PATH or an absolute path
+    bridge_command: str = "~/.local/nanit-bridge/bin/nanit"  # what setup_nanit.sh builds ("set up?")
+    systemctl_command: str = "systemctl"
+    unit: str = Field(default="littlebot-nanit.service", pattern=r"^[A-Za-z0-9@_.-]+\.service$")
+    rtmp_port: int = Field(default=1935, ge=1, le=65535)  # the bridge's RTMP server (setup_nanit.sh's port)
+    # The baby's sounds through the system's sound (beside the voice, never through its speaker lease). The
+    # parent's switch (``nanit.sound``) starts from this.
+    sound: bool = True
+    # The camera view closes by itself after this many minutes, so it doesn't run all night by accident; 0 = never.
+    max_minutes: int = Field(default=30, ge=0, le=720)
+    # The picture must start by then, else the view closes and says why (the bridge or the camera).
+    start_timeout_seconds: float = Field(default=20.0, ge=5.0, le=120.0)
+    extra_ffplay_args: list[str] = Field(default_factory=list)
+
+
+class CaptureConfig(_Section):
+    """Photos and videos by voice ("Hey LittleBot, take a picture" / "record this" / "stop recording"), the gallery on
+    the screen and the dashboard, and sharing to a phone (littlebot/capture, docs/PHOTOS.md).
+
+    Everything stays on the robot (``data/<folder>``): nothing is uploaded. Sharing makes a link to one photo or video
+    on the robot itself (the phone opens it over the home Wi-Fi); only that link goes through the phone notification.
+    The parent's switches (dashboard Photos page: ``capture.enabled``, ``capture.video_sound``) start from these;
+    ``enabled: false`` here switches the feature off whatever the parent chose."""
+
+    enabled: bool = True
+    folder: str = Field(default="gallery", min_length=1, max_length=80)  # under data_dir
+    photo_width: int = Field(default=1920, ge=320, le=4096)  # never upscaled: the camera's picture at most
+    photo_quality: int = Field(default=92, ge=40, le=98)
+    countdown_seconds: int = Field(default=3, ge=0, le=10)  # "3, 2, 1" before a voice photo (0 = at once)
+    show_seconds: float = Field(default=8.0, ge=0.0, le=120.0)  # a new photo shows on the screen this long
+    video_width: int = Field(default=1280, ge=320, le=1920)  # 1280x720: ~1 core of the Pi 5 at 30 fps
+    video_fps: int = Field(default=30, ge=5, le=30)
+    video_crf: int = Field(default=23, ge=16, le=35)  # H.264 quality (lower = better and bigger)
+    video_preset: Literal["ultrafast", "superfast", "veryfast", "faster", "fast", "medium"] = "veryfast"
+    video_sound: bool = True  # the room's sound in videos (the microphone privacy switch still wins)
+    audio_source: str = Field(default="default", min_length=1, max_length=200)  # PipeWire/Pulse source for ffmpeg
+    max_video_minutes: float = Field(default=10.0, ge=0.5, le=60.0)  # a recording stops by itself after this
+    min_free_mb: int = Field(default=1000, ge=100, le=100000)  # no new photo or video below this much free disk
+    share_hours: float = Field(default=24.0, ge=0.25, le=720.0)  # a share link works this long
+    # Phone notifications with a picture: the ntfy app fetches it from the robot itself (home Wi-Fi), so only the
+    # link goes through ntfy. Off: the notification carries the link only.
+    push_attach: bool = True
+    ffmpeg_command: str = "ffmpeg"  # a name on PATH or an absolute path
+    ffplay_command: str = "ffplay"  # plays a video from the gallery full screen
+
+
+class AndroidConfig(_Section):
+    """Android (Waydroid) on LittleBot's screen (littlebot/android, docs/ANDROID_ON_PI.md), only while it is on the
+    screen: as soon as it isn't, it is shut down and its 1 to 1.5 GB of memory comes back. Set up with
+    scripts/setup_waydroid.sh.
+
+    The parent's switch (dashboard Assistant page: ``android.enabled``) can turn it off; ``enabled: false`` here
+    switches it off whatever the parent chose."""
+
+    enabled: bool = True
+    waydroid_command: str = "waydroid"  # a name on PATH or an absolute path
+    systemctl_command: str = "systemctl"
+    # Its window not in front (closed, or another window over it) for this long: Android is shut down.
+    off_screen_seconds: float = Field(default=10.0, ge=2.0, le=600.0)
+    # Its window must be in front by then (the first start takes a minute or two), else Android is shut down.
+    start_timeout_seconds: float = Field(default=180.0, ge=30.0, le=900.0)
+    # It starts only with this much memory free (MemAvailable, MB; it takes 1 to 1.5 GB) ...
+    min_free_mb: int = Field(default=1200, ge=0, le=4096)
+    # ... and is shut down if free memory falls under this while it runs (LittleBot comes first).
+    min_free_mb_running: int = Field(default=250, ge=0, le=2048)
+    # Android's window: the desktop window whose app id or title has this in it (any case).
+    window_match: str = Field(default="waydroid", min_length=1, max_length=40)
+    # Apps that "open <name>" opens in Android: the name -> the Android package. aosu: the doorbell cameras' app.
+    apps: dict[str, str] = Field(default_factory=lambda: {"aosu": "com.glazero.android"})
+
+
 class PowerConfig(_Section):
     """Running on the battery (littlebot/power, docs/POWER.md "Running on the battery").
 
@@ -563,17 +910,59 @@ class ServoChannelConfig(_Section):
     min_pulse_us: int = 500  # servo pulse at servo angle 0 (absolute bounds 500..2500)
     max_pulse_us: int = 2500  # servo pulse at servo angle 180
     # Which limit a positive normalised gesture value moves toward: "raise" for arms,
-    # "look to the robot's left" for the head.
+    # "look to the robot's left" for the head (pan), "look up" for head_tilt.
     positive_toward: Literal["max", "min"] = "max"
+    # Soft limits: look_at() and body language stay this many degrees inside min/max (gestures stay within
+    # 85 % of the range anyway; parent slider moves may use the full, hard-clamped range).
+    soft_margin_deg: float = 2.0
 
 
 def _default_servos() -> dict[str, ServoChannelConfig]:
+    # "head" is the PAN axis (turn left / right; name kept for compatibility), "head_tilt" the TILT axis
+    # (nod up / down). A robot without one of them lists the others only (motion.servos replaces this whole map).
     return {
         "head": ServoChannelConfig(channel=0, neutral=90, min_angle=50, max_angle=130, max_speed_dps=60),
         "left_arm": ServoChannelConfig(channel=1, neutral=20, min_angle=10, max_angle=150, max_speed_dps=90),
         "right_arm": ServoChannelConfig(channel=2, neutral=160, min_angle=30, max_angle=170, max_speed_dps=90, inverted=True,
                                         positive_toward="min"),
+        "head_tilt": ServoChannelConfig(channel=3, neutral=90, min_angle=70, max_angle=110, max_speed_dps=60,
+                                        max_accel_dps2=200),
     }
+
+
+class LookConfig(_Section):
+    """``motion.look``: how MotionAPI.look_at(x, y) turns a gaze target into head pan / tilt (eyes lead, head follows)."""
+
+    # The camera sits in the head's top pod (hardware/enclosure_v2): x/y from vision are then relative to where the
+    # head points now. false = a camera fixed to the body (x/y are absolute directions).
+    camera_on_head: bool = True
+    fov_h_deg: float = 70.0  # the camera's horizontal field of view: x 0..1 spans this many degrees
+    fov_v_deg: float = 45.0  # ... vertical (y 0..1)
+    # Eyes lead, head follows: the eyes take small shifts at once; the head turns only when the target stays more
+    # than follow_offset (0..0.5 of the view) off-centre for longer than follow_after_seconds.
+    follow_offset: float = 0.15
+    follow_after_seconds: float = 0.4
+    gain: float = 0.8  # fraction of the offset the head turns per follow (< 1: no overshoot, converges in 2-3 steps)
+    settle_seconds: float = 0.6  # after a head turn, wait this long (the camera catches up) before judging again
+    speed: float = 0.5  # fraction of each head joint's max speed used by look_at moves
+
+
+class DriveConfig(_Section):
+    """``motion.drive``: the wheels phase (littlebot/motion/drive.py). Off by default; nothing calls it yet."""
+
+    enabled: bool = False  # commands are refused while false
+    backend: Literal["mock", "motor_hat"] = "mock"  # motor_hat: placeholder for the future motor HAT driver
+    max_linear_mps: float = 0.15  # forward / back speed limit (hard ceiling in code: 0.5)
+    max_angular_dps: float = 60.0  # turning speed limit (hard ceiling: 180)
+    max_linear_accel_mps2: float = 0.3  # speeds ramp at most this fast (no jerks, no tipping)
+    max_angular_accel_dps2: float = 180.0
+    cruise_linear_mps: float = 0.10  # forward(meters) / turn(degrees) use these speeds
+    cruise_angular_dps: float = 45.0
+    watchdog_seconds: float = 1.0  # an open-ended drive() stops unless re-sent within this long
+    max_duration_seconds: float = 10.0  # no single command runs longer than this
+    update_hz: float = 20.0  # control loop rate while moving (idle: no ticks)
+    publish_hz: float = 5.0  # motion.drive events while moving
+    wheel_base_m: float = 0.12  # distance between the two wheels (differential drive)
 
 
 class MotionConfig(_Section):
@@ -592,6 +981,13 @@ class MotionConfig(_Section):
     stop_all_returns_to_neutral: bool = True  # parent STOP: halt smoothly, then drift slowly back to neutral
     homing_speed_factor: float = 0.4  # fraction of max speed used for that return to neutral
     release_when_idle_seconds: float = 0.0  # >0: de-energise servos after this long without motion (0 = hold)
+    # Body language (littlebot/motion/body.py): the conversation turned into gaze, nods and small gestures.
+    # The face parts work without servos; the movements run on the simulator until real servos are armed.
+    body_language: bool = True
+    body_language_gap_seconds: float = 1.5  # at most one gesture (and one face nod) per this long
+    idle_motion_seconds: float = 90.0  # a tiny idle shift about this often while nothing happens (0 = never)
+    look: LookConfig = Field(default_factory=LookConfig)
+    drive: DriveConfig = Field(default_factory=DriveConfig)
 
 
 class DashboardConfig(_Section):
@@ -653,8 +1049,15 @@ class LittleBotConfig(BaseModel):
     text: TextConfig = Field(default_factory=TextConfig)
     claude: ClaudeConfig = Field(default_factory=ClaudeConfig)
     info: InfoConfig = Field(default_factory=InfoConfig)
+    assistant: AssistantConfig = Field(default_factory=AssistantConfig)
+    skills: SkillsConfig = Field(default_factory=SkillsConfig)
+    voice_games: VoiceGamesConfig = Field(default_factory=VoiceGamesConfig)
     screens: ScreensConfig = Field(default_factory=ScreensConfig)
     browser: BrowserConfig = Field(default_factory=BrowserConfig)
+    mirror: MirrorConfig = Field(default_factory=MirrorConfig)
+    nanit: NanitConfig = Field(default_factory=NanitConfig)
+    capture: CaptureConfig = Field(default_factory=CaptureConfig)
+    android: AndroidConfig = Field(default_factory=AndroidConfig)
     decide: DecideConfig = Field(default_factory=DecideConfig)
     power: PowerConfig = Field(default_factory=PowerConfig)
     media: MediaConfig = Field(default_factory=MediaConfig)
@@ -668,6 +1071,16 @@ class LittleBotConfig(BaseModel):
     anthropic_api_key: SecretStr | None = Field(default=None, exclude=True)
     openai_api_key: SecretStr | None = Field(default=None, exclude=True)
     typesafe_api_key: SecretStr | None = Field(default=None, exclude=True)  # Jev (littlebot/decide)
+    # The fast voice pipeline's speech services and the smart home (littlebot/assistant, littlebot/skills/home.py).
+    deepgram_api_key: SecretStr | None = Field(default=None, exclude=True)
+    cartesia_api_key: SecretStr | None = Field(default=None, exclude=True)
+    assemblyai_api_key: SecretStr | None = Field(default=None, exclude=True)
+    elevenlabs_api_key: SecretStr | None = Field(default=None, exclude=True)
+    home_assistant_token: SecretStr | None = Field(default=None, exclude=True)
+    # The calendar's secret iCal address(es) and the phone notifications' ntfy topic (littlebot/skills/agenda.py,
+    # push.py): not API keys, but anyone who has them can read the calendar / the notifications.
+    calendar_ics_url: SecretStr | None = Field(default=None, exclude=True)
+    ntfy_topic: SecretStr | None = Field(default=None, exclude=True)
 
     @field_validator("mode", mode="before")
     @classmethod
@@ -689,12 +1102,33 @@ class LittleBotConfig(BaseModel):
         d["has_anthropic_key"] = bool(self.anthropic_api_key and self.anthropic_api_key.get_secret_value())
         d["has_openai_key"] = bool(self.openai_api_key and self.openai_api_key.get_secret_value())
         d["has_typesafe_key"] = bool(self.typesafe_api_key and self.typesafe_api_key.get_secret_value())
+        for name, _env, _file in EXTRA_KEYS:
+            key = getattr(self, name)
+            d[f"has_{name}"] = bool(key and key.get_secret_value())
         return d
+
+    def secret(self, name: str) -> str:
+        """The key ``name`` (e.g. "deepgram_api_key") as a plain string, "" when unset. Never log it."""
+        key = getattr(self, name, None)
+        return key.get_secret_value() if isinstance(key, SecretStr) else ""
 
 
 # ---------------------------------------------------------------------------
 # Loading helpers
 # ---------------------------------------------------------------------------
+
+# (config attribute, environment variable, key file under data_dir): the rethink's keys, read like the Anthropic one
+# (the environment / .env first, else a file only the robot's user can read).
+EXTRA_KEYS: tuple[tuple[str, str, str], ...] = (
+    ("deepgram_api_key", "DEEPGRAM_API_KEY", "deepgram_api_key"),
+    ("cartesia_api_key", "CARTESIA_API_KEY", "cartesia_api_key"),
+    ("assemblyai_api_key", "ASSEMBLYAI_API_KEY", "assemblyai_api_key"),
+    ("elevenlabs_api_key", "ELEVENLABS_API_KEY", "elevenlabs_api_key"),
+    ("home_assistant_token", "HOME_ASSISTANT_TOKEN", "home_assistant_token"),
+    ("calendar_ics_url", "CALENDAR_ICS_URL", "calendar_ics_url"),
+    ("ntfy_topic", "NTFY_TOPIC", "ntfy_topic"),
+)
+
 
 def read_key_file(path: Path) -> str | None:
     """An API key kept in a file (one line), only when the file is the robot user's alone (chmod 600): a key
@@ -848,19 +1282,21 @@ def load_config(
     data.pop("anthropic_api_key", None)
     data.pop("openai_api_key", None)
     data.pop("typesafe_api_key", None)
+    for name, _env, _file in EXTRA_KEYS:
+        data.pop(name, None)
 
     cfg = LittleBotConfig.model_validate(data)
     if chosen != Mode.OFFLINE:
-        if env.get("ANTHROPIC_API_KEY"):
-            cfg.anthropic_api_key = SecretStr(env["ANTHROPIC_API_KEY"])
-        if env.get("OPENAI_API_KEY"):
-            cfg.openai_api_key = SecretStr(env["OPENAI_API_KEY"])
-        if env.get("TYPESAFE_API_KEY"):
-            cfg.typesafe_api_key = SecretStr(env["TYPESAFE_API_KEY"])
-        if cfg.anthropic_api_key is None:
-            key = read_key_file(cfg.data_path / cfg.claude.key_file)
-            if key:
-                cfg.anthropic_api_key = SecretStr(key)
+        from littlebot.core import keys  # noqa: PLC0415 - it uses this module's file helpers
+
+        # The API keys (littlebot/core/keys.py): saved on the dashboard, else the environment / .env, else data/<file>.
+        keys.load_into(cfg, env)
+        for name, env_name, file_name in EXTRA_KEYS:
+            if name in keys.ATTRS:
+                continue
+            value = env.get(env_name) or read_key_file(cfg.data_path / file_name)
+            if value:
+                setattr(cfg, name, SecretStr(value))
     if chosen == Mode.OFFLINE:
         # Offline demo: never touch the network, whatever the overrides say.
         cfg.privacy.cloud_enabled = False

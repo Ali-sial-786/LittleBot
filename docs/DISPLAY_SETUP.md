@@ -32,7 +32,8 @@ are easy to reach now, [MOTION_SAFETY.md](MOTION_SAFETY.md)).
 ## 1. Connect it (Pi off)
 
 1. **HDMI**: a micro-HDMI to HDMI cable from the Pi 5's **HDMI0** (the micro-HDMI next to the USB-C power
-   socket; in Linux the connector `HDMI-A-1`) to the screen's HDMI socket.
+   socket; in Linux the connector `HDMI-A-1`) to the screen's HDMI socket. The other port (`HDMI-A-2`) works
+   too: LittleBot finds the port the screen is on by itself (`display.output_name: auto`).
 2. **USB**: the screen's touch / power USB port to one of the Pi's USB-A ports. A black USB 2 port is
    enough for touch; keep the camera on a blue USB 3 port ([POWER.md](POWER.md)).
 3. Never plug or unplug anything on the GPIO header while the Pi is powered.
@@ -114,8 +115,10 @@ sudo udevadm control --reload && sudo reboot
 
 ## 4. Rotation
 
-Only if the screen is mounted upside down: `wlr-randr --output HDMI-A-1 --transform 180` (or Screen
-Configuration -> right-click the screen -> Orientation), then rotate the touch to match (section 3). LittleBot
+Only if the screen is mounted upside down: `wlr-randr --output HDMI-A-1 --transform 180` (`HDMI-A-2` if the
+screen is on the other port; or Screen Configuration -> right-click the screen -> Orientation). To keep it after
+a reboot, put `output HDMI-A-1 enable transform 180` in a `profile { }` in `~/.config/kanshi/config`. Then
+rotate the touch to match (section 3). LittleBot
 always draws landscape 1024x600: a portrait mounting is not supported.
 
 ## 5. Brightness

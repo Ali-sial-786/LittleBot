@@ -124,7 +124,9 @@ async def sign_out(dash: DashState = Depends(get_dash)) -> dict[str, Any]:
 
 @router.post("/live/start")
 async def live_start(body: LiveStartBody, dash: DashState = Depends(get_dash)) -> dict[str, Any]:
-    live = dash.need("live")
+    from littlebot.assistant import voice_front  # noqa: PLC0415
+
+    live = voice_front(dash.ctx) or dash.need("live")  # the assistant when assistant.pipeline picks it
     result = await live.start_session(parent_present=body.parent_present)
     if not result.get("ok"):
         code = 409 if result.get("error") in ("already_running", "busy") else 403
@@ -136,6 +138,9 @@ async def live_start(body: LiveStartBody, dash: DashState = Depends(get_dash)) -
 async def live_stop(dash: DashState = Depends(get_dash)) -> dict[str, Any]:
     live = dash.need("live")
     await live.stop_session("stopped by parent")
+    assistant = getattr(dash.ctx, "assistant", None)
+    if assistant is not None:
+        await assistant.stop_session("stopped by parent")
     return {"ok": True, **_view(dash)}
 
 

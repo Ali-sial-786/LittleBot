@@ -12,11 +12,17 @@ replaced the first one completely). The setting goes into the section's last cop
 counts) and a section used twice is pointed out. The new file is checked against LittleBot's settings before
 it is saved: a misspelt name or a wrong value changes nothing. Restart LittleBot after:
 systemctl --user restart littlebot
+
+A setting also chosen on the dashboard (the Assistant page's "Voices and models": assistant.stt, stt_shadow,
+tts, cartesia_voice, claude.model ...) is pointed out when the dashboard keeps its own choice: that one is used
+instead of the file's until "Back to the config file" there.
 """
 from __future__ import annotations
 
 import argparse
+import json
 import re
+import sqlite3
 import sys
 import tempfile
 from pathlib import Path
@@ -142,6 +148,35 @@ def effective(path: list[str], mode: str) -> object:
     return value
 
 
+def dashboard_choice(setting: str, mode: str) -> tuple[bool, object]:
+    """Whether the dashboard keeps its own choice for ``setting`` (used instead of local.yaml's), and what it is."""
+    from littlebot.core.config import load_config
+    from littlebot.core.settings import CONFIG_OVERRIDES
+
+    if setting not in CONFIG_OVERRIDES:
+        return False, None
+    db = Path(load_config(mode=mode, use_dotenv=False, environ={}).data_path) / "littlebot.db"
+    if not db.is_file():
+        return False, None
+    try:
+        con = sqlite3.connect(f"file:{db.as_posix()}?mode=ro", uri=True)
+        try:
+            row = con.execute("SELECT value FROM kv WHERE key=?", ("setting:" + setting,)).fetchone()
+        finally:
+            con.close()
+    except sqlite3.Error:
+        return False, None
+    return (True, json.loads(row[0])) if row else (False, None)
+
+
+def _dashboard_note(setting: str, mode: str) -> None:
+    kept, value = dashboard_choice(setting, mode)
+    if kept:
+        print(f"Note: the dashboard keeps its own choice for {setting} ({value!r}) and uses it instead of "
+              f"{LOCAL.name}'s. To use the file's, press \"Back to the config file\" on the Assistant page "
+              f"(Voices and models).")
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("setting", help="section.setting, e.g. chatgpt.live_barge_in_max_pitch_hz")
@@ -157,6 +192,7 @@ def main(argv: list[str] | None = None) -> int:
         ap.error("name a setting, e.g. chatgpt.live_barge_in_max_pitch_hz")
     if args.show:
         print(f"{'.'.join(path)} = {effective(path, args.mode)!r}")
+        _dashboard_note(".".join(path), args.mode)
         return 0
     if args.unset == (args.value is not None):
         ap.error("give a value, or --unset (or --show)")
@@ -178,6 +214,7 @@ def main(argv: list[str] | None = None) -> int:
     args.file.write_text(text, encoding="utf-8")
     done = f"line {at + 1}: {new_lines[at].strip()}" if at is not None else "removed (the default applies)"
     print(f"{'.'.join(path)}: {done}. Restart LittleBot: systemctl --user restart littlebot")
+    _dashboard_note(".".join(path), args.mode)
     return 0
 
 

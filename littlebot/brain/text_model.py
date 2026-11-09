@@ -41,14 +41,17 @@ def cloud_block(ctx: Any) -> str | None:
     return None
 
 
-def make_claude(ctx: Any, *, purpose: str = "", model: str | None = None) -> ClaudeProvider:
+def make_claude(ctx: Any, *, purpose: str = "", model: str | None = None,
+                first_round_timeout: float | None = None) -> ClaudeProvider:
+    from littlebot.core.keys import live_key  # noqa: PLC0415
+
     c = ctx.config.claude
-    return ClaudeProvider(api_key=ctx.config.anthropic_api_key, model=model or c.model, effort=c.effort,
+    return ClaudeProvider(api_key=live_key(ctx.config, "anthropic_api_key"), model=model or c.model, effort=c.effort,
                           thinking=c.thinking, max_tokens=c.max_tokens,
                           first_token_timeout=c.first_token_timeout_seconds, web_search=c.web_search,
                           web_search_max_uses=c.web_search_max_uses, base_url=c.base_url, purpose=purpose,
                           client=client_factory() if client_factory is not None else None,
-                          allowed=lambda: cloud_block(ctx))
+                          allowed=lambda: cloud_block(ctx), first_round_timeout=first_round_timeout)
 
 
 def text_provider(ctx: Any, chatgpt: BaseProvider, *, purpose: str = "") -> BaseProvider:
@@ -105,6 +108,15 @@ class FallbackProvider(BaseProvider):
                 ok = bool(await warm(timeout)) or ok
         return ok
 
+    async def prime(self, *, system: str, tools: list[dict[str, Any]] | None = None, timeout: float = 6.0) -> bool:
+        """Claude's prompt cached before the first question (``ClaudeProvider.prime``). Without this the robot's
+        brain (always one of these) never primed: the warm-up looks for ``prime`` on it (2026-11-03). The backups
+        answer only when Claude fails, so they aren't primed."""
+        prime = getattr(self.primary, "prime", None)
+        if prime is None or self.primary.missing():
+            return False
+        return bool(await prime(system=system, tools=tools, timeout=timeout))
+
     async def aclose(self) -> None:
         await self.primary.aclose()
         if isinstance(self.backup, FallbackProvider):  # a backup Claude model made here; ChatGPT is its maker's
@@ -115,11 +127,12 @@ class FallbackProvider(BaseProvider):
                     run_tool: Callable[[str, str], Awaitable[str]] | None = None, max_tool_rounds: int = 6,
                     detail: str | None = None, effort: str | None = None,
                     on_delta: Callable[[str], Any] | None = None,
-                    final_tools: Collection[str] = ()) -> ProviderReply:
-        """As ``ChatGPTProvider.reply`` (the same parameters, so callers that look at them pass the same)."""
+                    final_tools: Collection[str] = (), on_search: Callable[[], Any] | None = None) -> ProviderReply:
+        """As ``ChatGPTProvider.reply`` (the same parameters, so callers that look at them pass the same), and
+        Claude's ``on_search``."""
         kw: dict[str, Any] = {"images": images, "tools": tools, "run_tool": run_tool,
                               "max_tool_rounds": max_tool_rounds, "detail": detail, "effort": effort,
-                              "on_delta": on_delta, "final_tools": final_tools}
+                              "on_delta": on_delta, "final_tools": final_tools, "on_search": on_search}
         missing = self.primary.missing()
         if missing:
             if self._told_missing != missing:

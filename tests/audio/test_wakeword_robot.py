@@ -75,7 +75,10 @@ def bot(fake_sd, tmp_path):
     made: list[LittleBot] = []
 
     def _make() -> LittleBot:
-        cfg = make_test_config(dashboard={"enabled": False}, wake={"cooldown_seconds": 0.3},
+        cfg = make_test_config(dashboard={"enabled": False},
+                               wake={"cooldown_seconds": 0.3, "phrases": ["hey little bot", "hey littlebot",
+                                                                          "hey lil bot", "hey bot", "lil bot",
+                                                                          "little bot"]},
                                audio={"microphone": {"backend": "real"}, "speaker": {"backend": "sounddevice"}})
         ctx = build_core_context(cfg, db_path=":memory:", monitor=MockSystemMonitor())
         ctx.privacy.set(cloud_enabled=True)

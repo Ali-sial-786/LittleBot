@@ -101,6 +101,9 @@ SEARCH_ID_PREFIX = "search:"  # status()["item"]["id"] of a video found by searc
 # private, or its owner doesn't allow embedded playback).
 TRY_NEXT_RESULT_ERRORS = frozenset({2, 5, 100, 101, 150})
 MAX_QUEUE = 10
+# How the player page shows an item: "video" fills the screen; "music" (littlebot/skills/music.py) is a now-playing
+# screen (title, channel, LittleBot's eyes, equaliser bars) around a smaller player that nothing ever covers.
+PRESENTATIONS = ("video", "music")
 
 # Paused for a chat (``hold``): the page's "paused" report (it has the exact position) is awaited this long;
 # the video carries on this much earlier than where it stopped, so the child knows where they were.
@@ -320,13 +323,15 @@ class MediaController(Service):
 
     async def play_video(self, video_id: str, *, title: str | None = None, channel: str | None = None,
                          duration_seconds: int | None = None, alternatives: list[dict[str, Any]] | None = None,
-                         parent_override: bool = False) -> dict[str, Any]:
+                         parent_override: bool = False, presentation: str | None = None) -> dict[str, Any]:
         """Play any YouTube video by id (e.g. a search result), with ``media.allow_search`` on.
 
         A video that is on the approved list plays as that item. ``alternatives`` (more search
         results: ``{video_id, title, channel?}``) are what ``skip`` moves to, and what is tried next
-        if YouTube refuses this one (removed, private, embedding not allowed). Raises ValueError for
-        a malformed id, PermissionError when search playback is off or video isn't allowed now."""
+        if YouTube refuses this one (removed, private, embedding not allowed). ``presentation="music"``
+        (the music skill) shows it on the player page as a now-playing screen around a smaller player
+        (``PRESENTATIONS``; anything else is a plain video). Raises ValueError for a malformed id,
+        PermissionError when search playback is off or video isn't allowed now."""
         self._bind_loop()
         vid = validate_video_id(video_id)
         if not self.search_allowed():
@@ -340,6 +345,9 @@ class MediaController(Service):
                                                                            alt.get("duration_seconds")))
             if len(queue) >= MAX_QUEUE:
                 break
+        if presentation in PRESENTATIONS and presentation != "video":
+            item = {**item, "presentation": presentation}
+            queue = [{**q, "presentation": presentation} for q in queue]
         async with self._op_lock:
             await self._begin(item, parent_override, queue=queue)
         return self.status()

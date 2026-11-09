@@ -273,7 +273,7 @@ def test_opencv_camera_negotiation_read_and_release(fake_driver):
     cap = FakeCap.instances[-1]
     assert cap.api == FAKE_CV2.CAP_V4L2 or not cam_mod._is_linux()
     assert cap.props[FAKE_CV2.CAP_PROP_FOURCC] == FAKE_CV2.VideoWriter_fourcc(*"MJPG")
-    assert cap.props[FAKE_CV2.CAP_PROP_BUFFERSIZE] == 1
+    assert cap.props[FAKE_CV2.CAP_PROP_BUFFERSIZE] == 3  # 1 drops every other frame (30 fps -> 15)
     info = cam.info()
     assert (info["width"], info["height"], info["fps"], info["fourcc"]) == (640, 480, 30.0, "MJPG")
     assert info["requested"]["fps"] == 15.0
@@ -289,6 +289,26 @@ def test_opencv_camera_negotiation_read_and_release(fake_driver):
     assert cam.read() is None
     cam.release()  # idempotent
     assert cam.release_count == 1
+
+
+def test_opencv_camera_prefetch_decodes_the_next_frame_meanwhile(fake_driver):
+    dev, _ = fake_driver
+    cam = OpenCVCamera(dev, 640, 480, 15, "MJPG")
+    cam.open()
+    cap = FakeCap.instances[-1]
+    assert cam.read(timeout=1.0) is not None
+    time.sleep(0.1)
+    assert cap.retrieves == 1  # without prefetch, only the asked-for frame is decoded
+    cam.prefetch = True
+    assert cam.read(timeout=1.0) is not None
+    deadline = time.monotonic() + 1.0
+    while cam._seq <= cam._taken_seq and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert cam._seq > cam._taken_seq  # the next frame is decoded and waiting before anyone asks
+    t0 = time.monotonic()
+    assert cam.read(timeout=1.0) is not None and time.monotonic() - t0 < 0.05
+    cam.prefetch = False
+    cam.release()
 
 
 def test_opencv_camera_driver_errors_mark_failed(fake_driver):

@@ -33,6 +33,7 @@ DEFAULT_JOINTS: dict[str, dict[str, float]] = {
     "head": {"angle": 90, "target": 90, "min": 50, "max": 130, "neutral": 90},
     "left_arm": {"angle": 20, "target": 20, "min": 10, "max": 150, "neutral": 20},
     "right_arm": {"angle": 160, "target": 160, "min": 30, "max": 170, "neutral": 160},
+    "head_tilt": {"angle": 90, "target": 90, "min": 70, "max": 110, "neutral": 90},
 }
 
 
@@ -254,9 +255,15 @@ class SimPanel:
         head = joints.get("head", DEFAULT_JOINTS["head"])
         yaw = _num(head.get("angle"), 90) - _num(head.get("neutral"), 90)
         k = math.sin(math.radians(yaw))
+        # head_tilt (when fitted): + = looking up; shown by lifting the head and the eyes a little
+        tilt_j = joints.get("head_tilt", DEFAULT_JOINTS["head_tilt"])
+        tilt = _num(tilt_j.get("angle"), 90) - _num(tilt_j.get("neutral"), 90)
+        if tilt_j.get("positive_toward") == "min":
+            tilt = -tilt
+        lift = max(-6, min(6, int(round(tilt * 0.3))))
         hw = int(118 * (1 - 0.25 * abs(k)))
         hrect = pygame.Rect(0, 0, hw, 76)
-        hrect.midbottom = (int(cx + k * 14), body.top - 6)
+        hrect.midbottom = (int(cx + k * 14), body.top - 6 - lift)
         pygame.draw.rect(surf, (52, 60, 78), pygame.Rect(cx - 8, body.top - 10, 16, 12))
         pygame.draw.rect(surf, BODY, hrect, border_radius=16)
         pygame.draw.rect(surf, BODY_EDGE, hrect, width=2, border_radius=16)
@@ -265,10 +272,13 @@ class SimPanel:
         ex = screen.centerx + int(k * 10)
         for s in (-1, 1):
             er = pygame.Rect(0, 0, 13, 17)
-            er.center = (ex + s * 17, screen.centery - 3)
+            er.center = (ex + s * 17, screen.centery - 3 - lift)
             pygame.draw.rect(surf, INK, er.inflate(4, 4), border_radius=8)
             pygame.draw.rect(surf, ACCENT, er, border_radius=6)
         pygame.draw.arc(surf, MOUTH_INK, pygame.Rect(ex - 6, screen.centery + 4, 12, 9), math.pi * 1.1,
                         math.pi * 1.9, 2)
-        lbl = self.text(f"head {_num(head.get('angle'), 90):.0f}°", 15, DIM)
+        label = f"head {_num(head.get('angle'), 90):.0f}°"
+        if motion and isinstance(motion.get("joints"), dict) and "head_tilt" in motion["joints"]:
+            label += f" tilt {_num(tilt_j.get('angle'), 90):.0f}°"
+        lbl = self.text(label, 15, DIM)
         surf.blit(lbl, (rect.centerx - lbl.get_width() // 2, rect.y + 4))

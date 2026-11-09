@@ -46,6 +46,7 @@ import numpy as np
 
 from littlebot.audio import devices as dev
 from littlebot.audio import dsp
+from littlebot.audio import ec_route
 from littlebot.audio.errors import AudioDeviceError
 
 log = logging.getLogger("littlebot.chatgpt.live")
@@ -80,7 +81,15 @@ GAP_S = 0.12  # under the threshold this long: their speech (the run) ended; sho
 WARMUP_S = 0.3  # the voice's echo is measured this long in a call before anything can interrupt
 INITIAL_COUPLING = 1.0  # what is left of the voice at the microphone, relative to the speaker, before measuring
 FLOOR_OVER = 3.16  # louder than the room's own noise by this much (10 dB) too
-ECHO_REF_S = 0.3  # the echo of what the speaker played up to this long ago may still be at the microphone
+# the echo of what the speaker played up to this long ago may still be at the microphone: on the robot (2026-10-31)
+# the echo-cancelled microphone heard the voice 0.46 s after the speaker played it
+ECHO_REF_S = 0.5
+# The first words after a silence: the echo canceller lets the voice through for a moment (on the robot, 2026-10-31,
+# five answers after ~28 s of quiet left 0.03-0.7 RMS, landing 0.3-0.8 s in; mid-answer sentences 0.001-0.1), loud
+# and pitched like a grown-up (the voice is ~190 Hz): it held the answer as a false alarm. So for ONSET_GUARD_S
+# after the voice starts again after ONSET_QUIET_S of quiet, nothing counts as someone talking over it.
+ONSET_QUIET_S = 1.5
+ONSET_GUARD_S = 1.0
 ECHO_LEARN_MIN = 0.002  # the echo is measured only while the speaker plays at least this loud (RMS after volume)
 ID_AFTER_S = 0.2  # ask voice recognition (ctx.voices) about a run once this much was heard
 ID_TIMEOUT_S = 1.0
@@ -95,7 +104,19 @@ STOP_RUN_S = 1.5
 # (the baby's squeals), nor a word the voice says itself as a filler ("hang on, the seven-day is up"), whose echo
 # leaking through is higher than a grown-up's voice too.
 STOP_MAX_PITCH_HZ = 400.0
+# ... unless the recogniser is this sure of the word (not a filler the voice says itself). Over a long answer the
+# echo canceller takes the low half off a parent's "stop!" and the pitch is read off a harmonic: on the robot
+# (2026-10-31) a 101 Hz "stop" measured 571-608 Hz, higher than a baby's squeal, and the news was read on.
+STOP_SURE_CONF = 0.9
 VOICE_FILLERS = frozenset({"wait", "wait a second", "wait a minute", "hold on", "hang on"})
+# A stop word heard at the pitch the voice itself was playing then (within this share), and not STOP_SURE_CONF
+# sure: its own echo leaking through. On the robot (2026-10-31) OpenAI's voice (about 200 Hz, under
+# live_barge_in_max_pitch_hz) stopped itself mid-answer: "no stop" heard at 200 Hz, nobody talking.
+OWN_PITCH_NEAR = 0.12
+OWN_PITCH_KEEP = 300  # speaker blocks kept for it (about 3 s at 10 ms)
+# Said with no voice at all, so their "pitch" is noise (the robot measured a parent's "shh" at 579 Hz and turned it
+# down, 2026-10-31): never judged by pitch. The voice saying one itself is still caught (_said_it_itself).
+UNVOICED_STOPS = frozenset({"shh", "shush", "hush"})
 PREROLL_MAX_S = 0.8  # the microphone kept for the pre-roll (in memory, the last 0.8 s only)
 PREROLL_LEAD_S = 0.1  # the pre-roll starts this long before their speech did
 QUIET_LEVEL = 0.0105  # RMS below which a frame of the pre-roll is a pause (as in littlebot/audio/carry.py)
@@ -103,6 +124,12 @@ FADE_S = 0.05  # the voice fades out (and back in) over this long
 HOLD_MAX_S = 4.0  # the voice is held (not dropped) up to this long while deciding (FALSE_ALARM_MAX_S)
 STILL_TALKING_S = 0.3  # loud this recently: they are still talking (a false alarm waits for them)
 FALSE_ALARM_MAX_S = 4.0  # but no longer than this
+# Nothing loud once the voice was held (after its last sound and the room's echo of it had died away): it was the
+# voice's own echo leaking through, or a bump, not someone talking (they go on). It carries on after ECHO_HOLD_S, not
+# false_alarm_s: on the robot (2026-10-31, the speaker at full volume) such a false alarm held the answer 2.5 s.
+# What was already on its way to the speaker still echoes for about ECHO_REF_S after the voice is held.
+ECHO_GONE_S = 0.55
+ECHO_HOLD_S = 0.8
 DROP_GAP_S = 0.25  # the turn they cut into has ended: the voice was quiet this long ...
 USER_DONE_S = 0.25  # ... and they stopped talking this long ago (or their words are final)
 DROP_MAX_S = 15.0  # never drop the voice longer than this
@@ -219,9 +246,10 @@ class BargeInDetector:
     def reset_run(self) -> None:
         self.run = None
 
-    def step(self, frame: np.ndarray, echo_ref: float, now: float, *, voice_on: bool) -> bool:
+    def step(self, frame: np.ndarray, echo_ref: float, now: float, *, voice_on: bool, guard: bool = False) -> bool:
         """One 20 ms frame (int16 or float, 48 kHz). ``echo_ref``: the loudest the speaker played lately (RMS after
-        the volume), ``voice_on``: the voice is audible. True once per run, when it decides they are talking."""
+        the volume), ``voice_on``: the voice is audible, ``guard``: its first words after a silence (ONSET_GUARD_S:
+        nothing is loud then, and its echo isn't measured). True once per run, when it decides they are talking."""
         x = frame.astype(np.float32)
         if frame.dtype == np.int16:
             x = x / 32768.0
@@ -231,8 +259,9 @@ class BargeInDetector:
         if voice_on:
             threshold = max(threshold, self._over * self.coupling * echo_ref)
         self.threshold = threshold
-        loud = level >= threshold
-        if not loud and self.run is None and now >= self._quiet_after:
+        guarded = voice_on and guard
+        loud = level >= threshold and not guarded
+        if not loud and self.run is None and now >= self._quiet_after and not guarded:
             self._learn(level, echo_ref, voice_on)
         if not voice_on:  # nothing to talk over: only how loud it is matters (are they still talking?)
             if self.run is not None:
@@ -377,9 +406,12 @@ class LiveAudio:
         self._in_resampler: Any = None
         self._pcm = np.zeros(0, dtype=np.int16)  # microphone audio at 48 kHz not yet sent
         self._out_resampler: Any = None
+        self._pcm_resampler: tuple[int, Any] | None = None  # play_pcm's (source rate, dsp.StreamResampler)
         self._muted = False
         self._vol, self._vol_at = 0.0, float("-inf")
         self._last_loud = float("-inf")
+        self._voice_onset = float("-inf")  # when the voice last started after ONSET_QUIET_S of quiet
+        self._cue: collections.deque[np.ndarray] = collections.deque()  # play_cue's sounds, mixed over the voice
         self.level = 0.0  # last speaker block RMS (0..1)
         self._visemes: dsp.VisemeEstimator | None = None
         self._mouths: collections.deque[tuple[float, float, str]] = collections.deque(maxlen=64)  # (heard at, level, shape)
@@ -402,16 +434,22 @@ class LiveAudio:
         self._ring: collections.deque[np.ndarray] = collections.deque(maxlen=int(PREROLL_MAX_S / FRAME_S))
         self._sendq: collections.deque[np.ndarray] = collections.deque()  # the pre-roll, then the microphone
         self._send_pause = 0
+        # The pre-roll at once instead of at real time (read_frame then returns more than a frame): for a reader that
+        # takes audio faster than real time (the assistant's speech-to-text), never for a WebRTC call (GPT-Live).
+        self.burst_preroll = False
         self._hold = False  # the voice fades out and waits in the queue (PortAudio's thread reads this)
         self._hold_gain = 1.0  # PortAudio's thread only
         self._queue_cap_s = MAX_QUEUED_S
         self._played: collections.deque[tuple[float, float]] = collections.deque(maxlen=48)  # (heard at, RMS)
+        # (heard at, the block at about PITCH_RATE, that rate): the voice's own pitch (OWN_PITCH_NEAR)
+        self._played_low: collections.deque[tuple[float, np.ndarray, float]] = collections.deque(maxlen=OWN_PITCH_KEEP)
         self._identify: Callable[..., Any] | None = None  # ctx.voices.identify (optional)
         self._talking_with: Callable[[], Any] | None = None  # the call's current grown-up (optional)
         self._voice_said: Callable[[], str] | None = None  # the voice's words lately (optional)
         self._on_barge: Callable[[str, dict[str, Any]], None] | None = None
         self._stop_words: Any = None  # littlebot/chatgpt/stop_words.StopWords (optional)
-        self._stop_said: tuple[str, int] | None = None  # (the stop word that interrupts now, ms to recognise it)
+        # (the stop word that interrupts now, ms to recognise it, how sure, the voice's own pitch then)
+        self._stop_said: tuple[str, int, float, float] | None = None
         self._id_tasks: set[asyncio.Future[Any]] = set()
         self._barge_at = 0.0
         self._barge_run: _Run | None = None
@@ -481,6 +519,8 @@ class LiveAudio:
 
     def _decide_barge_in(self, mic: dict[str, Any], spk: dict[str, Any]) -> None:
         self.echo_cancelled = dev.is_echo_cancel_device(mic, "input") and dev.is_echo_cancel_device(spk, "output")
+        if self.echo_cancelled:
+            ec_route.ensure_soon()  # the canceller really plays on the speaker (not a socket nobody hears)
         mode = (self.barge.mode or "auto").lower()
         self.barge_in_on = self.half_duplex and (mode == "on" or (mode == "auto" and self.echo_cancelled))
         if self.barge_in_on and self._detector is None:
@@ -632,6 +672,11 @@ class LiveAudio:
         return self._bstate != _WATCH
 
     @property
+    def voice_held(self) -> bool:
+        """Someone cut in and it isn't decided yet: the voice is held, not dropped (it may still play on)."""
+        return self._bstate == _HELD
+
+    @property
     def mouth(self) -> tuple[float, str]:
         """``(level 0..1, viseme)`` of the voice heard right now, for the face's lip-sync.
 
@@ -655,6 +700,24 @@ class LiveAudio:
         self._mouth = (0.0, "closed")
 
     # ------------------------------------------------------------ microphone
+    def flush_input(self, keep_s: float = 0.0) -> None:
+        """Forget the microphone audio not read yet but its last ``keep_s`` seconds (the assistant opens the call
+        audio while the wake word still listens: what was heard until the wake word let go is in its carry)."""
+        with self._lock:
+            keep: list[np.ndarray] = []
+            if keep_s > 0 and self._in:
+                per = max(1, len(self._in[-1])) / float(self.mic_rate or RATE)
+                keep = list(self._in)[-max(1, math.ceil(keep_s / per)):]
+            self._in.clear()
+            self._in.extend(keep)
+        self._pcm = np.zeros(0, dtype=np.int16)
+
+    def input_behind_s(self) -> float:
+        """How far behind the microphone the call reads: audio heard but not sent yet (seconds, for the log)."""
+        with self._lock:
+            waiting = sum(len(b) for b in self._in) / float(self.mic_rate or RATE)
+        return waiting + len(self._pcm) / float(RATE) + len(self._sendq) * FRAME_S
+
     def _record_cb(self, indata: Any, frames: int, time_info: Any, status: Any) -> None:  # PortAudio thread
         block = np.array(indata[:, 0], dtype=np.int16, copy=True)
         self.mic_at = self._now()
@@ -719,7 +782,8 @@ class LiveAudio:
         self._ring.append(out)
         if self._bstate == _WATCH:
             if now - self._last_loud < self.echo_tail_s:  # the voice is audible: watch for someone cutting in
-                if det.step(out, self._echo_ref(now), now, voice_on=True) or self._stop_word(out, now):
+                guard = now - self._voice_onset < ONSET_GUARD_S
+                if det.step(out, self._echo_ref(now), now, voice_on=True, guard=guard) or self._stop_word(out, now):
                     self._interrupt(now)
                     return self._send(None)
                 self._maybe_identify(now)
@@ -750,7 +814,8 @@ class LiveAudio:
         hit = words.take()
         if hit is None:
             return False
-        said, at = hit
+        said, at, *more = hit
+        conf = float(more[0]) if more else 0.0
         runs = [r for r in (det.run, *reversed(det.recent)) if r is not None]
         run = next((r for r in runs if r.loud >= STOP_LOUD_FRAMES and r.last_loud >= at - STOP_RUN_S
                     and r.onset <= at), None)
@@ -766,15 +831,36 @@ class LiveAudio:
             log.info("live voice: heard '%s', but the voice itself just said it: it carried on", said)
             return False
         pitch = BargeInDetector.pitch_of(run)
-        if run.child > run.adult and (said in VOICE_FILLERS or pitch > STOP_MAX_PITCH_HZ):
+        own = self._own_pitch(run.onset - ECHO_REF_S, run.last_loud)
+        if own and pitch and abs(pitch - own) <= OWN_PITCH_NEAR * own and conf < STOP_SURE_CONF:
+            log.info("live voice: heard '%s' at the voice's own pitch (%d Hz; it played %d Hz, %.2f sure): its echo, "
+                     "it carried on", said, round(pitch), round(own), conf)
+            return False
+        if said not in UNVOICED_STOPS and run.child > run.adult and (said in VOICE_FILLERS or pitch > STOP_MAX_PITCH_HZ) \
+                and (said in VOICE_FILLERS or conf < STOP_SURE_CONF):
             # a child, or the voice's own echo leaking through (on the robot its false alarms were 240-259 Hz, the
             # parent 107-154 Hz, 2026-10-29): the voice saying "hang on" must not stop itself
-            log.info("live voice: heard '%s', but it sounded like a child or its own voice (%d Hz): it carried on",
-                     said, round(pitch))
+            log.info("live voice: heard '%s', but it sounded like a child or its own voice (%d Hz, %.2f sure): it "
+                     "carried on", said, round(pitch), conf)
             return False
         det.fired, det.run = run, None
-        self._stop_said = (said, late)
+        self._stop_said = (said, late, conf, own)
         return True
+
+    def _own_pitch(self, start: float, end: float) -> float:
+        """The voice's median pitch in what the speaker played between ``start`` and ``end`` (0: nothing voiced)."""
+        chunks = [(c, rate) for at, c, rate in list(self._played_low) if start <= at <= end]
+        if not chunks:
+            return 0.0
+        rate = chunks[-1][1]
+        x = np.concatenate([c for c, r in chunks if r == rate])
+        win = max(16, int(0.04 * rate))
+        f0s = []
+        for i in range(0, len(x) - win + 1, win // 2):
+            f0, voicing = estimate_pitch(x[i:i + win], int(rate))
+            if voicing >= VOICED_R and f0 > 0:
+                f0s.append(f0)
+        return float(np.median(f0s)) if f0s else 0.0
 
     def _said_it_itself(self, said: str) -> bool:
         """The stop word is in the voice's own words lately: what was heard is its echo."""
@@ -789,13 +875,18 @@ class LiveAudio:
 
     def _send(self, frame: np.ndarray | None) -> np.ndarray:
         """The pre-roll first, then the microphone, one frame per frame read (never a burst). While behind,
-        pauses longer than KEEP_PAUSE_S are cut short, so it is back in real time at their first pause."""
+        pauses longer than KEEP_PAUSE_S are cut short, so it is back in real time at their first pause.
+        ``burst_preroll`` (the assistant: speech-to-text takes audio faster than real time): all of it at once."""
         if frame is not None:
             if not self._sendq:
                 return frame
             self._sendq.append(frame)
         if not self._sendq:
             return np.zeros(FRAME, dtype=np.int16)
+        if self.burst_preroll:
+            out = np.concatenate(list(self._sendq))
+            self._sendq.clear()
+            return out
         f = self._sendq.popleft()
         quiet = float(np.sqrt(np.mean((f.astype(np.float32) / 32768.0) ** 2))) < QUIET_LEVEL
         self._send_pause = self._send_pause + 1 if quiet else 0
@@ -877,8 +968,9 @@ class LiveAudio:
         voice = run.voice if run is not None else None
         stop, self._stop_said = self._stop_said, None
         if stop is not None:
-            log.info("live voice: interrupted: they said '%s' (recognised in %d ms; %.1f s of speech, pitch %d Hz%s)",
-                     stop[0], stop[1], now - onset, round(pitch), f", voice {voice}" if voice else "")
+            log.info("live voice: interrupted: they said '%s' (recognised in %d ms, %.2f sure; %.1f s of speech, pitch "
+                     "%d Hz, the voice's own %d Hz%s)", stop[0], stop[1], stop[2], now - onset, round(pitch),
+                     round(stop[3]), f", voice {voice}" if voice else "")
         else:
             log.info("live voice: interrupted by a grown-up after %.1f s of speech (pitch %d Hz%s)", now - onset,
                      round(pitch), f", voice {voice}" if voice else "")
@@ -887,9 +979,13 @@ class LiveAudio:
             self._notify("stop_word", {"said": stop[0]})
 
     def _check_held(self, now: float) -> None:
-        """Held, and no words from ChatGPT: a false alarm once they stop (at the latest FALSE_ALARM_MAX_S)."""
+        """Held, and no words from ChatGPT: a false alarm once they stop (at the latest FALSE_ALARM_MAX_S), or
+        sooner when it went quiet the moment the voice did (ECHO_HOLD_S: its own echo, not a person)."""
         held = now - self._barge_at
         still = now - self._user_loud_at < STILL_TALKING_S
+        if ECHO_HOLD_S <= held < self.barge.false_alarm_s and self._user_loud_at <= self._barge_at + ECHO_GONE_S:
+            self._carry_on(f"quiet as soon as the voice stopped: its own echo, {held:.1f} s")
+            return
         if held >= self.barge.false_alarm_s and (not still or held >= max(FALSE_ALARM_MAX_S, self.barge.false_alarm_s)):
             self._carry_on(f"no words within {held:.1f} s")
 
@@ -908,13 +1004,22 @@ class LiveAudio:
         log.info("live voice: false alarm (%s), the voice carried on", reason)
         self._notify("carried_on", {"reason": reason})
 
-    def barge_in_heard(self, text: str, final: bool) -> str | None:
+    def barge_in_heard(self, text: str, final: bool, *, aside: bool = False) -> str | None:
         """ChatGPT's caption of what they say (littlebot/chatgpt/live.py passes every one). Their words while the
         voice is held: it was them, the held voice is dropped. Returns "go ahead" when their first final words
-        after cutting in say only that ("oops, go ahead"): the voice should carry on where it stopped."""
+        after cutting in say only that ("oops, go ahead"): the voice should carry on where it stopped.
+
+        ``aside``: the words are only "yeah", "okay", "mm" (the assistant decides): the voice stays held, and once
+        they are the whole turn (``final``) it plays on where it stopped ("aside"). A "Yeah." said over it dropped
+        the answer about Alexander the Great (the robot, 2026-11-03)."""
         if not self.barge_in_on or not text.strip():
             return None
         if self._bstate == _HELD:
+            if aside:
+                if final:
+                    self._carry_on(f"only {text.strip()!r} said over it")
+                    return "aside"
+                return None
             self._confirm()
         if final and self._await_final:
             self._await_final = False
@@ -1012,6 +1117,65 @@ class LiveAudio:
                     self._out_queued -= len(self._out.popleft())
         self._frame_at = self._now()
 
+    def play_pcm(self, samples: np.ndarray, rate: int = RATE) -> None:
+        """Queue float32 mono speech (-1..1) at ``rate``: the assistant's text-to-speech (littlebot/assistant), the
+        same queue, gate, barge-in and lip-sync as the model's voice. The caller paces it (``queued_s``): more
+        than the queue's cap waiting drops the oldest, as for the network's frames."""
+        if self._muted or not len(samples):
+            return
+        pcm = np.asarray(samples, dtype=np.float32).reshape(-1)
+        if rate != self.out_rate:
+            if self._pcm_resampler is None or self._pcm_resampler[0] != rate:
+                self._pcm_resampler = (rate, dsp.StreamResampler(rate, self.out_rate))
+            pcm = self._pcm_resampler[1].process(pcm)
+        if self._bstate == _DROPPING and self._dropping(pcm):
+            return
+        self.frames_out += 1
+        with self._lock:
+            self._out.append(pcm)
+            self._out_queued += len(pcm)
+            if not self._hold and self._out_queued <= MAX_QUEUED_S * self.out_rate:
+                self._queue_cap_s = MAX_QUEUED_S
+            while self._out_queued > self._queue_cap_s * self.out_rate and len(self._out) > 1:
+                self._out_queued -= len(self._out.popleft())
+        self._frame_at = self._now()
+
+    def play_cue(self, samples: np.ndarray, rate: int = RATE) -> None:
+        """A short sound they may talk over (the wake word's earcon, played by the assistant: wakeword EARLY_START):
+        mixed over whatever plays, and not the voice: it never shuts the microphone's gate, counts as something
+        to cut in on or moves the mouth. Echo cancelling takes it out (it goes to the same speaker)."""
+        if self._muted or not len(samples):
+            return
+        pcm = np.asarray(samples, dtype=np.float32).reshape(-1)
+        if rate != self.out_rate:
+            pcm = dsp.resample(pcm, rate, self.out_rate)
+        with self._lock:
+            self._cue.append(pcm.astype(np.float32))
+
+    def _take_cue(self, n: int) -> np.ndarray:
+        out = np.zeros(n, dtype=np.float32)
+        filled = 0
+        with self._lock:
+            while filled < n and self._cue:
+                head = self._cue[0]
+                k = min(n - filled, len(head))
+                out[filled:filled + k] = head[:k]
+                filled += k
+                if k == len(head):
+                    self._cue.popleft()
+                else:
+                    self._cue[0] = head[k:]
+        return out
+
+    @property
+    def queued_s(self) -> float:
+        """Seconds of voice waiting for the speaker."""
+        return self._out_queued / float(self.out_rate or RATE)
+
+    def unmute(self) -> None:
+        """The speaker plays again after ``mute`` (the assistant mutes to cut an answer, then talks again)."""
+        self._muted = False
+
     def _take(self, n: int) -> np.ndarray:
         out = np.zeros(n, dtype=np.float32)
         filled = 0
@@ -1064,6 +1228,8 @@ class LiveAudio:
         self.level = rms
         now = self.speaker_at = self._now()
         if rms >= self.voice_level:
+            if now - self._last_loud > ONSET_QUIET_S:
+                self._voice_onset = now
             self._last_loud = now
         try:  # lip-sync for the face: must never break the voice (an exception here stops the stream)
             est = self._visemes
@@ -1076,7 +1242,15 @@ class LiveAudio:
         if now - self._vol_at > 0.25:  # re-read the volume a few times a second, not every block
             self._vol_at, self._vol = now, max(0.0, min(1.0, float(self._volume())))
         if self.barge_in_on:  # what the speaker plays, for the barge-in detector's echo measure
-            self._played.append((now + self._output_delay(time_info), rms * self._vol))
+            heard_at = now + self._output_delay(time_info)
+            self._played.append((heard_at, rms * self._vol))
+            dec = max(1, int(self.out_rate) // PITCH_RATE)
+            n = len(y) // dec * dec
+            if n:
+                low = np.asarray(y[:n], dtype=np.float32).reshape(-1, dec).mean(axis=1)
+                self._played_low.append((heard_at, low, self.out_rate / dec))
+        if self._cue and not self._muted:
+            y = y + self._take_cue(frames)  # after the voice's own measures: a cue is never the voice
         y = y * self._vol
         outdata[:] = np.repeat(y[:, None], self._out_channels, axis=1) if self._out_channels > 1 else y[:, None]
 

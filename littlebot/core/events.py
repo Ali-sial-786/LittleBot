@@ -47,6 +47,7 @@ class Topics:
     FACE_GAZE = "face.gaze"  # {x, y}  (0..1 screen coords, 0.5,0.5 = centre)
     FACE_VISIBLE = "face.visible"  # {visible} False while video owns the screen (published by the face only)
     FACE_DOZE = "face.doze"  # {dozing, reason} the idle face started / stopped dozing (littlebot/face/doze.py)
+    FACE_SCREEN = "face.screen"  # {on, reason} the screen went dark after a quiet spell / lit again (face/doze.py)
 
     # --- vision ---
     VISION_FACES = "vision.faces"  # {faces: [{x, y, w, h, gaze_x, gaze_y, score, primary}], frame_w, frame_h, simulated}

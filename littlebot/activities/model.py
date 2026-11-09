@@ -33,7 +33,9 @@ from typing import Any, Callable, ClassVar, Iterable, Iterator, Literal
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
-from littlebot.core.interfaces import ACTIVITY_CATEGORIES, AGE_GROUPS, EXPRESSIONS, FACE_ANIMATIONS, SOUND_NAMES
+from littlebot.core.interfaces import (
+    ACTIVITY_CATEGORIES, AGE_GROUPS, EXPRESSIONS, FACE_ANIMATIONS, GESTURE_NAMES, SOUND_NAMES,
+)
 
 log = logging.getLogger("littlebot.activities.model")
 
@@ -42,7 +44,8 @@ log = logging.getLogger("littlebot.activities.model")
 # ---------------------------------------------------------------------------
 
 #: Motion gestures an activity may request (optional: skipped without motion / during e-stop).
-GESTURES: tuple[str, ...] = ("wave", "look_left", "look_right", "raise_arms", "celebrate", "dance", "shake", "neutral")
+#: Every gesture the motion module knows (core.interfaces.GESTURE_NAMES: wave, nod, shrug, tilt_curious ...).
+GESTURES: tuple[str, ...] = GESTURE_NAMES
 
 #: How much an adult needs to take part.
 PARTICIPATION: tuple[str, ...] = ("required", "recommended", "optional")

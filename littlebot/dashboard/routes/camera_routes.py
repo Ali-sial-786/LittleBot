@@ -11,11 +11,12 @@ watching are logged (no image data) and shown on the robot's own screen.
 
 from __future__ import annotations
 
+import struct
 import time
-from typing import Any
+from typing import Any, AsyncIterator
 
 from fastapi import APIRouter, Depends, Query, Request
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import Field
 
 from littlebot.dashboard.deps import DashState, client_ip, get_dash, log
@@ -26,6 +27,7 @@ router = APIRouter(prefix="/api/camera", tags=["camera"])
 
 VIEWER_PATTERN = r"^[A-Za-z0-9_-]{8,64}$"  # random id chosen by each open Camera page
 FRAME_WAIT_SECONDS = 2.0
+STREAM_HEADER = struct.Struct(">II")  # /stream: before each JPEG, its length and sequence number (big-endian)
 SNAPSHOT_WIDTH = 640  # the full camera picture
 SNAPSHOT_QUALITY = 85
 SNAPSHOT_TIMEOUT = 3.0
@@ -122,6 +124,42 @@ async def frame(request: Request, viewer: str = Query(pattern=VIEWER_PATTERN), a
     if not dash.ctx.privacy.camera_enabled:  # switched off while this request waited
         return _blocked("camera_off")
     return Response(jpeg, media_type="image/jpeg", headers={"X-Frame-Seq": str(int(seq))})
+
+
+@router.get("/stream")
+async def stream(request: Request, viewer: str = Query(pattern=VIEWER_PATTERN), after: int = Query(0, ge=0),
+                 dash: DashState = Depends(get_dash)) -> Response:
+    """The live view as one response: each new JPEG is sent as soon as the robot makes it and the connection takes
+    it, with no round trip per frame (one request per frame held Wi-Fi to ~13-20 fps). Each frame is 8 bytes
+    (``STREAM_HEADER``: length, sequence number) then the JPEG. The privacy switch is checked before the first
+    frame and after every one. The stream just ends when no frame can be had (privacy, a video, no camera,
+    stopped): the page then asks ``/frame`` once, which says why."""
+    vision = _vision(dash)
+    if vision is None:
+        return _blocked("unavailable")
+    if not dash.ctx.privacy.camera_enabled:
+        return _blocked("camera_off")
+    label = f"the dashboard ({client_ip(request)})"
+    try:
+        first = await vision.live_view_frame(viewer, after=after, label=label, timeout=FRAME_WAIT_SECONDS)
+    except Exception as e:  # noqa: BLE001 - PhotoUnavailable(reason) or a broken camera
+        return _failed(e, "live view stream")
+    if not dash.ctx.privacy.camera_enabled:
+        return _blocked("camera_off")
+
+    async def frames() -> AsyncIterator[bytes]:
+        jpeg, seq = first
+        while True:
+            yield STREAM_HEADER.pack(len(jpeg), int(seq)) + jpeg
+            del jpeg
+            try:
+                jpeg, seq = await vision.live_view_frame(viewer, after=seq, label=label, timeout=FRAME_WAIT_SECONDS)
+            except Exception:  # noqa: BLE001 - stopped, paused, no camera...: the page asks /frame for why
+                return
+            if not dash.ctx.privacy.camera_enabled:  # switched off while waiting
+                return
+
+    return StreamingResponse(frames(), media_type="application/octet-stream", headers={"X-Accel-Buffering": "no"})
 
 
 @router.post("/stop")

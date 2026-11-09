@@ -18,11 +18,11 @@ display:
   idle_fps: 15
 camera:
   backend: real
-  capture_width: 640
-  capture_height: 480
-  capture_fps: 15
+  capture_width: 1920
+  capture_height: 1080
+  capture_fps: 30
   process_width: 320
-  detect_fps: 15.0      # every camera frame: smoother eye tracking (Pi 5: YuNet ~8 ms each, ~12 % of one core)
+  detect_fps: 15.0      # every other camera frame: smooth eye tracking (Pi 5: YuNet ~8 ms each, ~12 % of one core)
 audio:
   microphone:
     backend: real

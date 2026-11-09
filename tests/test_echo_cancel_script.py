@@ -144,7 +144,8 @@ def fake_pw(tmp_path: Path):
         env = {k: v for k, v in os.environ.items() if k not in ("SUDO_USER", "XDG_CONFIG_HOME")}
         env.update(PATH=f"{bindir}{os.pathsep}{env.get('PATH', '')}", HOME=str(home), FAKE_PW_DIR=str(state),
                    XDG_RUNTIME_DIR=str(tmp_path), LITTLEBOT_EC_LIB_DIRS=str(libs),
-                   LITTLEBOT_EC_PYTHON=str(fake_python), **extra_env)
+                   LITTLEBOT_EC_PYTHON=str(fake_python))
+        env.update(extra_env)
         res = subprocess.run([BASH, str(SCRIPT), *args], check=False, capture_output=True, text=True, env=env, timeout=90)
         log = state / "calls.log"
         calls = log.read_text().splitlines() if log.exists() else []
@@ -277,6 +278,39 @@ def test_check_reports_missing_plugins(fake_pw, tmp_path: Path) -> None:
     res, _, _ = fake_pw("--check")
     assert res.returncode == 1
     assert "FAIL  the PipeWire ALSA plugin is missing: sudo apt install pipewire-alsa" in res.stdout
+
+
+_PW_LINK = r'''
+import os, sys
+spk, hdmi, mic = os.environ["FAKE_SPK"], os.environ["FAKE_HDMI"], os.environ["FAKE_MIC"]
+to = spk if os.environ.get("FAKE_LINKS") == "right" else hdmi  # "wrong": WirePlumber's fallback output
+args = sys.argv[1:]
+if args == ["-o"]:
+    print(f"littlebot_ec_playback:output_FL\nlittlebot_ec_playback:output_FR\n{mic}:capture_MONO")
+elif args == ["-i"]:
+    print("\n".join(f"{s}:playback_{c}" for s in (spk, hdmi) for c in ("FL", "FR")) + "\nlittlebot_ec_capture:input_MONO")
+elif args == ["-l"]:
+    print(f"littlebot_ec_playback:output_FL\n  |-> {to}:playback_FL\nlittlebot_ec_playback:output_FR\n"
+          f"  |-> {to}:playback_FR\n{mic}:capture_MONO\n  |-> littlebot_ec_capture:input_MONO")
+else:
+    sys.exit(1)
+'''
+
+
+def test_check_says_when_the_sound_goes_to_another_output(fake_pw, tmp_path: Path) -> None:
+    """On the robot WirePlumber linked the canceller to another output at boot: nothing was heard, all else passed."""
+    res, _, _ = fake_pw("--wait", "2")
+    assert res.returncode == 0, res.stdout + res.stderr
+    pw_link = tmp_path / "bin" / "pw-link"
+    pw_link.write_text(f"#!{sys.executable}\n{_PW_LINK}")
+    pw_link.chmod(0o755)
+    env = dict(LITTLEBOT_EC_PYTHON=sys.executable, FAKE_SPK=USB_SPK, FAKE_HDMI=HDMI0, FAKE_MIC=USB_MIC)
+    res, _, _ = fake_pw("--check", FAKE_LINKS="wrong", **env)
+    assert res.returncode == 1
+    assert f"FAIL  The echo canceller plays on {HDMI0}, not on the speaker {USB_SPK}: nobody hears it" in res.stdout
+    assert "littlebot.audio.ec_route --fix" in res.stdout
+    res, _, _ = fake_pw("--check", FAKE_LINKS="right", **env)
+    assert f"PASS  The echo canceller plays on {USB_SPK}" in res.stdout, res.stdout
 
 
 def test_the_installer_runs_it_only_when_asked(tmp_path: Path) -> None:

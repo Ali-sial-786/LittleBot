@@ -40,9 +40,9 @@ display:
 camera:
   backend: auto            # auto | real | mock | none   (switch to real once the camera is confirmed)
   device: auto
-  capture_width: 640       # 640x480 MJPG keeps USB bandwidth and CPU low; 1080p is not needed
-  capture_height: 480
-  capture_fps: 15
+  capture_width: 1920       # 1080p30 MJPG (the U20CAM's top mode); 640x480 halves the vision CPU if needed
+  capture_height: 1080
+  capture_fps: 30
   fourcc: MJPG
   process_width: 320       # detection runs on a 320 px wide copy
   detect_fps: 15.0         # face detections per second (every frame; lower it if the CPU is busy)
@@ -87,7 +87,8 @@ media:
   browser_command: null
 
 # ---------------------------------------------------------------------------
-# Motion: 3x MG90S on a PCA9685. Follow docs/MOTION_SAFETY.md step by step:
+# Motion: 3-4x MG90S on a PCA9685 (head pan, arms, optional head tilt; docs/MOVEMENT.md).
+# Follow docs/MOTION_SAFETY.md step by step:
 #   1. physical_enabled: false, backend: mock   <- start here (simulated servos)
 #   2. servos wired to their OWN regulated supply (common ground with the Pi),
 #      MOTION_SAFETY.md checklist A-C done -> physical_enabled: true, backend STILL mock

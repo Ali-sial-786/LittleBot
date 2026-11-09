@@ -77,3 +77,21 @@ def test_the_copy_of_a_section_that_counts_is_changed_and_a_second_copy_is_point
 def test_a_nested_setting(tmp_path):
     _, text = run(tmp_path, "audio.speaker.volume", "0.5")
     assert text.endswith("audio:\n  speaker:\n    volume: 0.5\n  echo_cancel: auto\n")
+
+
+def test_a_choice_the_dashboard_keeps_is_pointed_out(tmp_path, capsys, monkeypatch):
+    from types import SimpleNamespace
+
+    from littlebot.core import config as config_mod
+    from littlebot.core.storage import Database
+
+    db = Database(tmp_path / "littlebot.db")
+    db.kv_set("setting:assistant.stt_shadow", ["cartesia"])
+    db.close()
+    monkeypatch.setattr(config_mod, "load_config", lambda **kw: SimpleNamespace(data_path=tmp_path))
+    code, text = run(tmp_path, "assistant.stt_shadow", "[assemblyai]")
+    out = capsys.readouterr().out
+    assert code == 0 and "stt_shadow: [assemblyai]" in text
+    assert "the dashboard keeps its own choice for assistant.stt_shadow (['cartesia'])" in out
+    run(tmp_path, "assistant.tts", "[openai]")
+    assert "dashboard" not in capsys.readouterr().out  # not chosen there: nothing to say
