@@ -173,12 +173,14 @@ cached by the quantised shape.
 * Runs on the main thread until the window is closed / Q / Esc (calls
   `robot.request_shutdown`) or `robot.shutdown_event` is set; then returns (`main.py`
   calls `robot.shutdown()`). Only `pygame.display` is quit, never the mixer.
-* `display.width x display.height` is the screen: the 7" panel's 1024x600. The face is drawn at
-  `frame.face_size(width, height)`: 320 px tall and as wide as the screen's shape (546x320 here; 480x320
-  on a 3:2 screen), centred, with screen-wide extras (confetti, rising hearts, corner sparkles) spread
-  across the width and face-anchored ones (zzz, "?", the thought cloud) moved with its centre. It is
-  then scaled smoothly to the window (`display.scale` on a desktop) or the whole screen (fullscreen,
-  aspect preserved). Cards and games draw at the screen's own 1024x600, unscaled.
+* `display.width x display.height` is the screen: the 7" panel's 1024x600. The face's design space is
+  `frame.face_size(width, height)`: 320 units tall and as wide as the screen's shape (546x320 here;
+  480x320 on a 3:2 screen), centred, with screen-wide extras (confetti, rising hearts, corner sparkles)
+  spread across the width and face-anchored ones (zzz, "?", the thought cloud) moved with its centre.
+  The renderer draws it straight at the screen's size (`FaceRenderer(scale=1.875)`): every super-sampled
+  eye, mouth and sprite is shrunk to its size on the screen, never stretched afterwards, so the edges are
+  sharp on the 7" glass. A desktop window of another size (`display.scale`) gets one smooth scale at the
+  end. Cards and games draw at the screen's own 1024x600 too.
 * Frame rate: `display.fps` while anything animates, `display.idle_fps` when calm, 10 fps
   while dozing, 5 fps while hidden (`controller.target_fps()`); pygame's `Clock.tick` sleeps in between.
 * If the display cannot open (no X/Wayland/KMS, bad `SDL_VIDEODRIVER`) or frames keep
@@ -324,11 +326,11 @@ worst scenario (expression changed every 0.4 s) 4.2-4.5 ms vs 3.5-3.6 ms. The li
 looks cost the same; the resting mouth is one cached blit, a mouth cache miss costs
 0.13-0.38 ms, and lip-synced talking renders at ~1.2 ms/frame.
 
-The 7" screen (2026-11-09, same container): `benchmark_face.py` now draws the way the robot does,
-the 546x320 face scaled to the whole 1024x600 screen: overall mean **1.8 ms/frame**, worst scenario
-3.2 ms (spin_eyes), worst p95 5.7 ms. The drawing alone (`--scale 0`) is 0.9 ms mean, so the scaling
-to the screen costs about 0.9 ms a frame. Expect 2-3x that on the Pi 5: roughly 4-5 ms, 12-15 % of one
-core at 30 fps while animating (less at the idle frame rate).
+The 7" screen (2026-11-09, same container): `benchmark_face.py` draws the way the robot does, straight
+at 1024x600 (scale 1.875, sharp): overall mean **2.1 ms/frame**, calm face 1.6 ms, worst scenario 4.0 ms
+(expression changed every 0.4 s: bigger shapes to make on a cache miss), sleeping 0.8 ms, hidden 0.6 ms.
+The first version, drawn at 546x320 and stretched to the screen, was 1.8 ms mean but soft. Expect 2-3x
+that on the Pi 5: roughly 4-6 ms, 13-19 % of one core at 30 fps while animating (less at the idle rate).
 
 Real-time run of the display loop (dummy video driver, scale 1, no panel, 6 s; measured
 2026-10-20, before the cartoon eyes):
@@ -340,9 +342,7 @@ animating (the PERFORMANCE.md budget); measure on the Pi with the benchmark scri
 ## Known limitations
 
 * Hardware unverified: the 7" 1024x600 HDMI panel, KMS/Wayland fullscreen and its USB touch are
-  untested on the real Pi (see DISPLAY_SETUP.md). The face is drawn at 546x320 and scaled up 1.875x,
-  so its edges are a little soft on the 7" glass; drawing it at the screen's size would need the
-  renderer's pixel constants scaled (and more CPU on a cache miss). With `SDL_VIDEODRIVER=kmsdrm` pygame owns
+  untested on the real Pi (see DISPLAY_SETUP.md). With `SDL_VIDEODRIVER=kmsdrm` pygame owns
   the screen, so the Chromium video player cannot appear on top.
 * The hidden state only draws a calm screen; it does not iconify the window. The media
   module's kiosk browser is expected to sit on top while a video plays.

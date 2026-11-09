@@ -57,6 +57,11 @@ field's JSON schema, enforced by `director.clean_spec`). New since the 3.5" scre
 | `facts` | a number with **up to 4 stat tiles**; a list (**up to 12, two columns**); a comparison (**up to 4 columns and 8 rows**); a profile (**5 facts and a row of stats**); a score (**with who scored**); an item; **a note** under most of them | `layout`\*, `title`, `value`, `label`, **`note`**, **`stats`** (4), `items` (12), `ordered`, `columns` (4), `rows`, `subtitle`, `facts` (5), `teams` (with **`detail`**), `status`, `kicker`, `text`, `picture_query` |
 | `games` | every game in a **two-column grid** of big tiles | `ages` |
 
+The assistant's and skills' cards (`lists`, `reminders` with the ringing alarm, `calendar`, `briefing`,
+`home`, `music`, `glance`, `note`, `gallery` and its share card) and the voice games' cards (`quiz`, `word_game`,
+`game_board`) are laid out for the 1024x600 screen the same way: bigger text, more on a page (an agenda grouped by
+day, two columns of list items, all six smart-home tiles), tap targets of at least 90 px.
+
 Text the AI writes is cleaned before it is drawn (`_kit.clean`): no markdown, one line, and signs the font
 has no glyph for are written out ("≈" becomes "about", "→" "->"), so they never show as empty boxes.
 

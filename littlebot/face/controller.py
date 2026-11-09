@@ -179,8 +179,8 @@ class FaceController(Service):
         self.ctx = ctx
         self.bus = ctx.bus
         self.display_config = ctx.config.display
-        # The face is drawn 320 px tall and as wide as the screen's shape (546x320 for the 7" 1024x600 screen),
-        # then scaled to the screen once per frame (littlebot/face/frame.py face_size).
+        # The face's design space is 320 tall and as wide as the screen's shape (546x320 for the 7" 1024x600
+        # screen, littlebot/face/frame.py face_size); the renderer draws it at the screen's own size, sharp.
         self.face_size = face_size(ctx.config.display.width, ctx.config.display.height)
         self.animator = FaceAnimator(
             ctx.config.face, width=self.face_size[0], height=self.face_size[1], rng=rng, seed=seed,
@@ -313,7 +313,10 @@ class FaceController(Service):
         if self._renderer is None:
             from littlebot.face.renderer import FaceRenderer
 
-            self._renderer = FaceRenderer(self.face_size)
+            d = self.display_config
+            # drawn straight at the screen's size (1.875x on the 7" 1024x600 screen), not stretched to it
+            scale = min(int(d.width) / self.face_size[0], int(d.height) / self.face_size[1])
+            self._renderer = FaceRenderer(self.face_size, scale=scale)
         self._renderer.render(f, surface, rect)
         now = time.monotonic()
         self._render_times.append(now)

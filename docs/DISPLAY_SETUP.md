@@ -22,9 +22,9 @@ are easy to reach now, [MOTION_SAFETY.md](MOTION_SAFETY.md)).
 * **Cards and games** draw on a 1024x600 canvas, pixel for pixel: nothing is scaled on the robot.
   Text sizes are set for reading across a room (body text 36 px, about 3.6 mm tall on the glass; at most
   8 lines at a time): see the readability rules in [SCREENS.md](SCREENS.md).
-* **The face** is drawn 320 px tall and as wide as the screen's shape (546x320,
-  `littlebot/face/frame.py` `face_size`), then scaled to the whole screen once per frame: it fills the
-  screen edge to edge with no bars. (On the 3:2 3.5" screen it was 480x320.)
+* **The face** is designed 320 units tall and as wide as the screen's shape (546x320,
+  `littlebot/face/frame.py` `face_size`) and drawn straight at 1024x600, sharp: it fills the screen edge
+  to edge with no bars. (On the 3:2 3.5" screen it was 480x320.)
 * The **YouTube player** and the **browser view** are 1024x600 windows; the browser draws pages 1.25x
   bigger (`browser.zoom`; "zoom in" / "zoom out" change it).
 * Edge swipes (volume on the right edge, brightness on the left) start within about 15 mm of the edge.

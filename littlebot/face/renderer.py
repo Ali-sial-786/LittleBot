@@ -30,9 +30,12 @@ Performance notes (the Pi 5 must hold 30 fps at low CPU):
   few dozen cached shapes.
 * Sprites (hearts, sparkles, Z's, confetti ...) are rendered once per
   (kind, size, colour, angle-bucket) and cached.
-* Everything is drawn at the face's design size (``size``: 320 px tall, 546
-  wide for the 7" 1024x600 screen, frame.face_size) and scaled once at the end
-  to the screen.
+* The frame's geometry is in the face's design units (``size``: 320 tall, 546
+  wide for the 7" 1024x600 screen, frame.face_size). ``scale`` draws it that many
+  times bigger (1.875 on the 7" screen: the face comes out at 1024x600, sharp):
+  every super-sampled shape is shrunk to its size on the screen instead of to
+  its design size, so nothing is stretched afterwards. A target of another size
+  still gets one smooth scale at the end.
 """
 
 from __future__ import annotations
@@ -159,8 +162,11 @@ class _LRU(OrderedDict):  # type: ignore[type-arg]
 class FaceRenderer:
     """Draws face frames. Not thread-safe: use from the display (main) thread only."""
 
-    def __init__(self, size: tuple[int, int] = (NATIVE_W, NATIVE_H), *, supersample: int = 3) -> None:
-        self.size = (int(size[0]), int(size[1]))
+    def __init__(self, size: tuple[int, int] = (NATIVE_W, NATIVE_H), *, supersample: int = 3,
+                 scale: float = 1.0) -> None:
+        self.size = (int(size[0]), int(size[1]))  # the design size the frames are in
+        self.k = max(0.25, float(scale))  # screen pixels per design unit
+        self.out_size = (max(1, int(round(self.size[0] * self.k))), max(1, int(round(self.size[1] * self.k))))
         self.ss = max(1, int(supersample))
         self._native: pygame.Surface | None = None
         self._scaled: pygame.Surface | None = None
@@ -180,13 +186,14 @@ class FaceRenderer:
         """Draw ``frame`` into ``target`` (optionally into ``rect`` of it, scaled smoothly)."""
         t0 = time.perf_counter()
         dest_rect = rect or target.get_rect()
-        if dest_rect.size == self.size and dest_rect.topleft == (0, 0) and target.get_size() == self.size:
+        out = self.out_size
+        if dest_rect.size == out and dest_rect.topleft == (0, 0) and target.get_size() == out:
             self._draw(frame, target)
         else:
             if self._native is None:
-                self._native = pygame.Surface(self.size)
+                self._native = pygame.Surface(out)
             self._draw(frame, self._native)
-            if dest_rect.size == self.size:
+            if dest_rect.size == out:
                 target.blit(self._native, dest_rect.topleft)
             else:
                 if self._scaled is None or self._scaled.get_size() != dest_rect.size:
@@ -237,7 +244,7 @@ class FaceRenderer:
         if f.hidden > 0.001:
             veil = self._static.get(("veil", f.background))
             if veil is None:
-                veil = pygame.Surface(self.size)
+                veil = pygame.Surface(self.out_size)
                 veil.fill(_veil_color(f.background))
                 self._static[("veil", f.background)] = veil
             veil.set_alpha(int(255 * min(1.0, f.hidden)))
@@ -254,7 +261,7 @@ class FaceRenderer:
 
     # ------------------------------------------------------------------ background
     def _background(self, bg: Color) -> pygame.Surface:
-        key = ("bg", bg, self.size)
+        key = ("bg", bg, self.out_size)
         s = self._static.get(key)
         if s is None:
             s = self._make_background(bg)
@@ -262,7 +269,7 @@ class FaceRenderer:
         return s
 
     def _make_background(self, bg: Color) -> pygame.Surface:
-        w, h = self.size
+        w, h = self.out_size
         surf = pygame.Surface((w, h))
         try:
             import numpy as np
@@ -287,17 +294,17 @@ class FaceRenderer:
         return surf
 
     def _ring(self, color: Color, light: bool = False) -> pygame.Surface:
-        key = ("ring", color, self.size, light)
+        key = ("ring", color, self.out_size, light)
         s = self._static.get(key)
         if s is not None:
             return s
-        w, h = self.size
+        w, h = self.out_size
         ss = 2
         big = pygame.Surface((w * ss, h * ss), pygame.SRCALPHA)
-        inset, th = 7 * ss, 3 * ss
+        inset, th = int(round(7 * ss * self.k)), max(1, int(round(3 * ss * self.k)))
         rc = _mix(color, _ink(color), 0.3) if light else _lighten(color, 0.25)
         pygame.draw.rect(big, (*rc, 255), pygame.Rect(inset, inset, w * ss - 2 * inset, h * ss - 2 * inset),
-                         width=th, border_radius=26 * ss)
+                         width=th, border_radius=int(round(26 * ss * self.k)))
         line = pygame.transform.smoothscale(big, (w, h))
         small = pygame.transform.smoothscale(line, (w // 4, h // 4))
         small = pygame.transform.gaussian_blur(small, 3)
@@ -324,8 +331,9 @@ class FaceRenderer:
             e.side, color, glow > 0.01, light,
         )
         body = self._eyes.get_or(key, lambda: self._make_eye(e, color, light))
-        cw, ch = body.get_size()
-        x, y = int(round(e.cx - cw / 2)), int(round(e.cy - ch / 2))
+        cw, ch = body.get_size()  # screen pixels (the design size times self.k)
+        k = self.k
+        x, y = int(round(e.cx * k - cw / 2)), int(round(e.cy * k - ch / 2))
         if glow > 0.01:
             # the glow is blurry, so a much coarser key is visually identical and saves most recomputes
             gkey = (_q(e.w, 3), _q(e.h, 3), _q(e.lid_top, 0.05), _q(e.lid_angle, 3), _q(e.lid_bottom, 0.05),
@@ -333,7 +341,7 @@ class FaceRenderer:
             if light:  # a soft rosy shadow just below the eye gives depth on the pastel screen
                 glow_s = self._glows.get_or(gkey, lambda: self._make_shadow(body))
                 glow_s.set_alpha(int(255 * SHADOW_ALPHA * min(1.0, glow)))
-                dy = SHADOW_OFFSET
+                dy = int(round(SHADOW_OFFSET * k))
             else:
                 glow_s = self._glows.get_or(gkey, lambda: self._make_glow(body))
                 glow_s.set_alpha(int(255 * min(1.0, GLOW_ALPHA * glow)))
@@ -364,9 +372,11 @@ class FaceRenderer:
         if pupil is None:
             return None
         ox, oy, rx, ry, alpha = pupil
-        img = self._pupil_sprite(rx, ry, e.tilt, color)
+        k = self.k
+        img = self._pupil_sprite(rx * k, ry * k, e.tilt, color)
         img.set_alpha(int(255 * alpha))
-        return img, (int(round(cw / 2 + ox - img.get_width() / 2)), int(round(ch / 2 + oy - img.get_height() / 2)))
+        return img, (int(round(cw / 2 + ox * k - img.get_width() / 2)),
+                     int(round(ch / 2 + oy * k - img.get_height() / 2)))
 
     def _catchlight_overlays(self, e: EyeFrame, cw: int, ch: int) -> list[tuple[pygame.Surface, tuple[int, int]]]:
         out: list[tuple[pygame.Surface, tuple[int, int]]] = []
@@ -374,11 +384,12 @@ class FaceRenderer:
             # catchlights stay crisp white; a dull expression (sleepy) only makes them a bit smaller / softer
             alpha = int(255 * min(1.0, 0.55 + e.shine))
             size = 0.8 + 0.2 * min(1.0, e.shine)
+            k = self.k
             for ox, oy, r in catchlights(e):
-                img = self._catchlight_sprite(r * size)
+                img = self._catchlight_sprite(r * size * k)
                 img.set_alpha(alpha)
-                out.append((img, (int(round(cw / 2 + ox - img.get_width() / 2)),
-                                  int(round(ch / 2 + oy - img.get_height() / 2)))))
+                out.append((img, (int(round(cw / 2 + ox * k - img.get_width() / 2)),
+                                  int(round(ch / 2 + oy * k - img.get_height() / 2)))))
         return out
 
     def _comp_surface(self, w: int, h: int) -> pygame.Surface:
@@ -408,12 +419,13 @@ class FaceRenderer:
             self._draw_closed(big, rect, e, color, light)
         else:
             self._draw_open(big, rect, e, thin, light)
-        body = pygame.transform.smoothscale(big, (cw, ch))
+        k = self.k  # shrunk to its size on the screen (design size times k), not stretched later
+        body = pygame.transform.smoothscale(big, (max(1, int(round(cw * k))), max(1, int(round(ch * k)))))
         if not closed:
             # the gradient runs over the open part of the eye, so crescents and lidded eyes get all of it
             top, bottom = eye_span(e)
             span = max(bottom - top, 0.35 * h)
-            self._shade(body, ch / 2 + top, span, color, thin)
+            self._shade(body, (ch / 2 + top) * k, span * k, color, thin)
         if abs(e.tilt % 360.0) > 0.25 and abs(e.tilt % 360.0 - 360.0) > 0.25:
             body = pygame.transform.rotozoom(body, e.tilt, 1.0)
         return _fast(body)
@@ -570,9 +582,9 @@ class FaceRenderer:
 
     def _make_glow(self, core: pygame.Surface) -> pygame.Surface:
         cw, ch = core.get_size()
-        m = GLOW_MARGIN
+        m = int(round(GLOW_MARGIN * self.k))
         gw, gh = cw + 2 * m, ch + 2 * m
-        d = GLOW_DOWNSCALE
+        d = max(1, int(round(GLOW_DOWNSCALE * self.k)))  # the same blur, in design units, at any scale
         small = pygame.Surface((max(1, gw // d), max(1, gh // d)), pygame.SRCALPHA)
         small.blit(pygame.transform.smoothscale(core, (max(1, cw // d), max(1, ch // d))), (m // d, m // d))
         small = pygame.transform.gaussian_blur(small, GLOW_BLUR)
@@ -592,7 +604,8 @@ class FaceRenderer:
         key = (q.open, q.width, q.smile, q.round, q.teeth, q.tongue, q.angle, light, None if light else color)
         img = self._mouths.get_or(key, lambda: self._make_mouth(q, color, light))
         img.set_alpha(int(255 * min(1.0, m.alpha)))
-        surf.blit(img, (int(round(m.cx - img.get_width() / 2)), int(round(m.cy - img.get_height() / 2))))
+        k = self.k
+        surf.blit(img, (int(round(m.cx * k - img.get_width() / 2)), int(round(m.cy * k - img.get_height() / 2))))
 
     def _make_mouth(self, m: MouthFrame, color: Color, light: bool) -> pygame.Surface:
         """Lips as an ink line along both edges; when open, a dark inside with teeth / tongue."""
@@ -652,7 +665,7 @@ class FaceRenderer:
         for curve in curves:  # the lip line: overlapping round dots give an even, round-capped stroke
             for p in curve:
                 pygame.draw.circle(big, (*ink, 255), pt(p), r)
-        img = pygame.transform.smoothscale(big, (W, H))
+        img = pygame.transform.smoothscale(big, (max(1, int(round(W * self.k))), max(1, int(round(H * self.k)))))
         if abs(m.angle) > 0.5:
             img = pygame.transform.rotozoom(img, m.angle, 1.0)
         return _fast(img)
@@ -661,7 +674,8 @@ class FaceRenderer:
     def _draw_sprite(self, surf: pygame.Surface, s: Sprite, light: bool = False) -> None:
         if s.alpha <= 0.01 or s.size < 1.0:
             return
-        size_q = max(2, int(round(s.size)))
+        k = self.k
+        size_q = max(2, int(round(s.size * k)))  # made at its size on the screen
         ang_step = 10 if s.kind == "confetti" else 5
         ang = (_q(s.angle, ang_step) * ang_step) % 360 if s.kind not in ("dot", "blush", "play", "cloud", "puff") else 0
         light = light and s.kind in ("sparkle", "cloud", "puff")  # drawn differently on a light screen
@@ -670,7 +684,7 @@ class FaceRenderer:
         if img is None:
             return
         img.set_alpha(int(255 * min(1.0, s.alpha)))
-        surf.blit(img, (int(s.x - img.get_width() / 2), int(s.y - img.get_height() / 2)))
+        surf.blit(img, (int(s.x * k - img.get_width() / 2), int(s.y * k - img.get_height() / 2)))
 
     def _make_sprite(self, kind: str, size: int, color: Color, angle: float,
                      light: bool = False) -> pygame.Surface | None:
