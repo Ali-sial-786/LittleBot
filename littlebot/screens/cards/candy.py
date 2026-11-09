@@ -13,11 +13,12 @@ from typing import Any
 import pygame
 
 from littlebot.games import art
-from littlebot.screens.base import BODY_PX, PRESENTER_BOX, TITLE_PX, W
+from littlebot.screens.base import BODY_PX, PRESENTER_BOX, TITLE_PX, H, W
 
-HEADER_X = PRESENTER_BOX[0] + PRESENTER_BOX[2] + 16  # the title starts right of the presenter's eyes
+HEADER_X = PRESENTER_BOX[0] + PRESENTER_BOX[2] + 20  # the title starts right of the presenter's eyes
 HEADER_Y = PRESENTER_BOX[1] + PRESENTER_BOX[3] // 2 + 4
-PANEL = pygame.Rect(16, 108, W - 32, 360)  # the card's content box under the title
+_TOP = PRESENTER_BOX[1] + PRESENTER_BOX[3] + 14
+PANEL = pygame.Rect(16, _TOP, W - 32, H - _TOP - 14)  # the card's content box under the title (992 x 454)
 PANEL_FILL: art.Color = (255, 248, 251)
 PANEL_EDGE: art.Color = (246, 196, 220)
 

@@ -125,10 +125,10 @@ def test_wikipedia_summary_thumbnail_first(web: Web, caplog: pytest.LogCaptureFi
     assert pic.ready and pic.surface is not None
     assert pic.credit == "Wikipedia" and pic.source == "wikipedia"
     w, h = pic.surface.get_size()
-    assert w <= images.MAX_SIZE[0] and h <= images.MAX_SIZE[1] and (w, h) == (360, 270)  # 800x600 scaled down
+    assert w <= images.MAX_SIZE[0] and h <= images.MAX_SIZE[1] and (w, h) == (560, 420)  # 800x600 scaled down
     assert web.hosts() == [WIKI, UPLOAD]
     lines = [r.getMessage() for r in caplog.records if r.name == "littlebot.screens.images"]
-    assert len(lines) == 1 and "wikipedia picture in" in lines[0] and "360x270" in lines[0]
+    assert len(lines) == 1 and "wikipedia picture in" in lines[0] and "560x420" in lines[0]
     assert "rainbow" not in lines[0].lower().replace("wikipedia", "")  # never the query
 
 
@@ -233,7 +233,7 @@ def test_content_that_doesnt_match_its_type_is_skipped(web: Web) -> None:
 def test_jpeg_is_decoded(web: Web) -> None:
     web.image("example.org", "/x.jpg", JPEG, "image/jpeg; charset=binary")
     pic = fetch(web, url="https://example.org/x.jpg")
-    assert pic.surface is not None and pic.surface.get_size() == (360, 270)
+    assert pic.surface is not None and pic.surface.get_size() == (400, 300)  # small enough: kept as it is
 
 
 def test_webp_that_cant_be_decoded_is_skipped(web: Web) -> None:

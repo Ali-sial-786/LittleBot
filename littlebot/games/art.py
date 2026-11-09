@@ -2,7 +2,7 @@
 
 Style: soft pink background (matching LittleBot's face), rounded candy-coloured shapes with a
 white highlight, a dark plum "ink" for outlines and text, and LittleBot's own cyan eyes as the
-host. Everything is drawn for a 720x480 canvas (the robot's screen mode).
+host. Everything is drawn for a 1024x600 canvas (the robot's 7" screen, pixel for pixel).
 
 Performance (Raspberry Pi 5, 30 fps): anything with curves is drawn once, super-sampled and
 smooth-scaled down (clean edges), then cached; a frame is mostly blits. Sizes and angles are
@@ -22,7 +22,7 @@ import pygame
 
 Color = tuple[int, int, int]
 
-W, H = 720, 480  # logical canvas (the robot's 720x480 screen)
+W, H = 1024, 600  # logical canvas: the robot's 7" 1024x600 screen (littlebot/screens/base.py W, H)
 
 # ---------------------------------------------------------------- palette
 BG_TOP: Color = (255, 238, 245)
@@ -234,8 +234,9 @@ def background(size: tuple[int, int] = (W, H), *, top: Color = BG_TOP, bottom: C
         if spots:
             rng = random.Random(seed)
             layer = pygame.Surface((w, h), pygame.SRCALPHA)
+            k = max(0.25, min(w, h) / 480)  # the bokeh grows with the canvas (1.25 on the 1024x600 screen)
             for _ in range(9):
-                r = rng.randint(40, 120)
+                r = int(rng.randint(40, 120) * k)
                 x, y = rng.randint(-20, w + 20), rng.randint(-20, h + 20)
                 pygame.draw.circle(layer, (*BG_SPOT, rng.randint(26, 48)), (x, y), r)
             for _ in range(26):

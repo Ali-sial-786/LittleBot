@@ -1,7 +1,7 @@
 """The presenter: LittleBot's own eyes, small, in a corner of an info card, lip-synced to its voice.
 
 ``draw(surf, box, mood=..., mouth=..., color=..., t=...)`` paints them into ``box`` (x, y, w, h on
-the 720x480 canvas, :attr:`littlebot.screens.base.Card.presenter_box`): the games' eyes
+the 1024x600 canvas, :attr:`littlebot.screens.base.Card.presenter_box`): the games' eyes
 (littlebot/games/art.py ``draw_eyes``: rim, gradient, big pupil, two catchlights) on a little patch
 of LittleBot's pink face, with the real face's mouth under them (the same lip outline,
 littlebot/face/frame.py ``mouth_edges``, and the same spoken shapes, littlebot/face/mouth.py), so it

@@ -29,11 +29,16 @@ from littlebot.screens.base import (
     W,
 )
 
-# The header sits to the right of the presenter's eyes; the content panel below both.
+# The header sits to the right of the presenter's eyes; the content panel below both
+# (on the 1024x600 canvas: the header 794 x 112, the panel 992 x 456).
 _PX, _PY, _PW, _PH = PRESENTER_BOX
-HEADER = pygame.Rect(_PX + _PW + 16, 8, W - (_PX + _PW + 16) - 14, _PY + _PH - 6)
-PANEL = pygame.Rect(12, _PY + _PH + 12, W - 24, H - (_PY + _PH + 12) - 12)
-PAD = 22  # inside the panel
+HEADER = pygame.Rect(_PX + _PW + 20, 8, W - (_PX + _PW + 20) - 16, _PY + _PH - 6)
+PANEL = pygame.Rect(16, _PY + _PH + 14, W - 32, H - (_PY + _PH + 14) - 14)
+PAD = 26  # inside the panel
+# The panel split in two: text on the left, a picture (or a second column) on the right. The picture
+# column is about the width a 4:3 photo needs at the panel's height.
+PIC_W = 380
+GUTTER = 24  # between the text column and the picture
 PANEL_COLOR: art.Color = art.CREAM
 PANEL_BORDER: art.Color = art.mix(art.INK, art.BG_BOTTOM, 0.55)
 TEXT: art.Color = art.INK  # body text on cream: contrast ~10:1
@@ -216,7 +221,7 @@ def chip(label: str, color: Sequence[int], *, size: int = SMALL_PX, fg: Sequence
     return art.pill(label, size, fg, art.inkier(color, 0.22) if fg == art.WHITE else color, pad=(16, 7))
 
 
-def number_badge(n: int | str, color: Sequence[int], r: int = 22) -> pygame.Surface:
+def number_badge(n: int | str, color: Sequence[int], r: int = 25) -> pygame.Surface:
     key = ("kit_badge", str(n), tuple(color), r)
 
     def make() -> pygame.Surface:
@@ -235,15 +240,15 @@ def page_dots(surf: pygame.Surface, n: int, i: int, center: tuple[float, float])
     """``n`` dots, the ``i``-th one big and coloured (only when there is more than one page)."""
     if n <= 1:
         return
-    gap = 26
+    gap = 30
     x0 = center[0] - gap * (n - 1) / 2
     for k in range(n):
         on = k == i
-        art.blit_center(surf, art.circle(8 if on else 6, art.STRAWBERRY if on else art.mix(art.INK_SOFT, art.WHITE, .4)),
+        art.blit_center(surf, art.circle(10 if on else 7, art.STRAWBERRY if on else art.mix(art.INK_SOFT, art.WHITE, .4)),
                         (x0 + k * gap, center[1]))
 
 
-def arrow(direction: int, color: Sequence[int] = art.WHITE, r: int = 24) -> pygame.Surface:
+def arrow(direction: int, color: Sequence[int] = art.WHITE, r: int = 30) -> pygame.Surface:
     """A round next/back button (tap targets on paged cards)."""
     key = ("kit_arrow", direction, tuple(color), r)
 
@@ -337,7 +342,7 @@ class PictureSlot:
         if self._sprite is not None and self._sprite[0] == box:
             return self._sprite[1]
         src = self.picture.surface
-        frame = 6
+        frame = 7
         bw, bh = box[0] - 2 * frame, box[1] - 2 * frame
         w, h = src.get_size()
         k = min(bw / max(1, w), bh / max(1, h), 1.5)
@@ -346,9 +351,9 @@ class PictureSlot:
             img = pygame.transform.smoothscale(src, size)
         except (ValueError, pygame.error):
             img = pygame.transform.scale(src, size)
-        img = _rounded(img, 14)
+        img = _rounded(img, 16)
         out = pygame.Surface((size[0] + 2 * frame, size[1] + 2 * frame + 4), pygame.SRCALPHA)
-        out.blit(art.rounded_rect(size[0] + 2 * frame, size[1] + 2 * frame, 18, art.WHITE, shadow=4,
+        out.blit(art.rounded_rect(size[0] + 2 * frame, size[1] + 2 * frame, 20, art.WHITE, shadow=4,
                                   border=PANEL_BORDER, border_w=2), (0, 0))
         out.blit(img, (frame, frame))
         self._sprite = (box, out)
@@ -377,12 +382,12 @@ def placeholder(surf: pygame.Surface, rect: pygame.Rect, t: float) -> None:
         art.BG_BOTTOM, art.INK_SOFT, 0.25), border_w=2), rect.topleft)
     for k in range(3):
         phase = t * 3.2 - k * 0.55
-        lift = max(0.0, math.sin(phase)) * 10
-        art.blit_center(surf, art.circle(8, art.mix(ACCENTS[k], art.WHITE, 0.25)),
-                        (rect.centerx + (k - 1) * 28, rect.centery - lift))
+        lift = max(0.0, math.sin(phase)) * 12
+        art.blit_center(surf, art.circle(10, art.mix(ACCENTS[k], art.WHITE, 0.25)),
+                        (rect.centerx + (k - 1) * 34, rect.centery - lift))
 
 
-__all__ = ["ACCENTS", "BODY_PX", "HEADER", "MAX_LINES", "PAD", "PANEL", "SMALL_PX", "TEXT", "TEXT_SOFT", "TITLE_PX",
+__all__ = ["ACCENTS", "BODY_PX", "GUTTER", "HEADER", "MAX_LINES", "PAD", "PANEL", "PIC_W", "SMALL_PX", "TEXT", "TEXT_SOFT", "TITLE_PX",
            "PictureSlot", "appear", "arrow", "as_int", "background", "blit_alpha", "chip", "clean", "ellipsize",
            "fit", "header_title", "line_h", "number_badge", "outlined_fit", "page_dots", "paged", "panel",
            "placeholder", "str_list", "text_block", "text_w", "wrap"]

@@ -3,7 +3,7 @@
 A game is a plain object driven by the display loop (or tests):
 
 * ``update(dt)`` advances it by ``dt`` seconds (pure logic, no drawing);
-* ``draw(surface)`` paints the whole ``size`` canvas (720x480 by default);
+* ``draw(surface)`` paints the whole ``size`` canvas (1024x600 by default: the robot's 7" screen);
 * ``tap(x, y)`` / ``key(name)`` / ``hear(text)`` deliver input in canvas pixels / pygame key
   names / recognised speech.
 
@@ -213,13 +213,15 @@ class Game:
         p = art.ease_out_cubic((self.finale_t or 0.0) / 0.5)
         surf.blit(art.veil(self.size, art.BG_TOP, int(200 * p)), (0, 0))
         bob = math.sin((self.finale_t or 0.0) * 6) * 6
-        art.draw_eyes(surf, (self.w / 2, self.h * 0.42 + bob), 1.25 * (0.6 + 0.4 * art.ease_out_back(p)),
+        k = self.h / 480  # sized for the canvas (1.25 on the 1024x600 screen)
+        art.draw_eyes(surf, (self.w / 2, self.h * 0.40 + bob), 1.25 * k * (0.6 + 0.4 * art.ease_out_back(p)),
                       mood="happy", color=self.eye_color)
-        title = art.text_outlined(self.finale_text(), 76, art.WHITE, art.INK, 4)
-        art.blit_center(surf, title, (self.w / 2, self.h * 0.72), int(255 * p))
+        title = art.text_outlined(self.finale_text(), int(76 * k), art.WHITE, art.INK, 4)
+        art.blit_center(surf, title, (self.w / 2, self.h * 0.71), int(255 * p))
         line = self.summary() if self.taps else ""  # nobody played along: just celebrate
         if line:
-            art.blit_center(surf, art.pill(line, 30, art.INK, art.WHITE), (self.w / 2, self.h * 0.86), int(255 * p))
+            art.blit_center(surf, art.pill(line, int(32 * k), art.INK, art.WHITE, pad=(22, 10)),
+                            (self.w / 2, self.h * 0.86), int(255 * p))
         self.particles.draw(surf)  # confetti over the veil
 
     def burst(self, x: float, y: float, colors: Sequence[art.Color], n: int = 14, **kw: Any) -> None:
