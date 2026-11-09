@@ -7,11 +7,22 @@ import datetime as dt
 from typing import Any
 from zoneinfo import ZoneInfo
 
+import pygame
 import pytest
 
+from littlebot.games import art
 from littlebot.screens import base, preview
+from littlebot.screens.cards import _kit as kit
 from littlebot.screens.cards import reminders as card_mod
-from littlebot.screens.cards.reminders import ENDED_S, SNOOZE_BUTTON, STOP_BUTTON, RemindersCard, time_label
+from littlebot.screens.cards.reminders import (
+    ENDED_S,
+    SNOOZE_BUTTON,
+    STOP_BUTTON,
+    RemindersCard,
+    day_label,
+    split_when,
+    time_label,
+)
 from littlebot.screens.service import BACK_AFTER
 from littlebot.skills.hub import SkillHub
 from littlebot.skills.lists import Lists
@@ -84,6 +95,11 @@ def test_time_labels() -> None:
     assert time_label(now + dt.timedelta(days=3), now) == "Mon 2:05 pm"
     assert time_label(now + dt.timedelta(days=13), now) == "12 Nov 2:05 pm"
     assert time_label(now, now, twelve=False) == "14:05"
+    assert [day_label(now + dt.timedelta(days=d), now) for d in (0, 1, 3, 13)] == [
+        "Today", "Tomorrow", "Monday", "Thu 12 Nov"]
+    assert split_when("Tomorrow 7 am") == ("Tomorrow", "7 am") and split_when("6 pm") == ("Today", "6 pm")
+    assert split_when("Mon 8 pm") == ("Monday", "8 pm") and split_when("12 Nov 10:30 am") == ("12 Nov", "10:30 am")
+    assert split_when("14:05") == ("Today", "14:05") and split_when("soon") == ("", "soon")
 
 
 async def test_coming_up(rig: Rig) -> None:
@@ -96,6 +112,10 @@ async def test_coming_up(rig: Rig) -> None:
     await rig.r.run("set_reminder", {"text": "dentist", "when": "tomorrow at 9"})
     card.update(0.03)
     assert card.describe() == "Coming up, 3: 6 pm: call mom; Tomorrow 9 am: dentist; Mon 7 am: gym (alarm)"
+    page = card._pages[0]
+    assert [r["text"] for r in page if r["type"] == "day"] == ["Today", "Tomorrow", "Monday"]  # a heading a day
+    gym = next(r for r in page if r.get("id") == 2)
+    assert gym["lay"]["clock"] == "7 am" and gym["lay"]["side"] == "every weekday"  # how it repeats, shown
     assert rig.svc.current is not None and rig.svc.current.kind == "reminders"  # the skill showed it
     assert rig.svc.current.highlight == 3 and rig.svc.current.linger_seconds == 12.0
     preview.surface(card, seconds=0.2)
@@ -103,6 +123,7 @@ async def test_coming_up(rig: Rig) -> None:
         await rig.r.run("set_reminder", {"text": f"thing {i}", "when": f"in {i + 1} hours"})
     card.update(0.03)
     assert card.pages == 2 and card.describe().startswith("Coming up, 7 (page 1 of 2): 3:05 pm: thing 0")
+    assert all(sum(r["k"] for r in p) <= base.MAX_LINES and p[0]["type"] == "day" for p in card._pages)
     assert card.tap(400, 300) and card.page == 1
     assert card.tap(400, 300) and card.page == 0  # round again
     assert card.key("right") and card.page == 1 and card.command("prev", {}) and card.page == 0
@@ -230,3 +251,49 @@ async def test_previews_without_the_skill() -> None:
     bad: dict[str, Any] = {"card": "reminders", "items": ["x", {"text": None}], "highlight": "x", "linger": "soon"}
     card = await base.build(bad, None, base.RecordingHost())
     assert card.describe() == "Coming up, 1: : Reminder" and card.linger_seconds is None
+
+
+def drawn_sizes(card: RemindersCard, monkeypatch: pytest.MonkeyPatch) -> set[int]:
+    """The text sizes ``card.draw`` uses."""
+    sizes: set[int] = set()
+    for mod, name in ((art, "text"), (art, "text_outlined"), (art, "pill"), (kit, "text_block")):
+        real = getattr(mod, name)
+
+        def spy(*a: Any, _real: Any = real, **kw: Any) -> Any:
+            sizes.add(int(a[1] if len(a) > 1 else kw.get("size")))
+            return _real(*a, **kw)
+
+        monkeypatch.setattr(mod, name, spy)
+    card.draw(pygame.Surface((base.W, base.H)))
+    monkeypatch.undo()
+    return sizes
+
+
+def unpainted(card: RemindersCard) -> int:
+    """How many canvas pixels ``card.draw`` leaves as they were."""
+    surf = pygame.Surface((base.W, base.H))
+    surf.fill((255, 0, 255))
+    card.draw(surf)
+    return pygame.transform.threshold(None, surf, (255, 0, 255), (0, 0, 0, 0), set_behavior=0)
+
+
+async def test_the_ringing_screen_fills_the_canvas_with_big_buttons(monkeypatch: pytest.MonkeyPatch) -> None:
+    card = await base.build({"card": "reminders", "ringing": 3, "kind": "reminder", "repeat": "every weekday",
+                             "label": "take the lasagne out of the oven and turn the oven off please"}, None,
+                            base.RecordingHost())
+    assert unpainted(card) == 0  # the whole 1024 x 600, no strip left at the bottom
+    for button in (SNOOZE_BUTTON, STOP_BUTTON):
+        assert button.h >= 90 and button.w >= 300 and pygame.Rect(0, 0, base.W, base.H).contains(button)
+        assert button.bottom >= base.H - 40  # along the bottom, under the thumb
+    assert not SNOOZE_BUTTON.inflate(16, 16).colliderect(STOP_BUTTON.inflate(16, 16))
+    assert min(drawn_sizes(card, monkeypatch)) >= base.SMALL_PX
+    assert card.command("stop", {}) and card.ended == "Stopped"
+    assert unpainted(card) == 0
+
+
+async def test_every_view_uses_readable_sizes(monkeypatch: pytest.MonkeyPatch) -> None:
+    for spec in card_mod.SAMPLES:
+        card = await base.build(spec, None, base.RecordingHost())
+        card.update(5.0)
+        assert unpainted(card) == 0
+        assert min(drawn_sizes(card, monkeypatch)) >= base.SMALL_PX

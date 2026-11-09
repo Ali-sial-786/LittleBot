@@ -1,15 +1,28 @@
 """The calendar card (littlebot/screens/cards/calendar.py): a snapshot of the calendar's events from the spec, one
-day or a few days, paged five rows at a time."""
+day or a few days, as many as fit and at most MAX_LINES lines a page; big when they all fit on one page."""
 
 from __future__ import annotations
 
 from typing import Any
 
+import pygame
+import pytest
+
 from littlebot.games import art
 from littlebot.screens import base, preview
 from littlebot.screens.cards import _kit as kit
 from littlebot.screens.cards import calendar as card_mod
-from littlebot.screens.cards.calendar import ARROW_Y, HIGHLIGHT_S, CalendarCard, hex_color
+from littlebot.screens.cards.calendar import (
+    ARROW_Y,
+    BACK_X,
+    BIG,
+    HIGHLIGHT_S,
+    INNER,
+    NORMAL,
+    CalendarCard,
+    hex_color,
+    paginate,
+)
 
 
 async def make(spec: dict[str, Any]) -> CalendarCard:
@@ -36,6 +49,8 @@ async def test_one_day() -> None:
         {"id": "e2", "day": "Today", "when": "6:00 pm", "text": "Soccer"}]})
     assert card.title == "Today" and card.linger_seconds == 12.0 and card.pages == 1
     assert [r["type"] for r in card.rows] == ["event", "event"]  # one day: no day labels
+    assert all(r["lay"]["tier"] is BIG for r in card.rows)  # all on one page: big
+    assert card.rows[0]["lay"]["side"] == "Main St Clinic" and not card.rows[0]["lay"]["below"]  # beside it
     assert card.rows[0]["color"] == (0x79, 0x86, 0xCB) and card.rows[1]["color"] == art.SKY
     assert card.describe() == "Calendar (Today), 2 events: 3:00 pm Dentist at Main St Clinic; 6:00 pm Soccer"
     assert card.status()["events"] == 2 and card.status()["pages"] == 1
@@ -64,28 +79,62 @@ async def test_empty() -> None:
 
 
 async def test_paging() -> None:
-    card = await make({"title": "Today", "items": [ev(i) for i in range(1, 8)]})
-    assert card.pages == 2 and len(card.page_rows()) == 5
-    assert card.describe().startswith("Calendar (Today), 7 events (page 1 of 2): 1:00 pm Thing 1; ")
+    card = await make({"title": "Today", "items": [ev(i) for i in range(1, 13)]})
+    assert all(r["lay"]["tier"] is NORMAL for r in card.rows)  # more than a page: the normal size
+    assert card.pages == 2 and len(card.page_rows()) == 6  # 12: 6 + 6, not 8 + 4
+    assert card.describe().startswith("Calendar (Today), 12 events (page 1 of 2): 1:00 pm Thing 1; ")
     assert card.tap(400, 300) and card.page == 1
-    assert card.describe() == "Calendar (Today), 7 events (page 2 of 2): 6:00 pm Thing 6; 7:00 pm Thing 7"
+    assert card.describe() == ("Calendar (Today), 12 events (page 2 of 2): 7:00 pm Thing 7; 8:00 pm Thing 8; 9:00 pm "
+                               "Thing 9; 10:00 pm Thing 10; 11:00 pm Thing 11; 12:00 pm Thing 12")
     preview.surface(card, seconds=0.2)
     assert card.tap(400, 300) and card.page == 0  # round again
     assert card.key("right") and card.page == 1 and card.key("left") and card.page == 0
     assert card.command("next", {}) and card.page == 1 and card.command("prev", {}) and card.page == 0
     assert card.command("page", {"n": 2}) and card.page == 1
     assert not card.command("page", {"n": 3}) and not card.command("page", {"n": "x"}) and card.page == 1
-    assert card.tap(kit.PANEL.x + 44, ARROW_Y) and card.page == 0  # the left arrow
+    assert card.tap(BACK_X, ARROW_Y) and card.page == 0  # the left arrow
     assert not card.command("dance", {})
+    eight = await make({"items": [ev(i) for i in range(1, 9)]})
+    assert eight.pages == 1 and len(eight.page_rows()) == 8  # eight one-line events: one page
+
+
+async def test_pages_keep_to_max_lines_and_the_panel() -> None:
+    long = "a parent-teacher meeting about the school trip to the science museum"
+    items = [ev(i, "Today" if i < 5 else "Tomorrow", where="Oakwood Primary School" if i % 2 else "",
+                text=long if i % 3 == 0 else f"thing {i}") for i in range(1, 15)]
+    card = await make({"items": items})
+    assert card.pages > 1
+    for page in range(card.pages):
+        card.command("page", {"n": page + 1})
+        rows = card._pages[page]
+        assert sum(r["k"] for r in rows) <= base.MAX_LINES
+        assert sum(r["h"] for r in rows) <= INNER.h - 70
+        assert rows[0]["type"] == "day" and rows[-1]["type"] == "event"  # every page says which day it is
+        preview.surface(card, seconds=0.1)
+    shown = [r["id"] for p in card._pages for r in p if r["type"] == "event"]
+    assert shown == [f"e{i}" for i in range(1, 15)]  # every event once, in order
+    wrapped = next(r for r in card.rows if r.get("id") == "e3")
+    assert len(wrapped["lay"]["lines"]) == 2 and wrapped["lay"]["size"] >= base.BODY_PX and wrapped["lay"]["below"]
 
 
 async def test_a_day_label_never_ends_a_page() -> None:
-    items = [ev(i, "Today") for i in range(1, 4)] + [ev(4, "Tomorrow"), ev(5, "Tomorrow")]
-    card = await make({"items": items})
-    # Today, 1, 2, 3 | Tomorrow, 4, 5: the "Tomorrow" label would have been the 5th row, alone
-    assert card.pages == 2 and [r["type"] for r in card.page_rows()] == ["day", "event", "event", "event"]
+    def row(kind: str, text: str = "") -> dict[str, Any]:
+        return {"type": kind, "text": text, "h": 10, "k": 1}
+
+    # wherever the page ends, it never ends on a heading, and a page that goes on with a day starts with its heading
+    for today in range(1, 14):
+        rows = [row("day", "Today"), *[row("event", f"t{i}") for i in range(today)], row("day", "Tomorrow"),
+                row("event", "m1"), row("event", "m2")]
+        for room in (1000, 75):
+            pages = paginate(rows, room=room, paged_room=room)
+            assert all(p[-1]["type"] == "event" and p[0]["type"] == "day" for p in pages), (today, room)
+            assert all(sum(r["k"] for r in p) <= base.MAX_LINES for p in pages)
+            events = [r["text"] for p in pages for r in p if r["type"] == "event"]
+            assert events == [r["text"] for r in rows if r["type"] == "event"]
+    card = await make({"items": [ev(i, "Today") for i in range(1, 7)] + [ev(7, "Tomorrow"), ev(8, "Tomorrow")]})
+    assert card.pages == 2 and card.page_rows()[-1]["type"] == "event"
     card.command("next", {})
-    assert card.page_rows()[0] == {"type": "day", "text": "Tomorrow"}
+    assert card.page_rows()[0]["type"] == "day" and card.page_rows()[0]["text"] in ("Today", "Tomorrow")
 
 
 async def test_highlight_glows_for_a_moment() -> None:
@@ -128,4 +177,45 @@ async def test_samples_draw() -> None:
         assert preview.surface(card, seconds=0.4).get_size() == (base.W, base.H)
     one, few, empty = [await make(s) for s in card_mod.SAMPLES]
     assert not one.multi_day and few.multi_day and not empty.events
-    assert few.describe().startswith("Calendar (This week), 4 events (page 1 of 2): Today 3:00 pm Dentist; Tomorrow All day")
+    assert one.pages == 1 and few.pages == 2  # five events on three days: ten lines
+    assert few.describe().startswith("Calendar (This week), 5 events (page 1 of 2): Today 3:00 pm Dentist; "
+                                     "Tomorrow All day")
+
+
+def drawn_sizes(card: Any, monkeypatch: pytest.MonkeyPatch) -> set[int]:
+    """The text sizes ``card.draw`` uses."""
+    sizes: set[int] = set()
+    for mod, name in ((art, "text"), (art, "text_outlined"), (art, "pill"), (kit, "text_block")):
+        real = getattr(mod, name)
+
+        def spy(*a: Any, _real: Any = real, **kw: Any) -> Any:
+            sizes.add(int(a[1] if len(a) > 1 else kw.get("size")))
+            return _real(*a, **kw)
+
+        monkeypatch.setattr(mod, name, spy)
+    card.draw(pygame.Surface((base.W, base.H)))
+    monkeypatch.undo()
+    return sizes
+
+
+def unpainted(card: Any) -> int:
+    """How many canvas pixels ``card.draw`` leaves as they were."""
+    surf = pygame.Surface((base.W, base.H))
+    surf.fill((255, 0, 255))
+    card.draw(surf)
+    return pygame.transform.threshold(None, surf, (255, 0, 255), (0, 0, 0, 0), set_behavior=0)
+
+
+async def test_readable_and_the_whole_canvas(monkeypatch: pytest.MonkeyPatch) -> None:
+    words = "a parent-teacher meeting about the school trip "
+    long = [ev(i, "Today" if i < 6 else "Tomorrow", text=words * (i % 2 + 1),
+               where="Oakwood Primary School, the hall by the playground") for i in range(1, 12)]
+    for spec in [*card_mod.SAMPLES, {"card": "calendar", "items": long, "highlight": "e2"}]:
+        card = await base.build(spec, None, base.RecordingHost())
+        for page in range(card.pages):
+            card.command("page", {"n": page + 1})
+            assert unpainted(card) == 0
+            assert min(drawn_sizes(card, monkeypatch)) >= base.SMALL_PX
+            for row in card.page_rows():
+                if row["type"] == "event":
+                    assert row["lay"]["size"] >= base.BODY_PX and row["lay"]["tier"].side_px >= base.SMALL_PX
