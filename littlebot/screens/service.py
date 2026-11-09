@@ -128,6 +128,9 @@ COVERED = ("replaced", "video started", "game started", "activity started", "rob
 HIDDEN = ("tap", "keyboard", "asked to", "asked in the voice chat", "parent")
 ENDS_BEHIND = ("stop all", "switched off", "shutdown", "robot sleeping", "robot error")
 MAX_BEHIND = 3
+# Cards the parent's "info cards" switch doesn't stop: LittleBot's own settings panel (a 5 s hold), where that
+# switch is turned back on.
+ALWAYS_SHOWN = frozenset({"settings"})
 BACK_AFTER = 1.0  # s the screen stays free before a covered card comes back (a video or a game is taking it)
 
 
@@ -337,7 +340,7 @@ class ScreenService(Service):
 
     async def show(self, spec: dict[str, Any], *, source: str = "voice") -> dict[str, Any]:
         """Build ``spec`` and show it, replacing any current card (see the module docstring)."""
-        err = self._blocked()
+        err = self._blocked(str(spec.get("card") or "") if isinstance(spec, dict) else "")
         if err is not None:
             return self._result(False, err)
         from littlebot.screens import base  # noqa: PLC0415
@@ -350,7 +353,7 @@ class ScreenService(Service):
 
     def show_card(self, card: Card, *, source: str = "voice") -> dict[str, Any]:
         """Show an already-built card (it gets this service's host), replacing any current one."""
-        err = self._blocked()
+        err = self._blocked(str(getattr(card, "kind", "") or ""))
         if err is not None:
             return self._result(False, err)
         with self._lock:
@@ -805,9 +808,10 @@ class ScreenService(Service):
             self.last_error = error
         return {"ok": ok, "showing": self.describe(), "error": error}
 
-    def _blocked(self) -> str | None:
-        """Why a card can't go up right now: "disabled", "busy" or None."""
-        if not self.enabled:
+    def _blocked(self, kind: str = "") -> str | None:
+        """Why a card can't go up right now: "disabled", "busy" or None. LittleBot's own settings panel
+        (``ALWAYS_SHOWN``) opens with the info cards switched off: it is where they are switched back on."""
+        if not self.enabled and kind not in ALWAYS_SHOWN:
             return "disabled"
         ctx = self.ctx
         games = getattr(ctx, "games", None)
@@ -1041,6 +1045,9 @@ class ScreenService(Service):
 
     def _on_setting(self, event: Event) -> None:
         if event.get("key") == "screens.enabled" and not event.get("value"):
+            s = self._session
+            if s is not None and not s.ended and s.card.kind in ALWAYS_SHOWN:
+                return  # switched off in the settings panel itself: the panel stays
             self.close("switched off")
 
 

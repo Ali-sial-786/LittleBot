@@ -58,7 +58,7 @@ class FakePower:
 
 
 class _Dash:
-    urls = ["http://192.168.1.42:8765/", "http://littlebot.local:8765/", "http://127.0.0.1:8765/"]
+    urls = ("http://192.168.1.42:8765/", "http://littlebot.local:8765/", "http://127.0.0.1:8765/")
     port = 8765
 
 
@@ -148,18 +148,23 @@ async def test_the_switches(ctx):
     assert ctx.settings.get("display.flipped") is True and card.flipped
     press(card, "flip")
     assert ctx.settings.get("display.flipped") is False
-    # Info cards off asks for a second tap (off closes every card, this one too)
+    press(card, "cards")  # info cards off, and on again: at once
+    assert ctx.settings.get("screens.enabled") is False and not card.cards_on
     press(card, "cards")
-    assert ctx.settings.get("screens.enabled") is True and card.confirm == "cards"
-    assert "Tap again" in card._row_words("cards")[1]
-    press(card, "cards")
-    assert ctx.settings.get("screens.enabled") is False and not card.cards_on and card.confirm is None
-    press(card, "cards")  # on again: at once
-    assert ctx.settings.get("screens.enabled") is True
-    press(card, "cards")
-    for _ in range(int(S.CONFIRM_SECONDS * 10) + 2):
-        card.update(0.1)
-    assert card.confirm is None and ctx.settings.get("screens.enabled") is True  # the second tap never came
+    assert ctx.settings.get("screens.enabled") is True and card.cards_on
+
+
+async def test_the_panel_stays_and_opens_with_the_info_cards_off(ctx):
+    screens = ctx.screens = ScreenService(ctx, clock=FakeClock())
+    r = await screens.show({"card": "settings"}, source="touch")
+    assert r["ok"] and screens.current.kind == "settings"
+    ctx.settings.set("screens.enabled", False)  # switched off in the panel itself: the panel stays
+    assert screens.active and screens.current.kind == "settings"
+    screens.close("tap")
+    assert (await screens.show({"card": "weather", "report": {}}, source="voice"))["error"] == "disabled"
+    r = await screens.show({"card": "settings"}, source="touch")  # ...but the panel opens: it turns them on
+    assert r["ok"] and screens.current.kind == "settings"
+    screens.detach()
 
 
 async def test_go_to_sleep_like_the_voice_tool(ctx):
@@ -226,7 +231,7 @@ def test_changes_run_on_the_robots_loop_not_the_display_thread(ctx):
         assert wait_for(lambda: ctx.settings.get("display.theme") == "dark"
                         and ctx.settings.get("display.brightness") == pytest.approx(0.8))
         assert threads and threading.main_thread().name not in threads
-        assert len([k for k in threads]) <= 3  # (only the newest brightness, at most one before it)
+        assert len(threads) <= 3  # the theme, and the brightness: only its newest value after the one under way
     finally:
         rt.stop()
 
@@ -247,8 +252,7 @@ async def test_games_tab_shows_every_game_and_a_tap_starts_it(ctx):
         x, y = c.rect.center
         ctx.screens.handle_press(x / W, y / H)
         ctx.screens.handle_release(x / W, y / H)
-        assert card.starting == "colours" and "pop" in card.host.sounds if isinstance(card.host, RecordingHost) \
-            else card.starting == "colours"
+        assert card.starting == "colours"
         for _ in range(100):
             await asyncio.sleep(0.01)
             if ctx.games.active:
@@ -422,7 +426,6 @@ async def test_draws_in_both_themes(ctx, tmp_path):
                 corners[(dark, tab)] = img.get_at((W - 4, H - 4))
             card = await make(ctx)
             card.offset = card.max_offset
-            card.confirm = "cards"
             card.sleeping = True
             preview.render(card, tmp_path / f"scrolled_{dark}.png", seconds=0.2)
         light, dark_px = corners[(False, "settings")], corners[(True, "settings")]
@@ -442,7 +445,8 @@ async def test_opened_by_touch_closes_on_close_esc_the_eyes_and_after_a_minute(c
         x, y = S.CLOSE.center
         ctx.screens.handle_press(x / W, y / H)
         ctx.screens.handle_release(x / W, y / H)
-        assert not ctx.screens.active
+        ctx.screens.tick()  # (a card's own close is picked up by the next check)
+        assert not ctx.screens.active and ctx.screens.status()["last"]["reason"] == "closed by the card"
         await ctx.screens.show({"card": "settings"}, source="touch")
         assert ctx.screens.handle_key("escape") and not ctx.screens.active
         await ctx.screens.show({"card": "settings"}, source="touch")

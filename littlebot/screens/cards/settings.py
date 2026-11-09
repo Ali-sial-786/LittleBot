@@ -42,7 +42,17 @@ import pygame
 
 from littlebot.games import art
 from littlebot.games.catalog import GAMES, GameInfo
-from littlebot.screens.base import BODY_PX, PRESENTER_BOX, SMALL_PX, TITLE_PX, Card, CardType, H, W, register
+from littlebot.screens.base import (
+    BODY_PX,
+    PRESENTER_BOX,
+    SMALL_PX,
+    TITLE_PX,
+    Card,
+    CardType,
+    H,
+    W,
+    register,
+)
 from littlebot.screens.cards import _kit
 from littlebot.screens.cards.games import COLOURS as GAME_COLOURS
 from littlebot.screens.cards.games import _starter, game_icon, pick
@@ -57,12 +67,12 @@ TAB_COLOURS = {"settings": art.SKY, "games": art.TANGERINE, "about": art.GRAPE}
 TOUCH_LINGER = 60.0  # s without a touch before it goes (outside a chat), like the games menu
 POLL_SECONDS = 0.5  # how often a change made elsewhere is picked up (in-memory reads)
 NOTICE_SECONDS = 3.5
-CONFIRM_SECONDS = 4.0  # "tap again" for the info cards' switch
 FLASH_SECONDS = 0.18  # a tapped control lights up this long
 FRICTION = 4.5  # fling slow-down, 1/s
 STEP = 0.1  # the volume and the brightness move in steps of 10 %
 BRIGHTNESS_MIN = 0.15  # never darker (the display's floor, littlebot/face/edge_controls.py)
 DEFAULT_MAX_VOLUME = 0.8
+LOW_BATTERY = 20  # percent: the battery shows red below this (littlebot/face/battery_badge.py LOW_PERCENT)
 
 # The settings this card shows (and their defaults when there are no settings: a preview).
 VOLUME, BRIGHTNESS, THEME, FLIPPED, CARDS = ("audio.volume", "display.brightness", "display.theme",
@@ -177,7 +187,7 @@ class RobotLink:
             return None
         if not isinstance(st, dict) or not st.get("fitted") or not isinstance(st.get("percent"), (int, float)):
             return None
-        return {"percent": max(0, min(100, int(round(float(st["percent"]))))), "charging": bool(st.get("charging")),
+        return {"percent": max(0, min(100, round(float(st["percent"])))), "charging": bool(st.get("charging")),
                 "full": bool(st.get("charged")), "plugged_in": bool(st.get("plugged_in"))}
 
     def dashboard(self) -> tuple[list[str], bool]:
@@ -312,8 +322,7 @@ def _short(url: str) -> str:
     """ "http://192.168.1.20:8765/" -> "192.168.1.20:8765" (what to type on a phone)."""
     s = str(url).strip()
     for scheme in ("http://", "https://"):
-        if s.startswith(scheme):
-            s = s[len(scheme):]
+        s = s.removeprefix(scheme)
     return s.rstrip("/")
 
 
@@ -348,8 +357,6 @@ class SettingsCard(Card):
         self.values[VOLUME] = volume
         self.battery = self.link.battery()
         self.urls, self.local_only = self.link.dashboard()
-        self.confirm: str | None = None  # "cards": the next tap on that row switches the info cards off
-        self.confirm_until = 0.0
         self.notice = ""
         self.notice_until = 0.0
         self.flash: tuple[str, float] | None = None  # (control id, when) a tapped control lights up
@@ -472,8 +479,6 @@ class SettingsCard(Card):
                     self.offset = target
         if self.notice and self.t >= self.notice_until:
             self.notice = ""
-        if self.confirm and self.t >= self.confirm_until:
-            self.confirm = None
         self._take_results()
         self._poll -= dt
         if self._poll <= 0:
@@ -688,22 +693,12 @@ class SettingsCard(Card):
         self.host.sound("click")
 
     def toggle_cards(self) -> None:
-        """Info cards during chats. Off asks for a second tap: switching them off closes every card, this one
-        too (the screen service), and the settings can't open again until they are back on (the dashboard)."""
-        if not self.cards_on:
-            self.values[CARDS] = True
-            self.link.set_setting(CARDS, True)
-            self.host.sound("click")
-            return
-        if self.confirm != "cards":
-            self.confirm = "cards"
-            self.confirm_until = self.t + CONFIRM_SECONDS
-            self.host.sound("pop")
-            return
-        self.confirm = None
-        self.values[CARDS] = False
+        """Info cards during chats, on or off. (The screen service keeps this panel up, and lets it open, with
+        them off: ``service.ALWAYS_SHOWN``.)"""
+        on = not self.cards_on
+        self.values[CARDS] = on
         self.host.sound("click")
-        self.link.set_setting(CARDS, False)
+        self.link.set_setting(CARDS, on)
 
     def go_to_sleep(self) -> None:
         if self.sleeping:
@@ -761,7 +756,8 @@ class SettingsCard(Card):
             where = " or ".join(self.urls) or "the dashboard"
             bat = ""
             if self.battery is not None:
-                bat = f" The battery is at {self.battery['percent']}%{', charging' if self.battery['charging'] else ''}."
+                charging = ", charging" if self.battery["charging"] else ""
+                bat = f" The battery is at {self.battery['percent']}%{charging}."
             return f"{line} Showing about: the parent dashboard is at {where}.{bat}"
         return line
 
@@ -791,7 +787,7 @@ class SettingsCard(Card):
         self._draw_scrollbar(surf)
         if self.keyboard:
             c = self.control(self.focus)
-            if c is not None:
+            if c is not None and (not c.scrolls or c.rect.colliderect(VIEW)):
                 r = c.rect.inflate(10, 10)
                 if c.scrolls:
                     surf.set_clip(PANEL.clip(clip))
@@ -859,8 +855,7 @@ class SettingsCard(Card):
             room = right - 14 - tx
             name = art.text(_kit.ellipsize(label, BODY_PX, room), BODY_PX, art.INK)
             if sub:
-                sub_img = art.text(_kit.ellipsize(sub, SMALL_PX, room), SMALL_PX,
-                                   art.inkier(art.STRAWBERRY, 0.2) if self.confirm == rid else _kit.TEXT_SOFT)
+                sub_img = art.text(_kit.ellipsize(sub, SMALL_PX, room), SMALL_PX, _kit.TEXT_SOFT)
                 gap = 6
                 top = r.centery - (name.get_height() + gap + sub_img.get_height()) // 2
                 surf.blit(name, (tx, top))
@@ -888,8 +883,6 @@ class SettingsCard(Card):
         if rid == "flip":
             return "Upside down", "Turn the screen round"
         if rid == "cards":
-            if self.confirm == "cards":
-                return "Info cards", "Tap again to turn them off"
             return "Info cards", "Pictures and facts in chats"
         return "Go to sleep", "Sleepy face, quiet"
 
@@ -980,7 +973,8 @@ class SettingsCard(Card):
             words = f"{b['percent']}%"
             words += ", full" if b["full"] else ", charging" if b["charging"] else (", plugged in" if b["plugged_in"]
                                                                                    else "")
-            y = self._about_row(surf, "battery", art.MINT, x, y, "Battery", value=words, level=b["percent"] / 100)
+            col = art.STRAWBERRY if b["percent"] < LOW_BATTERY and not b["charging"] else art.MINT
+            y = self._about_row(surf, "battery", col, x, y, "Battery", value=words, level=b["percent"] / 100)
             y += 8
         # how to open these settings
         surf.blit(_divider(room), (x, y))
@@ -1118,9 +1112,9 @@ def _bar(w: int, h: int, v: float, cap: float, col: art.Color) -> pygame.Surface
             if v > 0:
                 fw = max(inner.h, inner.w * v)
                 pygame.draw.rect(s, col, pygame.Rect(inner.x, inner.y, fw, inner.h), border_radius=int(rad - 3 * k))
-                pygame.draw.rect(s, art.lighten(col, 0.35), pygame.Rect(inner.x + inner.h * 0.3, inner.y + inner.h * 0.16,
-                                                                         max(0, fw - inner.h * 0.6), inner.h * 0.2),
-                                 border_radius=int(inner.h * 0.1))
+                shine = pygame.Rect(inner.x + inner.h * 0.3, inner.y + inner.h * 0.16, max(0, fw - inner.h * 0.6),
+                                    inner.h * 0.2)
+                pygame.draw.rect(s, art.lighten(col, 0.35), shine, border_radius=int(inner.h * 0.1))
 
         return art.supersampled((w, h), draw)
 
@@ -1129,7 +1123,7 @@ def _bar(w: int, h: int, v: float, cap: float, col: art.Color) -> pygame.Surface
 
 def _battery_icon(size: int, level: float) -> pygame.Surface:
     level = round(art.clamp(level, 0.0, 1.0), 2)
-    col = art.STRAWBERRY if level < 0.2 else art.MINT
+    col = art.STRAWBERRY if level * 100 < LOW_BATTERY else art.MINT
 
     def draw(s: pygame.Surface, k: float) -> None:
         z = size * k
