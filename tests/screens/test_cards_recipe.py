@@ -37,6 +37,10 @@ def test_registered_with_fields_and_actions() -> None:
     ct = base.card_types()["recipe"]
     assert ct.required == ("title", "steps")
     assert ct.fields["steps_at_once"]["enum"] == [1, 2]
+    for name, schema in ct.fields.items():  # every field has its size, so the director trims it
+        assert "maxItems" in schema or "maxLength" in schema or "enum" in schema, name
+    assert ct.fields["steps"]["maxItems"] == 16 and ct.fields["ingredients"]["maxItems"] == 16
+    assert {"oven", "tips"} <= set(ct.fields)
     assert {"next", "prev", "step", "ingredients", "close"} <= set(ct.actions)
     assert recipe.RecipeCard.sticky is True
 
@@ -64,8 +68,8 @@ async def test_ingredients_first_then_steps_then_enjoy() -> None:
     assert host.asked_pictures == [("pancakes", "")]
     assert card.view == "ingredients"
     first = card.describe()
-    assert first.startswith("Ingredients for Banana pancakes (page 1 of 2): 2 ripe bananas, 2 eggs")
-    assert card.command("next", {}) and card.view == "ingredients" and "page 2 of 2" in card.describe()
+    assert first == ("Ingredients for Banana pancakes: 2 ripe bananas, 2 eggs, 1/2 cup rolled oats, 1 tsp baking "
+                     "powder, Pinch of cinnamon, Butter for the pan")  # all six on one page now
     assert card.command("next", {}) and card.describe() == "Step 1 of 7: Mash the bananas in a bowl"
     assert card.status()["step"] == 1 and card.status()["steps"] == 7
     assert card.command("step", {"n": 3}) and card.describe() == ("Step 3 of 7: Stir in the oats, baking powder "
@@ -100,7 +104,8 @@ async def test_two_steps_at_a_time() -> None:
 
 
 async def test_a_pair_too_long_for_one_screen_is_split() -> None:
-    long = "Carefully fold the beaten egg whites into the chocolate mixture in three parts without knocking out air"
+    long = ("Carefully fold the beaten egg whites into the chocolate mixture in three parts without knocking out "
+            "any of the air you whisked in so carefully, then spoon it into six small glasses")
     card = await make({"title": "Mousse", "steps_at_once": 2, "steps": [long, long, "Chill"]})
     groups = [[i for i, _ in s["steps"]] for s in card.screens() if s["view"] == "steps"]
     assert groups[0] == [0]  # too long to pair with the next one
@@ -118,7 +123,7 @@ async def test_steps_are_big_and_never_more_than_max_lines() -> None:
     for s in screens:
         assert s["size"] >= base.STEP_PX
         for _, lines in s["steps"]:
-            assert len(lines) <= base.MAX_LINES
+            assert len(lines) <= base.MAX_LINES - 1  # the "Next:" line under it counts too
             for line in lines:
                 w = sum(recipe._tok_w(t, s["size"]) for t in line) + kit.text_w(" ", s["size"]) * (len(line) - 1)
                 assert w <= width
@@ -236,11 +241,72 @@ async def test_failed_picture_reflows_the_ingredients_and_keeps_the_place() -> N
 
 
 async def test_ingredient_pages_fit() -> None:
-    card = await make(PANCAKES, base.RecordingHost(pictures={"pancakes": Pic(pygame.Surface((300, 200)))}))
-    for scr in card.screens():
-        if scr["view"] == "ingredients":
-            assert sum(len(lines) for _, lines in scr["items"]) <= base.MAX_LINES
-    assert recipe.INGREDIENT_PX >= base.BODY_PX
+    for spec in recipe.SAMPLES:
+        card = await make(spec, base.RecordingHost(pictures={"pancakes": Pic(pygame.Surface((300, 200)))}))
+        for scr in card.screens():
+            if scr["view"] != "ingredients":
+                continue
+            assert scr["size"] >= base.BODY_PX and len(scr["cols"]) <= 2
+            pitch = kit.line_h(scr["size"])
+            for col in scr["cols"]:  # each column: at most MAX_LINES lines, and it fits above the buttons
+                assert sum(len(lines) for _, lines in col) <= base.MAX_LINES
+                assert sum(len(lines) * pitch + recipe.ITEM_GAP for _, lines in col) - recipe.ITEM_GAP <= recipe.CONTENT_H
+            assert [i for i, _ in scr["items"]] == [i for col in scr["cols"] for i, _ in col]
+    assert min(recipe.INGREDIENT_SIZES) >= base.BODY_PX
+
+
+async def test_a_long_shopping_list_fits_one_screen_in_two_columns() -> None:
+    cookies = next(s for s in recipe.SAMPLES if s["title"] == "Chocolate chip cookies")
+    card = await make(cookies)
+    pages = [s for s in card.screens() if s["view"] == "ingredients"]
+    assert len(pages) == 1 and len(pages[0]["items"]) == 12 and [len(c) for c in pages[0]["cols"]] == [6, 6]
+    fourteen = await make({"title": "Big salad", "steps": ["Toss it"], "ingredients": [f"{k} leaves" for k in range(14)]})
+    pages = [s for s in fourteen.screens() if s["view"] == "ingredients"]
+    assert len(pages) == 1 and [len(c) for c in pages[0]["cols"]] == [7, 7] and pages[0]["size"] >= 40
+    many = await make({"title": "Feast", "steps": ["Cook"], "ingredients": [f"{k} things" for k in range(20)]})
+    pages = [s for s in many.screens() if s["view"] == "ingredients"]
+    assert len(pages) == 2 and [len(p["items"]) for p in pages] == [10, 10]  # evenly filled
+    assert many.describe().startswith("Ingredients for Feast (page 1 of 2): 0 things")
+
+
+async def test_the_dish_picture_sits_beside_the_ingredients_only_when_they_fit_one_page() -> None:
+    pic = {"pancakes": Pic(pygame.Surface((330, 220)))}
+    card = await make(PANCAKES, base.RecordingHost(pictures=pic))
+    page = card.current()
+    assert page["view"] == "ingredients" and page["pic"] and len(page["cols"]) == 1  # one wide column beside it
+    long = [f"Ingredient number {i} with a long name" for i in range(9)]
+    crowded = await make({**PANCAKES, "ingredients": long}, base.RecordingHost(pictures=pic))
+    pages = [s for s in crowded.screens() if s["view"] == "ingredients"]
+    assert not any(p["pic"] for p in pages) and all(len(p["cols"]) == 2 for p in pages)
+    crowded.command("step", {"n": 7})
+    crowded.command("next", {})
+    assert crowded.view == "finished"
+    preview.surface(crowded, seconds=1.0)  # the "Enjoy!" screen shows the dish instead
+
+
+async def test_tips_oven_and_the_next_step() -> None:
+    cookies = next(s for s in recipe.SAMPLES if s["title"] == "Chocolate chip cookies")
+    card = await make({**cookies, "tips": [{"step": 5, "tip": "Stop when no flour shows"}, "8: Edges golden",
+                                           "nonsense", {"step": 99, "tip": "too far"}, {"step": 5, "tip": "again"}]})
+    assert card.tips == {4: "Stop when no flour shows", 7: "Edges golden"}
+    assert card.command("step", {"n": 5})
+    cur = card.current()
+    assert cur["tip"] == ("Stop when no flour shows",)
+    assert card.describe() == "Step 5 of 9: Mix the flour into the butter until just combined Tip: Stop when no flour shows"
+    assert card._next_text(4) == "Next: Fold in the chocolate chips and walnuts"
+    assert card._next_text(8) == "Last step: nearly there!"
+    assert card.oven == "180°C" and card._oven_chip().get_width() > 100
+    assert recipe.OVEN_WORDS.search(card.steps[7]) and not recipe.OVEN_WORDS.search(card.steps[4])
+    for n in range(1, 10):  # every step with its tip and "Next:" fits above the buttons, big
+        card.command("step", {"n": n})
+        cur = card.current()
+        lines = cur["steps"][0][1]
+        assert len(lines) + len(cur["tip"]) + 1 <= base.MAX_LINES
+        h = len(lines) * kit.line_h(cur["size"]) + card._extras_h(cur["tip"])
+        assert h <= recipe.CONTENT_H and cur["size"] >= base.STEP_PX
+        preview.surface(card, seconds=0.5)
+    short = await make({"title": "Toast", "steps": ["Toast the bread", "Butter it"]})
+    assert short.current()["size"] == recipe.STEP_SIZES[0] and short.current()["tip"] == ()
 
 
 async def test_presenter_box_stays_free_and_text_sizes_are_readable(monkeypatch: pytest.MonkeyPatch) -> None:

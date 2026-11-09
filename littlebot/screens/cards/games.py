@@ -1,12 +1,12 @@
-"""The games menu: every on-screen game in a scrollable list; tap one to play it.
+"""The games menu: every on-screen game in a scrollable grid of tiles; tap one to play it.
 
 Opened by "show me the games" in a voice chat, or by a long press (about a second) on the idle face
 (littlebot/face/display.py; a plain tap still makes LittleBot giggle). It lists the games of the
-dashboard's Games page (littlebot/games/catalog.py ``GAMES``): a small drawn icon in the candy style,
-the name, a few words on what happens, the ages.
+dashboard's Games page (littlebot/games/catalog.py ``GAMES``), two tiles a row on the 7" screen: a drawn
+icon in the candy style, the name, a few words on what happens, the ages and a play button.
 
-* Drag to scroll (with a little fling), or the arrow keys (up / down move the highlight, Enter or
-  space plays it). The voice can ``scroll`` / ``play`` too.
+* Drag to scroll (with a little fling), or the arrow keys (left / right / up / down move the highlight
+  through the grid, Enter or space plays it). The voice can ``scroll`` / ``play`` too.
 * A tap on a game starts it through ``ctx.games.start(id, source="screen")``, like the dashboard's Play
   button (the same sharing rules: a voice chat keeps talking while the game takes the screen). The game
   then takes the screen and this card goes. If the game can't start, the card says why for a moment.
@@ -30,6 +30,7 @@ from littlebot.games import art
 from littlebot.games.catalog import GAMES, GameInfo
 from littlebot.screens.base import (
     BODY_PX,
+    PRESENTER_BOX,
     SMALL_PX,
     TITLE_PX,
     Card,
@@ -42,12 +43,16 @@ from littlebot.screens.base import (
 log = logging.getLogger("littlebot.screens")
 
 KIND = "games"
-LIST_TOP = 106  # the list scrolls under the header (title + presenter)
-ROW_PITCH = 140
-ROW_H = 126
-ROW_X = 22
-ICON = 96
-NAME_PX = 38
+LIST_TOP = PRESENTER_BOX[1] + PRESENTER_BOX[3] + 14  # the grid scrolls under the header (title + presenter)
+COLUMNS = 2
+GRID_X = 16  # the grid's left edge; the scrollbar sits right of it
+COL_GAP = 20
+TILE_W = (W - 2 * GRID_X - 20 - COL_GAP) // COLUMNS  # 476 on the 1024x600 screen (20: the scrollbar's lane)
+TILE_H = 152  # a big touch target (about 23 mm on the 7" glass)
+ROW_PITCH = TILE_H + 18
+ICON = 116
+NAME_PX = 40
+PLAY_R = 28
 FRICTION = 4.5  # fling slow-down, 1/s
 NOTICE_SECONDS = 3.5
 TOUCH_LINGER = 60.0  # s without a touch before a menu opened outside a chat goes
@@ -108,17 +113,33 @@ class GamesMenuCard(Card):
 
     # ------------------------------------------------------------ layout
     @property
-    def max_offset(self) -> float:
-        return max(0.0, LIST_TOP + len(self.games) * ROW_PITCH + 10 - H)
+    def rows(self) -> int:
+        return -(-len(self.games) // COLUMNS)
 
-    def row_rect(self, i: int) -> pygame.Rect:
-        return pygame.Rect(ROW_X, int(LIST_TOP + i * ROW_PITCH - self.offset), W - 2 * ROW_X - 14, ROW_H)
+    @property
+    def max_offset(self) -> float:
+        return max(0.0, LIST_TOP + self.rows * ROW_PITCH + 10 - H)
+
+    @property
+    def grid_top(self) -> int:
+        """The first row's top: under the header, or centred below it when every game fits without scrolling."""
+        spare = H - 10 - LIST_TOP - (self.rows * ROW_PITCH - (ROW_PITCH - TILE_H))
+        return LIST_TOP + (spare // 2 if spare > 0 else 0)
+
+    def tile_rect(self, i: int) -> pygame.Rect:
+        """Where game ``i``'s tile is now (in reading order: left to right, then down; scrolled)."""
+        row, col = divmod(i, COLUMNS)
+        return pygame.Rect(GRID_X + col * (TILE_W + COL_GAP), int(self.grid_top + row * ROW_PITCH - self.offset),
+                           TILE_W, TILE_H)
+
+    row_rect = tile_rect  # (the name from when it was a list)
 
     def row_at(self, x: float, y: float) -> int | None:
+        """The game whose tile is under (x, y), if any (never under the header)."""
         if y < LIST_TOP:
             return None
         for i in range(len(self.games)):
-            if self.row_rect(i).collidepoint(x, y):
+            if self.tile_rect(i).collidepoint(x, y):
                 return i
         return None
 
@@ -167,9 +188,17 @@ class GamesMenuCard(Card):
         return True
 
     def key(self, name: str) -> bool:
-        if name in ("down", "up"):
-            n = len(self.games)
-            self.selected = (self.selected + (1 if name == "down" else -1)) % max(1, n)
+        n = len(self.games)
+        if name in ("left", "right") and n:
+            self.selected = (self.selected + (1 if name == "right" else -1)) % n
+            self.show_row(self.selected)
+            return True
+        if name in ("down", "up") and n:
+            row, col = divmod(self.selected, COLUMNS)
+            rows = [r for r in range(self.rows) if r * COLUMNS + col < n]  # the rows that have this column
+            k = rows.index(row) if row in rows else 0
+            row = rows[(k + (1 if name == "down" else -1)) % len(rows)]
+            self.selected = row * COLUMNS + col
             self.show_row(self.selected)
             return True
         if name in ("page down", "page up"):
@@ -181,8 +210,8 @@ class GamesMenuCard(Card):
         return False
 
     def show_row(self, i: int) -> None:
-        """Scroll so row ``i`` is fully on screen."""
-        r = self.row_rect(i)
+        """Scroll so game ``i``'s tile is fully on screen."""
+        r = self.tile_rect(i)
         if r.top < LIST_TOP:
             self.offset -= LIST_TOP - r.top + 6
         elif r.bottom > H - 6:
@@ -244,56 +273,88 @@ class GamesMenuCard(Card):
         clip = surf.get_clip()
         surf.set_clip(pygame.Rect(0, LIST_TOP - 8, W, H - LIST_TOP + 8).clip(clip))
         for i, g in enumerate(self.games):
-            r = self.row_rect(i)
+            r = self.tile_rect(i)
             if r.bottom < LIST_TOP - 8 or r.top > H:
                 continue
-            self._draw_row(surf, r, g, i)
+            self._draw_tile(surf, r, g, i)
         surf.set_clip(clip)
-        # header over the list: soft fade, title, hint
+        # header over the grid: soft fade, title, hint (right of the presenter's eyes)
         surf.blit(_header_fade(), (0, 0))
-        art.blit_text(surf, self.title, TITLE_PX, ((170 + W) / 2, 40))
-        hint = "Tap a game to play" if len(self.games) * ROW_PITCH <= H - LIST_TOP else "Drag to see more, tap to play"
-        art.blit_text(surf, hint, SMALL_PX, ((170 + W) / 2, 80), art.INK_SOFT)
+        left = PRESENTER_BOX[0] + PRESENTER_BOX[2] + 20
+        cx = (left + W - 16) / 2
+        art.blit_text(surf, self.title, TITLE_PX, (cx, PRESENTER_BOX[1] + 34))
+        hint = "Tap a game to play" if self.max_offset <= 0 else "Drag to see more, tap a game to play"
+        art.blit_text(surf, hint, SMALL_PX, (cx, PRESENTER_BOX[1] + 82), art.INK_SOFT)
         self._draw_scrollbar(surf)
         if self.notice:
-            pill = art.pill(self.notice, BODY_PX, art.WHITE, art.STRAWBERRY)
-            art.blit_center(surf, pill, (W / 2, H - 44))
+            pill = art.pill(self.notice, BODY_PX, art.WHITE, art.inkier(art.STRAWBERRY, 0.15), pad=(22, 10))
+            art.blit_center(surf, pill, (W / 2, H - 50))
 
-    def _draw_row(self, surf: Any, r: pygame.Rect, g: GameInfo, i: int) -> None:
+    def _draw_tile(self, surf: Any, r: pygame.Rect, g: GameInfo, i: int) -> None:
         col = COLOURS.get(g.id, art.CANDY[i % len(art.CANDY)])
         selected = i == self.selected
         busy = self.starting == g.id
         border = art.inkier(col, 0.25) if selected or busy else None
-        surf.blit(art.rounded_rect(r.w, r.h, 30, art.WHITE, shadow=5, border=border, border_w=4), r.topleft)
-        ic = (r.x + 18 + ICON // 2, r.centery)
+        surf.blit(art.rounded_rect(r.w, r.h, 32, art.WHITE, shadow=5, border=border, border_w=4), r.topleft)
+        ic = (r.x + 16 + ICON // 2, r.centery)
         art.blit_center(surf, art.circle(ICON / 2 + 2, art.lighten(col, 0.55)), ic)
-        art.blit_center(surf, game_icon(g.id, ICON - 18, col), ic)
-        tx = r.x + 36 + ICON
-        surf.blit(art.text(g.name, NAME_PX), (tx, r.y + 18))
-        surf.blit(art.text(blurb(g), BODY_PX, art.INK_SOFT), (tx, r.y + 70))
-        age = art.pill(g.ages, SMALL_PX, art.INK, art.lighten(col, 0.6), pad=(12, 5))
-        surf.blit(age, (r.right - age.get_width() - 16, r.y + 14))
-        play = art.circle(24, col)
-        art.blit_center(surf, play, (r.right - 44, r.y + 88))
-        x0, y0 = r.right - 44, r.y + 88
-        tri = [(x0 - 7, y0 - 11), (x0 - 7, y0 + 11), (x0 + 12, y0)] if not busy else []
-        if tri:
-            pygame.draw.polygon(surf, art.WHITE, tri)
-        else:  # starting: three little dots
+        art.blit_center(surf, game_icon(g.id, ICON - 22, col), ic)
+        tx = r.x + 32 + ICON
+        room = r.right - 18 - tx
+        surf.blit(_line(g.name, NAME_PX, art.INK, room), (tx, r.y + 16))
+        surf.blit(_line(blurb(g), BODY_PX, art.INK_SOFT, room), (tx, r.y + 58))
+        age = art.pill(g.ages, SMALL_PX, art.INK, art.lighten(col, 0.6), pad=(14, 5))
+        surf.blit(age, age.get_rect(midleft=(tx, r.bottom - 36)))
+        x0, y0 = r.right - 18 - PLAY_R, r.bottom - 36
+        art.blit_center(surf, play_button(col, busy), (x0, y0 + 1))
+        if busy:  # starting: three little dots
             for k in range(3):
                 on = int(self.t * 4) % 3 == k
-                art.blit_center(surf, art.circle(4 if on else 3, art.WHITE), (x0 - 10 + k * 10, y0))
+                art.blit_center(surf, art.circle(5 if on else 4, _on(col)), (x0 - 12 + k * 12, y0))
 
     def _draw_scrollbar(self, surf: Any) -> None:
-        total = LIST_TOP + len(self.games) * ROW_PITCH + 10
+        total = LIST_TOP + self.rows * ROW_PITCH + 10
         if total <= H:
             return
         track_h = H - LIST_TOP - 16
         thumb_h = max(40, int(track_h * (H - LIST_TOP) / (total - LIST_TOP)))
         p = art.clamp(self.offset / max(1.0, self.max_offset), 0.0, 1.0)
         y = LIST_TOP + 8 + int((track_h - thumb_h) * p)
-        surf.blit(art.rounded_rect(8, track_h, 4, art.mix(art.BG_BOTTOM, art.INK_SOFT, 0.15)), (W - 16, LIST_TOP + 8))
-        surf.blit(art.rounded_rect(8, thumb_h, 4, art.INK_SOFT), (W - 16, y))
+        surf.blit(art.rounded_rect(10, track_h, 5, art.mix(art.BG_BOTTOM, art.INK_SOFT, 0.15)), (W - 22, LIST_TOP + 8))
+        surf.blit(art.rounded_rect(10, thumb_h, 5, art.INK_SOFT), (W - 22, y))
+
+
+def _on(col: art.Color) -> art.Color:
+    """White on a candy colour, plum ink on a light one (lemon): readable either way."""
+    return art.INK if 0.2126 * col[0] + 0.7152 * col[1] + 0.0722 * col[2] > 190 else art.WHITE
+
+
+def play_button(col: art.Color, busy: bool = False) -> pygame.Surface:
+    """A round play button in ``col`` with a soft rim; the triangle left out while the game is starting."""
+    r = PLAY_R
+
+    def make() -> pygame.Surface:
+        def draw(s: pygame.Surface, k: float) -> None:
+            c = (r + 2) * k
+            pygame.draw.circle(s, art.inkier(col, 0.3), (c, c + 2 * k), r * k)
+            pygame.draw.circle(s, col, (c, c), r * k)
+            if not busy:
+                pts = [(c - 8 * k, c - 13 * k), (c - 8 * k, c + 13 * k), (c + 14 * k, c)]
+                pygame.draw.polygon(s, _on(col), pts)
+
+        return art.supersampled((2 * r + 4, 2 * r + 6), draw)
+
+    return art.cached(("games-menu-play", tuple(col), busy), make)
+
+
+def _line(text: str, size: int, color: art.Color, width: int) -> pygame.Surface:
+    """``text`` on one line at ``size``, cut short with "..." when it is wider than ``width`` (cached)."""
+    f = art.font(size)
+    if f.size(text)[0] > width:
+        while text and f.size(text + "...")[0] > width:
+            text = text[:-1]
+        text = text.rstrip() + "..."
+    return art.text(text, size, color)
 
 
 def _header_fade() -> pygame.Surface:
@@ -495,4 +556,4 @@ SAMPLES: list[dict[str, Any]] = [
     {"card": KIND, "ages": "big"},
 ]
 
-__all__ = ["SAMPLES", "GamesMenuCard", "blurb", "game_icon", "pick"]
+__all__ = ["SAMPLES", "GamesMenuCard", "blurb", "game_icon", "pick", "play_button"]

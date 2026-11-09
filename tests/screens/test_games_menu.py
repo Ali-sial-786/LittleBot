@@ -85,14 +85,36 @@ def test_drag_scrolls_flings_and_springs_back():
     assert card.offset == 0.0
 
 
-def test_arrow_keys_move_the_highlight_and_scroll_to_it():
+def test_arrow_keys_move_the_highlight_through_the_grid_and_scroll_to_it():
     card, started = menu()
-    for _ in range(7):
-        assert card.key("down")
-    assert card.selected == 7 and card.row_rect(7).bottom <= H and card.offset > 0
-    assert card.key("up") and card.selected == 6
-    assert card.key("return") and started == ["reaction"]
+    for _ in range(3):
+        assert card.key("down")  # down a row: the same column
+    assert card.selected == 6 and card.tile_rect(6).bottom <= H and card.offset > 0
+    assert card.key("right") and card.selected == 7
+    assert card.key("down") and card.selected == 1 and card.offset == 0  # round to the top of the column
+    assert card.key("left") and card.selected == 0
+    assert card.key("left") and card.selected == 7  # back round to the last game
+    assert card.key("up") and card.selected == 5
+    assert card.key("return") and started == ["tictactoe"]
     assert card.key("q") is False
+
+
+def test_two_big_tiles_a_row_filling_the_width():
+    card, _ = menu()
+    a, b, c = card.tile_rect(0), card.tile_rect(1), card.tile_rect(2)
+    assert a.y == b.y and b.x > a.right and c.x == a.x and c.y > a.bottom  # reading order: left, right, down
+    assert a.h >= 90 and a.w >= 400 and b.right <= W - 20  # big touch targets, clear of the scrollbar
+    assert card.rows == 4 and card.max_offset > 0 and card.grid_top == G.LIST_TOP
+    few = G.GamesMenuCard({"card": "games"}, RecordingHost(), games=GAMES[:4])
+    assert few.max_offset == 0 and few.grid_top > G.LIST_TOP  # no scrolling: centred under the header
+    assert few.tile_rect(3).bottom <= H
+
+
+def test_play_buttons_are_readable_on_every_colour():
+    from littlebot.games import art
+
+    assert G._on(art.LEMON) == art.INK and G._on(art.GRAPE) == art.WHITE
+    assert G.play_button(art.SKY).get_size() == G.play_button(art.SKY, busy=True).get_size()
 
 
 def test_tap_a_game_to_play_it():
