@@ -958,52 +958,58 @@ class SettingsCard(Card):
     # the about tab
     def _draw_about(self, surf: Any) -> None:
         x = VIEW.x + 22
-        y = VIEW.y + 18
+        y = VIEW.y + 14
         room = VIEW.right - 22 - x
-        # the parent dashboard
-        y = self._about_heading(surf, "dashboard", "The parent dashboard", art.SKY, x, y)
+        # the parent dashboard: where to open it
         where = ("Only on LittleBot itself: LAN access is off" if self.local_only else
                  "On a phone or computer on the same Wi-Fi")
-        note = art.text(_kit.ellipsize(where, SMALL_PX, room - 70), SMALL_PX, _kit.TEXT_SOFT)
-        surf.blit(note, (x + 74, y - 22))
-        y += note.get_height() - 4
+        y = self._about_row(surf, "dashboard", art.SKY, x, y, "The parent dashboard", sub=where)
         for u in self.urls:
-            chip = art.pill(_kit.ellipsize(u, BODY_PX, room - 90), BODY_PX, art.INK, art.mix(art.WHITE, art.SKY, 0.2),
+            chip = art.pill(_kit.ellipsize(u, BODY_PX, room - 110), BODY_PX, art.INK, art.mix(art.WHITE, art.SKY, 0.2),
                             pad=(18, 8), border=art.mix(art.SKY, art.WHITE, 0.3))
-            surf.blit(chip, (x + 66, y))
-            y += chip.get_height() + 8
-        y += 14
-        # the battery
+            surf.blit(chip, (x + 70, y))
+            y += chip.get_height() + 10
+        y += 10
+        # the battery, when one is fitted
         if self.battery is not None:
             b = self.battery
             words = f"{b['percent']}%"
             words += ", full" if b["full"] else ", charging" if b["charging"] else (", plugged in" if b["plugged_in"]
                                                                                    else "")
-            y = self._about_heading(surf, "battery", "Battery", art.MINT, x, y, value=words,
-                                    level=b["percent"] / 100)
-            y += 14
+            y = self._about_row(surf, "battery", art.MINT, x, y, "Battery", value=words, level=b["percent"] / 100)
+            y += 8
         # how to open these settings
-        surf.blit(_divider(VIEW.right - 22 - x), (x, y))
-        y += 18
-        _badge(surf, "hold", art.GRAPE, (x + 32, y + 30))
-        lines = _kit.wrap("Hold a finger still for 5 seconds anywhere to open these settings", BODY_PX, room - 74)
-        block = _kit.text_block(list(lines), BODY_PX, art.INK)
-        surf.blit(block, (x + 74, y + max(0, 30 - block.get_height() // 2) if len(lines) == 1 else y + 4))
+        surf.blit(_divider(room), (x, y))
+        y += 14
+        lines = list(_kit.wrap("Hold a finger still for 5 seconds anywhere to open these settings", BODY_PX,
+                               room - 74))
+        block = _kit.text_block(lines, BODY_PX, art.INK)
+        h = max(64, block.get_height())
+        _badge(surf, "hold", art.GRAPE, (x + 32, y + h // 2))
+        surf.blit(block, (x + 74, y + (h - block.get_height()) // 2))
 
-    def _about_heading(self, surf: Any, icon: str, label: str, col: art.Color, x: int, y: int, *,
-                       value: str = "", level: float | None = None) -> int:
+    def _about_row(self, surf: Any, icon: str, col: art.Color, x: int, y: int, label: str, *, sub: str = "",
+                   value: str = "", level: float | None = None) -> int:
+        """A heading with its badge (and a small line under it, or a value beside it); the y under it."""
+        h = 68
+        c = (x + 32, y + h // 2)
         if level is not None:
-            art.blit_center(surf, art.circle(ICON_PX // 2 + 6, art.surface(art.mix(art.WHITE, col, 0.28))),
-                            (x + 32, y + 30))
-            art.blit_center(surf, _battery_icon(ICON_PX - 6, level), (x + 32, y + 30))
+            art.blit_center(surf, art.circle(ICON_PX // 2 + 6, art.surface(art.mix(art.WHITE, col, 0.28))), c)
+            art.blit_center(surf, _battery_icon(ICON_PX - 6, level), c)
         else:
-            _badge(surf, icon, col, (x + 32, y + 30))
+            _badge(surf, icon, col, c)
         img = art.text(label, BODY_PX, art.INK)
-        surf.blit(img, img.get_rect(midleft=(x + 74, y + 30)))
+        if sub:
+            note = art.text(_kit.ellipsize(sub, SMALL_PX, VIEW.right - 22 - (x + 74)), SMALL_PX, _kit.TEXT_SOFT)
+            top = c[1] - (img.get_height() + 6 + note.get_height()) // 2
+            surf.blit(img, (x + 74, top))
+            surf.blit(note, (x + 75, top + img.get_height() + 6))
+        else:
+            surf.blit(img, img.get_rect(midleft=(x + 74, c[1] + 1)))
         if value:
             v = art.text(value, BODY_PX, art.inkier(col, 0.45))
-            surf.blit(v, v.get_rect(midleft=(x + 74 + img.get_width() + 18, y + 30)))
-        return y + 66
+            surf.blit(v, v.get_rect(midleft=(x + 74 + img.get_width() + 18, c[1] + 1)))
+        return y + h + 6
 
     def _draw_scrollbar(self, surf: Any) -> None:
         total = self.content_height()
