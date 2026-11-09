@@ -1,6 +1,8 @@
 """The music card (littlebot/screens/cards/music.py): registered and offered, built from the Spotify skill or a
-spec, drawn (playing, paused, with and without a cover), a progress bar that follows the clock, taps and voice
-commands that pause / carry on through the skill (and flip back when that fails), and the face never covered."""
+spec, drawn (playing, paused, with and without a cover), the 1024x600 layout (a big cover, the song at TITLE_PX or
+bigger, a big button, a progress bar that costs no new sprites as it moves), a progress bar that follows the clock,
+taps and voice commands that pause / carry on through the skill (and flip back when that fails), and the face never
+covered."""
 
 from __future__ import annotations
 
@@ -10,8 +12,10 @@ from typing import Any
 import pygame
 import pytest
 
+from littlebot.games import art
 from littlebot.screens import base, preview
-from littlebot.screens.base import PRESENTER_BOX, RecordingHost
+from littlebot.screens.base import PRESENTER_BOX, TITLE_PX, RecordingHost
+from littlebot.screens.cards import candy
 from littlebot.screens.cards import music as music_card
 from littlebot.screens.cards.music import MusicCard, mmss
 from littlebot.skills.hub import SkillHub
@@ -89,6 +93,38 @@ def test_the_cover_is_fetched_and_drawn_and_the_face_stays_free():
     assert not cover.colliderect(pygame.Rect(*PRESENTER_BOX))
     no_https = MusicCard({**SPEC, "image_url": "http://example.com/x.jpg"}, RecordingHost())
     assert no_https.slot is None
+
+
+def test_the_layout_uses_the_7_inch_screen():
+    card = MusicCard(SPEC, RecordingHost())
+    cover, col, bar = card.art_rect(), card.column(), card.bar_rect()
+    face = pygame.Rect(*PRESENTER_BOX)
+    assert cover.w == cover.h >= 380 and candy.PANEL.contains(cover) and candy.PANEL.contains(col)
+    assert not cover.colliderect(col) and not col.colliderect(face) and col.w >= 440
+    assert col.contains(bar) and bar.w == col.w and bar.h >= 16
+    button = pygame.Rect(0, 0, 2 * music_card.BUTTON_R, 2 * music_card.BUTTON_R)
+    button.center = (bar.centerx, bar.bottom + music_card.TIMES_GAP + music_card.BUTTON_R)
+    assert button.w >= 90 and col.contains(button)  # a finger's tap, inside the panel
+    size, lines = card._song_lines(col.w)  # noqa: SLF001
+    assert size >= TITLE_PX and 1 <= len(lines) <= 2
+    long = MusicCard({**SPEC, "title": "word " * 40}, RecordingHost())
+    size, lines = long._song_lines(col.w)  # noqa: SLF001
+    assert size == TITLE_PX and len(lines) == 2 and lines[1].endswith("...")
+
+
+def test_the_progress_bar_is_cheap():
+    """The live bar moves every frame: it blits the same cached sprites (no new one for each width)."""
+    art.clear_caches()  # a full cache would hide new sprites (it drops the oldest)
+    clock = Clock()
+    card = MusicCard(SPEC, RecordingHost(clock=clock))
+    surf = pygame.Surface((base.W, base.H))
+    card.update(1.0)
+    card.draw(surf)
+    before = len(art._SPRITES)  # noqa: SLF001
+    for _ in range(40):
+        clock.t += 7.0  # the fill grows by several pixels each time
+        card.draw(surf)
+    assert len(art._SPRITES) - before <= 2  # noqa: SLF001
 
 
 def test_the_progress_follows_the_clock():

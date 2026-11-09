@@ -1,10 +1,11 @@
 """The music card: what Spotify plays on LittleBot now (littlebot/skills/spotify.py).
 
-The album cover (big, on the left), the song, the artist and the album, and a progress bar that follows the clock
-(the times under it), with a play / pause button; while it plays, small equaliser bars dance beside the title, and
-paused, the cover dims and says so. A tap anywhere (except on LittleBot's eyes, which close the card as on every
-card) pauses or carries on; the voice can say "pause", "next" ... (``command``). LittleBot's own eyes stay in the
-presenter's box at the top left: music never covers the face.
+The album cover (as tall as the panel, on the left), the song in big letters (up to two lines), the artist and the
+album, and along the bottom a progress bar that follows the clock with the times under it and a big play / pause
+button between them; while it plays, equaliser bars dance beside the title, and paused, the cover dims and says so.
+A tap anywhere (except on LittleBot's eyes, which close the card as on every card) pauses or carries on; the voice can
+say "pause", "next" ... (``command``). LittleBot's own eyes stay in the presenter's box at the top left: music never
+covers the face. The progress bar is a cached track and fill: a frame only moves the fill's edge and the knob.
 
 Shown by the Spotify skill when the music starts (it lingers like any card once the chat is over), by
 ``whats_playing``, or by the brain for "what's playing?". The card reads the skill's last-known state every second
@@ -22,7 +23,7 @@ from typing import Any, Awaitable, Callable
 import pygame
 
 from littlebot.games import art
-from littlebot.screens.base import BODY_PX, SMALL_PX, Card, CardHost, CardType, register
+from littlebot.screens.base import BODY_PX, SMALL_PX, TITLE_PX, Card, CardHost, CardType, register
 from littlebot.screens.cards import _kit as kit
 from littlebot.screens.cards import candy
 
@@ -32,9 +33,14 @@ SYNC_S = 1.0  # read the skill's state this often (no network)
 REFRESH_S = 20.0  # ask Spotify this often
 ENDED_REFRESH_S = 3.0  # ... and this long after a song should have ended
 BUILD_WAIT_S = 2.5
-TITLE_SIZES = (44, 40, 36, 32)
-ART = 296  # the cover's box (px)
-BAR_H = 14
+SONG_SIZES = (64, 58, TITLE_PX)  # the song: as big as fits in two lines (never under TITLE_PX; then "...")
+ARTIST_PX = 44
+ALBUM_PX = BODY_PX
+COLUMN_GAP = 34  # between the cover and the words
+BAR_H = 18  # the progress bar
+KNOB_R = 15
+BUTTON_R = 48  # the play / pause button (96 px across)
+TIMES_GAP = 12  # under the bar
 ACCENT: art.Color = art.MINT
 _ACTIONS = {"pause": "pause", "resume": "resume", "play": "resume", "toggle": "toggle", "next": "next",
             "skip": "next", "previous": "previous", "back": "previous"}
@@ -218,77 +224,107 @@ class MusicCard(Card):
                 "progress_ms": self.progress(), "duration_ms": self.duration_ms}
 
     # ------------------------------------------------------------ drawing
+    @staticmethod
+    def _inner() -> pygame.Rect:
+        return candy.PANEL.inflate(-2 * kit.PAD, -2 * kit.PAD)
+
     def art_rect(self) -> pygame.Rect:
-        return pygame.Rect(candy.PANEL.x + 24, candy.PANEL.y + (candy.PANEL.h - ART) // 2, ART, ART)
+        """The cover: a square as tall as the panel's inside, on the left."""
+        r = self._inner()
+        return pygame.Rect(r.x, r.y, r.h, r.h)
+
+    def column(self) -> pygame.Rect:
+        """Right of the cover: the words, then the bar, the times and the button along the bottom."""
+        r, cover = self._inner(), self.art_rect()
+        x = cover.right + COLUMN_GAP
+        return pygame.Rect(x, r.y, r.right - x, r.h)
+
+    def bar_rect(self) -> pygame.Rect:
+        col = self.column()
+        return pygame.Rect(col.x, col.bottom - 2 * BUTTON_R - TIMES_GAP - BAR_H, col.w, BAR_H)
 
     def draw(self, surf: pygame.Surface) -> None:
         kit.background(surf, seed=57)
         dy = candy.slide_in(self.t)
+        hy = int(candy.HEADER_Y + dy * 0.5)
         candy.header(surf, self.title, dy=dy * 0.5)
         if self.playing:
-            self._eq(surf, (candy.HEADER_X + kit.text_w(self.title, 44) + 34, int(candy.HEADER_Y + dy * 0.5)))
+            self._eq(surf, (candy.HEADER_X + kit.text_w(self.title, TITLE_PX) + 26, hy))
         label = candy.chip("Spotify", SMALL_PX, art.WHITE, art.inkier(ACCENT, 0.35))
-        surf.blit(label, label.get_rect(midright=(candy.PANEL.right - 4, int(candy.HEADER_Y + dy * 0.5))))
-        box = candy.panel(surf, dy=dy)
-        cover = self.art_rect().move(0, int(dy))
-        self._cover(surf, cover)
-        right = pygame.Rect(cover.right + 28, cover.y + 2, box.right - 26 - (cover.right + 28), cover.h)
-        self._words(surf, right)
-        self._bar(surf, right)
+        surf.blit(label, label.get_rect(midright=(candy.PANEL.right - 6, hy)))
+        candy.panel(surf, dy=dy)
+        off = int(dy)
+        self._cover(surf, self.art_rect().move(0, off))
+        bar = self.bar_rect().move(0, off)
+        col = self.column().move(0, off)
+        self._words(surf, pygame.Rect(col.x, col.y, col.w, bar.y - 20 - col.y))
+        self._bar(surf, bar)
 
     def _cover(self, surf: pygame.Surface, r: pygame.Rect) -> None:
         if self.slot is not None and self.slot.wanted:
             self.slot.draw(surf, r, self.t, credit=False)
         if self.slot is None or not self.slot.shown:
             if self.slot is None or not self.slot.loading:
-                surf.blit(art.rounded_rect(r.w, r.h, 26, art.mix(ACCENT, art.WHITE, 0.55), shadow=4,
+                surf.blit(art.rounded_rect(r.w, r.h, 30, art.mix(ACCENT, art.WHITE, 0.55), shadow=5,
                                            border=art.inkier(ACCENT, 0.2), border_w=3), r.topleft)
-                art.blit_center(surf, _note(110, art.inkier(ACCENT, 0.35)), r.center)
+                art.blit_center(surf, _note(r.w * 9 // 20, art.inkier(ACCENT, 0.35)), r.center)
         if not self.playing:
-            surf.blit(art.rounded_rect(r.w, r.h, 26, (60, 30, 55, 120)), r.topleft)
-            chip = candy.chip("Paused", BODY_PX, art.WHITE, art.inkier(art.GRAPE, 0.25))
+            surf.blit(art.rounded_rect(r.w, r.h, 30, (60, 30, 55, 120)), r.topleft)
+            chip = candy.chip("Paused", ARTIST_PX, art.WHITE, art.inkier(art.GRAPE, 0.25))
             surf.blit(chip, chip.get_rect(center=r.center))
 
-    def _words(self, surf: pygame.Surface, r: pygame.Rect) -> None:
-        y = r.y
-        size, lines = kit.fit(self.song or "Music", TITLE_SIZES, r.w, max_lines=2)
-        lines = list(lines)[:2]
-        if len(kit.wrap(self.song or "Music", size, r.w)) > 2:
-            lines[-1] = kit.ellipsize(lines[-1] + " ...", size, r.w)
-        block = kit.text_block(lines, size, kit.TEXT)
-        surf.blit(block, (r.x, y))
-        y += block.get_height() + 10
-        if self.artist:
-            surf.blit(art.text(kit.ellipsize(self.artist, BODY_PX, r.w), BODY_PX, kit.TEXT_SOFT), (r.x, y))
-            y += kit.line_h(BODY_PX)
-        if self.album and self.album != self.song:
-            surf.blit(art.text(kit.ellipsize(self.album, SMALL_PX, r.w), SMALL_PX, kit.TEXT_SOFT), (r.x, y))
+    def _song_lines(self, width: int) -> tuple[int, list[str]]:
+        song = self.song or "Music"
+        size, lines = kit.fit(song, SONG_SIZES, width, max_lines=2)
+        lines = list(lines)
+        if len(lines) > 2:
+            lines = [lines[0], kit.ellipsize(" ".join(lines[1:]), size, width)]
+        return size, lines
 
-    def _bar(self, surf: pygame.Surface, r: pygame.Rect) -> None:
-        btn_r = 30
-        bar = pygame.Rect(r.x, r.bottom - 70, r.w - 2 * btn_r - 18, BAR_H)
+    def _words(self, surf: pygame.Surface, r: pygame.Rect) -> None:
+        """The song, the artist and the album, as a block in the middle of the room above the bar."""
+        size, lines = self._song_lines(r.w)
+        imgs = [kit.text_block(lines, size, kit.TEXT, pitch=art.font(size).get_linesize() + 2)]
+        gaps = [16]
+        if self.artist:
+            imgs.append(art.text(kit.ellipsize(self.artist, ARTIST_PX, r.w), ARTIST_PX, kit.TEXT_SOFT))
+            gaps.append(8)
+        if self.album and self.album != self.song:
+            imgs.append(art.text(kit.ellipsize(self.album, ALBUM_PX, r.w), ALBUM_PX, kit.TEXT_SOFT))
+            gaps.append(0)
+        total = sum(i.get_height() for i in imgs) + sum(gaps[:len(imgs) - 1])
+        y = r.y + max(0, (r.h - total) // 2)
+        for img, gap in zip(imgs, gaps):
+            surf.blit(img, (r.x, y))
+            y += img.get_height() + gap
+
+    def _bar(self, surf: pygame.Surface, bar: pygame.Rect) -> None:
+        """The progress bar (a cached track and fill; only the fill's width and the knob move), the times under
+        its ends and the play / pause button between them."""
         surf.blit(art.rounded_rect(bar.w, bar.h, bar.h // 2, art.mix(art.INK_SOFT, art.WHITE, 0.62)), bar.topleft)
         k = art.clamp(self.fraction(), 0.0, 1.0)
-        if self.duration_ms and k > 0:
-            w = max(bar.h, int(bar.w * k))
-            surf.blit(art.rounded_rect(w, bar.h, bar.h // 2, ACCENT), bar.topleft)
-            art.blit_center(surf, art.circle(11, art.WHITE), (bar.x + w - bar.h // 2, bar.centery))
-            art.blit_center(surf, art.circle(7, art.inkier(ACCENT, 0.2)), (bar.x + w - bar.h // 2, bar.centery))
         if self.duration_ms:
-            t0 = art.text(mmss(self.progress()), SMALL_PX, kit.TEXT_SOFT)
-            t1 = art.text(mmss(self.duration_ms), SMALL_PX, kit.TEXT_SOFT)
-            surf.blit(t0, (bar.x, bar.bottom + 10))
-            surf.blit(t1, t1.get_rect(topright=(bar.right, bar.bottom + 10)))
-        center = (r.right - btn_r, bar.centery)
+            w = int(bar.w * k)
+            if w >= bar.h // 2:
+                fill = art.rounded_rect(bar.w, bar.h, bar.h // 2, ACCENT)
+                surf.blit(fill, bar.topleft, pygame.Rect(0, 0, w, bar.h))
+            x = bar.x + max(KNOB_R - 4, min(bar.w - KNOB_R + 4, w))
+            art.blit_center(surf, art.circle(KNOB_R, art.WHITE), (x, bar.centery))
+            art.blit_center(surf, art.circle(KNOB_R - 5, art.inkier(ACCENT, 0.2)), (x, bar.centery))
+            t0 = art.text(mmss(self.progress()), BODY_PX, kit.TEXT_SOFT)
+            t1 = art.text(mmss(self.duration_ms), BODY_PX, kit.TEXT_SOFT)
+            surf.blit(t0, (bar.x, bar.bottom + TIMES_GAP))
+            surf.blit(t1, t1.get_rect(topright=(bar.right, bar.bottom + TIMES_GAP)))
+        center = (bar.centerx, bar.bottom + TIMES_GAP + BUTTON_R)
         grow = 1.0 + 0.12 * math.sin(math.pi * min(1.0, self._flash / 0.35)) if self._flash else 1.0
-        art.blit_center(surf, art.scaled(_button(btn_r, self.playing), grow), center)
+        art.blit_center(surf, art.scaled(_button(BUTTON_R, self.playing), grow), center)
 
     def _eq(self, surf: pygame.Surface, mid_left: tuple[int, int]) -> None:
         x, cy = mid_left
-        for i in range(3):
-            h = 10 + 16 * (0.5 + 0.5 * math.sin(self.t * (6.0 + 1.7 * i) + i * 1.3))
-            rect = pygame.Rect(x + i * 11, int(cy + 13 - h), 7, int(h))
-            pygame.draw.rect(surf, kit.ACCENTS[i], rect, border_radius=3)
+        for i in range(4):
+            h = 14 + 26 * (0.5 + 0.5 * math.sin(self.t * (6.0 + 1.7 * i) + i * 1.3))
+            rect = pygame.Rect(x + i * 15, int(cy + 20 - h), 10, int(h))
+            pygame.draw.rect(surf, kit.ACCENTS[i], rect, border_radius=4)
 
 
 def _note(size: int, color: art.Color) -> pygame.Surface:

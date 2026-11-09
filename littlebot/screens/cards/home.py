@@ -1,9 +1,11 @@
 """The home card: a few smart-home devices and their state (littlebot/skills/home.py, Home Assistant).
 
-Six tiles at a time (more are paged: swipe, or "next"), each with a drawn icon (a bulb that glows when it is on, a
-plug, a fan that spins, a thermometer, blinds, a padlock, a TV, a scene's star, a script's play button), the
-device's name and its state. A tap on a light, a plug or a fan switches it: the tile flips at once and the skill
-asks Home Assistant on the robot's loop; if that fails the tile flips back and the voice is told.
+Six big tiles at a time in a 3 x 2 grid filling the panel (more are paged: swipe, the round arrows beside the title,
+or "next"), each with a big drawn icon (a bulb that glows when it is on, a plug, a fan that spins, a thermometer,
+blinds, a padlock, a TV, a scene's star, a script's play button), its state in a chip (green when on) and the
+device's name in big letters (up to two lines); a card with fewer devices puts them in the middle of the panel. A tap
+on a light, a plug or a fan switches it: the tile flips at once and the skill asks Home Assistant on the robot's loop;
+if that fails the tile flips back and the voice is told.
 
 Built by the skill's ``home_devices`` (the devices it found, in the spec) or from ``show_on_screen`` with a filter
 ("lights", "kitchen"): then the card asks the skill for them. Without the skill (not set up) there is no card.
@@ -19,15 +21,22 @@ from typing import Any, Callable
 import pygame
 
 from littlebot.games import art
-from littlebot.screens.base import BODY_PX, SMALL_PX, Card, CardHost, CardType, W, register
+from littlebot.screens.base import BODY_PX, TITLE_PX, Card, CardHost, CardType, H, W, register
 from littlebot.screens.cards import _kit, candy
 
 log = logging.getLogger("littlebot.screens.home")
 
 COLS, ROWS = 3, 2
-GAP = 12
-PAD = 16
+GAP = 16  # between tiles
+PAD = 18  # the tiles' inset in the panel
 SWIPE_PX = 60
+ICON_PX = 104  # a tile's icon
+NAME_PX = 40  # a device's name (up to NAME_LINES lines; a longer one ends in "...")
+NAME_LINES = 2
+STATE_PX = BODY_PX  # the state chip
+TILE_INSET = 16  # inside a tile
+ARROW_R = 44  # the page arrows beside the title (88 px across: a finger's tap)
+ARROW_GAP = 16
 TOGGLES = frozenset({"light", "switch", "fan"})
 ON_STATES = frozenset({"on", "open", "opening", "playing", "heat", "cool", "heat_cool", "auto", "dry", "fan_only",
                        "unlocked"})
@@ -175,11 +184,31 @@ class HomeCard(Card):
         return self.devices[start:start + self.per_page]
 
     def tile_rect(self, n: int) -> pygame.Rect:
+        """The ``n``-th tile on the page: the 3 x 2 grid fills the panel. A card with fewer devices than a page
+        holds puts them in the middle of the panel (one device: one tile in the middle) rather than in a corner."""
         box = candy.PANEL
         tw = (box.w - 2 * PAD - (COLS - 1) * GAP) // COLS
         th = (box.h - 2 * PAD - (ROWS - 1) * GAP) // ROWS
         col, row = n % COLS, n // COLS
-        return pygame.Rect(box.x + PAD + col * (tw + GAP), box.y + PAD + row * (th + GAP), tw, th)
+        x0, y0 = box.x + PAD, box.y + PAD
+        count = len(self.devices)
+        if count < self.per_page:  # one page, not full: centre the rows, and each row's tiles
+            rows = -(-count // COLS)
+            in_row = min(COLS, count - row * COLS)
+            x0 += (COLS - in_row) * (tw + GAP) // 2
+            y0 += (ROWS - rows) * (th + GAP) // 2
+        return pygame.Rect(x0 + col * (tw + GAP), y0 + row * (th + GAP), tw, th)
+
+    def arrow_rects(self) -> tuple[pygame.Rect, pygame.Rect] | None:
+        """The back and next arrows at the right of the title (only when there is more than one page)."""
+        if self.pages <= 1:
+            return None
+        cy = candy.HEADER_Y
+        right = candy.PANEL.right - ARROW_R
+        nxt = pygame.Rect(0, 0, 2 * ARROW_R, 2 * ARROW_R)
+        nxt.center = (right, cy)
+        back = nxt.move(-(2 * ARROW_R + ARROW_GAP), 0)
+        return back, nxt
 
     # ------------------------------------------------------------ steering
     def turn(self, step: int) -> bool:
@@ -200,7 +229,10 @@ class HomeCard(Card):
         for n, d in enumerate(self.shown()):
             if self.tile_rect(n).collidepoint(x, y):
                 return self.switch(d)
-        return self.turn(1) or self.turn(-self.page)
+        arrows = self.arrow_rects()
+        if arrows is not None and arrows[0].inflate(GAP, GAP).collidepoint(x, y):
+            return self.turn(-1)
+        return self.turn(1) or self.turn(-self.page)  # past the last page: back to the first
 
     def key(self, name: str) -> bool:
         if name in ("right", "down"):
@@ -266,45 +298,59 @@ class HomeCard(Card):
                 d["state"] = state
 
     def draw(self, surf: pygame.Surface) -> None:
-        surf.blit(art.background((W, 480), seed=31), (0, 0))
+        surf.blit(art.background((W, H), seed=31), (0, 0))
         dy = candy.slide_in(self.t)
-        candy.header(surf, self.title, dy=dy * 0.5)
-        box = candy.panel(surf, dy=dy)
+        arrows = self.arrow_rects()
+        title_w = (arrows[0].left - 40 - 30 * self.pages if arrows else W - 20) - candy.HEADER_X
+        title = candy.fit(self.title, TITLE_PX, title_w, min_size=TITLE_PX)
+        surf.blit(title, title.get_rect(midleft=(candy.HEADER_X, int(candy.HEADER_Y + dy * 0.5))))
+        if arrows is not None:
+            for r, step in zip(arrows, (-1, 1)):
+                can = 0 <= self.page + step < self.pages or step > 0  # next wraps round to the first page
+                img = _kit.arrow(step, art.WHITE if can else art.mix(art.WHITE, art.BG_BOTTOM, 0.6), ARROW_R)
+                surf.blit(img, r.move(0, int(dy * 0.5)).topleft)
+            _kit.page_dots(surf, self.pages, self.page,
+                           (arrows[0].left - 26 - 15 * (self.pages - 1), int(candy.HEADER_Y + dy * 0.5)))
+        candy.panel(surf, dy=dy)
         for n, d in enumerate(self.shown()):
             k = _kit.appear(self.t, 0.05 * n, 0.3)
             if k <= 0:
                 continue
             self._tile(surf, self.tile_rect(n).move(0, int(dy)), d, k)
-        if self.pages > 1:
-            _kit.page_dots(surf, self.pages, self.page, (box.centerx, box.bottom - 9))
 
     def _tile(self, surf: pygame.Surface, r: pygame.Rect, d: dict[str, Any], k: float) -> None:
         on = _on(d)
         kind = str(d.get("kind") or "switch")
         offline = str(d.get("state") or "") == "unavailable"
-        fill = art.lighten(LIT, 0.72) if on and kind in ("light", "switch", "fan") else \
-            (238, 236, 242) if offline else art.WHITE
-        edge = art.inkier(LIT, 0.15) if on and kind in ("light", "switch", "fan") else (246, 210, 228)
-        tile = art.rounded_rect(r.w, r.h, 24, fill, shadow=4, border=edge, border_w=4 if on else 3)
+        lit = on and kind in ("light", "switch", "fan")
+        fill = art.lighten(LIT, 0.72) if lit else (238, 236, 242) if offline else art.WHITE
+        edge = art.inkier(LIT, 0.15) if lit else (246, 210, 228)
+        tile = art.rounded_rect(r.w, r.h, 26, fill, shadow=5, border=edge, border_w=4 if lit else 3)
         if k < 0.99:
             art.blit_center(surf, art.scaled(tile, 0.85 + 0.15 * k), r.center)
             return
         surf.blit(tile, r.topleft)
-        icon = _icon(kind, on, 70)
-        if kind == "fan" and on:
-            icon = art.rotated(icon, (self.t * 240) % 360, key=("home_fan", 70))
-        art.blit_center(surf, icon, (r.x + 50, r.y + 50))
+        icon = _icon(kind, on, ICON_PX)
+        if kind == "fan" and on:  # three blades: a third of a turn looks the same
+            icon = art.rotated(icon, (self.t * 240) % 120, key=("home_fan", ICON_PX), step=4.0)
+        art.blit_center(surf, icon, (r.x + TILE_INSET + ICON_PX // 2 - 4, r.y + TILE_INSET + ICON_PX // 2 - 6))
         if kind == "lock":
             tint = art.TANGERINE if on else art.MINT
         else:
             tint = art.MINT if on else art.mix(art.INK_SOFT, art.WHITE, 0.2)
-        chip = _kit.chip(state_label(d), tint)
-        surf.blit(chip, chip.get_rect(topright=(r.right - 12, r.y + 16)))
-        name = candy.fit(str(d.get("name") or ""), BODY_PX, r.w - 24, art.INK, min_size=SMALL_PX)
-        surf.blit(name, name.get_rect(bottomleft=(r.x + 14, r.bottom - 14)))
+        room = r.w - 2 * TILE_INSET - ICON_PX + 8
+        chip = _kit.chip(_kit.ellipsize(state_label(d), STATE_PX, room - 36), tint, size=STATE_PX)
+        surf.blit(chip, chip.get_rect(topright=(r.right - TILE_INSET + 2, r.y + TILE_INSET + 6)))
+        lines = list(_kit.wrap(str(d.get("name") or ""), NAME_PX, r.w - 2 * TILE_INSET))
+        if len(lines) > NAME_LINES:
+            lines = lines[:NAME_LINES - 1] + [_kit.ellipsize(" ".join(lines[NAME_LINES - 1:]), NAME_PX,
+                                                            r.w - 2 * TILE_INSET)]
+        name = _kit.text_block(lines, NAME_PX, art.INK, pitch=art.font(NAME_PX).get_linesize() + 2)
+        surf.blit(name, name.get_rect(bottomleft=(r.x + TILE_INSET + 2, r.bottom - TILE_INSET + 2)))
         if str(d.get("entity_id") or "") in self._waiting:  # asking Home Assistant: a soft pulsing dot
             a = 0.5 + 0.5 * math.sin(self.t * 8)
-            art.blit_center(surf, art.circle(6, art.mix(art.INK_SOFT, art.WHITE, a)), (r.right - 20, r.bottom - 26))
+            art.blit_center(surf, art.circle(9, art.mix(art.INK_SOFT, art.WHITE, a)),
+                            (r.right - TILE_INSET - 10, r.y + TILE_INSET + 6 + chip.get_height() + 22))
 
 
 def _skill(ctx: Any) -> Any:

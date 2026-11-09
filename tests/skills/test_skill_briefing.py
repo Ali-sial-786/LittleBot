@@ -13,6 +13,8 @@ import pytest
 from news_fakes import BBC_WORLD, CBC_HAMILTON, CBC_TOP, FakeFeeds, online_context
 
 from littlebot.info.weather import WeatherError
+from littlebot.screens.base import BODY_PX
+from littlebot.screens.cards.briefing import BriefingCard, parse_weather
 from littlebot.screens.cards.weather import SAMPLE_REPORT
 from littlebot.skills.base import Skill
 from littlebot.skills.briefing import Briefing, card_spec, first_item, greeting, weather_line, weather_summary
@@ -96,7 +98,7 @@ async def test_morning_briefing_has_everything(setup):
     assert out["kind"] == "morning" and out["greeting"] == "Good morning"
     assert out["time"] == "7:05 am" and out["date"] == "Friday 30 October 2026"
     assert out["weather"] == {"place": "Toronto", "units": "°C", "day": "today", "high": 13, "low": 5,
-                              "conditions": "partly cloudy", "chance_of_rain_or_snow_percent": 10,
+                              "conditions": "partly cloudy", "chance_of_rain_or_snow_percent": 10, "sunset": "18:12",
                               "now": {"temperature": 12, "feels_like": 9, "conditions": "partly cloudy"}}
     assert out["reminders"] == "Reminders: 9 am dentist; 6 pm call mom"
     assert out["lists"] == "Lists: shopping (3 items), to-do (2 items)"
@@ -109,6 +111,10 @@ async def test_morning_briefing_has_everything(setup):
     assert spec["weather"] == "13° / 5° · partly cloudy" and spec["temperature"] == 12
     assert len(spec["headlines"]) == 3 and spec["sources"] == ["CBC", "CBC Hamilton", "BBC World"]
     assert spec["reminder"] == "9 am dentist"
+    card = BriefingCard(spec)  # the card it puts up: the weather block, all three headlines and the reminder at once
+    assert card.pages == 1 and len(card.shown()) == 3 and card.head_px >= BODY_PX
+    wx = parse_weather(spec["weather"], spec["conditions"])
+    assert (wx["high"], wx["low"], wx["conditions"], wx["other"]) == ("13", "5", "partly cloudy", [])
 
 
 async def test_context_note_remembers_todays_morning_briefing(setup):

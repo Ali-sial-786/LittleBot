@@ -1,6 +1,6 @@
-"""The gallery card and the QR card (littlebot/screens/cards/gallery.py): every mode draws, taps at the edges and
-swipes move, a tap on a video plays it, the voice's actions, the slideshow, and pictures loaded off the display
-thread."""
+"""The gallery card and the QR card (littlebot/screens/cards/gallery.py): every mode draws, taps at the edges (and on
+the big arrows there) and swipes move, a tap on a video plays it, the voice's actions, the slideshow, pictures loaded
+off the display thread, and the QR code big, made once and clear of LittleBot's eyes."""
 
 from __future__ import annotations
 
@@ -75,6 +75,25 @@ def test_browsing_draws_and_moves(tmp_path: Path) -> None:
     assert card.key("right") and card.index == 2 and card.key("left") and card.index == 1
     st = card.status()
     assert st["id"] == items[1].id and st["count"] == 3 and st["countdown"] is None
+
+
+def test_the_arrows_are_big_and_where_a_tap_moves(tmp_path: Path) -> None:
+    g, items = _gallery(tmp_path)
+    card = G.GalleryCard({}, RecordingHost(), gallery=g, items=items)
+    px, py, pw, ph = card.presenter_box
+    assert 0 <= px and 0 <= py and px + pw <= W and py + ph <= H  # LittleBot's eyes stay on the screen
+    back, nxt = card.arrow_centers()
+    assert 2 * G.ARROW_R >= 90  # a finger's tap
+    assert back[0] + G.ARROW_R < W * G.EDGE and nxt[0] - G.ARROW_R > W * (1 - G.EDGE)  # inside the edge taps
+    assert back[1] + G.ARROW_R < H - G.BAR_H and not pygame.Rect(px, py, pw, ph).collidepoint(back)
+    assert card.tap(*nxt) and card.index == 1 and card.tap(*back) and card.index == 0
+    surf = pygame.Surface((W, H))
+    _settle(card, surf)
+    disc = (nxt[0], nxt[1] - G.ARROW_R + 10)  # on the arrow's white disc, above its chevron
+    assert sum(surf.get_at(disc)[:3]) > 600  # the arrow is drawn
+    card.tap(W // 2, H // 2)  # a tap in the middle of a photo hides the bar and the arrows
+    card.draw(surf)
+    assert sum(surf.get_at(disc)[:3]) < 600
 
 
 def test_the_voices_actions(tmp_path: Path) -> None:
@@ -174,6 +193,12 @@ def test_the_qr_card(tmp_path: Path) -> None:
     card.update(0.1)
     card.draw(surf)
     assert "QR code" in card.describe()
+    code = card.code_rect()
+    assert code.h >= H - 100 and pygame.Rect(0, 0, W, H).contains(code)  # as big as the screen allows
+    assert not code.colliderect(pygame.Rect(*card.presenter_box))  # the eyes never cover the code
+    first = card._code(H - 2 * G.QR_MARGIN)  # noqa: SLF001
+    card.draw(surf)
+    assert card._code(H - 2 * G.QR_MARGIN) is first  # made once, not every frame  # noqa: SLF001
     assert card.tap(10, 10) and card.done
     off = G.ShareCard({}, RecordingHost(), url=url, reachable=False)
     off.draw(surf)

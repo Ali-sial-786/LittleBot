@@ -1,5 +1,6 @@
 """The briefing and home cards (littlebot/screens/cards/briefing.py, home.py): registration, drawing, paging,
-the voice's line, and a tap switching a light through the smart-home skill."""
+the voice's line, the 1024x600 layout (readable sizes, nothing over the presenter or off the panel, big tiles and
+buttons) and a tap switching a light through the smart-home skill."""
 
 from __future__ import annotations
 
@@ -7,11 +8,14 @@ import asyncio
 import copy
 from typing import Any
 
+import pygame
 
 from littlebot.screens import base, preview
+from littlebot.screens.base import BODY_PX, MAX_LINES, PRESENTER_BOX, H, W
 from littlebot.screens.cards import briefing as briefing_card
+from littlebot.screens.cards import candy
 from littlebot.screens.cards import home as home_card
-from littlebot.screens.cards.briefing import BriefingCard
+from littlebot.screens.cards.briefing import BriefingCard, parse_weather
 from littlebot.screens.cards.home import HomeCard, state_label
 from littlebot.skills.home import HomeError
 from littlebot.testing import make_test_context
@@ -35,11 +39,13 @@ async def test_briefing_samples_build_and_draw():
 
 
 def test_briefing_card_pages_and_describes():
-    spec = copy.deepcopy(briefing_card.SAMPLES[1])  # 7 headlines, no weather or reminder: 5 a page
+    spec = copy.deepcopy(briefing_card.SAMPLES[1])  # 9 headlines, some of two lines, no weather or reminder
     card = BriefingCard(spec)
-    assert card.per_page == 5 and card.pages == 2 and [i for i, _ in card.shown()] == [0, 1, 2, 3, 4]
-    assert "7 headlines (page 1 of 2)" in card.describe()
-    assert card.command("next", {}) and card.page == 1 and [i for i, _ in card.shown()] == [5, 6]
+    assert card.pages == 2 and card.max_lines == MAX_LINES
+    first = [i for i, _ in card.shown()]
+    assert first == list(range(card.per_page)) and 4 <= card.per_page <= 5  # evened out: 4 + 5, not 7 + 2
+    assert "9 headlines (page 1 of 2)" in card.describe()
+    assert card.command("next", {}) and card.page == 1 and [i for i, _ in card.shown()] == list(range(len(first), 9))
     assert not card.command("next", {}) and card.command("prev", {}) and card.page == 0
     assert card.tap(600, 300) and card.page == 1
     assert card.tap(600, 300) and card.page == 0  # past the last page: back to the first
@@ -48,11 +54,56 @@ def test_briefing_card_pages_and_describes():
     card.drag_end()
     assert card.page == 1
     preview.surface(card, seconds=0.5)
+    seven = BriefingCard({**spec, "headlines": [f"Headline number {i} about something that happened today"
+                                                for i in range(1, 8)]})
+    assert seven.pages == 1 and seven.per_page == 7  # the 7" screen: seven one-line headlines at once
     full = BriefingCard(briefing_card.SAMPLES[0])
     assert full.per_page == 3 and full.pages == 1 and not full.tap(600, 300)
     assert full.describe().startswith("Good morning, Friday 30 October; 12° / 4° · light rain · rain 70%")
     assert full.describe().endswith("; next reminder: 9 am dentist")
     assert full.status()["headlines"] == 3
+
+
+def _lines_on_page(card: BriefingCard) -> int:
+    return sum(len(card._wrapped[i]) for i, _ in card.shown())  # noqa: SLF001
+
+
+def test_briefing_layout_fits_the_screen():
+    """Every sample, every page: headlines at BODY_PX or bigger, at most MAX_LINES lines with the weather block and
+    the reminder, all inside the panel, under the presenter, and the weather / reminder clear of the headlines."""
+    panel = candy.PANEL
+    for spec in briefing_card.SAMPLES:
+        card = BriefingCard(copy.deepcopy(spec))
+        assert card.head_px >= BODY_PX
+        boxes = [r for r in (card.weather_rect(), card.reminder_rect()) if r is not None]
+        news = card.news_rect(dots=card.pages > 1)
+        for r in [*boxes, news]:
+            assert panel.contains(r) and not r.colliderect(pygame.Rect(*PRESENTER_BOX))
+        for r in boxes:
+            assert not r.colliderect(news)
+        for _ in range(card.pages):
+            lines = _lines_on_page(card) + (1 if card.weather else 0) + (1 if card.reminder else 0)
+            assert lines <= MAX_LINES
+            card.turn(1)
+        assert preview.surface(card, seconds=1.0).get_size() == (W, H)
+    evening = BriefingCard(briefing_card.SAMPLES[2])  # three long headlines: two lines each, all on one page
+    assert evening.pages == 1 and [len(evening._wrapped[i]) for i, _ in evening.shown()] == [2, 2, 2]  # noqa: SLF001
+    many = BriefingCard({"title": "Top stories", "headlines": [f"Story {i} " + "word " * 25 for i in range(15)]})
+    assert len(many.headlines) == briefing_card.MAX_HEADLINES and many.pages >= 3
+    assert sorted(i for p in range(many.pages) for i in many._pages[p]) == list(range(15))  # noqa: SLF001
+
+
+def test_briefing_weather_line_is_taken_apart():
+    assert parse_weather("12° / 4° · light rain · rain 70%", "light rain") == {
+        "when": "", "high": "12", "low": "4", "conditions": "light rain", "chance": "Rain 70%", "other": []}
+    tomorrow = parse_weather("Tomorrow: 11° / 4° · light rain · rain 85%", "light rain")
+    assert tomorrow["when"] == "Tomorrow" and tomorrow["high"] == "11" and tomorrow["chance"] == "Rain 85%"
+    assert parse_weather("Sunny and warm")["conditions"] == "Sunny and warm"
+    free = parse_weather("Feels like -20 with wind", "snow")
+    assert free["other"] == ["Feels like -20 with wind"] and free["conditions"] == ""
+    card = BriefingCard({"title": "Good morning", "weather": "Sunny and warm all day", "temperature": 24})
+    assert card.weather_rect().h > briefing_card.WEATHER_H  # no headlines: the weather fills the panel
+    preview.surface(card, seconds=0.5)
 
 
 def test_briefing_card_cleans_what_the_ai_sends():
@@ -103,6 +154,14 @@ class Hub:
 async def test_home_samples_build_draw_and_page():
     card = await base.build(copy.deepcopy(home_card.SAMPLES[0]), None, base.RecordingHost())
     assert isinstance(card, HomeCard) and card.pages == 2 and len(card.shown()) == 6
+    tiles = [card.tile_rect(n) for n in range(6)]
+    for i, r in enumerate(tiles):  # big tiles (a finger and the state readable), inside the panel, not overlapping
+        assert r.w >= 280 and r.h >= 180 and candy.PANEL.contains(r)
+        assert not any(r.colliderect(o) for o in tiles[i + 1:])
+    covered = sum(r.w * r.h for r in tiles) / (candy.PANEL.w * candy.PANEL.h)
+    assert covered > 0.75  # the grid fills the panel
+    back, nxt = card.arrow_rects()
+    assert back.w >= 88 and not back.colliderect(pygame.Rect(*PRESENTER_BOX)) and nxt.right <= W
     assert preview.surface(card, seconds=1.0).get_size() == (base.W, base.H)
     assert card.describe().startswith("Lights (page 1 of 2): Kitchen Light on 80%, Porch Light off")
     assert card.command("next", {}) and [d["name"] for d in card.shown()] == ["Bedroom Fan", "Living Room TV",
@@ -111,6 +170,12 @@ async def test_home_samples_build_draw_and_page():
     preview.surface(card, seconds=0.5)
     assert card.key("left") and card.page == 0
     assert not card.switch(card.shown()[0])  # no skill to ask: nothing happens
+    assert card.tap(*nxt.center) and card.page == 1 and card.tap(*back.center) and card.page == 0  # the arrows
+    one = HomeCard({"title": "Kitchen"}, devices=copy.deepcopy(DEVICES[:1]))
+    centre = one.tile_rect(0).center
+    assert one.arrow_rects() is None and abs(centre[0] - candy.PANEL.centerx) <= 2 and \
+        abs(centre[1] - candy.PANEL.centery) <= 2  # one device: in the middle, not stuck in a corner
+    preview.surface(one, seconds=0.5)
 
 
 async def test_home_card_from_a_filter_asks_the_skill():
