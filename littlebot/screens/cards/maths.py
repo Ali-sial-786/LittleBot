@@ -1,12 +1,16 @@
 """The maths cards: a sum or a conversion worked out big, and counting for the little one.
 
-``maths``: "what's 12 times 7?" shows "12 × 7" and, popping in under it, "= 84" (up to three short
-steps in between when the AI gives them). "3 cups in ml", "350 °F in °C" work the same way. The AI
-gives the expression and the result; when both can be read here (plain arithmetic, or a number with a
-known unit) the result is checked with a tiny parser (no eval) and corrected if it is wrong.
+``maths``: "what's 12 times 7?" shows "12 × 7" and, popping in under it, "= 84". With working (up to
+five short steps) the sum and its steps fill the left of the card and the answer sits on the right.
+"3 cups in ml", "350 °F in °C" work the same way, and a conversion also shows the same amount in a
+couple of other handy units ("0.71 l", "48 tbsp", worked out here) unless the AI gives its own
+``also`` lines. The AI gives the expression and the result; when both can be read here (plain
+arithmetic, or a number with a known unit) the result is checked with a tiny parser (no eval) and
+corrected if it is wrong.
 
 ``count``: "count to 5" shows five big stars (hearts, apples, balls) appearing one by one with a pop,
-each with its number, for the little one to follow along.
+each with its number, for the little one to follow along (up to 20, in rows of ten), and the number in
+words when they are all counted.
 """
 
 from __future__ import annotations
@@ -19,13 +23,19 @@ from typing import Any
 import pygame
 
 from littlebot.games import art
-from littlebot.screens.base import BODY_PX, Card, CardHost, CardType, W, register
+from littlebot.screens.base import BODY_PX, SMALL_PX, Card, CardHost, CardType, H, W, register
 from littlebot.screens.cards import candy
 
 log = logging.getLogger("littlebot.screens.maths")
 
-MAX_STEPS = 3
+MAX_STEPS = 5
+MAX_ALSO = 3  # handy equivalents under a conversion's answer
 TEXT_W = candy.PANEL.w - 60
+# With working: the sum and its steps on the left (STEPS_W wide), the answer on the right (centred at ANSWER_X).
+STEPS_W = 600
+ANSWER_X = candy.PANEL.left + STEPS_W + (candy.PANEL.w - STEPS_W) // 2
+ANSWER_W = candy.PANEL.w - STEPS_W - 40
+SOFT_INK: art.Color = art.mix(art.INK_SOFT, art.INK, 0.35)
 
 
 # ---------------------------------------------------------------- a tiny arithmetic parser (no eval)
@@ -228,6 +238,44 @@ def convert(value: float, src: str, dst: str) -> float | None:
     return value * a[1] / b[1]
 
 
+# Other units a conversion's amount is shown in (the first few that aren't the two asked about and give a
+# sensible number), with how they are written.
+_ALSO_UNITS: dict[str, tuple[tuple[str, str], ...]] = {
+    "volume": (("ml", "ml"), ("l", "l"), ("cup", "cups"), ("tbsp", "tbsp"), ("tsp", "tsp"), ("fl oz", "fl oz")),
+    "length": (("cm", "cm"), ("m", "m"), ("km", "km"), ("in", "in"), ("ft", "ft"), ("mi", "miles")),
+    "mass": (("g", "g"), ("kg", "kg"), ("oz", "oz"), ("lb", "lb")),
+    "speed": (("km/h", "km/h"), ("mph", "mph"), ("m/s", "m/s")),
+}
+
+
+def equivalents(expression: str, result: str = "", n: int = 2) -> list[str]:
+    """The amount in a conversion ("3 cups to ml") in ``n`` other handy units: ["0.71 l", "48 tbsp"]; [] for
+    arithmetic, temperatures and anything unknown."""
+    left = re.split(r"\s+(?:in|to|into|as)\s+", str(expression or "").split("=")[0].strip(), maxsplit=1)
+    q = _quantity(left[0])
+    src = _unit(q[1]) if q else None
+    if q is None or src is None or src[0] not in _ALSO_UNITS:
+        return []
+    asked = {src[1]}
+    dst = _quantity(str(result or "").lstrip("=≈ "))
+    target = _unit(dst[1]) if dst else (_unit(left[1]) if len(left) > 1 else None)
+    if target is not None:
+        asked.add(target[1])
+    out: list[str] = []
+    for name, shown in _ALSO_UNITS[src[0]]:
+        factor = _UNITS[name][1]
+        if any(abs(factor - a) <= 1e-9 * max(1.0, a) for a in asked if isinstance(a, float)):
+            continue
+        v = q[0] * src[1] / factor
+        if not 0.1 <= abs(v) <= 20000:
+            continue
+        places = 0 if abs(v) >= 100 else 1 if abs(v) >= 10 else 2
+        out.append(f"{format_number(v, places)} {shown}")
+        if len(out) >= n:
+            break
+    return out
+
+
 def check(expression: str, result: str) -> str:
     """``result``, or the right one when it can be worked out here and the AI's is wrong."""
     result = " ".join(str(result or "").split())
@@ -260,6 +308,20 @@ def check(expression: str, result: str) -> str:
     return f"{format_number(right, places)} {r[1]}"
 
 
+# Signs the card's font has no glyph for (they would show as an empty box): what to write instead.
+_NO_GLYPH = (("\u2248", "~"), ("\u2192", "->"), ("\u2190", "<-"), ("\u221e", "infinity"), ("\u2713", ""),
+             ("\u2032", "'"), ("\u2033", '"'), ("\u20b9", "Rs "))
+
+
+def typeset(text: str) -> str:
+    """``text`` with only signs the card's font can draw: " ≈ " becomes " = about ", "→" "->" and so on."""
+    s = re.sub(r"^\s*\u2248\s*", "about ", str(text or ""))
+    s = re.sub(r"\s\u2248\s*", " = about ", s)
+    for sign, instead in _NO_GLYPH:
+        s = s.replace(sign, instead)
+    return " ".join(s.split())
+
+
 def pretty(expression: str) -> str:
     """ "12*7" -> "12 × 7" for plain arithmetic; conversions stay as they were given."""
     s = re.sub(r"(?<=\d)\s+°", "°", " ".join(str(expression or "").split()).rstrip("=? "))  # the font spaces ° itself
@@ -284,16 +346,20 @@ class MathsCard(Card):
         self.show(spec)
 
     def show(self, spec: dict[str, Any]) -> None:
-        self.expression = pretty(str(spec.get("expression") or ""))[:60]
+        self.expression = typeset(pretty(str(spec.get("expression") or "")))[:60]
         result = str(spec.get("result") or "")
         if not result:
             v = evaluate(self.expression)
             result = format_number(v) if v is not None else ""
-        self.result = re.sub(r"(?<=\d)\s+°", "°", check(str(spec.get("expression") or ""), result))[:40]
+        self.result = typeset(re.sub(r"(?<=\d)\s+°", "°", check(str(spec.get("expression") or ""), result)))[:40]
         steps = spec.get("steps") or []
-        self.steps = [" ".join(str(s).split())[:60] for s in (steps if isinstance(steps, list) else [steps])
+        self.steps = [typeset(str(s))[:60] for s in (steps if isinstance(steps, list) else [steps])
                       if str(s).strip()][:MAX_STEPS]
         self.conversion = evaluate(self.expression) is None
+        also = spec.get("also") or []
+        given = [typeset(str(a))[:40] for a in (also if isinstance(also, list) else [also]) if str(a).strip()]
+        self.also = given[:MAX_ALSO] if given else (equivalents(str(spec.get("expression") or ""), self.result)
+                                                     if self.conversion else [])
         self.title = str(spec.get("title") or "")[:40] or ("Converting" if self.conversion else "Let's work it out")
         self.shown_at = self.t
         self.mood = "happy"
@@ -308,36 +374,63 @@ class MathsCard(Card):
         return f"{self.expression} = {self.result.lstrip('= ')}" if self.result else self.expression
 
     def draw(self, surf: pygame.Surface) -> None:
-        surf.blit(art.background((W, 480), seed=9), (0, 0))
+        surf.blit(art.background((W, H), seed=9), (0, 0))
         dy = candy.slide_in(self.t)
         candy.header(surf, self.title, dy=dy * 0.5)
         box = candy.panel(surf, dy=dy)
         age = self.t - self.shown_at
-        if self.steps:
-            y = box.top + 50
-            candy.blit_mid(surf, candy.fit(self.expression, 60, TEXT_W, min_size=40), (box.centerx, y))
+        if self.steps:  # the sum and its working on the left, the answer on the right
+            left = box.left + STEPS_W // 2
+            n = len(self.steps)
+            pitch = 58 if n <= 4 else 54
+            y = box.top + (box.h - (80 + pitch * n)) // 2 + 34
+            candy.blit_mid(surf, candy.fit(self.expression, 68, STEPS_W - 60, min_size=44), (left, y))
             for i, step in enumerate(self.steps):
                 a = art.clamp((age - 0.25 - 0.3 * i) / 0.25, 0, 1)
                 if a > 0:
-                    art.blit_center(surf, candy.fit(step, 40, TEXT_W, min_size=BODY_PX),
-                                    (box.centerx, y + 56 + 44 * i), int(255 * a))
-            ry, rsize, delay = box.bottom - 66, 88, 0.35 + 0.3 * len(self.steps)
-        else:
-            candy.blit_mid(surf, candy.fit(self.expression, 96, TEXT_W, min_size=44), (box.centerx, box.top + 100))
-            ry, rsize, delay = box.top + 250, 136, 0.45
+                    art.blit_center(surf, candy.fit(step, 46, STEPS_W - 60, min_size=BODY_PX),
+                                    (left, y + 80 + pitch * i), int(255 * a))
+            sep = box.left + STEPS_W
+            art.capsule(surf, candy.PANEL_EDGE, (sep, box.top + 40), (sep, box.bottom - 40), 4)
+            cx, ry, rsize, width, delay = ANSWER_X, box.centery - (36 if self.also else 0), 112, ANSWER_W, \
+                0.35 + 0.3 * n
+        else:  # the sum big, the answer under it (and the equivalents under that), centred in the panel
+            top = box.centery - (140 if self.also else 104)
+            candy.blit_mid(surf, candy.fit(self.expression, 104, TEXT_W, min_size=52), (box.centerx, top))
+            cx, ry, rsize, width, delay = box.centerx, top + 170, 150, TEXT_W, 0.45
         if not self.result or age < delay:
             return
-        sprite = self._result_sprite(rsize)
+        sprite = self._result_sprite(rsize, width)
         p = (age - delay) / 0.35
         k = art.ease_out_back(p, 2.0) if p < 1 else 1.0
-        art.blit_center(surf, art.scaled(sprite, k) if k < 0.99 or k > 1.01 else sprite, (box.centerx, ry))
+        art.blit_center(surf, art.scaled(sprite, k) if k < 0.99 or k > 1.01 else sprite, (cx, ry))
+        if self.also and age >= delay + 0.4:
+            a = int(255 * art.clamp((age - delay - 0.4) / 0.3, 0, 1))
+            if self.steps:
+                y = ry + sprite.get_height() // 2 + 40
+                art.blit_center(surf, art.text("That's also", SMALL_PX, SOFT_INK), (cx, y), a)
+                for i, line in enumerate(self.also):
+                    art.blit_center(surf, self._also_chip(line, width), (cx, y + 48 + 52 * i), a)
+            else:
+                chips = [art.text("That's also", BODY_PX, SOFT_INK)] + [self._also_chip(x, 300) for x in self.also]
+                gap = 16
+                total = sum(c.get_width() for c in chips) + gap * (len(chips) - 1)
+                x = cx - total / 2
+                for c in chips:
+                    art.blit_center(surf, c, (x + c.get_width() / 2, ry + sprite.get_height() // 2 + 56), a)
+                    x += c.get_width() + gap
 
-    def _result_sprite(self, size: int) -> pygame.Surface:
+    def _also_chip(self, text: str, width: int) -> pygame.Surface:
+        """A mint chip for one equivalent, its text shortened to fit ``width``."""
+        shown, size = candy._fitted(text, BODY_PX, width - 40, SMALL_PX)
+        return candy.chip(shown, size, art.INK, art.lighten(art.MINT, 0.72))
+
+    def _result_sprite(self, size: int, width: int = TEXT_W) -> pygame.Surface:
         text = f"= {self.result.lstrip('= ')}"
-        key = ("maths_result", text, size)
+        key = ("maths_result", text, size, width)
 
         def make() -> pygame.Surface:
-            img = candy.fit(text, size, TEXT_W - 60, min_size=48)
+            img = candy.fit(text, size, width - 60, min_size=48)
             w, h = img.get_width() + 64, img.get_height() + 20
             box = art.rounded_rect(w, h, h // 2, art.lighten(art.LEMON, 0.62), shadow=5,
                                    border=art.inkier(art.LEMON, 0.15), border_w=4).copy()
@@ -356,24 +449,32 @@ async def build_maths(spec: dict[str, Any], ctx: Any, host: CardHost) -> MathsCa
 register(CardType(
     kind="maths",
     description="A sum or a conversion worked out big: '12 × 7 = 84', '3 cups = 710 ml', '350 °F = 177 °C', "
-                "'15% of 80 = 12'. Give the expression and the result; steps only if they help (at most 3, short).",
+                "'15% of 80 = 12'. Give the expression and the result; the working as steps when it helps (up to "
+                "5, short); a conversion shows the amount in a couple of other units by itself.",
     fields={
         "expression": {"type": "string", "description": "What was asked, short, with numbers and symbols: "
                                                         "'12 × 7', '3 cups to ml', '350 °F to °C'."},
         "result": {"type": "string", "description": "The answer with its unit: '84', '710 ml', '177 °C'."},
-        "steps": {"type": "array", "items": {"type": "string"}, "maxItems": MAX_STEPS,
-                  "description": "Optional working, at most 3 short lines: '10 × 7 = 70', '2 × 7 = 14'."},
+        "steps": {"type": "array", "items": {"type": "string", "maxLength": 40}, "maxItems": MAX_STEPS,
+                  "description": "Optional working, up to 5 short lines: '10 × 7 = 70', '2 × 7 = 14', "
+                                 "'70 + 14 = 84'."},
+        "also": {"type": "array", "items": {"type": "string", "maxLength": 30}, "maxItems": MAX_ALSO,
+                 "description": "Optional, rarely needed: up to 3 handy equivalents of the answer, as short lines "
+                                "('about 3 mugs', '0.71 litres'). Leave out for sums; conversions get some "
+                                "worked out on the robot."},
     },
     build=build_maths,
     required=("expression", "result"),
     actions={"show": "another sum on the same card: {\"expression\": \"12 × 8\", \"result\": \"96\", "
-                     "\"steps\": []}"},
+                     "\"steps\": [], \"also\": []}"},
 ))
 
 
 # ---------------------------------------------------------------- counting
 THINGS = ("star", "heart", "apple", "ball")
-MAX_COUNT = 10
+MAX_COUNT = 20
+NUMBER_WORDS = ("zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven",
+                "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen", "twenty")
 PACE = 1.1  # seconds between things appearing (about the voice's counting)
 FIRST = 0.6
 
@@ -477,33 +578,51 @@ class CountCard(Card):
             return f"Counting to {self.n}: {things(self.shown)} so far"
         return f"{things(self.n)}, all counted"
 
+    def _sizes(self) -> tuple[list[int], int, int]:
+        """The rows (how many in each), the things' size and their numbers' size: one row up to 5, two rows up
+        to 10, rows of ten after that (so 14 reads as ten and four more)."""
+        if self.n <= 5:
+            return [self.n], 150, 84
+        if self.n <= 10:
+            return [math.ceil(self.n / 2), self.n // 2], 104, 56
+        return [10, self.n - 10], 80, 48
+
     def _places(self) -> list[tuple[int, int, int]]:
         """(x, y, size) of each thing."""
         box = candy.PANEL
-        rows = [self.n] if self.n <= 5 else [math.ceil(self.n / 2), self.n // 2]
-        size = 116 if len(rows) == 1 else 86
-        ys = [box.top + 140] if len(rows) == 1 else [box.top + 92, box.top + 250]
+        rows, size, num = self._sizes()
+        row_h = size + num + 22
+        words = 70  # room left at the bottom for the number in words
+        top = box.top + (box.h - words - row_h * len(rows)) // 2 + size // 2 + 8
         out = []
-        for row, y in zip(rows, ys):
-            step = min(132, (box.w - 40) // max(1, row))
+        for r, row in enumerate(rows):
+            step = min(size + 44, (box.w - 40) // max(1, row))
             x0 = box.centerx - step * (row - 1) / 2
-            out += [(int(x0 + step * i), y, size) for i in range(row)]
+            out += [(int(x0 + step * i), top + r * row_h, size) for i in range(row)]
         return out
 
     def draw(self, surf: pygame.Surface) -> None:
-        surf.blit(art.background((W, 480), seed=13), (0, 0))
+        surf.blit(art.background((W, H), seed=13), (0, 0))
         dy = candy.slide_in(self.t)
         candy.header(surf, self.title, dy=dy * 0.5)
-        candy.panel(surf, dy=dy)
-        big = self.n <= 5
+        box = candy.panel(surf, dy=dy)
+        _, _, num_px = self._sizes()
         for i, (x, y, size) in enumerate(self._places()[: self.shown]):
             age = self.t - self.start - FIRST - i * PACE
             k = art.ease_out_back(age / 0.35, 2.2) if age < 0.35 else 1.0
-            bob = math.sin(self.t * 2.4 + i) * 3
+            bob = math.sin(self.t * 2.4 + i) * 4
             sprite = thing_sprite(self.thing, size, i)
             art.blit_center(surf, art.scaled(sprite, k) if k < 0.99 else sprite, (x, y + dy + bob))
-            num = art.text_outlined(str(i + 1), 72 if big else 50, art.WHITE, art.INK, 3)
-            art.blit_center(surf, num, (x, y + dy + size * 0.5 + (46 if big else 30)))
+            num = art.text_outlined(str(i + 1), num_px, art.WHITE, art.INK, 3)
+            art.blit_center(surf, num, (x, y + dy + size * 0.5 + num_px * 0.62))
+        if self.cheered:  # all counted: the number in words
+            age = self.t - self.start - FIRST - (self.n - 1) * PACE - 0.7
+            word = NUMBER_WORDS[self.n] if self.n < len(NUMBER_WORDS) else str(self.n)
+            thing = self.thing if self.n == 1 else f"{self.thing}s"
+            pill = art.pill(f"{self.n}: {word} {thing}!", BODY_PX + 4, art.INK, art.lighten(art.LEMON, 0.6),
+                            pad=(26, 10), border=art.inkier(art.LEMON, 0.15))
+            k = art.ease_out_back(age / 0.4, 1.8) if age < 0.4 else 1.0
+            art.blit_center(surf, art.scaled(pill, k) if k < 0.99 else pill, (box.centerx, box.bottom - 46 + dy))
         self.particles.draw(surf)
 
 
@@ -514,9 +633,10 @@ async def build_count(spec: dict[str, Any], ctx: Any, host: CardHost) -> CountCa
 register(CardType(
     kind="count",
     description="Counting for the little one: 'count to 5' shows big stars (or hearts, apples, balls) appearing "
-                "one by one with their numbers while you count out loud, about one a second. Up to 10.",
+                "one by one with their numbers while you count out loud, about one a second, and the number in "
+                "words at the end. Up to 20 (in rows of ten).",
     fields={
-        "to": {"type": "integer", "minimum": 1, "maximum": MAX_COUNT, "description": "How many to count, 1 to 10."},
+        "to": {"type": "integer", "minimum": 1, "maximum": MAX_COUNT, "description": "How many to count, 1 to 20."},
         "thing": {"type": "string", "enum": list(THINGS), "description": "What to count (default star)."},
     },
     build=build_count,
@@ -532,8 +652,14 @@ SAMPLES: list[dict[str, Any]] = [
     {"card": "maths", "expression": "350 °F to °C", "result": "177 °C"},
     {"card": "maths", "expression": "23 × 14", "result": "322", "steps": ["20 × 14 = 280", "3 × 14 = 42",
                                                                           "280 + 42 = 322"]},
+    {"card": "maths", "expression": "1,250 ÷ 25", "result": "50",
+     "steps": ["1,250 ÷ 5 = 250", "250 ÷ 5 = 50", "5 × 5 = 25", "So 1,250 ÷ 25 = 50", "Check: 50 × 25 = 1,250"]},
+    {"card": "maths", "expression": "2.5 kg to lb", "result": "5.5 lb", "steps": ["1 kg ≈ 2.2 lb",
+                                                                                  "2.5 × 2.2 = 5.5"]},
     {"card": "count", "to": 5, "thing": "star"},
     {"card": "count", "to": 8, "thing": "apple"},
+    {"card": "count", "to": 14, "thing": "ball"},
 ]
 
-__all__ = ["SAMPLES", "CountCard", "MathsCard", "check", "convert", "evaluate", "format_number", "pretty"]
+__all__ = ["SAMPLES", "CountCard", "MathsCard", "check", "convert", "equivalents", "evaluate", "format_number",
+           "pretty", "typeset"]

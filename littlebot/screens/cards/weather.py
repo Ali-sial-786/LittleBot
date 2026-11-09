@@ -30,6 +30,7 @@ from littlebot.screens.base import (
     Card,
     CardHost,
     CardType,
+    H,
     W,
     register,
 )
@@ -41,7 +42,19 @@ VIEWS = ("now", "day", "week", "hours")
 SWIPE_PX = 60  # a sideways drag this long is a swipe
 WEEKDAYS = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
 WINDY = {"km/h": 40, "mph": 25}  # from this wind speed a dry day shows the wind icon
-SLIDE_PX = 120  # how far the content slides when the day changes
+SLIDE_PX = 160  # how far the content slides when the day changes
+MAX_HOURS = 6  # hours across a day (the forecast has 6: littlebot/info/weather.py DAY_HOURS)
+MAX_DETAILS = 5  # rows in the details column (rain, wind, humidity, UV, sunrise and sunset)
+# The "now" and "day" views: the top TOP_H px of the panel hold the icon, the temperature and the details
+# column (from DETAIL_X, DETAIL_W wide); the hours run along the bottom.
+TOP_H = 268
+DETAIL_X = 586
+DETAIL_W = 382
+DAY_DETAIL_X = 560  # one day's details start further left: the right arrow is beside them
+DETAIL_PITCH = 50
+DETAIL_ICON = 40
+ARROW_PX = 56  # the day arrows (a tap anywhere on that half turns the day)
+TILE_EDGE: art.Color = (250, 222, 236)
 
 # ---------------------------------------------------------------- icons
 CLOUD: art.Color = (250, 250, 255)
@@ -53,6 +66,7 @@ RAYS: art.Color = (255, 186, 70)
 MOON: art.Color = (255, 228, 140)
 WIND: art.Color = (110, 200, 236)
 LOW_INK: art.Color = art.mix(art.INK_SOFT, art.INK, 0.35)  # a low temperature: softer, still readable
+RAIN_INK: art.Color = art.inkier(art.SKY, 0.55)  # a chance of rain worth noticing
 
 
 def icon_kind(conditions: str, *, windy: bool = False) -> str:
@@ -433,7 +447,7 @@ class WeatherCard(Card):
 
     def key(self, name: str) -> bool:
         if name in ("right", "left"):
-            return self.tap(W if name == "right" else 0, 300)
+            return self.tap(W if name == "right" else 0, H / 2)
         if name in ("up", "down"):
             i = VIEWS.index(self.view)
             return self.set_view(VIEWS[(i + (1 if name == "down" else -1)) % len(VIEWS)])
@@ -509,10 +523,10 @@ class WeatherCard(Card):
                 self.title = self._title()
 
     def _hours(self) -> list[dict[str, Any]]:
-        return [h for h in self._day().get("hours") or [] if isinstance(h, dict)][:6]
+        return [h for h in self._day().get("hours") or [] if isinstance(h, dict)][:MAX_HOURS]
 
     def draw(self, surf: pygame.Surface) -> None:
-        surf.blit(art.background((W, 480), seed=11), (0, 0))
+        surf.blit(art.background((W, H), seed=11), (0, 0))
         dy = candy.slide_in(self.t)
         candy.header(surf, self.title, dy=dy * 0.5)
         box = candy.panel(surf, dy=dy)
@@ -529,110 +543,239 @@ class WeatherCard(Card):
             self._draw_day(surf, box, ox)
         surf.set_clip(clip)
         if self.view in ("day", "hours"):
+            y = box.centery if self.view == "hours" else box.top + TOP_H // 2
             if self.day > 0:
-                candy.blit_mid(surf, _arrow(40, False), (box.left + 24, box.top + 110))
+                candy.blit_mid(surf, _arrow(ARROW_PX, False), (box.left + ARROW_PX // 2 + 2, y))
             if self.day < len(self.forecast) - 1:
-                candy.blit_mid(surf, _arrow(40, True), (box.right - 24, box.top + 110))
+                candy.blit_mid(surf, _arrow(ARROW_PX, True), (box.right - ARROW_PX // 2 - 2, y))
 
     def _bob(self) -> int:
-        return round(math.sin(self.t * 1.8) * 4)
+        return round(math.sin(self.t * 1.8) * 5)
 
+    # ------------------------------------------------------------ now and one day
     def _draw_now(self, surf: pygame.Surface, box: pygame.Rect, ox: int) -> None:
+        """Top: the icon, the temperature and the details beside them; below: the next hours."""
         now, today = self.now, self._day(0)
         kind = icon_kind(now.get("conditions", ""), windy=self._windy(now.get("wind")))
-        candy.blit_mid(surf, weather_icon(kind, 200), (box.left + 150 + ox, box.top + 130 + self._bob()))
-        cx = box.left + 470 + ox
-        candy.blit_mid(surf, candy.degrees(_num(now.get("temperature")), 150), (cx, box.top + 92))
+        candy.blit_mid(surf, weather_icon(kind, 210), (box.left + 140 + ox, box.top + 124 + self._bob()))
+        cx = box.left + 400 + ox
+        candy.blit_mid(surf, candy.degrees(_num(now.get("temperature")), 150), (cx, box.top + 86))
         cond = str(now.get("conditions") or "")
-        candy.blit_mid(surf, candy.fit(cond[:1].upper() + cond[1:], TITLE_PX, 380), (cx, box.top + 180))
+        candy.blit_mid(surf, candy.fit(cond[:1].upper() + cond[1:], TITLE_PX, 300), (cx, box.top + 176))
         fl = _num(now.get("feels_like"))
         if fl is not None:
-            candy.blit_mid(surf, art.text(f"Feels like {fl}°", BODY_PX, art.INK), (cx, box.top + 228))
-        chips = []
-        if _num(today.get("high")) is not None:
-            chips.append(candy.chip(f"High {today['high']}°", BODY_PX, art.INK, art.lighten(art.STRAWBERRY, 0.72)))
-        if _num(today.get("low")) is not None:
-            chips.append(candy.chip(f"Low {today['low']}°", BODY_PX, art.INK, art.lighten(art.SKY, 0.7)))
-        chance = _num(today.get("chance_of_rain_or_snow_percent"))
-        if chance is not None:
-            chips.append(candy.chip(f"Rain {chance}%", BODY_PX, art.INK, art.lighten(art.PERIWINKLE, 0.72)))
-        self._row(surf, chips, box.centerx + ox, box.bottom - 52)
-
-    def _row(self, surf: pygame.Surface, items: list[pygame.Surface], cx: float, cy: float, gap: int = 16) -> None:
-        total = sum(i.get_width() for i in items) + gap * max(0, len(items) - 1)
-        x = cx - total / 2
-        for img in items:
-            surf.blit(img, img.get_rect(midleft=(int(x), int(cy))))
-            x += img.get_width() + gap
+            candy.blit_mid(surf, art.text(f"Feels like {fl}°", BODY_PX, art.INK), (cx, box.top + 226))
+        rows = [self._detail("thermo", "", self._high_low(today))]
+        rows.append(self._rain_row(today))
+        wind = _num(now.get("wind"))
+        if wind is not None:
+            gusts = _num(now.get("gusts"))
+            extra = f", gusts {gusts}" if gusts is not None and gusts >= wind + 10 else ""
+            rows.append(self._detail("wind", "Wind", f"{wind} {self.wind_unit}{extra}"))
+        hum = _num(now.get("humidity_percent"))
+        if hum is not None:
+            rows.append(self._detail("humid", "Humidity", f"{hum}%"))
+        rows.append(self._sun_row(today))
+        self._details(surf, [r for r in rows if r is not None][:MAX_DETAILS], box, ox)
+        self._hour_strip(surf, self._hours(), box, ox)
 
     def _draw_day(self, surf: pygame.Surface, box: pygame.Rect, ox: int) -> None:
         d = self._day()
-        candy.blit_mid(surf, weather_icon(self._icon_for_day(d), 150), (box.left + 140 + ox, box.top + 104 + self._bob()))
-        cx = box.left + 440 + ox
+        candy.blit_mid(surf, weather_icon(self._icon_for_day(d), 170), (box.left + 150 + ox,
+                                                                        box.top + 116 + self._bob()))
+        cx = box.left + 392 + ox
         hi, lo = _num(d.get("high")), _num(d.get("low"))
-        big = candy.degrees(hi, 112)
-        small = candy.degrees(lo, 64, LOW_INK) if lo is not None else None
-        slash = art.text("/", 64, LOW_INK)
-        w = big.get_width() + (18 + slash.get_width() + 12 + small.get_width() if small else 0)
+        big = candy.degrees(hi, 124)
+        small = candy.degrees(lo, 70, LOW_INK) if lo is not None else None
+        slash = art.text("/", 70, LOW_INK)
+        w = big.get_width() + (16 + slash.get_width() + 10 + small.get_width() if small else 0)
         x0 = int(cx - w / 2)
-        r = surf.blit(big, big.get_rect(midleft=(x0, box.top + 78)))
+        r = surf.blit(big, big.get_rect(midleft=(x0, box.top + 84)))
         if small is not None:
-            base = r.bottom - int(112 * 0.16)  # sit the small numbers on the big one's baseline
-            rs = surf.blit(slash, slash.get_rect(bottomleft=(r.right + 18, base + 4)))
-            surf.blit(small, small.get_rect(bottomleft=(rs.right + 12, base + 6)))
+            base = r.bottom - int(124 * 0.16)  # sit the small numbers on the big one's baseline
+            rs = surf.blit(slash, slash.get_rect(bottomleft=(r.right + 16, base + 4)))
+            surf.blit(small, small.get_rect(bottomleft=(rs.right + 10, base + 6)))
         cond = str(d.get("conditions") or "")
-        items = [candy.fit(cond[:1].upper() + cond[1:], 40, 290)]
-        chance = _num(d.get("chance_of_rain_or_snow_percent"))
-        if chance is not None:
-            items.append(candy.chip(f"Rain {chance}%", BODY_PX, art.INK, art.lighten(art.PERIWINKLE, 0.72)))
-        self._row(surf, items, cx, box.top + 168)
-        hours = self._hours()
-        if self.day > 0 and len(hours) > 4:
-            hours = hours[1:5]  # morning to evening
-        self._hour_tiles(surf, hours[:4], box, box.top + 278, tile_w=150, icon=56, ox=ox, rain=False)
+        candy.blit_mid(surf, candy.fit(cond[:1].upper() + cond[1:], TITLE_PX - 6, 300), (cx, box.top + 186))
+        width = box.w - DAY_DETAIL_X - ARROW_PX - 12
+        rows = [self._rain_row(d, width)]
+        wind = _num(d.get("wind_max"))
+        if wind is not None:
+            gusts = _num(d.get("gusts_max"))
+            value = (f"{wind}, gusts {gusts} {self.wind_unit}" if gusts is not None and gusts >= wind + 10
+                     else f"up to {wind} {self.wind_unit}")
+            rows.append(self._detail("wind", "Wind", value, width))
+        uv = d.get("uv_index_max")
+        if isinstance(uv, (int, float)) and not isinstance(uv, bool):
+            rows.append(self._detail("sun", "UV", f"{round(uv)} {uv_words(uv)}", width))
+        rows.append(self._sun_row(d, width))
+        self._details(surf, [r for r in rows if r is not None][:MAX_DETAILS], box, ox, x=DAY_DETAIL_X)
+        self._hour_strip(surf, self._hours(), box, ox)
 
-    def _hour_tiles(self, surf: pygame.Surface, hours: list[dict[str, Any]], box: pygame.Rect, cy: int, *,
-                    tile_w: int, icon: int, ox: int, rain: bool) -> None:
+    def _high_low(self, d: dict[str, Any]) -> str:
+        hi, lo = _num(d.get("high")), _num(d.get("low"))
+        parts = ([f"High {hi}°"] if hi is not None else []) + ([f"Low {lo}°"] if lo is not None else [])
+        return "  ".join(parts)
+
+    def _rain_row(self, d: dict[str, Any], width: int = DETAIL_W) -> pygame.Surface | None:
+        chance = _num(d.get("chance_of_rain_or_snow_percent"))
+        if chance is None:
+            return None
+        amount = ""
+        snow, rain = d.get("snow_cm"), d.get("rain_mm")
+        if isinstance(snow, (int, float)) and snow:
+            amount = f", {snow:g} cm snow"
+        elif isinstance(rain, (int, float)) and rain and chance >= 20:
+            amount = f", {rain:g} mm"
+        label = "Snow" if _rain_kind(d.get("conditions", "")) == "snow" else "Rain"
+        return self._detail("drop", label, f"{chance}%{amount}", width)
+
+    def _sun_row(self, d: dict[str, Any], width: int = DETAIL_W) -> pygame.Surface | None:
+        rise, sset = str(d.get("sunrise") or ""), str(d.get("sunset") or "")
+        if not rise and not sset:
+            return None
+        parts = [candy.hour_label(t, self.twelve) for t in (rise, sset) if t]
+        return self._detail("sunset", "Sun", " to ".join(parts) if len(parts) == 2 else parts[0], width)
+
+    def _detail(self, icon: str, label: str, value: str, width: int = DETAIL_W) -> pygame.Surface | None:
+        """One details row, at most ``width`` px: a little icon, a soft label and the value in ink (cached)."""
+        if not value:
+            return None
+        key = ("wx_detail", icon, label, value, width)
+
+        def make() -> pygame.Surface:
+            ico = _mini_icon(icon, DETAIL_ICON)
+            lab = art.text(f"{label} ", BODY_PX, LOW_INK) if label else None
+            val = candy.fit(value, BODY_PX, width - DETAIL_ICON - 12 - (lab.get_width() if lab else 0))
+            h = max(ico.get_height(), val.get_height())
+            w = ico.get_width() + 12 + (lab.get_width() if lab else 0) + val.get_width()
+            out = pygame.Surface((w, h), pygame.SRCALPHA)
+            out.blit(ico, ico.get_rect(midleft=(0, h // 2)))
+            x = ico.get_width() + 12
+            if lab is not None:
+                out.blit(lab, lab.get_rect(midleft=(x, h // 2 + 1)))
+                x += lab.get_width()
+            out.blit(val, val.get_rect(midleft=(x, h // 2 + 1)))
+            return out
+
+        return art.cached(key, make)
+
+    def _details(self, surf: pygame.Surface, rows: list[pygame.Surface], box: pygame.Rect, ox: int, *,
+                 x: int = DETAIL_X) -> None:
+        """The details column right of the temperature (from ``x`` px into the panel), rows centred in the top
+        part of the panel."""
+        if not rows:
+            return
+        x = box.left + x + ox
+        pitch = min(DETAIL_PITCH, (TOP_H - 24) // len(rows))
+        y = box.top + (TOP_H - pitch * len(rows)) // 2 + pitch // 2 + 4
+        for i, img in enumerate(rows):
+            age = self.t - 0.15 - 0.07 * i
+            if age <= 0:
+                continue
+            a = min(1.0, age / 0.25)
+            art.blit_center(surf, img, (x + img.get_width() / 2, y + i * pitch), int(255 * a))
+
+    def _hour_strip(self, surf: pygame.Surface, hours: list[dict[str, Any]], box: pygame.Rect, ox: int) -> None:
+        """Small tiles across the bottom of the panel: the hours of the day shown (time, icon, temperature, rain)."""
         if not hours:
             return
-        gap = 10
-        tile_h = 150 if not rain else 290
-        total = len(hours) * tile_w + (len(hours) - 1) * gap
+        gap = 12
+        n = len(hours)
+        tile_w = min(150, (box.w - 48 - gap * (n - 1)) // n)
+        tile_h = box.h - TOP_H - 22
+        total = n * tile_w + (n - 1) * gap
         x = box.centerx - total / 2 + ox
-        tile = art.rounded_rect(tile_w, tile_h, 22, art.WHITE, shadow=4, border=(250, 222, 236), border_w=3)
+        top = box.top + TOP_H + 4
+        tile = art.rounded_rect(tile_w, tile_h, 22, art.WHITE, shadow=4, border=TILE_EDGE, border_w=3)
         for h in hours:
-            r = pygame.Rect(int(x), int(cy - tile_h / 2), tile_w, tile_h)
+            r = pygame.Rect(int(x), top, tile_w, tile_h)
             surf.blit(tile, r.topleft)
             label = candy.hour_label(h.get("time", ""), self.twelve)
-            if rain:
-                candy.blit_mid(surf, art.text(label, BODY_PX, art.INK), (r.centerx, r.top + 34))
-                candy.blit_mid(surf, weather_icon(icon_kind(h.get("conditions", "")), icon), (r.centerx, r.top + 108))
-                candy.blit_mid(surf, candy.degrees(_num(h.get("temperature")), 48), (r.centerx, r.top + 186))
-                chance = _num(h.get("chance_of_rain_or_snow_percent"))
-                if chance is not None:
-                    pct = art.text(f"{chance}%", BODY_PX, art.inkier(art.SKY, 0.55) if chance >= 40 else LOW_INK)
-                    drop = _drop_icon(22)
-                    x1 = r.centerx - (drop.get_width() + 4 + pct.get_width()) // 2
-                    surf.blit(drop, drop.get_rect(midleft=(x1, r.top + 244)))
-                    surf.blit(pct, pct.get_rect(midleft=(x1 + drop.get_width() + 4, r.top + 246)))
+            candy.blit_mid(surf, candy.fit(label, SMALL_PX, tile_w - 10, min_size=SMALL_PX), (r.centerx, r.top + 24))
+            candy.blit_mid(surf, weather_icon(icon_kind(h.get("conditions", "")), 62), (r.centerx, r.top + 76))
+            temp = candy.degrees(_num(h.get("temperature")), 42)
+            chance = _num(h.get("chance_of_rain_or_snow_percent"))
+            if chance is not None and chance >= 30:
+                pct = art.text(f"{chance}%", SMALL_PX, RAIN_INK)
+                drop = _drop_icon(22)
+                w = temp.get_width() + 10 + drop.get_width() + pct.get_width()
+                x1 = r.centerx - w // 2
+                surf.blit(temp, temp.get_rect(midleft=(x1, r.top + 128)))
+                x1 += temp.get_width() + 10
+                surf.blit(drop, drop.get_rect(midleft=(x1, r.top + 128)))
+                surf.blit(pct, pct.get_rect(midleft=(x1 + drop.get_width(), r.top + 130)))
             else:
-                candy.blit_mid(surf, art.text(label, SMALL_PX, art.INK), (r.centerx, r.top + 22))
-                candy.blit_mid(surf, weather_icon(icon_kind(h.get("conditions", "")), icon), (r.centerx, r.top + 72))
-                candy.blit_mid(surf, candy.degrees(_num(h.get("temperature")), 38), (r.centerx, r.top + 124))
+                candy.blit_mid(surf, temp, (r.centerx, r.top + 128))
             x += tile_w + gap
 
+    # ------------------------------------------------------------ hour by hour
     def _draw_hours(self, surf: pygame.Surface, box: pygame.Rect, ox: int) -> None:
+        """Tall tiles, one an hour: the time and icon, the temperature on a curve across them, the chance of rain
+        as a filling gauge at the bottom."""
         hours = self._hours()
         if not hours:
             candy.blit_mid(surf, art.text("No hours to show", BODY_PX, art.INK), box.center)
             return
-        tile_w = min(150, (box.w - 90 - 10 * (len(hours) - 1)) // len(hours))
-        self._hour_tiles(surf, hours, box, box.centery, tile_w=tile_w, icon=min(76, tile_w - 20), ox=ox, rain=True)
+        n = len(hours)
+        gap = 12
+        inner = box.w - 2 * (ARROW_PX + 12)
+        tile_w = min(150, (inner - gap * (n - 1)) // n)
+        tile_h = box.h - 32
+        total = n * tile_w + (n - 1) * gap
+        x0 = box.centerx - total / 2 + ox
+        top = box.top + 16
+        tile = art.rounded_rect(tile_w, tile_h, 24, art.WHITE, shadow=4, border=TILE_EDGE, border_w=3)
+        temps = [_num(h.get("temperature")) for h in hours]
+        known = [t for t in temps if t is not None]
+        lo, hi = (min(known), max(known)) if known else (0, 0)
+        curve_top, curve_bottom = top + 226, top + 296  # the warmest hour's dot .. the coldest's
 
+        def dot_y(t: int) -> float:
+            return curve_bottom - (curve_bottom - curve_top) * ((t - lo) / (hi - lo) if hi > lo else 0.5)
+
+        centres = [x0 + i * (tile_w + gap) + tile_w / 2 for i in range(n)]
+        for i, h in enumerate(hours):
+            r = pygame.Rect(int(x0 + i * (tile_w + gap)), top, tile_w, tile_h)
+            surf.blit(tile, r.topleft)
+            label = candy.hour_label(h.get("time", ""), self.twelve)
+            candy.blit_mid(surf, candy.fit(label, BODY_PX, tile_w - 10, min_size=SMALL_PX), (r.centerx, r.top + 32))
+            candy.blit_mid(surf, weather_icon(icon_kind(h.get("conditions", "")), min(96, tile_w - 24)),
+                           (r.centerx, r.top + 112))
+            chance = _num(h.get("chance_of_rain_or_snow_percent"))
+            if chance is not None:
+                self._rain_gauge(surf, r, chance)
+        pts = [(centres[i], dot_y(t)) for i, t in enumerate(temps) if t is not None]
+        if len(pts) > 1:
+            for a, b in itertools.pairwise(pts):
+                art.capsule(surf, art.lighten(art.TANGERINE, 0.35), a, b, 6)
+        for i, t in enumerate(temps):
+            if t is None:
+                continue
+            y = dot_y(t)
+            art.blit_center(surf, art.circle(9, art.inkier(art.TANGERINE, 0.3)), (centres[i], y))
+            art.blit_center(surf, art.circle(6, art.TANGERINE), (centres[i], y))
+            candy.blit_mid(surf, candy.degrees(t, 46), (centres[i], y - 34))
+
+    def _rain_gauge(self, surf: pygame.Surface, r: pygame.Rect, chance: int) -> None:
+        """The chance of rain at the bottom of an hour's tile: a drop and the %, over a bar that fills with it."""
+        bar = pygame.Rect(r.left + 14, r.bottom - 34, r.w - 28, 16)
+        surf.blit(art.rounded_rect(bar.w, bar.h, bar.h // 2, art.lighten(art.SKY, 0.78)), bar.topleft)
+        fill = int(bar.w * max(0, min(100, chance)) / 100)
+        if fill >= bar.h:
+            surf.blit(art.rounded_rect(fill, bar.h, bar.h // 2, art.SKY), bar.topleft)
+        pct = art.text(f"{chance}%", BODY_PX, RAIN_INK if chance >= 40 else LOW_INK)
+        drop = _drop_icon(26)
+        x1 = r.centerx - (drop.get_width() + 4 + pct.get_width()) // 2
+        y = bar.top - 30
+        surf.blit(drop, drop.get_rect(midleft=(x1, y)))
+        surf.blit(pct, pct.get_rect(midleft=(x1 + drop.get_width() + 4, y + 2)))
+
+    # ------------------------------------------------------------ the week
     def _tiles(self) -> tuple[int, int, int]:
         n = max(1, len(self.forecast))
-        gap = 8
-        tile_w = min(110, (candy.PANEL.w - 24 - gap * (n - 1)) // n)
+        gap = 10
+        tile_w = min(150, (candy.PANEL.w - 24 - gap * (n - 1)) // n)
         x0 = candy.PANEL.centerx - (n * tile_w + (n - 1) * gap) // 2
         return x0, tile_w, gap
 
@@ -645,7 +788,7 @@ class WeatherCard(Card):
 
     def _draw_week(self, surf: pygame.Surface, box: pygame.Rect) -> None:
         x0, tw, gap = self._tiles()
-        th = box.h - 36
+        th = box.h - 32
         for i, d in enumerate(self.forecast):
             age = self.t - 0.06 * i  # the tiles pop in one after another
             k = art.ease_out_back(age / 0.3, 1.6) if age < 0.3 else 1.0
@@ -653,22 +796,92 @@ class WeatherCard(Card):
                 continue
             chosen = i == self.day
             fill = art.lighten(art.LEMON, 0.7) if chosen else art.WHITE
-            edge = art.inkier(art.LEMON, 0.2) if chosen else (250, 222, 236)
-            tile = art.rounded_rect(tw, th, 22, fill, shadow=4, border=edge, border_w=4 if chosen else 3)
+            edge = art.inkier(art.LEMON, 0.2) if chosen else TILE_EDGE
+            tile = art.rounded_rect(tw, th, 24, fill, shadow=4, border=edge, border_w=4 if chosen else 3)
             r = pygame.Rect(x0 + i * (tw + gap), box.top + 16, tw, th)
             if k < 0.99:
                 art.blit_center(surf, art.scaled(tile, k), r.center)
                 continue
             surf.blit(tile, r.topleft)
-            name = "Today" if i == 0 else str(d.get("date", ""))[:3]
-            candy.blit_mid(surf, candy.fit(name, BODY_PX, tw - 8), (r.centerx, r.top + 34))
-            candy.blit_mid(surf, weather_icon(self._icon_for_day(d), min(84, tw - 12)), (r.centerx, r.top + 108))
-            candy.blit_mid(surf, candy.degrees(_num(d.get("high")), 44), (r.centerx, r.top + 180))
-            candy.blit_mid(surf, candy.degrees(_num(d.get("low")), BODY_PX, LOW_INK), (r.centerx, r.top + 222))
+            date = str(d.get("date", ""))
+            name = "Today" if i == 0 else date[:3]
+            candy.blit_mid(surf, candy.fit(name, BODY_PX, tw - 10), (r.centerx, r.top + 34))
+            day_no = _day_of_month(date)
+            if day_no:
+                candy.blit_mid(surf, art.text(day_no, SMALL_PX, LOW_INK), (r.centerx, r.top + 70))
+            candy.blit_mid(surf, weather_icon(self._icon_for_day(d), min(100, tw - 16)), (r.centerx, r.top + 140))
+            candy.blit_mid(surf, candy.degrees(_num(d.get("high")), 52), (r.centerx, r.top + 218))
+            candy.blit_mid(surf, candy.degrees(_num(d.get("low")), 40, LOW_INK), (r.centerx, r.top + 266))
             chance = _num(d.get("chance_of_rain_or_snow_percent"))
-            if chance is not None and chance >= 30:
+            if chance is not None and chance >= 20:
                 candy.blit_mid(surf, art.pill(f"{chance}%", SMALL_PX, art.WHITE, art.inkier(art.SKY, 0.25),
-                                              pad=(8, 4)), (r.centerx, r.top + 276))
+                                              pad=(12, 5)), (r.centerx, r.top + 320))
+            amount = _amount(d)
+            if amount:
+                candy.blit_mid(surf, candy.fit(amount, SMALL_PX, tw - 10, min_size=SMALL_PX), (r.centerx, r.top + 366))
+            elif self._windy(d.get("wind_max")) and self._icon_for_day(d) != "wind":
+                candy.blit_mid(surf, weather_icon("wind", 46), (r.centerx, r.top + 366))
+
+
+def uv_words(uv: float) -> str:
+    """The WHO's words for a UV index: "low", "moderate", "high", "very high", "extreme"."""
+    return "low" if uv < 3 else "moderate" if uv < 6 else "high" if uv < 8 else "very high" if uv < 11 else "extreme"
+
+
+def _day_of_month(date: str) -> str:
+    """ "Saturday 24 October" -> "24 Oct"."""
+    parts = str(date or "").split()
+    return f"{parts[1]} {parts[2][:3]}" if len(parts) >= 3 and parts[1].isdigit() else ""
+
+
+def _amount(d: dict[str, Any]) -> str:
+    """How much rain or snow a day brings ("4 mm", "2 cm snow"); "" when none or little."""
+    snow, rain = d.get("snow_cm"), d.get("rain_mm")
+    if isinstance(snow, (int, float)) and not isinstance(snow, bool) and snow >= 0.5:
+        return f"{snow:g} cm snow"
+    if isinstance(rain, (int, float)) and not isinstance(rain, bool) and rain >= 1:
+        return f"{rain:g} mm"
+    return ""
+
+
+def _mini_icon(kind: str, size: int) -> pygame.Surface:
+    """The little icons beside the details: drop, wind, humid, thermo, sun, sunset."""
+    if kind == "drop":
+        return _drop_icon(size)
+    if kind in ("wind", "sun"):
+        return weather_icon(kind, size)
+
+    def make() -> pygame.Surface:
+        def draw(s: pygame.Surface, k: float) -> None:
+            n = size * k
+            if kind == "humid":
+                _drop(s, n * 0.36, n * 0.62, n * 0.2)
+                _drop(s, n * 0.7, n * 0.78, n * 0.14)
+            elif kind == "thermo":
+                cx = n * 0.5
+                art.capsule(s, art.inkier(art.WHITE, 0.4), (cx, n * 0.12), (cx, n * 0.66), n * 0.26)
+                art.capsule(s, art.WHITE, (cx, n * 0.12), (cx, n * 0.66), n * 0.16)
+                pygame.draw.circle(s, art.inkier(art.STRAWBERRY, 0.35), (cx, n * 0.74), n * 0.2)
+                pygame.draw.circle(s, art.STRAWBERRY, (cx, n * 0.74), n * 0.15)
+                art.capsule(s, art.STRAWBERRY, (cx, n * 0.36), (cx, n * 0.7), n * 0.09)
+            else:  # sunset: half a sun on the horizon
+                cy = n * 0.66
+                layer = pygame.Surface(s.get_size(), pygame.SRCALPHA)
+                pygame.draw.circle(layer, art.inkier(SUN, 0.35), (n * 0.5, cy), n * 0.27)
+                pygame.draw.circle(layer, SUN, (n * 0.5, cy), n * 0.22)
+                for i in range(5):
+                    a = math.pi + i * math.pi / 4
+                    p0 = (n * 0.5 + math.cos(a) * n * 0.33, cy + math.sin(a) * n * 0.33)
+                    p1 = (n * 0.5 + math.cos(a) * n * 0.44, cy + math.sin(a) * n * 0.44)
+                    art.capsule(layer, RAYS, p0, p1, n * 0.07)
+                layer.fill((0, 0, 0, 0), pygame.Rect(0, int(cy), int(n), int(n - cy)))
+                s.blit(layer, (0, 0))
+                art.capsule(s, art.inkier(art.PERIWINKLE, 0.25), (n * 0.08, cy + n * 0.02), (n * 0.92, cy + n * 0.02),
+                            n * 0.08)
+
+        return art.supersampled((size, size), draw)
+
+    return art.cached(("wx_mini", kind, size), make)
 
 
 # ---------------------------------------------------------------- building
@@ -703,10 +916,12 @@ async def build(spec: dict[str, Any], ctx: Any, host: CardHost) -> WeatherCard |
 
 register(CardType(
     kind="weather",
-    description="The weather on screen while you talk about it: now (big icon, temperature, feels-like, today's "
-                "high and low, chance of rain), one day's forecast (today, tomorrow or a weekday up to 6 days ahead, "
-                "with a few hours across it), the next 7 days, or hour by hour. Use it for EVERY weather question. "
-                "Leave out place for the weather at home.",
+    description="The weather on screen while you talk about it, filled in from the forecast (you give only the "
+                "place, view and day): now (big icon, temperature, feels-like, today's high and low, rain, wind, "
+                "humidity, sunrise and sunset, and the next hours), one day's forecast (today, tomorrow or a weekday "
+                "up to 6 days ahead: high and low, rain and how much, wind, UV, sunrise and sunset, and six hours "
+                "across it), the next 7 days, or hour by hour (temperatures on a curve, the chance of rain each "
+                "hour). Use it for EVERY weather question. Leave out place for the weather at home.",
     fields={
         "place": {"type": "string", "description": "A city or place, only if not home: 'Paris', 'Springfield, "
                                                    "Illinois'."},
@@ -732,21 +947,32 @@ def _sample_report() -> dict[str, Any]:
             ("Tuesday", "Tuesday 27 October", "light snow", 1, -3, 60),
             ("Wednesday", "Wednesday 28 October", "thunderstorms", 20, 12, 90),
             ("Thursday", "Thursday 29 October", "fog", 9, 4, 20), ("Friday", "Friday 30 October", "cloudy", 15, 8, 10)]
+    extra = [  # rain_mm, snow_cm, wind_max, gusts_max, uv_index_max, sunrise, sunset
+        (None, None, 18, 30, 3.2, "07:32", "18:12"), (6.4, None, 24, 41, 1.4, "07:33", "18:10"),
+        (None, None, 46, 70, 4.1, "07:35", "18:08"), (None, 2.5, 20, 35, 1.0, "07:36", "18:07"),
+        (14.0, None, 32, 60, 2.0, "07:37", "18:05"), (0.4, None, 10, 18, 2.2, "07:39", "18:04"),
+        (None, None, 15, 25, 3.0, "07:40", "18:02")]
     hours_today = [("15:00", 12, "partly cloudy", 0), ("18:00", 11, "cloudy", 10), ("21:00", 9, "light rain", 60),
                    ("00:00", 8, "clear", 0), ("03:00", 7, "fog", 10), ("06:00", 6, "cloudy", 20)]
     hours_rainy = [("06:00", 4, "cloudy", 20), ("09:00", 6, "light rain", 70), ("12:00", 9, "rain", 90),
                    ("15:00", 11, "light rain", 80), ("18:00", 8, "cloudy", 30), ("21:00", 6, "mainly clear", 10)]
-    def hours(rows: list[tuple[str, int, str, int]], cond: str | None = None) -> list[dict[str, Any]]:
-        return [{"time": t, "temperature": tt, "conditions": cond or c, "chance_of_rain_or_snow_percent": p}
-                for t, tt, c, p in rows]
+    def hours(rows: list[tuple[str, int, str, int]], cond: str | None = None, most: int = 100,
+              shift: int = 0) -> list[dict[str, Any]]:
+        return [{"time": t, "temperature": tt + shift, "conditions": cond or c,
+                 "chance_of_rain_or_snow_percent": min(p, most)} for t, tt, c, p in rows]
 
     forecast = []
     for i, (day, date, cond, hi, lo, chance) in enumerate(days):
-        rows = hours(hours_today) if i == 0 else hours(hours_rainy) if i == 1 else hours(hours_rainy, cond)
-        forecast.append({"day": day, "date": date, "conditions": cond, "high": hi, "low": lo,
-                         "chance_of_rain_or_snow_percent": chance, "wind_max": 18, "hours": rows})
+        rows = (hours(hours_today) if i == 0 else hours(hours_rainy) if i == 1
+                else hours(hours_rainy, cond, chance, (hi - 11)))
+        rain, snow, wind, gusts, uv, rise, sset = extra[i]
+        d = {"day": day, "date": date, "conditions": cond, "high": hi, "low": lo,
+             "chance_of_rain_or_snow_percent": chance, "rain_mm": rain, "snow_cm": snow, "wind_max": wind,
+             "gusts_max": gusts, "uv_index_max": uv, "sunrise": rise, "sunset": sset, "hours": rows}
+        forecast.append({k: v for k, v in d.items() if v is not None})
     return {"place": "Toronto, Ontario, Canada", "local_time": "14:30", "units": {"temperature": "°C", "wind": "km/h"},
-            "now": {"temperature": 12, "feels_like": 9, "conditions": "partly cloudy", "wind": 12},
+            "now": {"temperature": 12, "feels_like": 9, "conditions": "partly cloudy", "humidity_percent": 64,
+                    "wind": 12, "gusts": 28},
             "forecast": forecast, "source": "Open-Meteo"}
 
 
@@ -757,6 +983,7 @@ SAMPLES: list[dict[str, Any]] = [
     {"card": "weather", "view": "day", "day": "tomorrow", "report": SAMPLE_REPORT},
     {"card": "weather", "view": "week", "report": SAMPLE_REPORT},
     {"card": "weather", "view": "hours", "day": "tomorrow", "report": SAMPLE_REPORT},
+    {"card": "weather", "view": "day", "day": "Monday", "report": SAMPLE_REPORT},  # windy, high UV
 ]
 
-__all__ = ["SAMPLES", "WeatherCard", "icon_kind", "parse_day", "rain_words", "weather_icon"]
+__all__ = ["SAMPLES", "WeatherCard", "icon_kind", "parse_day", "rain_words", "uv_words", "weather_icon"]

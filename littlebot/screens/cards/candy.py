@@ -1,5 +1,7 @@
 """Small drawing helpers shared by the weather, clock, timer and maths cards (the games' candy look).
 
+Laid out for the 1024x600 canvas: the title right of the presenter's eyes, the content in :data:`PANEL`.
+
 Everything here draws through littlebot/games/art.py, so it is cached the same way: a card's frame is
 mostly blits of sprites made once.
 """
@@ -65,7 +67,7 @@ def panel(surf: pygame.Surface, rect: pygame.Rect = PANEL, *, dy: float = 0.0, f
 def chip(s: str, size: int = BODY_PX, fg: Sequence[int] = art.INK, bg: Sequence[int] = art.WHITE,
          border: Sequence[int] | None = None) -> pygame.Surface:
     """A rounded label ("High 13°")."""
-    return art.pill(s, size, fg, bg, pad=(16, 7), border=border)
+    return art.pill(s, size, fg, bg, pad=(18, 8), border=border)
 
 
 def degrees(value: Any, size: int, color: Sequence[int] = art.INK) -> pygame.Surface:
@@ -92,7 +94,7 @@ def blit_mid(surf: pygame.Surface, img: pygame.Surface, center: tuple[float, flo
     return r
 
 
-def slide_in(t: float, seconds: float = 0.35, distance: float = 26.0) -> float:
+def slide_in(t: float, seconds: float = 0.35, distance: float = 32.0) -> float:
     """How far below its place a card's content still is ``t`` seconds after it appeared."""
     return (1.0 - art.ease_out_cubic(t / seconds)) * distance if t < seconds else 0.0
 

@@ -24,7 +24,7 @@ def make(zone=None, place="", home="America/Toronto", twelve=True, at=NOON_UTC) 
 def test_registered_with_fields_actions_and_samples():
     ct = base.card_types()["clock"]
     assert set(ct.fields) == {"place", "timezone"} and ct.required == () and set(ct.actions) == {"place"}
-    assert len(clock.SAMPLES) == 3
+    assert len(clock.SAMPLES) == 4
 
 
 async def test_every_sample_builds_and_draws():
@@ -61,6 +61,22 @@ def test_here_and_elsewhere():
     assert make("America/Toronto", "Toronto").offset == "Same time as here"
     assert make("Asia/Kathmandu", "Kathmandu", home="UTC").offset == "5¾ hours ahead"
     assert make("Australia/Sydney", "Sydney").weekday == "Sunday"  # already tomorrow there
+
+
+def test_part_of_day_year_and_the_time_at_home():
+    assert [clock.day_part(h) for h in (4, 5, 11, 12, 16, 17, 20, 21, 0)] == [
+        "night", "morning", "morning", "afternoon", "afternoon", "evening", "evening", "night", "night"]
+    here = make()  # 9:30 am in Toronto
+    assert here.part == "morning" and here.year == 2026 and here.home_text == ""  # home: no "at home" line
+    tokyo = make("Asia/Tokyo", "Tokyo")  # 10:30 pm on Saturday there, 9:30 am at home
+    assert tokyo.part == "night" and tokyo.home_text == "At home it's 9:30 am"
+    sydney = make("Australia/Sydney", "Sydney")  # already Sunday there
+    assert sydney.home_text == "At home it's 9:30 am on Saturday"
+    berlin = make("Europe/Berlin", "Berlin", twelve=False)
+    assert berlin.home_text == "At home it's 09:30"
+    assert len(tokyo._lines) == len(here._lines) + 2  # the offset chip and the time at home
+    assert max(img.get_width() for img in tokyo._lines) <= clock.TEXT_W
+    assert clock.FACE_CENTER[0] + clock.FACE_PX // 2 < clock.TEXT_X - clock.TEXT_W // 2  # dial and text apart
 
 
 def test_it_follows_the_clock():
