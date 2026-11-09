@@ -20,7 +20,7 @@ what was asked) is `littlebot/screens/director.py` and the live voice's tools.
   (`littlebot/games/art.py` `background`), rounded candy-coloured shapes, dark plum text. The screen
   service paints that background first, so every card sits on the same calm pink.
 * The layout: the presenter top-left, the title to its right (`_kit.HEADER`, 788x112 px), and the card's
-  content in a rounded panel under both (`_kit.PANEL` / `candy.PANEL`, 992x456 px); a card with a picture
+  content in a rounded panel under both (`_kit.PANEL` / `candy.PANEL`, 992x454 px); a card with a picture
   gives it a column on the right (`_kit.PIC_W`, 380 px).
 * The presenter's box is `Card.presenter_box`, top-left by default (`base.PRESENTER_BOX`,
   184x106 px at (16, 12)). The eyes are the games' hosting eyes (`art.draw_eyes`: rim, gradient, big pupil, two

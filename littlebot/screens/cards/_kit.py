@@ -30,7 +30,7 @@ from littlebot.screens.base import (
 )
 
 # The header sits to the right of the presenter's eyes; the content panel below both
-# (on the 1024x600 canvas: the header 788 x 112, the panel 992 x 456).
+# (on the 1024x600 canvas: the header 788 x 112, the panel 992 x 454).
 _PX, _PY, _PW, _PH = PRESENTER_BOX
 HEADER = pygame.Rect(_PX + _PW + 20, 8, W - (_PX + _PW + 20) - 16, _PY + _PH - 6)
 PANEL = pygame.Rect(16, _PY + _PH + 14, W - 32, H - (_PY + _PH + 14) - 14)
