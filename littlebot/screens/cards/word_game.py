@@ -1,8 +1,13 @@
-"""The word game card (kind "word_game", internal): hangman's blanks, the letters tried, lives as hearts.
+"""The word game card (kind "word_game", internal): hangman's blanks, the whole alphabet with the letters tried
+(green: in the word, red and crossed out: not), lives as hearts.
 
 Shown by the voice games (littlebot/games/voice/word_game.py), never offered to the AI. It follows the live game
 (littlebot/screens/cards/_gamekit.py): a right letter pops into its blanks, a wrong one breaks a heart, and when a
 word ends the whole word shows in green (solved) or red (out of lives) for a moment before the next one.
+
+On the 1024x600 screen: the blanks across the top (letters up to 120 px; 13 letters still about 80 px), under them
+the alphabet in two rows of 13 keys (which letters are left is as plain as which were tried) and the word number
+and the words solved; the lives as hearts beside the title. The keys only show: Hangman takes letters by voice.
 
 Spec (JSON): pattern [letter or "" per slot], guessed [letters], wrong [letters], lives, max_lives, category,
 number, total, score, result {id, word, won} | null, last {id, letter, hit} | null, over, session, title.
@@ -10,17 +15,28 @@ number, total, score, result {id, word, won} | null, last {id, letter, hit} | nu
 
 from __future__ import annotations
 
+import string
 from typing import Any
 
 import pygame
 
 from littlebot.games import art
-from littlebot.screens.base import BODY_PX, CardHost, CardType, W, register
+from littlebot.screens.base import BODY_PX, CardHost, CardType, register
 from littlebot.screens.cards import _gamekit as gk
 from littlebot.screens.cards import _kit as kit
 
-WORD_RECT = pygame.Rect(12, gk.TOP, W - 24, 200)
-TRIED_RECT = pygame.Rect(12, WORD_RECT.bottom + 12, W - 24, 480 - WORD_RECT.bottom - 24)
+# The word's blanks across the top of the game area; under them the alphabet, two rows of 13 keys, and a line
+# with the word number and the words solved.
+WORD_RECT = pygame.Rect(gk.AREA.x, gk.AREA.y, gk.AREA.w, 200)
+TRIED_RECT = pygame.Rect(gk.AREA.x, WORD_RECT.bottom + gk.GAP, gk.AREA.w, gk.AREA.bottom - WORD_RECT.bottom - gk.GAP)
+ALPHABET = string.ascii_uppercase
+KEYS_PER_ROW = 13
+KEY_GAP = 8
+KEY_W = (TRIED_RECT.w - 2 * 22 - (KEYS_PER_ROW - 1) * KEY_GAP) // KEYS_PER_ROW
+KEY_H = 70
+KEY_PX = 44
+SLOT_MAX = 104  # a letter's blank, at most (a short word); 13 letters still get about 70 px each
+LETTER_MAX_PX = 120
 POP_S = 0.45
 
 SAMPLES = [
@@ -28,6 +44,33 @@ SAMPLES = [
      "guessed": ["E", "A", "L", "N"], "wrong": ["S", "O"], "lives": 4, "max_lives": 6, "number": 2, "total": 5,
      "score": 1, "result": None, "last": {"id": 6, "letter": "N", "hit": True}, "over": False},
 ]
+
+
+def key_rect(i: int) -> pygame.Rect:
+    """Where letter ``i`` of the alphabet (0 = A) sits."""
+    row, col = divmod(i, KEYS_PER_ROW)
+    width = KEYS_PER_ROW * KEY_W + (KEYS_PER_ROW - 1) * KEY_GAP
+    x0 = TRIED_RECT.centerx - width // 2
+    return pygame.Rect(x0 + col * (KEY_W + KEY_GAP), TRIED_RECT.y + 18 + row * (KEY_H + 10), KEY_W, KEY_H)
+
+
+def key(letter: str, state: str) -> pygame.Surface:
+    """A letter key: "" not tried yet, "hit" in the word (green), "miss" not in it (red, crossed out)."""
+
+    def make() -> pygame.Surface:
+        fill, edge, ink = gk.PANEL_HI, gk.BORDER, gk.INK
+        if state == "hit":
+            fill, edge = gk.GOOD_BOX, art.lighten(gk.GOOD, 0.35)
+        elif state == "miss":
+            fill, edge, ink = gk.BAD_BOX, art.lighten(gk.BAD, 0.3), art.mix(gk.INK, gk.BAD, 0.25)
+        out = art.rounded_rect(KEY_W, KEY_H, 16, fill, shadow=3, border=edge, border_w=3).copy()
+        t = art.text(letter, KEY_PX, ink)
+        out.blit(t, t.get_rect(center=(KEY_W // 2, KEY_H // 2 + 1)))
+        if state == "miss":
+            pygame.draw.line(out, ink, (12, KEY_H - 14), (KEY_W - 12, 14), 4)
+        return out
+
+    return art.cached(("gk_key", letter, state, KEY_W, KEY_H), make)
 
 
 class WordGameCard(gk.GameCard):
@@ -78,22 +121,22 @@ class WordGameCard(gk.GameCard):
     def draw(self, surf: pygame.Surface) -> None:
         gk.background(surf)
         v = self.view
-        max_lives = max(1, int(v.get("max_lives") or 6))
-        lives = max(0, int(v.get("lives") or 0))
+        max_lives = max(1, kit.as_int(v.get("max_lives"), 6))
+        lives = max(0, kit.as_int(v.get("lives")))
         shake = 0
         if self.t - self.miss_at < 0.5:
-            shake = int(6 * (1 - (self.t - self.miss_at) / 0.5) * (1 if int(self.t * 30) % 2 else -1))
-        x = W - 14
-        hearts_left = x
+            shake = int(8 * (1 - (self.t - self.miss_at) / 0.5) * (1 if int(self.t * 30) % 2 else -1))
+        x = gk.HEADER.right
+        hearts_left = None
         if not v.get("over") and not self.flashing:
             for n in reversed(range(max_lives)):
-                img = gk.heart(n < lives, 30)
-                r = img.get_rect(midright=(x + (shake if n == lives else 0), gk.HEADER.centery - 2))
+                img = gk.heart(n < lives)
+                r = img.get_rect(midright=(x + (shake if n == lives else 0), gk.HEADER.centery))
                 surf.blit(img, r)
-                x = r.left - 4
+                x = r.left - 6
                 hearts_left = x
         cat = "" if self.flashing else str(v.get("category") or "")  # the next word's category waits for it
-        gk.title(surf, f"Hangman · {cat}" if cat else "Hangman", right=hearts_left)
+        gk.title(surf, [f"Hangman · {cat}", cat] if cat else "Hangman", right=hearts_left)
         if self.flashing and self.flash:
             self._word_end(surf, self.flash)
             return
@@ -105,68 +148,57 @@ class WordGameCard(gk.GameCard):
 
     def _slots(self, n: int) -> tuple[int, int, int]:
         n = max(1, n)
-        slot = min(66, (WORD_RECT.w - 40) // n)
-        size = max(40, min(80, int(slot * 1.2)))
+        slot = min(SLOT_MAX, (WORD_RECT.w - 64) // n)
+        size = max(48, min(LETTER_MAX_PX, int(slot * 1.15)))
         x0 = WORD_RECT.centerx - slot * n // 2
         return slot, size, x0
 
     def _blanks(self, surf: pygame.Surface, pattern: list[str], color: Any = None) -> None:
-        gk.box(surf, WORD_RECT, gk.PANEL_HI, radius=26)
+        gk.box(surf, WORD_RECT, gk.PANEL_HI, radius=28)
         slot, size, x0 = self._slots(len(pattern))
-        base_y = WORD_RECT.centery + size // 3
+        cap = art.font(size).get_ascent()  # the letters sit on their blanks, the pair centred in the panel
+        base_y = WORD_RECT.centery + cap // 2 - 4
         for i, c in enumerate(pattern):
             cx = x0 + slot * i + slot // 2
-            line = pygame.Rect(0, 0, max(10, slot - 12), 6)
-            line.midtop = (cx, base_y + 6)
-            pygame.draw.rect(surf, gk.CYAN if not c else gk.INK_SOFT, line, border_radius=3)
+            line = pygame.Rect(0, 0, max(12, slot - 16), 8)
+            line.midtop = (cx, base_y + 10)
+            pygame.draw.rect(surf, gk.CYAN if not c else gk.INK_SOFT, line, border_radius=4)
             if not c:
                 continue
-            k = 1.0
-            if c == self.pop_letter and self.t - self.pop_at < POP_S:
+            img, k = art.text_outlined(c, size, color or gk.INK, gk.OUTLINE, 3), 1.0
+            if c == self.pop_letter and self.t - self.pop_at < POP_S:  # a right guess pops in, big then settling
                 k = 1.0 + 0.45 * (1 - art.ease_out_cubic((self.t - self.pop_at) / POP_S))
-            img = art.text_outlined(c, int(size * k), color or gk.INK, (10, 16, 40), 2)
-            surf.blit(img, img.get_rect(midbottom=(cx, base_y + 4)))
+                img = pygame.transform.smoothscale(img, (int(img.get_width() * k), int(img.get_height() * k)))
+            surf.blit(img, img.get_rect(midbottom=(cx, base_y + 8 + int(size * k) // 7)))
 
     def _tried(self, surf: pygame.Surface, guessed: list[str], wrong: list[str], v: dict[str, Any]) -> None:
-        gk.box(surf, TRIED_RECT, gk.PANEL, radius=22)
-        letters = [(c, True) for c in guessed] + [(c, False) for c in wrong]
-        letters.sort(key=lambda p: p[0])
-        label = gk.text(["Tried:"], BODY_PX, gk.INK_SOFT, align="left")
-        surf.blit(label, label.get_rect(topleft=(TRIED_RECT.x + 20, TRIED_RECT.y + 16)))
-        if not letters:
-            hint = gk.text(["Say a letter, or the whole word!"], BODY_PX, gk.INK, align="left")
-            surf.blit(hint, hint.get_rect(midleft=(TRIED_RECT.x + 20, TRIED_RECT.centery + 18)))
-        x, y = TRIED_RECT.x + 20 + label.get_width() + 14, TRIED_RECT.y + 12
-        for c, hit in letters:
-            img = art.pill(c, 36, gk.INK, gk.GOOD if hit else gk.BAD, pad=(14, 4))
-            if x + img.get_width() > TRIED_RECT.right - 16:
-                x, y = TRIED_RECT.x + 20, y + img.get_height() + 8
-            surf.blit(img, (x, y))
-            x += img.get_width() + 8
-        status = f"Word {v.get('number', 0)} of {v.get('total', 0)}  ·  solved {v.get('score', 0)}"
-        s = gk.text([status], BODY_PX, gk.INK_SOFT)
-        surf.blit(s, s.get_rect(midbottom=(TRIED_RECT.centerx, TRIED_RECT.bottom - 10)))
+        gk.box(surf, TRIED_RECT, gk.PANEL, radius=24)
+        hit = {str(c).upper() for c in guessed}
+        miss = {str(c).upper() for c in wrong}
+        for i, c in enumerate(ALPHABET):
+            img = key(c, "hit" if c in hit else "miss" if c in miss else "")
+            surf.blit(img, key_rect(i))
+        number = f"Word {v.get('number', 0)} of {v.get('total', 0)}"
+        status = f"{number}  ·  say a letter, or the whole word!" if not (hit or miss) else \
+            f"{number}  ·  solved {v.get('score', 0)}"
+        line = pygame.Rect(TRIED_RECT.x + 20, key_rect(len(ALPHABET) - 1).bottom + 4, TRIED_RECT.w - 40,
+                           TRIED_RECT.bottom - key_rect(len(ALPHABET) - 1).bottom - 8)
+        gk.blit_text_in(surf, status, line, (BODY_PX,), 1, gk.INK_SOFT)
 
     def _word_end(self, surf: pygame.Surface, f: dict[str, Any]) -> None:
         word = str(f.get("word") or "")
         won = bool(f.get("won"))
         self._blanks(surf, list(word), color=art.lighten(gk.GOOD, 0.35) if won else art.lighten(gk.BAD, 0.35))
-        gk.box(surf, TRIED_RECT, gk.GOOD if won else gk.BAD, border=None, radius=22)
+        edge = art.lighten(gk.GOOD if won else gk.BAD, 0.3)
+        gk.box(surf, TRIED_RECT, gk.GOOD_BOX if won else gk.BAD_BOX, border=edge, radius=24, border_w=5)
         msg = "You got it!" if won else "The word was..."
-        img = art.text_outlined(msg, 56, gk.INK, (10, 16, 40), 3)
+        img = art.text_outlined(msg, 72, gk.INK, gk.OUTLINE, 3)
         surf.blit(img, img.get_rect(center=TRIED_RECT.center))
 
     def _final(self, surf: pygame.Surface, v: dict[str, Any]) -> None:
-        panel = pygame.Rect(12, gk.TOP, W - 24, 480 - gk.TOP - 12)
-        gk.box(surf, panel, gk.PANEL_HI, radius=28)
-        k = art.ease_out_back(kit.appear(self.t, self.over_at or 0.0, 0.6))
-        big = art.text_outlined(f"{v.get('score', 0)} / {v.get('total', 0)}", max(40, int(110 * max(0.3, k))),
-                                gk.INK, (10, 16, 40), 3)
-        surf.blit(big, big.get_rect(center=(panel.centerx, panel.y + 120)))
-        words = gk.text(["words solved"], 44, gk.GOLD)
-        surf.blit(words, words.get_rect(center=(panel.centerx, panel.y + 215)))
-        again = gk.text(["Say \"play again\" for another round"], BODY_PX, gk.INK_SOFT)
-        surf.blit(again, again.get_rect(center=(panel.centerx, panel.bottom - 50)))
+        score, total = kit.as_int(v.get("score")), kit.as_int(v.get("total"))
+        gk.scoreboard(surf, self.t, self.over_at or 0.0, f"{score} / {total}",
+                      "word solved" if score == 1 else "words solved", score / max(1, total))
 
 
 async def build(spec: dict[str, Any], ctx: Any, host: CardHost) -> WordGameCard:

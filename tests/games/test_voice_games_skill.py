@@ -322,6 +322,9 @@ def screens(ctx):
 
 
 async def test_the_card_follows_the_game_and_a_tap_answers(ctx, screens):
+    import pygame
+
+    from littlebot.screens.base import H, W
     from littlebot.screens.cards.quiz import QuizCard, tile_rect
 
     sk = VoiceGames(ctx, rng=rng(), model=False)
@@ -338,6 +341,9 @@ async def test_the_card_follows_the_game_and_a_tap_answers(ctx, screens):
     assert card.view["number"] == 2 and card.flashing
     card.update(5.0)
     assert not card.flashing
+    canvas = pygame.Surface((W, H))
+    card.draw(canvas)  # the live card, on the 7" screen's 1024x600 canvas
+    assert tile_rect(g.current.answer).h >= 90  # a big tile to tap
     target = tile_rect(g.current.answer).center
     assert card.tap(*target)
     assert card.pressed == g.current.answer
