@@ -64,6 +64,11 @@ if (check == "head_vs_screen")       intersection() { union() { sa_head_frame_bo
 if (check == "plugs_go_in")          intersection() { sa_head_frame_body(); union() { screen_plugs3(s, true); screen_dummy3(s); } }
 if (check == "glass_untouched")      intersection() { sa_head_frame_body(); translate([0, g3_y - 0.5, scr_cz]) rotate([-90, 0, 0]) linear_extrude(scr[2] + 0.5) rr(scr[0] + 0.6, scr[1] + 0.6, 0.01); }
 if (check == "cover_vs_frame")       intersection() { sa_head_frame_body(); sa_head_back(); }
+// the camera's pivot screws (M3 x 12, from inside the head): the head's path down its bore and the shank are clear of
+// the frame; the shank's last 5 mm bite into the bracket's pivots (must NOT be empty)
+module pivot_screw(s, from_x, to_x, d) translate([s * from_x, y4f + cam_board_y + cam_pivot_dy, cam4_z]) rotate([0, -s * 90, 0]) cylinder(d = d, h = from_x - to_x, $fn = 16);
+if (check == "pivot_screws_clear")   intersection() { sa_head_frame_body(); for (s = [-1, 1]) { pivot_screw(s, cam4_scr_x + 20, cam4_scr_x, 5.9); pivot_screw(s, cam4_scr_x, cam4_scr_x - 12, 2.9); } }
+if (check == "pivot_screws_bite")    intersection() { place_cam4() camera_bracket(); for (s = [-1, 1]) pivot_screw(s, cam4_scr_x, cam4_scr_x - 12, 3.0); }
 if (check == "hood_vs_camera")       intersection() { union() { sa_head_frame_body(); sa_head_back(); } union() { camera_s(); place_cam4() camera_bracket(); } }
 if (check == "head_vs_body")         intersection() { union() { sa_body(); v3_neck_plate(); }; head_all(head_angle); }
 // arms

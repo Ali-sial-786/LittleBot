@@ -103,6 +103,7 @@ function head_top(Y, x = 0) = let (k = k4(Y - Yc)) z4c + H4[1] * k * pow(max(0, 
 hood_c = z4c + H4[1] + hood_rise - hood_ab[1];
 cam4_z = hood_c + 6;                     // the lens's centre
 module place_cam4() translate([0, y4f + cam_board_y, cam4_z]) children();
+cam4_scr_x = 26;                         // the pivot screws' heads (|x|): 12 mm reach 5 mm into the bracket's pivots, as v2
 /* [4xAA box in the head] */
 bat4_y = 61;                             // its front face, from the face (behind the cables' bore)
 bat4_clr = 0.5;
@@ -333,11 +334,12 @@ module sa_head_frame_body() {
         translate([0, neck_y, hd_z0 - 1]) cylinder(r = neck_bore_r, h = 10, $fn = 48);
         for (a = head4_scr) translate([0, neck_y, 0]) rotate(a) translate([head_screw_r, 0, hd_z0 - 1]) cylinder(d = clear_m3, h = 10, $fn = fn_small);
         for (x = cov4_scr) translate([x, y4f + H4_split + 5, hd_z0]) cylinder(d = pilot_m3, h = 16, $fn = fn_small);   // the cover's screws
-        // camera: the lens, the pivot screws (M3 x 12 from outside, heads sunk)
+        // camera: the lens, the pivot screws (M3 x 12, from inside the head: the bosses' ends are in the head, under
+        // its roof; each head sits at x = 26, down a 6.4 mm bore through the boss, as v2's pod)
         translate([0, y4f - 1, cam4_z]) rotate([-90, 0, 0]) cylinder(d = cam_aperture, h = H4_face_t + 2, $fn = 48);
         for (s = [-1, 1]) translate([s * 24, y4f + cam_board_y + cam_pivot_dy, cam4_z]) {
             rotate([0, 90, 0]) cylinder(d = clear_m3, h = 20, center = true, $fn = fn_small);
-            translate([s * 26, 0, 0]) rotate([0, s * 90, 0]) cylinder(d = 6.4, h = 12, $fn = 24);
+            translate([s * (cam4_scr_x - 24), 0, 0]) rotate([0, s * 90, 0]) cylinder(d = 6.4, h = 30, $fn = 24);
         }
     }
 }

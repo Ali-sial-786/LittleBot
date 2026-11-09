@@ -15,7 +15,7 @@ To look like the concept, v4 is bigger than v3: 437 mm tall, the head 242 × 158
 | Where | What | Why |
 |---|---|---|
 | Head | A superellipsoid (round every way) with its front cut flat for the face, and a soft bevel round the face | The concept's round head. The screen sits in the flat face, 0.6 mm off the glass's edges all round: nothing touches or covers the glass. |
-| Head, top | The camera hood with a dark arch printed into the face | The head frame's first 8 layers use the 2nd filament. v2's camera bracket hangs inside on 2 pivot screws through the hood's sides, so the tilt is adjustable. |
+| Head, top | The camera hood with a dark arch printed into the face | The head frame's first 8 layers use the 2nd filament. v2's camera bracket hangs inside on 2 pivot screws, driven from inside the head, so the tilt is adjustable. |
 | Head, inside | The HDMI ribbon plug, the right-angle USB-C and the HDMI coupler | All hidden. Each end of the head has room to push a plug in from behind. |
 | Head, back half | The 4×AA servo box, standing behind the neck, lid backwards | Take the back off (2 screws from under the head) to swap the cells. The box balances the screen's weight. Its leads go down the neck to the PCA9685. |
 | Head, back | 2 × 4 slits, as the concept | Vents. |
@@ -41,7 +41,9 @@ The base ring is v3's shape, with its 4 screw tabs moved to the back, so it need
 | `LittleBot_v4_assembled.3mf` | the whole robot assembled and coloured, to look at (not to print) |
 | `stl/*.stl` | each part on its own, in its print orientation (`head_inlay` is the head frame's dark arch) |
 | `plates_v4.png` | top view of the 5 plates |
-| `checks_v4.scad`, `run_checks_v4.sh` | 58 checks (`OPENSCAD=... ./run_checks_v4.sh`), all passing. They cover interference, the arms' sweep and finger pinch with the head turned, the glass never touched, room to push each plug in, the slider, the AA box in the head, the speaker and mic, and the dark panel. |
+| `checks_v4.scad`, `run_checks_v4.sh` | 60 checks (`OPENSCAD=... ./run_checks_v4.sh`), all passing. They cover interference, the arms' sweep and finger pinch with the head turned, the glass never touched, room to push each plug in, the slider, the AA box in the head, the speaker and mic, the dark panel, and the camera's pivot screws (a clear path in, and they reach the bracket). |
+| `LittleBot_v4_assembly.mp4` | **the assembly video** (4 minutes): every part, screw, nut and cable going in, in the order below, each screw turned in by its tool with its size on a tag |
+| `assembly_video/` | re-makes the video (`OPENSCAD=... ./make_video.sh`). The screws, nuts, cable routes and part positions come from the model (`video4.scad`). |
 | `export_v4.sh`, `make_v4_project.py`, `make_v4_assembly.py` | re-make the STLs, the project and the assembled 3MF |
 
 Re-make everything after changing the model. Run from this folder:
@@ -94,7 +96,7 @@ Because everything is 45 mm taller than v3, a few leads have to reach further:
 | Head → black neck | 3 × M3 × 10, down through the head's floor | pilot holes in the puck |
 | Screen → head frame | 4 × M2.5 × 6 (or M3 × 6), from behind, down the 4 wells | the screen's corner standoffs |
 | Head back → head frame | 2 × M3 × 12, from under the head | the frame's 2 bosses (2 tabs hold the back's top) |
-| Camera bracket | 2 × M3 × 12, through the hood's sides (heads sunk) | the bracket's pivots |
+| Camera bracket | 2 × M3 × 12, from inside the head (2 mm L-key, short end in), down a bore in each of the hood's bosses | the bracket's pivots |
 | Arm servos, arms | as v3 | |
 
 In total: 18 × M3 × 12, 5 × M3 × 10, 5 × M3 × 8 and 8 M3 nuts (v2's neck screws included).
@@ -128,7 +130,7 @@ In total: 18 × M3 × 12, 5 × M3 × 10, 5 × M3 × 8 and 8 M3 nuts (v2's neck s
    - Camera:
      - clip the board into v2's bracket;
      - set the bracket into the hood from below, lens forwards;
-     - fit the 2 pivot screws through the hood's sides;
+     - fit the 2 pivot screws from inside the head, down the bores in the hood's bosses (2 mm L-key, short end in);
      - set the tilt and tighten.
    - AA box: stand it between its rails behind the neck, lid backwards, with its leads down the neck.
    - Back: hook its 2 slots over the frame's tabs, swing it down and fit 2 × M3 × 12 from under the head.
@@ -146,7 +148,7 @@ In total: 18 × M3 × 12, 5 × M3 × 10, 5 × M3 × 8 and 8 M3 nuts (v2's neck s
 
 ## Known
 
-- The camera's 2 pivot screws show on the hood's sides, sunk 5 mm. They're what makes the tilt adjustable.
+- The camera's 2 pivot screws are inside the head: reach them from behind with the back off. They're what makes the tilt adjustable.
 - The neck plate shows as a flat oval round the neck on top of the body. v2's neck parts drop in from the top, so the opening is the plate's size.
 - 5 plates rather than 4: the bigger head's back and the neck plate no longer fit on one plate.
 - The head frame is 242 mm wide on the A1's 256 mm bed: centre it if you move it.
