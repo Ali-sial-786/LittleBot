@@ -121,3 +121,11 @@ def test_the_crosses_collect_one_press_each(monkeypatch):
     threading.Thread(target=touch_each_cross, daemon=True).start()
     points = ct.collect(reader)
     assert points == [(500.0, 600.0)] * len(ct.TARGETS)
+
+
+def test_finds_the_7in_screens_usb_touch_and_not_a_touchpad():
+    usb = ('I: Bus=0003 Vendor=1a86 Product=e5e3 Version=0110\nN: Name="wch.cn USB2IIC_CTP_CONTROL"\n'
+           'P: Phys=usb-xhci-hcd.0-1/input0\nH: Handlers=mouse0 event5\n')
+    pad = 'I: Bus=0018\nN: Name="SYNA2B31:00 06CB:CDEB Touchpad"\nH: Handlers=mouse1 event6\n'
+    assert ct.find_touch_device(pad + "\n" + usb) == ("wch.cn USB2IIC_CTP_CONTROL", "event5")
+    assert ct.find_touch_device(pad) is None

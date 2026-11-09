@@ -49,7 +49,7 @@ from littlebot.face.doze import (
     DozeTimer,
 )
 from littlebot.face.expressions import EXPRESSION_PARAMS
-from littlebot.face.frame import FaceFrame
+from littlebot.face.frame import FaceFrame, face_size
 from littlebot.face.mouth import VISEMES
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -158,8 +158,11 @@ class FaceController(Service):
         self.ctx = ctx
         self.bus = ctx.bus
         self.display_config = ctx.config.display
+        # The face is drawn 320 px tall and as wide as the screen's shape (546x320 for the 7" 1024x600 screen),
+        # then scaled to the screen once per frame (littlebot/face/frame.py face_size).
+        self.face_size = face_size(ctx.config.display.width, ctx.config.display.height)
         self.animator = FaceAnimator(
-            ctx.config.face, width=ctx.config.display.width, height=ctx.config.display.height, rng=rng, seed=seed,
+            ctx.config.face, width=self.face_size[0], height=self.face_size[1], rng=rng, seed=seed,
         )
         self._lock = threading.RLock()
         self._cmds: collections.deque[tuple[str, tuple[Any, ...]]] = collections.deque()
@@ -287,7 +290,7 @@ class FaceController(Service):
         if self._renderer is None:
             from littlebot.face.renderer import FaceRenderer
 
-            self._renderer = FaceRenderer((self.display_config.width, self.display_config.height))
+            self._renderer = FaceRenderer(self.face_size)
         self._renderer.render(f, surface, rect)
         now = time.monotonic()
         self._render_times.append(now)

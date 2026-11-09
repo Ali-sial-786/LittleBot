@@ -15,17 +15,16 @@
 # Secrets (API keys) never go in YAML - they live in .env (see .env.example).
 
 # ---------------------------------------------------------------------------
-# Display: DORHEA MPI3508 3.5" HDMI screen, 480x320 panel.
-# The app draws its face at width x height and fills the screen. If the Pi drives the
-# HDMI output at another mode (e.g. 720x480 or 640x480 - see docs/DISPLAY_SETUP.md),
-# keep these at 480x320: they are the face's drawing size, not the HDMI mode.
+# Display: GeeekPi 7" capacitive touch screen, 1024x600 IPS, on HDMI (touch over USB).
+# width x height is the screen in pixels: the cards and games draw at exactly this size, the face
+# at 546x320 (the same shape) scaled up. See docs/DISPLAY_SETUP.md.
 # ---------------------------------------------------------------------------
 display:
-  width: 480
-  height: 320
+  width: 1024
+  height: 600
   fullscreen: true
   scale: 1.0
-  output_mode: "720x480@60"  # HDMI mode LittleBot asks for at start (the panel's 3:2 shape); null = desktop's mode
+  output_mode: "1024x600@60"  # HDMI mode LittleBot asks for at start (the panel's own pixels); null = desktop's mode
   video_driver: wayland      # true fullscreen + hidden pointer under labwc; null = SDL's default (X11 via Xwayland)
   hide_cursor: true        # no mouse pointer over the face
   show_sim_panel: false    # desktop-simulator side panel: off on the robot
@@ -61,6 +60,9 @@ vision:
 #   .venv/bin/python scripts/check_audio.py --list      (or: arecord -l / aplay -l)
 # Examples (UNVERIFIED - copy the real names from the list): "USB PnP Sound Device",
 # "UACDemo", "USB Audio".
+# The 7" screen has two small speakers of its own, fed over HDMI. LittleBot keeps using the USB speaker
+# (the echo canceller and barge-in were tuned with it); to try the screen's speakers instead, set
+# speaker.device to "hdmi" (the Pi 5 calls it vc4-hdmi-0), then re-run scripts/setup_echo_cancel.sh.
 # ---------------------------------------------------------------------------
 audio:
   microphone:

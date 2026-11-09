@@ -57,11 +57,13 @@ class LoggingConfig(_Section):
 
 
 class DisplayConfig(_Section):
-    width: int = 480
-    height: int = 320
+    # The screen in pixels: the 7" GeeekPi HDMI panel's 1024x600. Cards and games draw at exactly this size;
+    # the face is drawn 320 px tall and as wide as this shape (littlebot/face/frame.py face_size), then scaled.
+    width: int = 1024
+    height: int = 600
     fps: int = 30
     idle_fps: int = 20  # lower frame rate when nothing is animating, to save CPU
-    scale: float = 2.0  # desktop window scale factor (1.0 on the Pi)
+    scale: float = 1.0  # desktop window scale factor (the robot is always 1.0, full screen)
     fullscreen: bool = False
     headless: bool = False  # no window at all (tests, dashboard-only runs)
     show_debug: bool = False
@@ -69,7 +71,7 @@ class DisplayConfig(_Section):
     hide_cursor: bool = False
     tap_reaction: bool = True  # tapping the face makes LittleBot giggle (cause-and-effect play)
     # Screen mode to request from the Wayland compositor before going fullscreen, e.g.
-    # "720x480@60" (None = leave the desktop's mode alone). See docs/DISPLAY_SETUP.md.
+    # "1024x600@60" (None = leave the desktop's mode alone). See docs/DISPLAY_SETUP.md.
     output_mode: str | None = None
     output_name: str = "HDMI-A-1"  # the Pi 5's HDMI0 port
     # SDL video driver to prefer, e.g. "wayland" (None = SDL's own choice, which is X11 via
@@ -461,11 +463,11 @@ class BrowserConfig(_Section):
     idle_seconds: float = Field(default=30.0, ge=10.0, le=1800.0)
     # During the chat: closes this long after they talked about something else (no browser words, no touch).
     moved_on_seconds: float = Field(default=20.0, ge=5.0, le=600.0)
-    zoom: float = Field(default=1.4, ge=0.75, le=2.5)  # pages are this much bigger (720x480 screen: 514x343 px)
+    zoom: float = Field(default=1.25, ge=0.75, le=2.5)  # pages are this much bigger (1024x600 screen: 819x480 px)
     # Claim to be an Android phone so sites send their phone layout. Off: LittleBot says what it is (Chromium on
     # Linux); Google asks fewer "are you a robot?" questions of a browser that doesn't pretend.
     mobile_layout: bool = False
-    kiosk: bool | None = None  # full screen; None = on the robot (Raspberry Pi) only, a 720x480 window elsewhere
+    kiosk: bool | None = None  # full screen; None = on the robot (Raspberry Pi) only, a 1024x600 window elsewhere
     start_timeout_seconds: float = Field(default=20.0, ge=2.0, le=120.0)  # Chromium's DevTools must answer by then
     read_chars: int = Field(default=3000, ge=200, le=10000)  # page text handed to the voice ("what does it say?")
     extra_args: list[str] = Field(default_factory=list)  # more Chromium switches (e.g. --renderer-process-limit=2)
@@ -781,6 +783,40 @@ def env_overrides(environ: dict[str, str] | None = None) -> dict[str, Any]:
     return out
 
 
+# What a config/local.yaml written for the old 3.5" MPI3508 screen (from config/hardware.example.yaml before
+# the 7" screen) says, and what the 7" 1024x600 screen needs instead. Left as they were, they would draw the
+# screen as a 3:2 face with bars at the sides and ask the 7" panel for a squashed 720x480 mode.
+OLD_SCREEN_SIZE = (480, 320)
+OLD_SCREEN_MODE = "720x480@60"
+
+
+def migrate_local(local: dict[str, Any]) -> dict[str, Any]:
+    """``local`` (config/local.yaml) with the old 3.5" screen's display values replaced by the 7" screen's,
+    with a warning that says how to tidy the file. Anything else, or other display values, is kept."""
+    display = local.get("display") if isinstance(local, dict) else None
+    if not isinstance(display, dict):
+        return local
+    fixed = dict(display)
+    said: list[str] = []
+    try:
+        size = (int(display.get("width")), int(display.get("height")))
+    except (TypeError, ValueError):
+        size = None
+    if size == OLD_SCREEN_SIZE:
+        fixed["width"], fixed["height"] = DisplayConfig().width, DisplayConfig().height
+        said.append("display.width/height 480x320")
+    if str(display.get("output_mode") or "").strip() == OLD_SCREEN_MODE:
+        fixed["output_mode"] = f"{DisplayConfig().width}x{DisplayConfig().height}@60"
+        said.append(f"display.output_mode {OLD_SCREEN_MODE}")
+    if not said:
+        return local
+    logging.getLogger("littlebot.config").warning(
+        "config/local.yaml has the old 3.5\" screen's %s: using the 7\" screen's %dx%d instead. Remove those lines "
+        "(scripts/set_config.py --unset display.width, display.height, display.output_mode) to stop this warning.",
+        " and ".join(said), fixed.get("width", DisplayConfig().width), fixed.get("height", DisplayConfig().height))
+    return {**local, "display": fixed}
+
+
 def load_config(
     mode: str | Mode | None = None,
     config_file: str | Path | None = None,
@@ -801,7 +837,7 @@ def load_config(
     chosen = Mode(chosen.value if isinstance(chosen, Mode) else str(chosen).lower())
     data = deep_merge(data, _read_yaml(cdir / f"{chosen.value}.yaml"))
     if include_local:
-        data = deep_merge(data, _read_yaml(cdir / "local.yaml"))
+        data = deep_merge(data, migrate_local(_read_yaml(cdir / "local.yaml")))
     if config_file:
         data = deep_merge(data, _read_yaml(Path(config_file)))
     data = deep_merge(data, env_overrides(env))

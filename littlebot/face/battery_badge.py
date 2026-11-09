@@ -20,10 +20,10 @@ from typing import Any, NamedTuple
 FADE_IN_SECONDS = 0.2
 FADE_SECONDS = 0.4
 MAX_SECONDS = 30.0
-MARGIN = 14  # px from the face's top-left corner, on the 720x480 canvas
-BADGE_W, BADGE_H = 168, 64
+MARGIN = 16  # px from the face's top-left corner, on the 1024x600 canvas
+BADGE_W, BADGE_H = 184, 70  # ~28 x 10 mm on the 7" screen
 SMALL = 0.6  # the always-on corner copy, this much of the full size
-CANVAS_H = 480
+CANVAS_H = 600
 LOW_PERCENT = 20
 _CACHE: OrderedDict[tuple[Any, ...], Any] = OrderedDict()
 

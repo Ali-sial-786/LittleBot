@@ -20,11 +20,32 @@ import datetime as dt
 
 
 # ----------------------------------------------------------------- config
+def test_an_old_3in5_local_yaml_gets_the_7in_screen(tmp_path, caplog):
+    """A config/local.yaml written for the 3.5" MPI3508 (480x320, a 720x480 mode) would squash the 7" screen."""
+    import logging
+    import shutil
+
+    from littlebot.core.config import CONFIG_DIR, migrate_local
+
+    for name in ("default.yaml", "pi.yaml"):
+        shutil.copy(CONFIG_DIR / name, tmp_path / name)
+    (tmp_path / "local.yaml").write_text("display:\n  width: 480\n  height: 320\n  output_mode: \"720x480@60\"\n"
+                                         "  idle_fps: 12\n")
+    with caplog.at_level(logging.WARNING, logger="littlebot.config"):
+        cfg = load_config("pi", config_dir=tmp_path, environ={}, use_dotenv=False)
+    assert (cfg.display.width, cfg.display.height, cfg.display.output_mode) == (1024, 600, "1024x600@60")
+    assert cfg.display.idle_fps == 12  # the rest of local.yaml still counts
+    assert any("old 3.5" in r.getMessage() and "--unset" in r.getMessage() for r in caplog.records)
+    kept = {"display": {"width": 800, "height": 480, "output_mode": None}}
+    assert migrate_local(kept) == kept  # a screen chosen on purpose is left alone
+    assert migrate_local({"audio": {}}) == {"audio": {}}
+
+
 def test_default_config_loads_for_every_mode():
     for mode in ("simulation", "pi", "offline"):
         cfg = load_config(mode, environ={}, use_dotenv=False, include_local=False)
         assert cfg.mode == Mode(mode)
-        assert cfg.display.width == 480 and cfg.display.height == 320
+        assert cfg.display.width == 1024 and cfg.display.height == 600  # the 7" screen
         assert cfg.motion.physical_enabled is False
         assert cfg.dashboard.host == "127.0.0.1"
         assert cfg.dashboard.lan_access is False

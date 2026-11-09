@@ -17,11 +17,11 @@ logging:
   file: logs/littlebot.log
 
 display:
-  width: 480
-  height: 320
+  width: 1024            # the screen in pixels: the 7" GeeekPi HDMI panel (cards and games draw at this size;
+  height: 600            # the face is drawn 546x320 for this shape and scaled up)
   fps: 30
   idle_fps: 20
-  scale: 2.0
+  scale: 1.0             # desktop window scale (the simulator window is 1024x600 plus its side panel)
   fullscreen: false
   show_debug: false
   show_sim_panel: true
@@ -140,9 +140,9 @@ browser:
   enabled: true
   idle_seconds: 120        # closes this long after the voice chat ended with nobody touching the page
   moved_on_seconds: 20     # ...and during the chat, this long after they moved on to something else
-  zoom: 1.4                # pages are this much bigger on the small screen ("zoom in" / "zoom out" change it)
+  zoom: 1.25               # pages are this much bigger on the 7" screen ("zoom in" / "zoom out" change it)
   mobile_layout: false     # true: claim to be a phone for sites' phone layout (Google then asks more captchas)
-  kiosk: null              # null = full screen on the robot only (a 720x480 window on a desktop)
+  kiosk: null              # null = full screen on the robot only (a 1024x600 window on a desktop)
 
 power:
   # The battery (docs/POWER.md section 8): an RP2040-Zero battery monitor on a USB port. Without one

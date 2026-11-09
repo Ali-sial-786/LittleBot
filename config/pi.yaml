@@ -1,13 +1,14 @@
-# Raspberry Pi 5 (4 GB) with the 480x320 HDMI screen and USB camera/mic/speaker.
+# Raspberry Pi 5 (4 GB) with the 7" 1024x600 HDMI touch screen (GeeekPi) and USB camera/mic/speaker.
 # A 2 GB board also works: system.memory: auto (config/default.yaml) keeps less loaded there.
 # UNVERIFIED until the hardware arrives - see HARDWARE_ARRIVAL_CHECKLIST.md.
 display:
   scale: 1.0
   fullscreen: true
-  # The MPI3508's EDID prefers 1280x720, which its scaler squashes into the 3:2 panel.
-  # 720x480 is the panel's own shape (checked on the real screen 2026-10-22).
-  # null = keep whatever mode the desktop uses.
-  output_mode: "720x480@60"
+  # The 7" panel's own pixels. If the desktop already runs it at 1024x600 (its EDID's preferred mode) nothing
+  # changes; if it picked another mode (some of these boards also offer 1280x720 / 1920x1080, which the
+  # scaler squeezes) this puts it back. null = keep whatever mode the desktop uses.
+  # (The old 3.5" MPI3508 used "720x480@60".)
+  output_mode: "1024x600@60"
   # Native Wayland window: true fullscreen over the taskbar and no mouse pointer
   # (checked on the robot 2026-10-22; SDL's default X11-via-Xwayland showed both).
   video_driver: wayland

@@ -3,7 +3,11 @@
 
     .venv/bin/python scripts/benchmark_face.py               # table, 150 frames per scenario
     .venv/bin/python scripts/benchmark_face.py --frames 300 --json
-    .venv/bin/python scripts/benchmark_face.py --scale 2      # include the window up-scale cost
+    .venv/bin/python scripts/benchmark_face.py --scale 0      # the face's drawing alone (no scaling to the screen)
+
+By default each frame is drawn the way the robot draws it: the face at its design size (546x320 for the
+7" 1024x600 screen, littlebot/face/frame.py face_size) scaled to the whole screen (display.width x height,
+times ``--scale``).
 
 Runs headless (SDL dummy driver). "cpu@30fps" estimates the share of ONE core the
 face would need at 30 fps (mean_ms * 30 / 10). Frames are rendered with a fixed
@@ -46,12 +50,14 @@ def run(frames: int, scale: float, seed: int) -> dict[str, Any]:
 
     from littlebot.core.interfaces import EXPRESSIONS
     from littlebot.face.controller import FaceController
+    from littlebot.face.frame import face_size
     from littlebot.testing import make_test_context
 
     pygame.display.init()
     pygame.font.init()
-    native = pygame.Surface((480, 320))
-    window = pygame.Surface((int(480 * scale), int(320 * scale))) if scale != 1.0 else None
+    cfg = make_test_context(fakes=False).config.display
+    native = pygame.Surface(face_size(cfg.width, cfg.height))  # the face's own size: no scaling
+    window = pygame.Surface((int(cfg.width * scale), int(cfg.height * scale))) if scale > 0 else None
     rows = []
     dt = 1 / 30
     for name, setup in _scenarios():
@@ -116,7 +122,8 @@ def run(frames: int, scale: float, seed: int) -> dict[str, Any]:
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--frames", type=int, default=150)
-    p.add_argument("--scale", type=float, default=1.0, help="also scale into a window-sized surface")
+    p.add_argument("--scale", type=float, default=1.0,
+                   help="draw into the screen (display.width x height) times this; 0: the face's own size only")
     p.add_argument("--seed", type=int, default=3)
     p.add_argument("--json", action="store_true", help="print JSON instead of a table")
     args = p.parse_args(argv)

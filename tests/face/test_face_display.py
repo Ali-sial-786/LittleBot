@@ -131,9 +131,9 @@ def test_window_layout_with_and_without_panel():
     loop = D.DisplayLoop(robot, max_frames=3)
     loop.open()
     try:
-        w, h = loop.window.get_size()
-        assert w == 720 + D.PANEL_WIDTH and h == max(480, D.PANEL_MIN_HEIGHT)
-        assert loop.face_rect.size == (720, 480)
+        w, h = loop.window.get_size()  # the 1024x600 screen at 1.5x, plus the panel
+        assert w == 1536 + D.PANEL_WIDTH and h == max(900, D.PANEL_MIN_HEIGHT)
+        assert loop.face_rect.size == (1536, 900)
         assert loop.run() == "max_frames"
         assert loop.window.get_at((loop.face_rect.right + 20, 200))[:3] != (0, 0, 0)  # panel drawn
     finally:
@@ -143,7 +143,7 @@ def test_window_layout_with_and_without_panel():
     loop = D.DisplayLoop(robot, max_frames=2)
     loop.open()
     try:
-        assert loop.window.get_size() == (480, 320) and loop.panel_rect is None
+        assert loop.window.get_size() == (1024, 600) and loop.panel_rect is None
         loop.run()
     finally:
         loop.close()

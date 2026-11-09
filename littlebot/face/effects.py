@@ -268,9 +268,19 @@ def _cached_particles(kind: str, seed: int) -> list[_Particle]:
     return ps
 
 
-def _confetti_sprite(p: _Particle, v: float, eye_color: Color, alpha: float = 1.0) -> Sprite:
+def _spread(width: float) -> float:
+    """How much wider than 480 the face is (1.14 on the 1024x600 screen): screen-wide particles spread with it."""
+    return max(1.0, float(width) / NATIVE_W)
+
+
+def _shift(width: float) -> float:
+    """How far right the face's centre moved on a wider screen (33 px at 546 wide): face-anchored extras follow."""
+    return max(0.0, (float(width) - NATIVE_W) / 2)
+
+
+def _confetti_sprite(p: _Particle, v: float, eye_color: Color, alpha: float = 1.0, spread: float = 1.0) -> Sprite:
     y = p.y + v * (NATIVE_H + 80)
-    x = p.x + 14 * math.sin(p.phase + v * 7.0)
+    x = p.x * spread + 14 * math.sin(p.phase + v * 7.0)
     fade = clamp01((1 - v) * 4) * clamp01(v * 10)
     return Sprite("confetti", x, y, p.size, alpha * fade, angle=p.spin * 360 * v, color=p.color)
 
@@ -281,9 +291,9 @@ def _sparkle_sprite(p: _Particle, v: float, alpha: float = 1.0) -> Sprite:
                   color=p.color)
 
 
-def _heart_sprite(p: _Particle, v: float, alpha: float = 1.0, rise: float = 250.0) -> Sprite:
+def _heart_sprite(p: _Particle, v: float, alpha: float = 1.0, rise: float = 250.0, spread: float = 1.0) -> Sprite:
     y = p.y - rise * smoothstep(v) - 20 * v
-    x = p.x + 12 * math.sin(p.phase + v * 5.0)
+    x = p.x * spread + 12 * math.sin(p.phase + v * 5.0)
     a = alpha * clamp01(v * 5) * clamp01((1 - v) * 3)
     size = p.size * (0.6 + 0.4 * clamp01(v * 4))
     return Sprite("heart", x, y, size, a, angle=p.spin * math.sin(v * 6), color=p.color)
@@ -303,30 +313,31 @@ def _painted(sprites: list[Sprite], palette: Palette) -> list[Sprite]:
 
 
 def animation_sprites(name: str, elapsed: float, seed: int, eye_color: Color,
-                      palette: Palette = DARK_PALETTE) -> list[Sprite]:
-    """Particles for one-shot animation ``name`` ``elapsed`` seconds after it started."""
+                      palette: Palette = DARK_PALETTE, width: float = NATIVE_W) -> list[Sprite]:
+    """Particles for one-shot animation ``name`` ``elapsed`` seconds after it started, on a face ``width`` wide."""
     out: list[Sprite] = []
+    spread, dx = _spread(width), _shift(width)
     if name == "confetti":
         for p in _cached_particles("confetti", seed):
             v = (elapsed - p.delay) / p.life
             if 0.0 < v < 1.0:
-                out.append(_confetti_sprite(p, v, eye_color))
+                out.append(_confetti_sprite(p, v, eye_color, spread=spread))
     elif name == "sparkle":
         for p in _cached_particles("sparkle", seed):
             v = (elapsed - p.delay) / p.life
             if 0.0 < v < 1.0:
                 s = _sparkle_sprite(p, v)
-                out.append(Sprite(s.kind, s.x, s.y, s.size, s.alpha, s.angle, palette.sparkle))
+                out.append(Sprite(s.kind, s.x + dx, s.y, s.size, s.alpha, s.angle, palette.sparkle))
     elif name == "hearts":
         for p in _cached_particles("hearts", seed):
             v = (elapsed - p.delay) / p.life
             if 0.0 < v < 1.0:
-                out.append(_heart_sprite(p, v))
+                out.append(_heart_sprite(p, v, spread=spread))
     elif name == "zzz":
         for p in _cached_particles("zzz", seed):
             v = (elapsed - p.delay) / p.life
             if 0.0 < v < 1.0:
-                out.append(_z_sprite(p.x, p.y, v, p.size, glyph_color(eye_color, palette)))
+                out.append(_z_sprite(p.x + dx, p.y, v, p.size, glyph_color(eye_color, palette)))
     return _painted(out, palette)
 
 
@@ -350,12 +361,13 @@ def _soft(c: Color, k: float = 0.85) -> Color:
 THOUGHT_W, THOUGHT_H = 106.0, 56.0  # the thought cloud, up and to the right of the eyes
 
 
-def _thought_sprites(a: float, t: float, eyes: tuple[EyeFrame, ...], color: Color) -> list[Sprite]:
+def _thought_sprites(a: float, t: float, eyes: tuple[EyeFrame, ...], color: Color,
+                     width: float = NATIVE_W) -> list[Sprite]:
     """The thinking "..." in a cloud above the right eye (a thought bubble), with two little puffs
     trailing off towards the forehead. It follows the eye a little but always stays on screen."""
     right = max(eyes, key=lambda e: e.cx) if eyes else None
-    ex, top = (right.cx, right.cy - (right.full_h or right.h) / 2) if right is not None else (NATIVE_W / 2 + 103, 73)
-    cx = min(NATIVE_W - THOUGHT_W / 2 - 4, ex + 50)
+    ex, top = (right.cx, right.cy - (right.full_h or right.h) / 2) if right is not None else (width / 2 + 103, 73)
+    cx = min(width - THOUGHT_W / 2 - 4, ex + 50)
     cy = max(THOUGHT_H / 2 + 4, min(top - 14, 36.0))
     bob = 2.0 * math.sin(t * 1.3)
     rise = clamp01(a * 1.4)  # the cloud puffs up as it fades in
@@ -374,13 +386,15 @@ def _thought_sprites(a: float, t: float, eyes: tuple[EyeFrame, ...], color: Colo
 
 def extras_sprites(
     alphas: dict[str, float], t: float, eyes: Iterable[EyeFrame], eye_color: Color,
-    palette: Palette = DARK_PALETTE, mouth: tuple[float, float] | None = None,
+    palette: Palette = DARK_PALETTE, mouth: tuple[float, float] | None = None, width: float = NATIVE_W,
 ) -> list[Sprite]:
-    """Continuous overlays requested by the current expression (faded by ``alphas``).
+    """Continuous overlays requested by the current expression (faded by ``alphas``), on a face ``width`` wide
+    (screen-wide extras spread across it, the ones placed by the face move with its centre).
 
     ``mouth`` is the mouth's centre (kept for callers; the thinking dots now sit in a thought cloud).
     """
     out: list[Sprite] = []
+    spread, dx = _spread(width), _shift(width)
     eyes = tuple(eyes)
     glyph = glyph_color(eye_color, palette)
     a = alphas.get("blush", 0.0)
@@ -392,29 +406,30 @@ def extras_sprites(
     if a > 0.01:
         for p in _LOOP_CONFETTI:
             v = ((t + p.delay * 4.0) / (p.life + 0.6)) % 1.0
-            out.append(_confetti_sprite(p, v, eye_color, a * 0.9))
+            out.append(_confetti_sprite(p, v, eye_color, a * 0.9, spread=spread))
     a = alphas.get("sparkles", 0.0)
     if a > 0.01:
         for x, y, ph, size in _LOOP_SPARKLES:
             v = (t * 0.55 + ph) % 1.0
             s = math.sin(math.pi * v) ** 2
             if s > 0.02:
-                out.append(Sprite("sparkle", x, y, size * (0.4 + 0.6 * s), a * s, angle=45 * v, color=palette.sparkle))
+                out.append(Sprite("sparkle", x * spread, y, size * (0.4 + 0.6 * s), a * s, angle=45 * v,
+                                  color=palette.sparkle))
     a = alphas.get("hearts", 0.0)
     if a > 0.01:
         for p in _LOOP_HEARTS:
             v = ((t + p.delay) / p.life) % 1.0
-            out.append(_heart_sprite(p, v, a * 0.9, rise=200.0))
+            out.append(_heart_sprite(p, v, a * 0.9, rise=200.0, spread=spread))
     a = alphas.get("zzz", 0.0)
     if a > 0.01:
         for i in range(3):
             v = ((t / 3.3) + i / 3.0) % 1.0
-            out.append(_z_sprite(360, 92, v, 18 + 4 * i, glyph, a))
+            out.append(_z_sprite(360 + dx, 92, v, 18 + 4 * i, glyph, a))
     a = alphas.get("question", 0.0)
     if a > 0.01:
-        out.append(Sprite("question", 418, 62 + 4 * math.sin(t * 2.4), 46, a, angle=-10 + 8 * math.sin(t * 1.6),
+        out.append(Sprite("question", 418 + dx, 62 + 4 * math.sin(t * 2.4), 46, a, angle=-10 + 8 * math.sin(t * 1.6),
                           color=glyph if palette.light else _soft(eye_color, 0.9)))
     a = alphas.get("dots", 0.0)
     if a > 0.01:
-        out.extend(_thought_sprites(a, t, eyes, glyph if palette.light else _soft(eye_color, 0.9)))
+        out.extend(_thought_sprites(a, t, eyes, glyph if palette.light else _soft(eye_color, 0.9), width))
     return _painted(out, palette)

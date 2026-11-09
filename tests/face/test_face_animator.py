@@ -710,3 +710,34 @@ def test_talking_keeps_the_mood_of_the_expression():
         step(a, 0.5)
         a.speech_started(3.0)
     assert _talk(happy, "small").smile > _talk(sad, "small").smile
+
+
+# ------------------------------------------------------------------ a wider screen (the 7" 1024x600)
+def test_face_size_follows_the_screen_shape():
+    from littlebot.face.frame import face_size
+
+    assert face_size(1024, 600) == (546, NATIVE_H)  # 1024x600: the same shape, 320 tall
+    assert face_size(720, 480) == (NATIVE_W, NATIVE_H)  # the old 3:2 screen: as before
+    assert face_size(800, 600) == (NATIVE_W, NATIVE_H)  # squarer: 480 wide (bars above and below)
+    assert face_size(0, 0) == (NATIVE_W, NATIVE_H)
+
+
+def test_a_wide_face_is_centred_and_its_extras_spread_across_it():
+    from littlebot.core.config import FaceConfig
+
+    narrow = calm()
+    wide = A.FaceAnimator(FaceConfig(idle_gaze=False), seed=1, width=546, height=NATIVE_H)
+    narrow.next_blink = wide.next_blink = 1e9
+    fn, fw = narrow.frame(), wide.frame()
+    assert (fw.width, fw.height) == (546, NATIVE_H)
+    shift = (546 - NATIVE_W) / 2
+    for en, ew in zip(fn.eyes, fw.eyes):
+        assert ew.cx == pytest.approx(en.cx + shift) and ew.cy == pytest.approx(en.cy)
+    assert fw.mouth.cx == pytest.approx(fn.mouth.cx + shift)
+    from littlebot.face import effects
+
+    confetti = effects.animation_sprites("confetti", 1.0, 3, (90, 210, 255), width=546)
+    assert max(s.x for s in confetti) > NATIVE_W  # screen-wide confetti reaches the wider edges
+    zzz_n = effects.extras_sprites({"zzz": 1.0}, 0.5, fn.eyes, (90, 210, 255))
+    zzz_w = effects.extras_sprites({"zzz": 1.0}, 0.5, fw.eyes, (90, 210, 255), width=546)
+    assert [round(b.x - a.x) for a, b in zip(zzz_n, zzz_w)] == [round(shift)] * len(zzz_n)  # moves with the face

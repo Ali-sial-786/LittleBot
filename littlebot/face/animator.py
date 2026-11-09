@@ -729,7 +729,7 @@ class FaceAnimator:
         if stretch > 0.0:  # waking from a doze: the eyes stretch tall and lift a little, a small yawn
             m.add(Motion(dy=-5.0 * stretch, sx=1.0 - 0.03 * stretch, sy=1.0 + 0.1 * stretch,
                          mouth_open=0.3 * stretch, mouth_round=0.8 * stretch))
-        cx0 = NATIVE_W / 2
+        cx0 = self.width / 2  # the face is centred however wide the screen is (frame.face_size)
         gx, gy = self.gaze()
         gx, gy = _clamp(gx * 2 - 1 + m.gx), _clamp(gy * 2 - 1 + m.gy)
         breath = math.sin(self._breath_phase) if self.cfg.breathing else 0.0
@@ -787,7 +787,7 @@ class FaceAnimator:
             mcx = cx0 + ox * cos_r + oy * sin_r + gx * GAZE_DX * 0.6 + m.dx
             mcy = EYE_Y - ox * sin_r + oy * cos_r + gy * GAZE_DY * 0.5 + breath_dy - hop + m.dy
             low = 0.82 * MOUTH_OPEN_H * 1.45 * pose.open + 6.0 + 14.0 * pose.tongue  # reach below the centre
-            mcy = min(mcy, NATIVE_H - MOUTH_BOTTOM_MARGIN - low)
+            mcy = min(mcy, self.height - MOUTH_BOTTOM_MARGIN - low)
             mouth = MouthFrame(
                 cx=mcx, cy=mcy, open=clamp01(pose.open), alpha=1.0, width=MOUTH_W * max(0.2, pose.width) * m.sx,
                 smile=_clamp(pose.smile), round=clamp01(pose.round), teeth=clamp01(pose.teeth),
@@ -798,18 +798,18 @@ class FaceAnimator:
         alphas = self.extras_alpha
         if self.doze_amount > 0.0:  # dozing: the "zzz" floats up once the eyes are (nearly) closed
             alphas = dict(alphas, zzz=alphas.get("zzz", 0.0) * clamp01((self.doze_lid - 0.5) / 0.4))
-        sprites: list[Sprite] = effects.extras_sprites(alphas, t, eyes, color, palette, anchor)
+        sprites: list[Sprite] = effects.extras_sprites(alphas, t, eyes, color, palette, anchor, width=self.width)
         for a in self.animations:
-            sprites.extend(effects.animation_sprites(a.name, t - a.start, a.seed, color, palette))
+            sprites.extend(effects.animation_sprites(a.name, t - a.start, a.seed, color, palette, width=self.width))
         if self.hidden_amount > 0.0:
             pulse = 0.85 + 0.15 * math.sin(t * 1.3)
-            sprites.append(Sprite("play", NATIVE_W - 34, NATIVE_H - 30, 22,
+            sprites.append(Sprite("play", self.width - 34, self.height - 30, 22,
                                   0.4 * self.hidden_amount * pulse, color=color))
         ring_strength = max(self.extras_alpha.get("ring", 0.0), self._listen_alpha)
         ring = ring_strength * (0.72 + 0.28 * math.sin(t * 2 * math.pi * 0.7)) if ring_strength > 0.01 else 0.0
         glow = p.glow * (1.0 + 0.3 * level) if self.cfg.glow else 0.0
         return FaceFrame(
-            width=NATIVE_W, height=NATIVE_H, t=t, background=tuple(self.cfg.background_color),  # type: ignore[arg-type]
+            width=self.width, height=self.height, t=t, background=tuple(self.cfg.background_color),  # type: ignore[arg-type]
             color=color, glow=glow, eyes=(eyes[0], eyes[1]), mouth=mouth, sprites=tuple(sprites),
             ring=ring, hidden=self.hidden_amount, expression=self.expression, state=self.state,
             debug={"gaze_x": round(gx, 3), "gaze_y": round(gy, 3), "level": round(level, 3),

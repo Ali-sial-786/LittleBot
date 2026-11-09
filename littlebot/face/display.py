@@ -1,7 +1,8 @@
 """Main-thread display loop and desktop simulator window.
 
-``run_display(robot)`` opens the face window (480x320 rendered natively, then
-scaled smoothly to ``display.scale`` or fullscreen), drives the face animation,
+``run_display(robot)`` opens the face window (``display.width`` x ``display.height``: the 7" screen's
+1024x600, times ``display.scale`` on a desktop, or fullscreen), drives the face animation (drawn at
+``frame.face_size`` and scaled to the window; cards and games draw at the screen's own size),
 handles keyboard / mouse / touch input and (on the desktop) draws the
 simulator side panel. It blocks until the window is closed or
 ``robot.shutdown_event`` is set, then returns; ``main.py`` calls
@@ -44,8 +45,9 @@ TAP_COOLDOWN_SECONDS = 1.5
 # A plain tap still giggles: babies tap the face all the time, a deliberate hold is a grown-up's.
 LONG_PRESS_SECONDS = 1.0
 LONG_PRESS_SLOP = 0.04  # of the face width: a finger that wanders further is not holding still
-# A resistive touch screen often flickers as a finger lands: down, up, down again within a few ms. A lift is
-# held back this long; a press again near it (TOUCH_BOUNCE_PX) means the finger never left.
+# A resistive touch screen (the old 3.5" one) often flickers as a finger lands: down, up, down again within a few
+# ms. A lift is held back this long; a press again near it (TOUCH_BOUNCE_PX) means the finger never left. The 7"
+# screen's capacitive touch doesn't flicker; the short hold-back is harmless there (a tap ends 0.1 s later).
 TOUCH_BOUNCE_S = 0.1
 TOUCH_BOUNCE_PX = 40
 # MX Player-style edge swipes on the idle face (littlebot/face/edge_controls.py): slide up / down on the right
@@ -58,7 +60,10 @@ PANEL_MIN_HEIGHT = 460
 # While a parent watches the camera live on the dashboard, a small camera sign sits in the face's top-right
 # corner so viewing is never hidden. Drawn in the face's own palette (renderer.MOUTH_INK / MOUTH_INSIDE on
 # the pastel screen, the eye colour on a dark one), soft and still so it doesn't pull a child's attention.
-LIVE_BADGE_WIDTH = 30  # px at the native 480x320
+# Overlays on the face (the camera sign, the setup code) are sized for a face this tall and scaled with it:
+# 1.5x on the 7" screen's 600 px (the camera sign is then 45 px, about 7 mm on the glass).
+OVERLAY_REF_H = 400
+LIVE_BADGE_WIDTH = 30  # px on a face OVERLAY_REF_H tall
 LIVE_BADGE_MARGIN = 12
 LIVE_BADGE_INK = (66, 32, 62, 150)  # deep plum, ~60 % opaque
 LIVE_BADGE_DOT = (146, 40, 82, 210)  # raspberry "on" dot
@@ -128,11 +133,12 @@ def run_display(robot: Any, demo: bool = False) -> None:
 def apply_output_mode(output: str, mode: str, *, run: Callable[..., Any] = subprocess.run,
                       which: Callable[[str], str | None] = shutil.which,
                       env: Any = None, settle_s: float = 0.5) -> bool:
-    """Ask the Wayland compositor to drive ``output`` at ``mode`` (e.g. ``"720x480@60"``).
+    """Ask the Wayland compositor to drive ``output`` at ``mode`` (e.g. ``"1024x600@60"``).
 
-    The MPI3508's EDID offers only 16:9 / 4:3 modes (preferred 1280x720), which its scaler
-    squashes into the 3:2 panel; 720x480 has the panel's own shape. Uses ``wlr-randr`` and
-    only acts in a Wayland session; never fatal. Returns True when the mode was changed.
+    The 7" GeeekPi panel is 1024x600; a desktop that picked another mode from its EDID (some of these
+    boards also offer 1280x720 or 1920x1080, which their scaler squeezes) is put back on the panel's own
+    pixels. (The old 3.5" MPI3508 needed ``"720x480@60"`` the same way.) Uses ``wlr-randr`` and only acts in a
+    Wayland session; never fatal. Returns True when the mode was changed.
     """
     env = os.environ if env is None else env
     if not env.get("WAYLAND_DISPLAY") or which("wlr-randr") is None:
@@ -549,7 +555,7 @@ class DisplayLoop:
         """Small strip at the bottom of the face: the one-time dashboard setup code."""
         pg = self._pg
         r = self.face_rect
-        s = r.h / self.native_size[1]
+        s = r.h / OVERLAY_REF_H
         size = max(14, int(17 * s))
         code = str(self.setup_banner.get("code", ""))
         label = self._font(size).render("Parent setup code", True, (150, 170, 190))
@@ -576,7 +582,7 @@ class DisplayLoop:
 
     def _live_badge(self) -> tuple[Any, tuple[int, int]]:
         r = self.face_rect
-        s = r.h / self.native_size[1]  # scaled with the face
+        s = r.h / OVERLAY_REF_H  # scaled with the face
         width = max(12, int(round(LIVE_BADGE_WIDTH * s)))
         badge = self._badges.get(width)
         if badge is None:

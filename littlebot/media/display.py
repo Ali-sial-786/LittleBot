@@ -1,7 +1,7 @@
 """Where the YouTube player page is shown.
 
 * :class:`BrowserKioskBackend`  - on the robot: launches Chromium full-screen (kiosk) on the
-  480x320 screen pointing at the local player page, and terminates it when playback stops
+  1024x600 screen pointing at the local player page, and terminates it when playback stops
   so the animated face is visible again.
 * :class:`DesktopBrowserBackend` - desktop simulation: opens the page in the default browser
   (``webbrowser``). It cannot be closed programmatically; the page shows a calm
@@ -178,7 +178,7 @@ def find_browser(preferred: str | None = None, which: Callable[[str], str | None
 
 
 def build_kiosk_command(
-    browser: str, url: str, *, user_data_dir: str | Path, width: int = 480, height: int = 320,
+    browser: str, url: str, *, user_data_dir: str | Path, width: int = 1024, height: int = 600,
     extra_args: Sequence[str] = (), kiosk: bool = True, incognito: bool = True,
 ) -> list[str]:
     """Chromium command line for a locked-down, full-screen player window (``kiosk=False``: an app window of
@@ -223,8 +223,8 @@ class BrowserKioskBackend(DisplayBackend):
         browser: str | None,
         *,
         user_data_dir: str | Path,
-        width: int = 480,
-        height: int = 320,
+        width: int = 1024,
+        height: int = 600,
         extra_args: Sequence[str] = (),
         launcher: Launcher | None = None,
         terminate_timeout: float = 2.0,  # SIGTERM -> wait -> SIGKILL -> wait 1 s: < 5 s shutdown budget

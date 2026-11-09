@@ -1,7 +1,7 @@
 # Desktop simulation: use the computer's webcam / microphone / speaker when they
 # exist ("auto"), mocks otherwise. Servos are always simulated.
 display:
-  scale: 2.0
+  scale: 1.0             # the 1024x600 screen at its own size (try 0.75 on a small laptop screen)
   show_sim_panel: true
 motion:
   backend: mock

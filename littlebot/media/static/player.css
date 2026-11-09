@@ -1,4 +1,4 @@
-/* LittleBot player page: black, calm, sized for the 480x320 robot screen; scales up for desktop preview. */
+/* LittleBot player page: black, calm, sized by the screen (vmin) for the robot's 7" 1024x600 screen and the desktop preview alike. */
 html, body {
   margin: 0;
   padding: 0;

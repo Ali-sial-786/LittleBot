@@ -30,8 +30,9 @@ Performance notes (the Pi 5 must hold 30 fps at low CPU):
   few dozen cached shapes.
 * Sprites (hearts, sparkles, Z's, confetti ...) are rendered once per
   (kind, size, colour, angle-bucket) and cached.
-* Everything is drawn at the native 480x320 and scaled once at the end if the
-  target is a different size.
+* Everything is drawn at the face's design size (``size``: 320 px tall, 546
+  wide for the 7" 1024x600 screen, frame.face_size) and scaled once at the end
+  to the screen.
 """
 
 from __future__ import annotations

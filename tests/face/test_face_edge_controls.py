@@ -250,7 +250,7 @@ def test_no_backlight_or_a_broken_one(tmp_path):
 
 # ------------------------------------------------------------------ the bar's look
 def test_bar_sprites_draw_and_are_cached(pygame_display):
-    surf = pygame.Surface((720, 480))
+    surf = pygame.Surface(EC.CANVAS)  # the 7" screen: the bar at its own size
     rect = surf.get_rect()
     r = EC.draw_bar(surf, rect, EC.Bar("volume", "right", 0.55, 0.69, 1.0))
     assert r.right <= rect.right and r.centerx > rect.centerx

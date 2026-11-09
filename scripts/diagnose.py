@@ -849,11 +849,12 @@ def check_display(r: Report, ctx: Ctx) -> None:
         if c["status"] != "connected":
             continue
         edid = c["edid"]
-        has_native = "480x320" in c["modes"]
+        has_native = "1024x600" in c["modes"]  # the 7" GeeekPi panel's own pixels
         msg = (f"{c['connector']} connected; modes: {', '.join(c['modes'][:6]) or 'none'}"
                + (f"; EDID '{edid.get('name') or edid.get('manufacturer')}' preferred {edid.get('preferred')}" if edid else "; no EDID"))
         r.add(S, f"connector_{c['connector']}", "PASS", msg, c,
-              hint=None if has_native else "480x320 is not advertised by EDID. See docs/DISPLAY_SETUP.md (try 720x480 or a video= mode).")
+              hint=None if has_native else "1024x600 (the 7\" panel's own size) is not advertised by EDID. LittleBot asks "
+                                           "for it anyway (display.output_mode); else see docs/DISPLAY_SETUP.md (a video= mode).")
         if c["connector"] == "HDMI-A-2" and ctx.is_pi:
             r.add(S, "hdmi_port", "INFO", "screen is on HDMI1 (HDMI-A-2)",
                   hint="HDMI0 (next to the USB-C power socket) is HDMI-A-1; video= settings must name the connector in use.")
@@ -922,7 +923,9 @@ def _input_devices() -> list[dict[str, str]]:
 def check_touch(r: Report, ctx: Ctx) -> None:
     S = "touch"
     devs = _input_devices()
-    touch = [d for d in devs if re.search(r"ads7846|xpt2046|touch", d.get("name", ""), re.I)]
+    # The 7" screen's capacitive touch is a USB device ("...CTP..." / "...Touch..."); ads7846 is the old 3.5" screen's
+    touch = [d for d in devs if re.search(r"touch|ctp|ilitek|goodix|egalax|ft5x06|ads7846|xpt2046", d.get("name", ""), re.I)
+             and not re.search(r"touchpad", d.get("name", ""), re.I)]
     overlay = [ln for ln in boot_config_lines() if ln.startswith("dtoverlay=ads7846")]
     spi_on = any(re.match(r"dtparam=spi=on", ln) for ln in boot_config_lines())
     if touch:
@@ -933,13 +936,18 @@ def check_touch(r: Report, ctx: Ctx) -> None:
                   f"{d['name']} ({ev or 'no event node'}{'' if readable else ', not readable by this user'})", d,
                   hint=None if readable else "Add the user to the 'input' group (sudo usermod -aG input $USER) and log in again.")
     else:
-        hint = ("The touch layer is optional: the app works without it. See docs/DISPLAY_SETUP.md (ads7846 overlay, UNVERIFIED on Pi 5)."
-                if ctx.is_pi else None)
-        status = "WARN" if overlay else ("INFO" if ctx.is_pi else "SKIP")
-        r.add(S, "device", status, "no touchscreen input device found" + (" although the ads7846 overlay is configured" if overlay else ""),
+        hint = ("Touch is optional: the app works without it. The 7\" screen's touch is USB: plug the screen's touch USB "
+                "port into one of the Pi's USB ports (docs/DISPLAY_SETUP.md)." if ctx.is_pi else None)
+        r.add(S, "device", "INFO" if ctx.is_pi else "SKIP", "no touchscreen input device found",
               {"input_devices": [d.get("name") for d in devs][:20]}, hint=hint)
     if ctx.is_pi:
         r.add(S, "boot_config", "INFO", f"spi={'on' if spi_on else 'off'}; ads7846 overlay: {overlay[0] if overlay else 'not configured'}")
+        if overlay:  # the old 3.5" screen's resistive touch: with that screen gone it only reads noise
+            r.add(S, "old_touch_overlay", "WARN", "dtoverlay=ads7846 is still in config.txt (the old 3.5\" screen's touch)",
+                  {"line": overlay[0]},
+                  hint="The 7\" screen's touch is USB. Remove the ads7846 line (and dtparam=spi=on unless something else "
+                       "uses SPI) from /boot/firmware/config.txt and reboot: with no 3.5\" screen on the header it can "
+                       "turn noise into phantom taps (docs/DISPLAY_SETUP.md).")
         if os.path.isdir("/sys/module/ads7846"):
             r.add(S, "driver", "INFO", "ads7846 kernel module loaded")
 
