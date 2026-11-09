@@ -934,7 +934,7 @@ class SettingsCard(Card):
             lit = busy or self._flashing(f"game:{g.id}")
             fill = art.mix(art.WHITE, col, 0.18) if lit else art.WHITE
             surf.blit(art.rounded_rect(r.w, r.h, 28, fill, shadow=5, border=art.inkier(col, 0.25) if lit else
-                                       art.mix(col, art.WHITE, 0.2), border_w=3), r.topleft)
+                                       art.mix(col, art.WHITE, 0.15), border_w=3), r.topleft)
             ic = (r.x + 14 + G_ICON // 2, r.centery)
             art.blit_center(surf, art.circle(G_ICON / 2, art.surface(art.lighten(col, 0.55))), ic)
             art.blit_center(surf, game_icon(g.id, G_ICON - 20, col), ic)
@@ -964,12 +964,16 @@ class SettingsCard(Card):
         where = ("Only on LittleBot itself: LAN access is off" if self.local_only else
                  "On a phone or computer on the same Wi-Fi")
         y = self._about_row(surf, "dashboard", art.SKY, x, y, "The parent dashboard", sub=where)
-        for u in self.urls:
+        cx, line = x + 70, 0
+        for u in self.urls:  # side by side while they fit
             chip = art.pill(_kit.ellipsize(u, BODY_PX, room - 110), BODY_PX, art.INK, art.mix(art.WHITE, art.SKY, 0.2),
                             pad=(18, 8), border=art.mix(art.SKY, art.WHITE, 0.3))
-            surf.blit(chip, (x + 70, y))
-            y += chip.get_height() + 10
-        y += 10
+            if cx > x + 70 and cx + chip.get_width() > x + room:
+                cx, y = x + 70, y + line + 10
+            surf.blit(chip, (cx, y))
+            cx += chip.get_width() + 14
+            line = chip.get_height()
+        y += line + 20
         # the battery, when one is fitted
         if self.battery is not None:
             b = self.battery
