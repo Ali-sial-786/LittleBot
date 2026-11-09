@@ -36,6 +36,10 @@ def test_an_old_3in5_local_yaml_gets_the_7in_screen(tmp_path, caplog):
     assert (cfg.display.width, cfg.display.height, cfg.display.output_mode) == (1024, 600, "1024x600@60")
     assert cfg.display.idle_fps == 12  # the rest of local.yaml still counts
     assert any("old 3.5" in r.getMessage() and "--unset" in r.getMessage() for r in caplog.records)
+    half = migrate_local({"display": {"height": 320, "fps": 25}})  # width already removed, height not yet
+    assert half["display"] == {"height": 600, "fps": 25}
+    assert load_config("pi", config_dir=tmp_path, environ={}, use_dotenv=False,
+                       overrides=None).display.height == 600
     kept = {"display": {"width": 800, "height": 480, "output_mode": None}}
     assert migrate_local(kept) == kept  # a screen chosen on purpose is left alone
     assert migrate_local({"audio": {}}) == {"audio": {}}

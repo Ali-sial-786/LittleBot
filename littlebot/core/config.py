@@ -1232,22 +1232,25 @@ def migrate_local(local: dict[str, Any]) -> dict[str, Any]:
         return local
     fixed = dict(display)
     said: list[str] = []
-    try:
-        size = (int(display.get("width")), int(display.get("height")))
-    except (TypeError, ValueError):
-        size = None
-    if size == OLD_SCREEN_SIZE:
-        fixed["width"], fixed["height"] = DisplayConfig().width, DisplayConfig().height
-        said.append("display.width/height 480x320")
+    new = DisplayConfig()
+    # Each on its own: half tidied (width removed, height still 320) must not make a 1024x320 screen.
+    for key, old in (("width", OLD_SCREEN_SIZE[0]), ("height", OLD_SCREEN_SIZE[1])):
+        try:
+            value = int(display[key]) if key in display else None
+        except (TypeError, ValueError):
+            value = None
+        if value == old:
+            fixed[key] = getattr(new, key)
+            said.append(f"display.{key} {old}")
     if str(display.get("output_mode") or "").strip() == OLD_SCREEN_MODE:
-        fixed["output_mode"] = f"{DisplayConfig().width}x{DisplayConfig().height}@60"
+        fixed["output_mode"] = f"{new.width}x{new.height}@60"
         said.append(f"display.output_mode {OLD_SCREEN_MODE}")
     if not said:
         return local
     logging.getLogger("littlebot.config").warning(
-        "config/local.yaml has the old 3.5\" screen's %s: using the 7\" screen's %dx%d instead. Remove those lines "
-        "(scripts/set_config.py --unset display.width, display.height, display.output_mode) to stop this warning.",
-        " and ".join(said), fixed.get("width", DisplayConfig().width), fixed.get("height", DisplayConfig().height))
+        "config/local.yaml has the old 3.5\" screen's %s: using the 7\" screen's values instead (%dx%d). Remove those "
+        "lines (scripts/set_config.py --unset display.width, display.height, display.output_mode) to stop this "
+        "warning.", ", ".join(said), fixed.get("width", new.width), fixed.get("height", new.height))
     return {**local, "display": fixed}
 
 

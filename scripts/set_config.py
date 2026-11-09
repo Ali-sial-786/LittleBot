@@ -135,8 +135,27 @@ def check(text: str, mode: str) -> str | None:
         try:
             load_config(mode=mode, config_file=candidate, include_local=False, use_dotenv=False, environ={})
         except Exception as e:  # noqa: BLE001 - YAML or settings errors: shown, nothing saved
-            return str(e).strip().splitlines()[0] if str(e).strip() else type(e).__name__
+            return describe_error(e)
     return None
+
+
+def describe_error(e: Exception) -> str:
+    """What is wrong, naming each setting ("3 problems: skills.music: not a LittleBot setting; ..."): a
+    validation error's first line alone ("3 validation errors for LittleBotConfig") doesn't say which."""
+    errors = getattr(e, "errors", None)
+    if callable(errors):
+        try:
+            items = [(".".join(str(p) for p in err.get("loc", ())), str(err.get("msg", ""))) for err in errors()]
+        except Exception:  # noqa: BLE001
+            items = []
+        if items:
+            said = "; ".join(f"{loc or 'the file'}: "
+                             f"{'not a LittleBot setting (this version of LittleBot does not know it)' if 'xtra' in msg else msg}"
+                             for loc, msg in items[:6])
+            more = f"; and {len(items) - 6} more" if len(items) > 6 else ""
+            return f"{len(items)} problem{'s' if len(items) != 1 else ''}: {said}{more}"
+    text = str(e).strip()
+    return text.splitlines()[0] if text else type(e).__name__
 
 
 def effective(path: list[str], mode: str) -> object:
