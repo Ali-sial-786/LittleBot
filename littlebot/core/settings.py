@@ -118,6 +118,11 @@ def build_defaults(cfg: LittleBotConfig) -> dict[str, Any]:
         "face.expression_default": "neutral",
         # screen brightness 0.15..1 (a left-edge swipe on the face; littlebot/face/edge_controls.py)
         "display.brightness": 1.0,
+        # the screen's look: "light" (the pink face) or "dark" (glowing eyes on a night-blue face, dark cards);
+        # "dark mode" / "light mode" by voice, or on the robot's own settings screen (a 5 s hold)
+        "display.theme": "light",
+        # the picture turned round (180 degrees) for a screen mounted upside down; normal otherwise
+        "display.flipped": False,
         # the idle face dozes (droopy eyes, a "zzz") when nothing is happening; only a look, the robot stays
         # awake and listening (littlebot/face/doze.py). Someone walking in wakes it for a while.
         "face.doze_enabled": True,
@@ -184,6 +189,30 @@ def build_defaults(cfg: LittleBotConfig) -> dict[str, Any]:
 _NON_PERSISTENT = {"motion.physical_armed"}
 
 
+def theme_value(value: Any) -> str:
+    """``display.theme``: "light" or "dark" ("night", "on" / True mean dark)."""
+    v = str(value).strip().lower() if not isinstance(value, bool) else ("dark" if value else "light")
+    if v in ("dark", "night", "on", "true", "1"):
+        return "dark"
+    if v in ("light", "day", "off", "false", "0", "normal"):
+        return "light"
+    raise ValueError(f"display.theme must be light or dark, not {value!r}")
+
+
+def flag_value(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    v = str(value).strip().lower()
+    if v in ("1", "true", "yes", "on"):
+        return True
+    if v in ("0", "false", "no", "off"):
+        return False
+    raise ValueError(f"expected true or false, not {value!r}")
+
+
+BUILTIN_VALIDATORS: dict[str, Callable[[Any], Any]] = {"display.theme": theme_value, "display.flipped": flag_value}
+
+
 class Settings:
     def __init__(self, db: Database, bus: EventBus, defaults: dict[str, Any]) -> None:
         self._db = db
@@ -191,7 +220,7 @@ class Settings:
         self._defaults = copy.deepcopy(defaults)
         self._values: dict[str, Any] = copy.deepcopy(defaults)
         self._lock = threading.RLock()
-        self._validators: dict[str, Callable[[Any], Any]] = {}
+        self._validators: dict[str, Callable[[Any], Any]] = dict(BUILTIN_VALIDATORS)
         self.load()
 
     def load(self) -> None:

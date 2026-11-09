@@ -83,6 +83,8 @@ class DisplayConfig(_Section):
 class FaceConfig(_Section):
     eye_color: tuple[int, int, int] = (90, 210, 255)
     background_color: tuple[int, int, int] = (255, 214, 228)  # soft light pink (a dark colour gives glowing eyes)
+    # the face in dark mode (setting display.theme: "dark"): night blue, the eyes glow
+    dark_background_color: tuple[int, int, int] = (10, 14, 30)
     glow: bool = True
     blink_interval: tuple[float, float] = (2.5, 6.0)  # random seconds between blinks
     double_blink_chance: float = 0.18

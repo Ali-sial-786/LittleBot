@@ -344,13 +344,14 @@ def test_a_tap_in_the_middle_giggles_at_once(window):
     assert ctx.face.status()["expression"] == "happy"
 
 
-def test_a_long_press_on_the_edge_still_opens_the_games_menu(window):
+def test_a_5s_hold_on_the_edge_still_opens_the_settings(window):
     loop, ctx = window
     _post(loop, ("down", _at(loop, 0.04, 0.5)))
     loop.check_edges(time.monotonic() + EC.STILL_SECONDS + 0.01)  # a resting finger: its giggle plays...
     assert ctx.face.status()["expression"] == "happy"
-    assert loop.check_long_press(time.monotonic() + D.LONG_PRESS_SECONDS + 0.05)  # ...and the hold opens the menu
-    assert _wait(lambda: ctx.screens.active) and ctx.screens.current.kind == "games"
+    assert loop.check_long_press(time.monotonic() + 1.5) is False  # (no games menu after a second any more)
+    assert loop.check_long_press(time.monotonic() + D.SETTINGS_HOLD_SECONDS + 0.05)  # ...and 5 s opens the settings
+    assert _wait(lambda: ctx.screens.active) and ctx.screens.current.kind == "settings"
 
 
 def test_an_edge_swipe_sets_the_volume_without_a_giggle_or_the_menu(window, caplog):

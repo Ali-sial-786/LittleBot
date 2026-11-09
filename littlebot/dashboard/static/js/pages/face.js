@@ -83,6 +83,23 @@ export default {
             h('span', { class: 'hint', text: 'Real sleep after a long quiet spell (the camera checks less often). 0: never.' }))),
         h('div', { class: 'btn-row' }, saveSleep), sleepNote));
 
+    // How the screen looks: dark mode (also "dark mode" by voice, or the robot's own settings: hold 5 s) and turned round.
+    const darkRow = switchRow({ title: 'Dark mode',
+      text: 'A night-blue face with glowing eyes, and dark cards and games: gentler in a dark room. Also by voice: "dark mode", "light mode".',
+      onChange: async (v) => (await app.act(() => put('/face/look', { dark_mode: v }), v ? 'Dark mode is on.' : 'Light mode is on.')) !== null });
+    const flipRow = switchRow({ title: 'Turn the screen upside down',
+      text: 'Only for a screen mounted upside down. Off: the right way up.',
+      onChange: async (v) => (await app.act(() => put('/face/look', { flipped: v }), v ? 'The screen is turned round.' : 'The screen is the right way up.')) !== null });
+    const lookCard = h('section', { class: 'card' },
+      h('div', { class: 'card-head' }, h('h2', {}, icon('moon'), 'Screen')),
+      h('p', { class: 'muted', text: 'On the robot itself, hold a finger still on the screen for 5 seconds for its settings and the games.' }),
+      h('div', { class: 'stack' }, darkRow.el, flipRow.el));
+    function showLook(l) {
+      if (!l) return;
+      darkRow.set(!!l.dark_mode);
+      flipRow.set(!!l.flipped);
+    }
+
     function showSleep(s) {
       if (!s) return;
       doze.set(s.doze_enabled);
@@ -119,7 +136,8 @@ export default {
           h('div', { class: 'card-head' }, h('h2', {}, icon('zap'), 'Animations')),
           h('p', { class: 'muted', text: 'Little flourishes played on top of the current expression.' }),
           h('div', { class: 'mt-2' }, animRow)),
-        sleepCard));
+        sleepCard,
+        lookCard));
 
     function build(expressions, animations) {
       clear(exprGrid);
@@ -140,6 +158,7 @@ export default {
     get('/face').then((info) => {
       build(info.expressions || FALLBACK_EXPRESSIONS, info.animations || FALLBACK_ANIMATIONS);
       showSleep(info.sleep);
+      showLook(info.look);
       unavailable = !info.available;
       if (unavailable) view.querySelector('.page-head')?.after(h('div', { class: 'banner warn mt-2' }, icon('alert'), h('div', {}, h('strong', { text: 'The face display is unavailable' }), h('span', { text: 'Buttons will not have any effect until it is running.' }))));
       if (app.status) update(app.status);

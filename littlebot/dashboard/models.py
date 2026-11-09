@@ -93,6 +93,13 @@ class AnimationBody(Body):
         return v
 
 
+class FaceLookBody(Body):
+    """How the screen looks: dark mode (display.theme) and the picture turned round (display.flipped)."""
+
+    dark_mode: bool | None = None
+    flipped: bool | None = None
+
+
 class FaceSleepBody(Body):
     """Dozing (an idle look, littlebot/face/doze.py) and the deeper sleep after a long quiet spell."""
 

@@ -413,13 +413,13 @@ class TimerCard(Card):
         if t.state == "ringing":
             pulse = 0.5 + 0.5 * math.sin((now - t.rang_at) * 4.0)
             art.blit_center(surf, art.glow(r * 1.3, DONE_COLOR, 1.0), (cx, cy), int(90 + 150 * pulse))
-            art.blit_center(surf, art.circle(r - width // 2, art.lighten(DONE_COLOR, 0.8)), (cx, cy))
+            art.blit_center(surf, art.circle(r - width // 2, art.surface(art.lighten(DONE_COLOR, 0.8))), (cx, cy))
             art.blit_center(surf, _ring(r, width, DONE_COLOR, RING_STEPS), (cx, cy))
             candy.blit_mid(surf, candy.fit("Done!", int(r * 0.62), inner), (cx, cy))
             return
         left = t.remaining(now)
         q = math.ceil(RING_STEPS * min(1.0, left / max(1.0, t.total)))
-        art.blit_center(surf, art.circle(r - width // 2, art.CREAM), (cx, cy))
+        art.blit_center(surf, art.circle(r - width // 2, art.surface(art.CREAM)), (cx, cy))  # (dark in dark mode)
         art.blit_center(surf, _ring(r, width, t.color, q), (cx, cy))
         big = candy.fit(clock_text(left), int(r * 0.7), inner, min_size=BODY_PX)
         if t.state == "paused":

@@ -437,6 +437,22 @@ def test_output_mode_failure_is_not_fatal(caplog):
     assert "failed to apply" in caplog.text
 
 
+def test_the_screen_is_turned_the_right_way_up_or_round():
+    run = _Run()
+    wlr = lambda _: "/usr/bin/wlr-randr"  # noqa: E731
+    assert D.apply_output_transform("HDMI-A-1", False, run=run, which=wlr, env=WAYLAND, settle_s=0) is True
+    assert run.calls[-1] == ["wlr-randr", "--output", "HDMI-A-1", "--transform", "normal"]  # a leftover turn goes
+    assert D.apply_output_transform("HDMI-A-2", True, run=run, which=wlr, env=WAYLAND, settle_s=0) is True
+    assert run.calls[-1] == ["wlr-randr", "--output", "HDMI-A-2", "--transform", "180"]
+    assert D.apply_output_transform("HDMI-A-1", True, run=run, which=wlr, env={}, settle_s=0) is False  # no Wayland
+    import subprocess
+
+    def refuse(argv, **kw):
+        return subprocess.CompletedProcess(argv, 1, "", "no such output")
+
+    assert D.apply_output_transform("HDMI-A-9", False, run=refuse, which=wlr, env=WAYLAND, settle_s=0) is False
+
+
 WLR_TWO = """HDMI-A-1 "Unknown (HDMI-A-1)"
   Enabled: no
 HDMI-A-2 "MPI3508 (HDMI-A-2)"

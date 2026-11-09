@@ -27,6 +27,7 @@ from __future__ import annotations
 import asyncio
 import collections
 import logging
+import math
 import os
 import re
 import shutil
@@ -46,9 +47,13 @@ log = logging.getLogger("littlebot.face.display")
 TAP_REACTION_ENABLED = True
 TAP_REACTION_SOUND = "giggle"
 TAP_COOLDOWN_SECONDS = 1.5
-# Holding a finger on the idle face this long opens the games menu (littlebot/screens/cards/games.py).
-# A plain tap still giggles: babies tap the face all the time, a deliberate hold is a grown-up's.
-LONG_PRESS_SECONDS = 1.0
+# Holding a finger still anywhere on the screen this long opens LittleBot's settings (littlebot/screens/cards/
+# settings.py: volume, brightness, dark mode, the games...), over the face, a card or a game. A plain tap still
+# giggles: babies tap the face all the time; five seconds of a still finger is a grown-up's. After HOLD_RING_FROM
+# seconds a ring fills around the finger, so whoever holds knows it is coming.
+SETTINGS_HOLD_SECONDS = 5.0
+HOLD_RING_FROM = 1.0
+HOLD_RING_R = 64  # px on the 1024x600 screen (scaled with the face)
 DOUBLE_TAP_SECONDS = 0.45  # two taps on the idle face this close together: today at a glance
 LONG_PRESS_SLOP = 0.04  # of the face width: a finger that wanders further is not holding still
 # A resistive touch screen (the old 3.5" one) often flickers as a finger lands: down, up, down again within a few
@@ -102,7 +107,7 @@ HELP_LINES: tuple[tuple[str, str], ...] = (
     ("X / E", "STOP everything / motion emergency stop"),
     ("Esc (game)", "stop the on-screen game (taps, 1-9, space play it)"),
     ("Esc (card)", "close the info card (a tap on its little eyes too)"),
-    ("hold click", "hold 1 s on the face: the games menu"),
+    ("hold click", "hold 5 s anywhere: LittleBot's settings (and the games)"),
     ("edge drag", "slide up / down on the face's right edge: volume; left edge: brightness"),
     ("- / =", "speaker volume down / up"),
     ("[ / ]", "screen brightness down / up"),
@@ -297,6 +302,33 @@ def make_screen_power(output: str, *, fullscreen: bool, sim_mode: bool, env: Any
     return ScreenPower(output)
 
 
+def apply_output_transform(output: str, flipped: bool, *, run: Callable[..., Any] = subprocess.run,
+                           which: Callable[[str], str | None] = shutil.which, env: Any = None,
+                           settle_s: float = 0.3) -> bool:
+    """Turn the picture on ``output`` the right way up ("normal"), or round ("180") when ``flipped`` (a screen
+    mounted upside down; setting ``display.flipped``). LittleBot sets it at every start, so a turn left in the
+    desktop's settings (e.g. kanshi's, from the old screen) doesn't keep the screen upside down. Uses
+    ``wlr-randr`` in a Wayland session; never fatal. True when it was set."""
+    env = os.environ if env is None else env
+    transform = "180" if flipped else "normal"
+    if not env.get("WAYLAND_DISPLAY") or which("wlr-randr") is None:
+        log.info("screen turn (%s) for %s skipped: needs a Wayland session with wlr-randr", transform, output)
+        return False
+    try:
+        res = run(["wlr-randr", "--output", output, "--transform", transform], capture_output=True, text=True,
+                  timeout=5)
+    except (OSError, subprocess.SubprocessError) as e:
+        log.warning("could not turn screen %s to %s: %s", output, transform, e)
+        return False
+    if res.returncode != 0:
+        log.warning("could not turn screen %s to %s: %s", output, transform, (res.stderr or res.stdout or "").strip())
+        return False
+    log.info("screen %s: %s", output, "turned round (display.flipped)" if flipped else "the right way up")
+    if settle_s > 0:
+        time.sleep(settle_s)
+    return True
+
+
 def init_video(pg: Any, driver: str | None, env: Any = None) -> None:
     """``pygame.display.init()``, preferring SDL video ``driver`` (e.g. ``"wayland"``).
 
@@ -397,6 +429,9 @@ class DisplayLoop:
         self._game_t: float | None = None  # last frame time while an on-screen game runs
         self._card_t: float | None = None  # last frame time while an info card shows
         self._press: tuple[float, float, float] | None = None  # (nx, ny, when) a finger held on the idle face
+        self._hold: tuple[float, float, float] | None = None  # (nx, ny, when) a still finger anywhere: the settings
+        self.dark = bool(self._setting("display.theme", "light") == "dark")  # dark mode (display.theme)
+        self.flipped = bool(self._setting("display.flipped", False))  # the picture turned round (display.flipped)
         self.touch_bounce_s = TOUCH_BOUNCE_S
         self._pointer_down = False  # button 1 / the finger is down (some touch drivers' motion has no buttons)
         self._lift: tuple[tuple[int, int], float] | None = None  # a lift held back (TOUCH_BOUNCE_S)
@@ -428,6 +463,8 @@ class DisplayLoop:
         self.output_name = find_output(self.cfg.output_name) if self.fullscreen else self.cfg.output_name
         if self.fullscreen and self.cfg.output_mode:
             apply_output_mode(self.output_name, self.cfg.output_mode)
+        if self.fullscreen:  # the right way up (display.flipped; a turn left over from the old screen goes)
+            apply_output_transform(self.output_name, self._setting("display.flipped", False))
         init_video(pygame, self.cfg.video_driver)
         pygame.font.init()
         pygame.display.set_caption(f"{self.ctx.config.robot_name}")
@@ -697,6 +734,9 @@ class DisplayLoop:
     # ------------------------------------------------------------------ drawing
     def _draw(self, now: float) -> None:
         win = self.window
+        from littlebot.games import art
+
+        art.set_dark(self.dark)  # cards, games and the bars draw in the theme (here: the display thread)
         if self.face_rect.size != win.get_size():
             win.fill((0, 0, 0))
         covered = self._draw_game(win, now) or self._draw_card(win, now)
@@ -729,6 +769,7 @@ class DisplayLoop:
         if badge is not None and not self.face_hidden():
             draw_badge(win, self.face_rect, badge, 1.0 if self.brightness.backlight is not None
                        else 0.5 + 0.5 * self.brightness.level)
+        self._draw_hold_ring(win, now)
 
     def face_hidden(self) -> bool:
         try:
@@ -809,9 +850,9 @@ class DisplayLoop:
         r = self.face_rect
         s = r.h / OVERLAY_REF_H  # scaled with the face
         width = max(12, int(round(LIVE_BADGE_WIDTH * s)))
-        badge = self._badges.get(width)
+        badge = self._badges.get((width, self.dark))
         if badge is None:
-            badge = self._badges[width] = self._make_live_badge(width)
+            badge = self._badges[(width, self.dark)] = self._make_live_badge(width)
         m = int(round(LIVE_BADGE_MARGIN * s))
         return badge, (r.right - badge.get_width() - m, r.y + m)
 
@@ -821,7 +862,8 @@ class DisplayLoop:
 
         pg = self._pg
         face_cfg = getattr(self.ctx.config, "face", None)
-        bg = tuple(getattr(face_cfg, "background_color", (255, 214, 228)))[:3]
+        bg = tuple(getattr(face_cfg, "dark_background_color" if self.dark else "background_color",
+                           (255, 214, 228)))[:3]  # (dark mode: the night-blue face)
         if is_light_background(bg):  # inked, like the mouth and the closed eyes on the pastel screen
             ink, dot = LIVE_BADGE_INK, LIVE_BADGE_DOT
         else:  # glowing, like the eyes on a dark screen
@@ -1024,29 +1066,69 @@ class DisplayLoop:
 
     # A long press on the idle face opens the games menu (a plain tap keeps its giggle).
     def check_long_press(self, now: float) -> bool:
-        press = self._press
-        if press is None or self._lift is not None or now - press[2] < LONG_PRESS_SECONDS:
+        """A finger held still SETTINGS_HOLD_SECONDS anywhere on the screen opens LittleBot's settings (a running
+        game stops for it). True when it opened them."""
+        hold = self._hold
+        if hold is None or self._lift is not None or now - hold[2] < SETTINGS_HOLD_SECONDS:
             return False  # (a lift held back: the finger is up)
-        self._press = None
-        screens = getattr(self.ctx, "screens", None)
+        self._hold = self._press = None
+        self._edge_tap = None
         self.edges.cancel()
-        if screens is None or self._games() is not None or self._screens() is not None or self.face_hidden():
+        screens = getattr(self.ctx, "screens", None)
+        if screens is None or self.face_hidden():
             return False
-        log.info("long press on the face: games menu")
-        self._submit(lambda: screens.show({"card": "games"}, source="touch"), "games menu")
+        log.info("5 s hold on the screen: settings")
+        games = self._games()
+
+        async def open_settings() -> Any:
+            if games is not None:
+                try:
+                    games.stop("settings")
+                except Exception:  # noqa: BLE001
+                    log.debug("stopping the game for the settings failed", exc_info=True)
+            return await screens.show({"card": "settings"}, source="touch")
+
+        self._submit(open_settings, "settings")
         return True
+
+    def hold_progress(self, now: float) -> float | None:
+        """How far a still finger is towards the settings (0..1) once the ring shows, else None."""
+        hold = self._hold
+        if hold is None or self._lift is not None or now - hold[2] < HOLD_RING_FROM:
+            return None
+        return min(1.0, (now - hold[2] - HOLD_RING_FROM) / (SETTINGS_HOLD_SECONDS - HOLD_RING_FROM))
+
+    def _draw_hold_ring(self, win: Any, now: float) -> None:
+        """A ring filling around a held finger (over everything): the settings are coming."""
+        p = self.hold_progress(now)
+        if p is None or self._hold is None:
+            return
+        from littlebot.games import art
+
+        pg = self._pg
+        r = self.face_rect
+        s = r.h / 600
+        cx, cy = r.x + self._hold[0] * r.w, r.y + self._hold[1] * r.h
+        rad = HOLD_RING_R * s
+        art.blit_center(win, art.ring(rad, 10 * s, art.WHITE, 150), (cx, cy))
+        if p > 0.0:
+            box = pg.Rect(0, 0, int(2 * rad), int(2 * rad))
+            box.center = (int(cx), int(cy))
+            pg.draw.arc(win, art.SKY, box, math.pi / 2 - 2 * math.pi * p, math.pi / 2, max(3, int(10 * s)))
+        label = art.pill("Settings", max(18, int(28 * s)), art.INK, art.WHITE, pad=(14, 6))
+        art.blit_center(win, label, (cx, max(r.y + label.get_height(), cy - rad - 26 * s)))
 
     def _pointer_moved(self, pos: tuple[int, int], buttons: tuple[int, ...]) -> None:
         if self.edges.tracking and self._edge_moved(pos):
             return
         if buttons and buttons[0]:
             self._card_pointer("drag", pos)
-        press = self._press
-        if press is not None:
-            r = self.face_rect
-            nx, ny = (pos[0] - r.x) / max(1, r.w), (pos[1] - r.y) / max(1, r.h)
-            if abs(nx - press[0]) > LONG_PRESS_SLOP or abs(ny - press[1]) > LONG_PRESS_SLOP * 1.5:
-                self._press = None
+        r = self.face_rect
+        nx, ny = (pos[0] - r.x) / max(1, r.w), (pos[1] - r.y) / max(1, r.h)
+        for name in ("_press", "_hold"):  # a finger that wanders is neither a tap nor a hold
+            held = getattr(self, name)
+            if held is not None and (abs(nx - held[0]) > LONG_PRESS_SLOP or abs(ny - held[1]) > LONG_PRESS_SLOP * 1.5):
+                setattr(self, name, None)
 
     def _card_key(self, key: int) -> bool:
         screens = self._screens()
@@ -1235,6 +1317,21 @@ class DisplayLoop:
         key = event.get("key")
         if key in ("audio.volume", "display.brightness"):
             self._level_news.append((key, event.get("value")))
+        elif key == "display.theme":  # dark mode: the next frame draws in it (art.set_dark, on the display thread)
+            self.dark = event.get("value") == "dark"
+        elif key == "display.flipped":
+            self.flipped = bool(event.get("value"))
+            if self.fullscreen and self._opened:
+                output, flipped = self.output_name, self.flipped
+                threading.Thread(target=lambda: apply_output_transform(output, flipped, settle_s=0),
+                                 name="screen-flip", daemon=True).start()
+
+    def _setting(self, key: str, default: Any) -> Any:
+        settings = getattr(self.ctx, "settings", None)
+        try:
+            return settings.get(key, default) if settings is not None else default
+        except Exception:  # noqa: BLE001
+            return default
 
     # ------------------------------------------------------------------ input
     def _handle_events(self) -> bool:
@@ -1310,7 +1407,7 @@ class DisplayLoop:
         self._lift = None
         if self._press is not None:  # a still tap on the face (not a swipe or a hold)
             self._tap_lifted(lift[1])
-        self._press = None
+        self._press = self._hold = None
         self._edge_release(lift[0])
         self._card_pointer("release", lift[0])
 
@@ -1414,10 +1511,12 @@ class DisplayLoop:
             return
         nx = (pos[0] - self.face_rect.x) / max(1, self.face_rect.w)
         ny = (pos[1] - self.face_rect.y) / max(1, self.face_rect.h)
+        if button == 1:  # anywhere (face, card or game): held still 5 s, the settings
+            self._hold = (nx, ny, time.monotonic())
         if button == 1 and (self._game_tap(nx, ny) or self._card_tap(nx, ny)):
             return
         if button == 1:
-            self._press = (nx, ny, time.monotonic())  # held still for a second: the games menu
+            self._press = (nx, ny, time.monotonic())  # a still tap on the face (a giggle; two: today at a glance)
         if mod is None:
             mod = pg.key.get_mods()
         shift = bool(mod & pg.KMOD_SHIFT)

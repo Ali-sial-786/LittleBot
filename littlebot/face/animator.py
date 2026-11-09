@@ -713,6 +713,12 @@ class FaceAnimator:
             m.add(effects.animation_motion(a.name, (self.t - a.start) / a.duration))
         return m
 
+    def set_background(self, color: tuple[int, int, int]) -> None:
+        """The face's background colour from now on (dark mode: a dark one, and the eyes glow)."""
+        c = (int(color[0]), int(color[1]), int(color[2]))
+        if tuple(self.cfg.background_color) != c:
+            self.cfg = self.cfg.model_copy(update={"background_color": c})
+
     def eye_color(self) -> tuple[int, int, int]:
         p = self.params
         base = tuple(float(c) for c in self.cfg.eye_color)

@@ -35,6 +35,7 @@ Color = tuple[int, int, int]
 
 # LittleBot's face colours (config face.background_color; littlebot/face/renderer.py MOUTH_*).
 FACE_PINK: Color = (255, 214, 228)
+FACE_NIGHT: Color = (10, 14, 30)  # the face in dark mode (config face.dark_background_color)
 MOUTH_INK: Color = (66, 32, 62)
 MOUTH_INSIDE: Color = (146, 40, 82)
 TONGUE: Color = (255, 120, 146)
@@ -135,7 +136,7 @@ def draw(surf: Any, box: Sequence[float], *, mood: str = "neutral", mouth: float
     if pop <= 0.02:
         return
     if backing:
-        _backing(surf, (x, y, w, h), pop)
+        _backing(surf, (x, y, w, h), pop, FACE_NIGHT if art.dark() else FACE_PINK)
     cx, cy, s, my = layout((x, y, w, h))
     talking = art.clamp(float(mouth or 0.0), 0.0, 1.0)
     bob = -1.6 * s * talking  # a tiny lift on loud syllables, like the face's speaking bounce
@@ -146,15 +147,15 @@ def draw(surf: Any, box: Sequence[float], *, mood: str = "neutral", mouth: float
     if pop >= 0.6:
         pose = mouth_pose(mood, talking, shape)
         k = art.EYE_W * s / FACE_EYE_W * MOUTH_GROW
-        art.blit_center(surf, mouth_sprite(pose, k), (cx, my + bob))
+        art.blit_center(surf, mouth_sprite(pose, k, col if art.dark() else None), (cx, my + bob))
 
 
-def _backing(surf: Any, box: tuple[float, float, float, float], pop: float) -> None:
-    """A soft patch of LittleBot's pink face (with a white rim and a drop shadow) for the eyes to sit on."""
+def _backing(surf: Any, box: tuple[float, float, float, float], pop: float, face: Color = FACE_PINK) -> None:
+    """A soft patch of LittleBot's face (pink with a white rim, or night blue in dark mode) for the eyes."""
     x, y, w, h = box
     bw, bh = int(w * (0.7 + 0.3 * pop)), int(h * (0.7 + 0.3 * pop))
     radius = int(min(bw, bh) * 0.32)
-    patch = art.rounded_rect(bw, bh, radius, FACE_PINK, shadow=4, border=art.WHITE, border_w=3)
+    patch = art.rounded_rect(bw, bh, radius, face, shadow=4, border=art.WHITE, border_w=3)
     surf.blit(patch, (int(x + (w - bw) / 2), int(y + (h - bh) / 2)))
 
 
@@ -162,13 +163,21 @@ def _q(v: float, step: float) -> float:
     return round(v / step) * step
 
 
-def mouth_sprite(pose: MouthPose, k: float) -> pygame.Surface:
+def mouth_sprite(pose: MouthPose, k: float, glow: Sequence[int] | None = None) -> pygame.Surface:
     """The face's mouth at ``k`` x its size: an ink lip line along both edges; when open, a raspberry
-    inside with teeth (and a little tongue on a wide "ah"), as littlebot/face/renderer.py draws it."""
+    inside with teeth (and a little tongue on a wide "ah"), as littlebot/face/renderer.py draws it. ``glow``: the
+    eye colour, for the dark face's look (the lips in the eye colour, a deep inside), as the renderer does there."""
     o, wd, sm = _q(pose.open, 0.05), _q(pose.width, 0.05), _q(pose.smile, 0.05)
     rd, th = _q(pose.round, 0.1), _q(pose.teeth, 0.25)
     k = _q(k, 0.02)
-    key = ("presenter-mouth", o, wd, sm, rd, th, k)
+    tone = tuple(int(v) for v in glow[:3]) if glow is not None else None
+    key = ("presenter-mouth", o, wd, sm, rd, th, k, tone)
+    if tone is None:
+        lip, inside, tongue_c, teeth_c = MOUTH_INK, MOUTH_INSIDE, TONGUE, TEETH
+    else:
+        lip = art.lighten(tone, 0.15)
+        inside = (int(tone[0] * 0.22), int(tone[1] * 0.22), int(tone[2] * 0.22))
+        tongue_c, teeth_c = (255, 128, 160), (240, 248, 255)
 
     def make() -> pygame.Surface:
         ss = 4
@@ -187,13 +196,13 @@ def mouth_sprite(pose: MouthPose, k: float) -> pygame.Surface:
         gap = max(b[1] - a[1] for a, b in zip(top, bot)) * k
         curves: tuple[list[tuple[float, float]], ...] = (top,)
         if gap >= 1.2:
-            pygame.draw.polygon(big, (*MOUTH_INSIDE, 255), [pt(p) for p in top] + [pt(p) for p in reversed(bot)])
+            pygame.draw.polygon(big, (*inside, 255), [pt(p) for p in top] + [pt(p) for p in reversed(bot)])
             n = len(top) - 1
             if th > 0.05:  # upper teeth just under the top lip
                 t_h = min(gap / k * 0.55, 8.0) * th + lw / k / 2
                 edge = [(px, min(py + t_h * (1.0 - (2.0 * i / n - 1.0) ** 2) ** 0.35, b[1]))
                         for i, ((px, py), b) in enumerate(zip(top, bot))]
-                pygame.draw.polygon(big, (*TEETH, 255), [pt(p) for p in top] + [pt(p) for p in reversed(edge)])
+                pygame.draw.polygon(big, (*teeth_c, 255), [pt(p) for p in top] + [pt(p) for p in reversed(edge)])
             elif o > 0.45 and rd < 0.5:  # a little tongue on the bottom lip
                 hw = max(abs(px) for px, _ in top) * 0.55
                 low = [(px, py) for (px, py) in bot if abs(px) < hw]
@@ -202,7 +211,7 @@ def mouth_sprite(pose: MouthPose, k: float) -> pygame.Surface:
                     tg = gap / k * 0.35
                     upper = [(px, min(py, max(a[1], floor - tg * math.sqrt(max(0.0, 1.0 - (px / hw) ** 2)))))
                              for (px, py), a in zip(bot, top) if abs(px) < hw]
-                    pygame.draw.polygon(big, (*TONGUE, 255), [pt(p) for p in upper] + [pt(p) for p in reversed(low)])
+                    pygame.draw.polygon(big, (*tongue_c, 255), [pt(p) for p in upper] + [pt(p) for p in reversed(low)])
             curves = (top, bot)
         r = lw * ss / 2
         for curve in curves:  # overlapping round dots: an even, round-capped stroke
@@ -211,7 +220,7 @@ def mouth_sprite(pose: MouthPose, k: float) -> pygame.Surface:
                 steps = max(1, int(math.hypot(bx - ax, by - ay) / (r * 0.5)))
                 for j in range(steps + 1):
                     f = j / steps
-                    pygame.draw.circle(big, (*MOUTH_INK, 255), (ax + (bx - ax) * f, ay + (by - ay) * f), r)
+                    pygame.draw.circle(big, (*lip, 255), (ax + (bx - ax) * f, ay + (by - ay) * f), r)
         return pygame.transform.smoothscale(big, (sw, sh))
 
     return art.cached(key, make)

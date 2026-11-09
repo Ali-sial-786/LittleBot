@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import math
 import random
+import threading
 from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Any, Callable, Iterable, Sequence
@@ -47,6 +48,66 @@ BUBBLEGUM: Color = (255, 122, 200)
 CANDY: tuple[Color, ...] = (STRAWBERRY, TANGERINE, LEMON, MINT, SKY, PERIWINKLE, GRAPE, BUBBLEGUM)
 
 SS = 3  # super-sampling factor for cached sprites
+
+# ---------------------------------------------------------------- theme: light (the default) or dark
+# Dark mode (setting ``display.theme``: asked for by voice, or on the robot's settings screen) is applied where the
+# colours are drawn, so every card and game follows it without knowing: a *surface* (the background, a cream panel,
+# a pale tint) turns dark with a hint of its hue, *ink* (dark text and lines) turns light with its hue kept, and
+# everything in between (candy colours, chips, outlines, pictures, LittleBot's eyes) stays as it is, so white text
+# on a coloured chip still reads. The display loop sets it once a frame (``set_dark``); cached sprites are kept
+# per theme.
+_DARK = False
+DARK_BG_TOP: Color = (34, 26, 52)  # the background's night gradient
+DARK_BG_BOTTOM: Color = (17, 13, 30)
+DARK_BG_SPOT: Color = (60, 48, 84)
+DARK_SURFACE: Color = (50, 42, 68)  # what white and cream become (a tint keeps its hue: pale sky -> dark blue)
+LIGHT_SURFACE_FROM = 0.72  # HSL lightness above which a pale colour is a surface (white, cream, pastel tints)
+PALE_CHROMA_BELOW = 110  # ... pale: max - min channel under this (a bright candy colour is never a surface)
+DARK_INK_BELOW = 0.5  # ... and below which it is ink (dark text and lines)
+
+
+def dark() -> bool:
+    """True while the dark theme is on."""
+    return _DARK
+
+
+def set_dark(on: bool) -> bool:
+    """Switch the theme (the display thread does, once a frame). True when it changed."""
+    global _DARK
+    on = bool(on)
+    changed = on != _DARK
+    _DARK = on
+    return changed
+
+
+def _lightness(c: Sequence[int]) -> float:
+    return (max(c[0], c[1], c[2]) + min(c[0], c[1], c[2])) / 510.0
+
+
+def surface(c: Sequence[int]) -> Color:
+    """``c`` as a surface in the current theme: in the dark one a light colour becomes a dark one of its hue."""
+    if (not _DARK or _lightness(c) <= LIGHT_SURFACE_FROM
+            or max(c[0], c[1], c[2]) - min(c[0], c[1], c[2]) >= PALE_CHROMA_BELOW):
+        return (int(c[0]), int(c[1]), int(c[2]))
+    return (max(0, min(255, DARK_SURFACE[0] + int(c[0]) - 255)), max(0, min(255, DARK_SURFACE[1] + int(c[1]) - 255)),
+            max(0, min(255, DARK_SURFACE[2] + int(c[2]) - 255)))
+
+
+def readable(c: Sequence[int], on: Sequence[int]) -> Color:
+    """Text colour ``c`` drawn on ``on`` in the current theme: turned light (``ink``) when what it is on ends up
+    dark, kept as it is when that stays light (dark text on a bright lemon chip keeps reading)."""
+    if not _DARK or _lightness(surface(on)) < 0.55:
+        return ink(c)
+    return (int(c[0]), int(c[1]), int(c[2]))
+
+
+def ink(c: Sequence[int]) -> Color:
+    """``c`` as text or a line in the current theme: in the dark one a dark colour becomes a light one of its hue
+    (its lightness turned over: plum ink -> soft lilac); light and mid colours (white on a chip) stay."""
+    if not _DARK or _lightness(c) >= DARK_INK_BELOW:
+        return (int(c[0]), int(c[1]), int(c[2]))
+    shift = 255 - max(c[0], c[1], c[2]) - min(c[0], c[1], c[2])
+    return (int(c[0]) + shift, int(c[1]) + shift, int(c[2]) + shift)
 
 
 # ---------------------------------------------------------------- maths
@@ -102,21 +163,26 @@ def dist(ax: float, ay: float, bx: float, by: float) -> float:
 
 # ---------------------------------------------------------------- caching
 class _LRU(OrderedDict):  # type: ignore[type-arg]
+    """A small LRU cache. Locked: the display thread draws, but a card or a test may draw from another thread too
+    (an unlocked OrderedDict changed by two threads at once can raise KeyError mid-frame)."""
+
     def __init__(self, maxsize: int) -> None:
         super().__init__()
         self.maxsize = maxsize
+        self.lock = threading.RLock()  # re-entrant: making a pill makes its text and its box
 
     def get_or(self, key: Any, make: Callable[[], Any]) -> Any:
-        try:
-            v = self[key]
-            self.move_to_end(key)
-            return v
-        except KeyError:
-            v = make()
-            self[key] = v
-            if len(self) > self.maxsize:
-                self.popitem(last=False)
-            return v
+        with self.lock:
+            try:
+                v = self[key]
+                self.move_to_end(key)
+                return v
+            except KeyError:
+                v = make()
+                self[key] = v
+                while len(self) > self.maxsize:
+                    self.popitem(last=False)
+                return v
 
 
 _SPRITES = _LRU(900)
@@ -125,12 +191,13 @@ _FONTS: dict[int, pygame.font.Font] = {}
 
 
 def cached(key: Any, make: Callable[[], pygame.Surface]) -> pygame.Surface:
-    return _SPRITES.get_or(key, lambda: _fast(make()))
+    return _SPRITES.get_or((_DARK, key), lambda: _fast(make()))
 
 
 def clear_caches() -> None:
-    _SPRITES.clear()
-    _TEXT.clear()
+    for cache in (_SPRITES, _TEXT):
+        with cache.lock:
+            cache.clear()
 
 
 def cache_bytes() -> int:
@@ -171,15 +238,18 @@ def font(size: int) -> pygame.font.Font:
     return f
 
 
-def text(s: str, size: int, color: Sequence[int] = INK) -> pygame.Surface:
-    key = (s, size, tuple(color))
-    return _TEXT.get_or(key, lambda: font(size).render(s, True, color))
+def text(s: str, size: int, color: Sequence[int] = INK, on: Sequence[int] | None = None) -> pygame.Surface:
+    """``s`` rendered (cached). In the dark theme dark colours turn light; ``on``: what it is drawn on, when that
+    may stay light (a bright chip): then a dark colour stays dark (``readable``)."""
+    key = (s, size, tuple(color), _DARK, tuple(on) if on is not None else None)
+    shown = readable(color, on) if on is not None else ink(color)
+    return _TEXT.get_or(key, lambda: font(size).render(s, True, shown))
 
 
 def text_outlined(s: str, size: int, color: Sequence[int] = WHITE, outline: Sequence[int] = INK,
                   width: int = 3) -> pygame.Surface:
     """Big friendly title text: fill colour with a rounded outline (readable on any colour)."""
-    key = ("outlined", s, size, tuple(color), tuple(outline), width)
+    key = ("outlined", s, size, tuple(color), tuple(outline), width, _DARK)
 
     def make() -> pygame.Surface:
         f = font(size)
@@ -207,10 +277,10 @@ def blit_text(surf: pygame.Surface, s: str, size: int, center: tuple[float, floa
 def pill(s: str, size: int = 30, fg: Sequence[int] = INK, bg: Sequence[int] = WHITE, *,
          pad: tuple[int, int] = (18, 8), border: Sequence[int] | None = None) -> pygame.Surface:
     """Rounded label (status / score chips)."""
-    key = ("pill", s, size, tuple(fg), tuple(bg), pad, tuple(border) if border else None)
+    key = ("pill", s, size, tuple(fg), tuple(bg), pad, tuple(border) if border else None, _DARK)
 
     def make() -> pygame.Surface:
-        t = text(s, size, fg)
+        t = text(s, size, fg, on=bg)  # (text and rounded_rect apply the theme; the text reads on its chip)
         w, h = t.get_width() + 2 * pad[0], t.get_height() + 2 * pad[1]
         box = rounded_rect(w, h, h // 2, bg, shadow=3, border=border)
         out = box.copy()
@@ -223,8 +293,12 @@ def pill(s: str, size: int = 30, fg: Sequence[int] = INK, bg: Sequence[int] = WH
 # ---------------------------------------------------------------- backgrounds
 def background(size: tuple[int, int] = (W, H), *, top: Color = BG_TOP, bottom: Color = BG_BOTTOM,
                spots: bool = True, seed: int = 7) -> pygame.Surface:
-    """Soft vertical pink gradient with a few big, very faint bokeh circles (opaque, cached)."""
-    key = ("bg", size, top, bottom, spots, seed)
+    """Soft vertical pink gradient with a few big, very faint bokeh circles (opaque, cached); a deep night
+    gradient in the dark theme."""
+    key = ("bg", size, top, bottom, spots, seed, _DARK)
+    spot = BG_SPOT
+    if _DARK:
+        top, bottom, spot = DARK_BG_TOP, DARK_BG_BOTTOM, DARK_BG_SPOT
 
     def make() -> pygame.Surface:
         w, h = size
@@ -238,10 +312,10 @@ def background(size: tuple[int, int] = (W, H), *, top: Color = BG_TOP, bottom: C
             for _ in range(9):
                 r = int(rng.randint(40, 120) * k)
                 x, y = rng.randint(-20, w + 20), rng.randint(-20, h + 20)
-                pygame.draw.circle(layer, (*BG_SPOT, rng.randint(26, 48)), (x, y), r)
+                pygame.draw.circle(layer, (*spot, rng.randint(26, 48)), (x, y), r)
             for _ in range(26):
                 x, y = rng.randint(0, w), rng.randint(0, h)
-                pygame.draw.circle(layer, (255, 255, 255, 70), (x, y), rng.choice((2, 3, 3, 4)))
+                pygame.draw.circle(layer, (255, 255, 255, 40 if _DARK else 70), (x, y), rng.choice((2, 3, 3, 4)))
             surf.blit(layer, (0, 0))
         return surf
 
@@ -251,6 +325,7 @@ def background(size: tuple[int, int] = (W, H), *, top: Color = BG_TOP, bottom: C
 def veil(size: tuple[int, int], color: Sequence[int], alpha: int) -> pygame.Surface:
     alpha = int(clamp(alpha, 0, 255)) // 8 * 8
     key = ("veil", size, tuple(color), alpha)
+    color = surface(color)
 
     def make() -> pygame.Surface:
         s = pygame.Surface(size, pygame.SRCALPHA)
@@ -402,12 +477,15 @@ def rounded_rect(w: int, h: int, radius: int, color: Sequence[int], *, shadow: i
     """Rounded box sprite; ``shadow`` px soft drop shadow below it (the sprite grows by that much)."""
     w, h, radius = int(w), int(h), int(radius)
     key = ("rrect", w, h, radius, tuple(color), shadow, tuple(border) if border else None, border_w, shine)
+    color = surface(color)  # (the theme: a cream panel is dark in dark mode)
+    border = surface(border) if border is not None else None
 
     def make() -> pygame.Surface:
         out = pygame.Surface((w, h + shadow), pygame.SRCALPHA)
         if shadow:
+            shade = (0, 0, 0, 90) if _DARK else (*INK, 46)
             sh = supersampled((w, h), lambda s, k: pygame.draw.rect(
-                s, (*INK, 46), s.get_rect(), border_radius=int(radius * k)), ss=2)
+                s, shade, s.get_rect(), border_radius=int(radius * k)), ss=2)
             out.blit(sh, (0, shadow))
 
         def draw(s: pygame.Surface, k: float) -> None:

@@ -217,7 +217,7 @@ def text_block(lines: Sequence[str], size: int, color: Sequence[int] = TEXT, *, 
     key = ("kit_block", tuple(lines), size, tuple(color), align, pitch)
 
     def make() -> pygame.Surface:
-        imgs = [art.font(size).render(s, True, color) for s in lines]
+        imgs = [art.font(size).render(s, True, art.ink(color)) for s in lines]  # (the theme: light ink when dark)
         w = max((i.get_width() for i in imgs), default=1)
         h = pitch * (len(imgs) - 1) + (imgs[-1].get_height() if imgs else 1)
         out = pygame.Surface((max(1, w), max(1, h)), pygame.SRCALPHA)

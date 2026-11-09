@@ -65,6 +65,29 @@ day, two columns of list items, all six smart-home tiles), tap targets of at lea
 Text the AI writes is cleaned before it is drawn (`_kit.clean`): no markdown, one line, and signs the font
 has no glyph for are written out ("≈" becomes "about", "→" "->"), so they never show as empty boxes.
 
+## Dark mode
+
+"Dark mode" / "night mode" (and "light mode", "turn off dark mode") to LittleBot, the **Dark mode** switch in its
+settings panel (hold a finger still on the screen for 5 seconds) or on the dashboard's Face page set
+`display.theme` to `dark` / `light` (kept across restarts). Said plainly, it switches at once without asking
+the AI (`assistant/intents.py`, `chatgpt/quick.py`); otherwise the AI has the `set_screen_theme` tool.
+
+* The face goes night blue (`face.dark_background_color`), so its eyes glow.
+* Cards, games and the level bars follow it in `littlebot/games/art.py`, where colours are drawn: a pale
+  surface (the background, a cream panel, a pastel tint: light and low in colour) turns dark with a hint of its
+  hue (`art.surface`); dark ink (plum text and lines) turns light with its hue kept (`art.ink`); bright candy
+  colours, chips, pictures and LittleBot's eyes stay as they are, so white text on a coloured chip still reads.
+  Text on something that stays light (a lemon chip) stays dark (`art.text(..., on=fill)`, `art.readable`).
+  Cached sprites are kept per theme, so switching back and forth costs nothing.
+* A card drawing with pygame directly passes its colours through `art.surface` / `art.ink` (the timer's dial,
+  the kit's text blocks).
+
+## The settings panel
+
+Holding a finger still on the screen for 5 seconds, anywhere (the face, a card or a game: a running game stops
+for it), opens LittleBot's own settings (`littlebot/screens/cards/settings.py`, kind `settings`, never offered
+to the AI). From the first second a ring fills around the finger with "Settings" above it.
+
 ## The games menu
 
 Cards generally appear only during a voice chat (the director decides). One exception: the **games
@@ -73,9 +96,9 @@ two-column grid of big tiles that scrolls, each with a drawn icon, its name, a f
 button.
 
 * Opened by "show me the games" in a chat (`{"card": "games"}`; optional `"ages"`: `all`, `child` for
-  the child's age, `little` or `big`), or by a **long press** - holding a finger still on the idle face
-  for about a second (`face/display.py`, `LONG_PRESS_SECONDS`). A plain tap still makes LittleBot
-  giggle: babies tap the face all the time.
+  the child's age, `little` or `big`). On the robot itself the games are also in its settings panel (hold a
+  finger still for 5 seconds, below). A plain tap still makes LittleBot giggle: babies tap the face all the
+  time.
 * Drag to scroll (with a little fling), or the arrow keys (they move through the grid; Enter / space plays the highlighted game).
 * Tap a game to play it: `ctx.games.start(id, source="screen")`, like the dashboard's Play button (a
   voice chat keeps talking while the game takes the screen). The game takes the screen and the menu goes;

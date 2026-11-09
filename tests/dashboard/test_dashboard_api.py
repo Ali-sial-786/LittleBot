@@ -160,6 +160,18 @@ async def test_face_doze_and_sleep_settings(authed, dctx):
     assert (await authed.put("/api/face/sleep", json={"doze": True})).status_code == 422
 
 
+async def test_dark_mode_and_the_screen_turned_round(authed, dctx):
+    info = (await authed.get("/api/face")).json()
+    assert info["look"] == {"dark_mode": False, "flipped": False}
+    r = await authed.put("/api/face/look", json={"dark_mode": True})
+    assert r.status_code == 200 and r.json()["look"] == {"dark_mode": True, "flipped": False}
+    assert dctx.settings.get("display.theme") == "dark"
+    r = await authed.put("/api/face/look", json={"dark_mode": False, "flipped": True})
+    assert r.json()["look"] == {"dark_mode": False, "flipped": True} and dctx.settings.get("display.flipped") is True
+    assert (await authed.put("/api/face/look", json={})).status_code == 422
+    assert (await authed.put("/api/face/look", json={"theme": "dark"})).status_code == 422
+
+
 async def test_face_demo_runs_scripted_sequence(authed, dctx, app):
     r = await authed.post("/api/face/demo")
     assert r.status_code == 200 and r.json()["started"]

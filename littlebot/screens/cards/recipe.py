@@ -183,7 +183,7 @@ def rich_sprite(lines: list[list[Token]], size: int) -> pygame.Surface:
             for k, (text, timer, glued) in enumerate(_segments(ln)):
                 if k and not glued:
                     x += space
-                img = f.render(text, True, kit.TEXT if not timer else art.INK)
+                img = f.render(text, True, art.ink(kit.TEXT if not timer else art.INK))
                 if timer:
                     pill = art.rounded_rect(img.get_width() + 24, pill_h, pill_h // 2, art.mix(art.LEMON, art.WHITE, 0.25),
                                             border=art.inkier(art.LEMON, 0.35), border_w=2)
@@ -258,7 +258,7 @@ def icon_chip(label: str, icon: pygame.Surface, fill: art.Color, edge: art.Color
     key = ("recipe_icon_chip", label, id(icon), fill, edge)
 
     def make() -> pygame.Surface:
-        t = art.text(label, BODY_PX, art.INK)
+        t = art.text(label, BODY_PX, art.INK, on=fill)
         w, h = t.get_width() + icon.get_width() + 46, t.get_height() + 18
         out = art.rounded_rect(w, h, h // 2, fill, shadow=3, border=edge, border_w=2).copy()
         out.blit(icon, (17, (h - icon.get_height()) // 2))

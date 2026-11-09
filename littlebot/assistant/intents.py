@@ -157,6 +157,16 @@ class Intent:
     args: dict[str, Any] = dataclasses.field(default_factory=dict)
 
 
+# Dark mode (setting display.theme): "dark mode", "switch to night mode", "turn off dark mode", "light mode please".
+_SWITCH = r"(?:(?:switch|turn|go|change|put|set)(?: it| the screen| your screen| yourself)?(?: on| over| back)?(?: (?:to|into|in))? )"
+_THEME_WORD = r"(?: mode| theme)"
+DARK_MODE = _whole(rf"{_SWITCH}?(?:the )?(?:dark|night){_THEME_WORD}(?: on)?|(?:make|turn) (?:the |your )?screen dark|"
+                   rf"(?:turn|switch) (?:off|out) (?:the )?(?:light|day){_THEME_WORD}")
+LIGHT_MODE = _whole(rf"{_SWITCH}?(?:the )?(?:light|day|normal){_THEME_WORD}(?: on)?|"
+                    rf"(?:turn|switch) (?:off|out) (?:the )?(?:dark|night){_THEME_WORD}|"
+                    rf"(?:no|stop|exit|leave) (?:the )?(?:dark|night){_THEME_WORD}")
+
+
 def match(text: str, *, media_on: bool = False, recording_on: bool = False) -> Intent | None:
     """The instant intent ``text`` is, or None (the brain answers). ``media_on``: a video or music is playing or
     paused for this chat, so "pause", "play", "skip" are about it. ``recording_on``: LittleBot is recording a video,
@@ -193,6 +203,10 @@ def match(text: str, *, media_on: bool = False, recording_on: bool = False) -> I
     percent = _percent(m.group("n")) if m else None
     if percent is not None:
         return Intent("volume", f"Volume {percent}.", args={"percent": percent})
+    if DARK_MODE.match(t):
+        return Intent("theme", "Dark mode.", args={"theme": "dark"})
+    if LIGHT_MODE.match(t):
+        return Intent("theme", "Light mode.", args={"theme": "light"})
     if media_on:
         if PAUSE.match(t):
             return Intent("pause", "", end=True)
@@ -208,6 +222,9 @@ def match(text: str, *, media_on: bool = False, recording_on: bool = False) -> I
 async def run(intent: Intent, box: Any, ctx: Any) -> str:
     """Do it with LittleBot's toolbox; returns what to say (``intent.say`` unless the action says otherwise)."""
     name = intent.name
+    if name == "theme":
+        result = await box.run("set_screen_theme", {"theme": intent.args.get("theme")})
+        return intent.say if not str(result).startswith("error") else "I can't change the screen right now."
     if name == "volume":
         current = _speaker_volume(box)
         if intent.args.get("step", 0) < 0 and current is not None and current <= MIN_VOICE_VOLUME + 1e-6:

@@ -14,6 +14,7 @@ from littlebot.dashboard.models import (
     AnimationBody,
     BlinkBody,
     ExpressionBody,
+    FaceLookBody,
     FaceSleepBody,
     GazeBody,
 )
@@ -30,6 +31,12 @@ SLEEP_SETTINGS = {
     "screen_off_after_seconds": "face.screen_off_after_seconds",
     "sleep_after_idle_minutes": "system.sleep_after_idle_minutes",
 }
+
+
+def _look_view(dash: DashState) -> dict[str, Any]:
+    settings = dash.ctx.settings
+    return {"dark_mode": settings.get("display.theme", "light") == "dark",
+            "flipped": bool(settings.get("display.flipped", False))}
 
 
 def _sleep_view(dash: DashState) -> dict[str, Any]:
@@ -92,6 +99,7 @@ async def face_info(dash: DashState = Depends(get_dash)) -> dict[str, Any]:
         "states": list(FACE_STATES),
         "demo_running": "face_demo" in dash.named_tasks,
         "sleep": _sleep_view(dash),
+        "look": _look_view(dash),
     }
 
 
@@ -106,6 +114,20 @@ async def sleep_settings(body: FaceSleepBody, dash: DashState = Depends(get_dash
         dash.ctx.settings.set(SLEEP_SETTINGS[field], value, source="dashboard")
     log.info("doze / screen / sleep settings changed from dashboard: %s", changes)
     return {"ok": True, "sleep": _sleep_view(dash)}
+
+
+@router.put("/look")
+async def look_settings(body: FaceLookBody, dash: DashState = Depends(get_dash)) -> dict[str, Any]:
+    """Dark mode (the face, the cards and the games) and the screen turned round for an upside-down mounting."""
+    changes = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
+    if not changes:
+        raise HTTPException(status_code=422, detail="Nothing to change.")
+    if "dark_mode" in changes:
+        dash.ctx.settings.set("display.theme", "dark" if changes["dark_mode"] else "light", source="dashboard")
+    if "flipped" in changes:
+        dash.ctx.settings.set("display.flipped", bool(changes["flipped"]), source="dashboard")
+    log.info("screen look changed from dashboard: %s", changes)
+    return {"ok": True, "look": _look_view(dash)}
 
 
 @router.post("/expression")

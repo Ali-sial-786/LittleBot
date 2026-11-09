@@ -205,6 +205,12 @@ class FaceController(Service):
         self._faces_seen_at: dict[int, float] = {}  # number of faces -> when last seen (someone new)
         self._asleep = False  # the robot is SLEEPING: its state's hold doesn't keep the screen on
         self._load_doze_settings(first=True)
+        settings = getattr(ctx, "settings", None)
+        if settings is not None:  # dark mode as it was left (a setting kept across restarts)
+            try:
+                self.animator.set_background(self.theme_background(settings.get("display.theme", "light")))
+            except Exception:  # noqa: BLE001 - the light face
+                self.log.debug("display.theme unreadable", exc_info=True)
         state = getattr(ctx, "state", None)
         if state is not None and getattr(state, "state", None) is not None:
             self._doze_state(str(state.state.value), self._clock())
@@ -536,6 +542,16 @@ class FaceController(Service):
         with self._doze_lock:
             self.doze.glance(self._clock(), seconds, "the face was asked to show something")
 
+    def theme_background(self, theme: Any) -> tuple[int, int, int]:
+        """The face's background for ``theme`` ("dark": face.dark_background_color, else face.background_color)."""
+        cfg = self.ctx.config.face
+        color = cfg.dark_background_color if str(theme or "").lower() == "dark" else cfg.background_color
+        return (int(color[0]), int(color[1]), int(color[2]))
+
+    def _apply_theme(self, theme: Any) -> None:
+        """Dark mode on or off for the face (a bus callback: queued for the animator, applied on the next frame)."""
+        self._enqueue("set_background", self.theme_background(theme))
+
     def _load_doze_settings(self, *, first: bool = False) -> None:
         settings = getattr(self.ctx, "settings", None)
         if settings is None:
@@ -574,6 +590,8 @@ class FaceController(Service):
         if topic == Topics.SETTINGS_CHANGED:
             if event.get("key") in DOZE_SETTINGS:
                 self._load_doze_settings()
+            elif event.get("key") == "display.theme":
+                self._apply_theme(event.get("value"))
             return
         now = self._clock()
         with self._doze_lock:

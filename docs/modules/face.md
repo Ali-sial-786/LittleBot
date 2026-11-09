@@ -191,6 +191,18 @@ cached by the quantised shape.
 * Touch: when not in simulator mode (the robot's own screen), tapping the face makes
   LittleBot look at the finger, smile, bounce and giggle (`audio.play_sound("giggle")`),
   with a 1.5 s cooldown. Disable with `TAP_REACTION_ENABLED = False` in `face/display.py`.
+* A finger held still for `SETTINGS_HOLD_SECONDS` (5 s) anywhere (the face, a card or a game) opens LittleBot's
+  settings panel (`littlebot/screens/cards/settings.py`; a running game stops for it). From
+  `HOLD_RING_FROM` (1 s) a ring fills around the finger with "Settings" above it, so a grown-up knows it is
+  coming; a finger that wanders more than `LONG_PRESS_SLOP` starts again. (The 1 s hold that opened the games
+  menu is gone: the games are in the settings panel.)
+* Dark mode (setting `display.theme`: "dark mode" / "light mode" by voice, the settings panel, or the dashboard's
+  Face page): the face's background is `face.dark_background_color` (night blue, so the renderer's glowing-eye
+  look), and the display loop sets `art.set_dark` once a frame so the cards, games and level bars draw dark
+  (littlebot/games/art.py: pale surfaces turn dark with their hue, dark ink turns light, candy colours stay).
+* The picture's orientation (setting `display.flipped`): at start, fullscreen, the display loop sets the
+  output's transform with `wlr-randr` (`normal`, or `180` when flipped), so a turn left in the desktop's own
+  settings doesn't keep the screen upside down; a change applies at once.
 * Edge swipes (MX Player style, `face/edge_controls.py`), on the idle face only (not over a game,
   an info card, the setup banner, a hidden face or a video holding the screen lease): press in the
   outer 10 % of the width (about 15 mm on the 7" glass) and slide up / down (past a 14 px slop on the
@@ -201,7 +213,7 @@ cached by the quantised shape.
   height (about 5 cm) covers the whole range, relative to where the finger started. A rounded bar with the
   icon and percentage shows while sliding and 3 s after, then fades; it also shows when the volume
   changes elsewhere (dashboard, voice). A press at the edge that doesn't slide is the usual tap
-  (its giggle waits for the release, or 0.3 s of a resting finger) or long press. Brightness uses
+  (its giggle waits for the release, or 0.3 s of a resting finger) or a 5 s hold. Brightness uses
   a real backlight (`/sys/class/backlight/*`, only if writable without root, only fullscreen
   without the sim panel) and otherwise dims in software: one cached black veil over the face,
   re-made only when the level changes. Each swipe logs one INFO line (`touch: volume 45% -> 70%`).

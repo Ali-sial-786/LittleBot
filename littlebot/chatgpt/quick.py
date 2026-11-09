@@ -95,7 +95,7 @@ MAX_TIMER_S = 24 * 3600
 
 @dataclasses.dataclass(frozen=True)
 class Asked:
-    """What a hand-off asks for: ``what`` is weather | time | volume | timer | picture; ``args`` the tool's
+    """What a hand-off asks for: ``what`` is weather | time | volume | theme | timer | picture; ``args`` the tool's
     arguments."""
 
     what: str
@@ -107,10 +107,34 @@ def match(question: str) -> Asked | None:
     text = " ".join(str(question or "").split())
     if not text or len(text.split()) > MAX_WORDS:
         return None
-    for find in (_volume, _timer, _picture, _time, _weather):
+    for find in (_volume, _theme, _timer, _picture, _time, _weather):
         asked = find(text)
         if asked is not None:
             return asked
+    return None
+
+
+# Dark mode (setting display.theme): "switch to dark mode", "turn off night mode", "light mode please". Not a question
+# about it ("what's dark mode?", "do you have a night mode?"): the text model answers those.
+_THEME_VERB = r"\b(?:switch|turn|go|put|change|set|use|enable|activate|start|back)\b[^.?!]{0,30}"
+_THEME_ALONE = r"^\W*(?:(?:please|now|little ?bot|ok(?:ay)?)\W+)*{0}(?:\W+(?:please|on|now))*\W*$"
+_THEME_LIGHT = re.compile(r"\b(?:turn|switch|put) (?:off|out) (?:the |your )?(?:dark|night) (?:mode|theme)\b|"
+                          rf"{_THEME_VERB}\b(?:light|day|normal) (?:mode|theme)\b|"
+                          + _THEME_ALONE.format(r"(?:light|day|normal) (?:mode|theme)")
+                          + r"|\b(?:exit|leave|stop) (?:the )?(?:dark|night) mode\b", re.I)
+_THEME_DARK = re.compile(rf"{_THEME_VERB}\b(?:dark|night) (?:mode|theme)\b|"
+                         + _THEME_ALONE.format(r"(?:dark|night) (?:mode|theme)")
+                         + r"|\b(?:make|turn) (?:the |your )?screen dark\b", re.I)
+_THEME_QUESTION = re.compile(r"^\s*(?:what|how|why|when|is|are|does|do|can you tell|tell me about)\b", re.I)
+
+
+def _theme(text: str) -> Asked | None:
+    if _THEME_QUESTION.search(text):
+        return None
+    if _THEME_LIGHT.search(text):
+        return Asked("theme", {"theme": "light"})
+    if _THEME_DARK.search(text):
+        return Asked("theme", {"theme": "dark"})
     return None
 
 
@@ -236,6 +260,9 @@ async def answer(asked: Asked, box: Any, question: str, *,
     asked_for = sanitize_user_text(question, max_chars=200)
     if asked.what == "volume":
         return await _answer_volume(asked.args, box)
+    if asked.what == "theme":
+        result = await box.run("set_screen_theme", {"theme": asked.args["theme"]})
+        return f"Done: {result[3:].strip()}. Tell them in a few words." if result.startswith("ok:") else None
     if asked.what == "time":
         return await _answer_time(box)
     if asked.what == "timer":

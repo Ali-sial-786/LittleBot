@@ -134,6 +134,10 @@ TOOLS: tuple[_Tool, ...] = (
           "to check it first.", _obj({"step": {**_PERCENT, "description": "percent, default 10"}})),
     _Tool("volume_down", "Make LittleBot quieter (default one step of 10 percent). Returns the new volume: no "
           "need to check it first.", _obj({"step": {**_PERCENT, "description": "percent, default 10"}})),
+    _Tool("set_screen_theme", "Switch LittleBot's screen to dark mode (a night-blue face with glowing eyes and dark "
+          "cards, gentler in a dark room) or back to light mode (the pink face). Use it for \"dark mode\", \"night "
+          "mode\", \"light mode\", \"turn off dark mode\". Returns the theme now on.",
+          _obj({"theme": {"type": "string", "enum": ["dark", "light"]}}, ("theme",))),
     _Tool("set_face", "Show a face or face animation on LittleBot's screen, e.g. happy, surprised, sleepy, wink, "
           "spin_eyes, peekaboo, hearts, confetti.", _obj({"face": _STR}, ("face",))),
     _Tool("go_to_sleep", "Put LittleBot to sleep (sleepy face, quiet) once you have said good night.", _obj()),
@@ -588,8 +592,8 @@ class RobotToolbox:
             (f"I can play the {approved} videos on my approved list." if approved else "No videos are set up yet."),
             (f"Games: {', '.join(n for n in game_names if n)[:300]}." if game_names else
              "Games are not available yet." if games is None else "No games are installed yet."),
-            "I can change my volume, go to sleep and wake up, stop everything, and tell you how I am "
-            "(temperature, memory, Wi-Fi, what's connected).",
+            "I can change my volume, switch my screen to dark mode and back, go to sleep and wake up, stop "
+            "everything, and tell you how I am (temperature, memory, Wi-Fi, what's connected).",
             "I can tell you the weather here or anywhere, today or in the next days, and the time and date"
             + (", and find out things that change, like news, sports scores or opening hours." if self.web_search
                else "."),
@@ -708,6 +712,19 @@ class RobotToolbox:
         if video is not None:
             parts.append(f"video volume is now {round(video * 100)}%")
         return "; ".join(parts) or "nothing changed"
+
+    async def _set_screen_theme(self, args: dict[str, Any]) -> str:
+        """Dark mode on or off (setting display.theme: the face, the cards and the games follow it at once)."""
+        theme = str(args.get("theme") or "").strip().lower()
+        if theme not in ("dark", "light"):
+            return _err('say "dark" or "light"')
+        settings = getattr(self.ctx, "settings", None)
+        if settings is None:
+            return _err("the screen can't change now")
+        was = settings.get("display.theme", "light")
+        settings.set("display.theme", theme, source="voice")
+        self.done.append(f"{theme} mode")
+        return _ok(f"{theme} mode is on" + (" (it already was)" if was == theme else ""))
 
     async def _get_volume(self, args: dict[str, Any]) -> str:
         return _json(self._volumes())

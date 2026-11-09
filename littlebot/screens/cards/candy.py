@@ -76,13 +76,13 @@ def degrees(value: Any, size: int, color: Sequence[int] = art.INK) -> pygame.Sur
     key = ("deg", s, int(size), tuple(color))
 
     def make() -> pygame.Surface:
-        num = art.font(size).render(s, True, color)
+        num = art.font(size).render(s, True, art.ink(color))
         r = max(3, round(size * 0.1))
         lw = max(2, round(size * 0.036))
         gap = max(1, round(size * 0.035))
         out = pygame.Surface((num.get_width() + gap + 2 * r + 1, num.get_height()), pygame.SRCALPHA)
         out.blit(num, (0, 0))
-        out.blit(art.ring(r, lw, color), (num.get_width() + gap, round(size * 0.07)))
+        out.blit(art.ring(r, lw, art.ink(color)), (num.get_width() + gap, round(size * 0.07)))
         return out
 
     return art.cached(key, make)

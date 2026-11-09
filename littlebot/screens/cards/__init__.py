@@ -15,7 +15,9 @@ _MODULES = ("weather", "clock", "timer", "maths", "definition", "explain", "reci
             "lists", "reminders", "calendar", "briefing", "home", "glance", "note", "music", "quiz", "word_game",
             "game_board",
             # LittleBot's own photos and videos (littlebot/capture): never offered to the director
-            "gallery")
+            "gallery",
+            # LittleBot's own settings panel (a 5 s hold on the screen): never offered to the director
+            "settings")
 
 for _name in _MODULES:
     try:

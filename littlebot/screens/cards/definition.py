@@ -98,7 +98,7 @@ def say_it_sprite(say_it: str, size: int = SAY_PX, accent: art.Color = art.STRAW
         used = 0
         for token, stressed in _say_parts(say_it):
             color = strong if stressed else (kit.TEXT_SOFT if token == "-" else kit.TEXT)
-            img = f.render(token, True, color)
+            img = f.render(token, True, art.ink(color))
             if used and used + img.get_width() > max_w and token not in ("-", " "):
                 lines.append([])
                 used = 0

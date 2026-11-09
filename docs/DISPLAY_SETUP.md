@@ -85,8 +85,10 @@ sudo apt install -y evtest && sudo evtest                    # pick it, tap the 
 ```
 
 With one screen the desktop (labwc) maps the touch to it by itself. LittleBot reads taps, holds and drags
-as the mouse (SDL turns the first finger into mouse events): a tap makes LittleBot giggle, a 1 s hold opens
-the games menu, a slide up or down at the edge changes the volume or the brightness.
+as the mouse (SDL turns the first finger into mouse events): a tap makes LittleBot giggle, a finger held still
+for 5 seconds anywhere opens LittleBot's settings panel (volume, brightness, dark mode, the games...; a ring
+fills around the finger from the first second), a slide up or down at the edge changes the volume or the
+brightness.
 
 **If taps land in the wrong place** (usually only after rotating the screen):
 
@@ -115,11 +117,13 @@ sudo udevadm control --reload && sudo reboot
 
 ## 4. Rotation
 
-Only if the screen is mounted upside down: `wlr-randr --output HDMI-A-1 --transform 180` (`HDMI-A-2` if the
-screen is on the other port; or Screen Configuration -> right-click the screen -> Orientation). To keep it after
-a reboot, put `output HDMI-A-1 enable transform 180` in a `profile { }` in `~/.config/kanshi/config`. Then
-rotate the touch to match (section 3). LittleBot
-always draws landscape 1024x600: a portrait mounting is not supported.
+LittleBot sets the picture's orientation itself at every start (`wlr-randr --transform`): the right way up, or
+turned round (180 degrees) when **Turn the screen upside down** is on (the robot's settings panel: hold a finger
+still for 5 seconds; or the dashboard's Face page; setting `display.flipped`). A turn left in the desktop's own
+settings (Screen Configuration, or a `transform 180` in `~/.config/kanshi/config` from the old screen) is undone
+at the next start; remove it there too, so the desktop doesn't turn it back when the screen is plugged in again.
+If the touch then lands mirrored, rotate it to match (section 3). LittleBot always draws landscape 1024x600: a
+portrait mounting is not supported.
 
 ## 5. Brightness
 
