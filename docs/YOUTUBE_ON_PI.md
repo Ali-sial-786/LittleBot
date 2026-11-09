@@ -87,7 +87,7 @@ To try if memory or CPU is short (each must be measured; add via `media.kiosk_ex
   and the face must be visible again when Chromium exits. *Unverified* under the Pi's Wayland
   compositor (labwc on current Raspberry Pi OS; Wayfire on older Bookworm images). With
   `SDL_VIDEODRIVER=kmsdrm` (no desktop) Chromium cannot show at all - video needs the desktop.
-* `--window-size=480,320` is ignored in kiosk mode: the window takes the whole output.
+* `--window-size=1024,600` is ignored in kiosk mode: the window takes the whole output.
 * **Touch**: if the screen's touch panel is active, a child can tap the YouTube player. We do
   **not** put anything over the player to block taps (YouTube forbids overlays in front of
   the player and blocking player functionality - section 8). Instead:
