@@ -42,17 +42,17 @@ summary like "12 bubbles popped") and then the face comes back with a happy expr
 
 ## Touch (UNVERIFIED on the robot)
 
-The MPI3508's resistive touch (ADS7846/XPT2046 on SPI) is optional and not yet set up or tested
-on the Pi 5 - see [DISPLAY_SETUP.md](DISPLAY_SETUP.md) section 5. When the kernel driver works
-and the compositor maps it to HDMI-A-1, SDL delivers each touch to the window as a finger event
-**and** a synthesised left mouse click; the display loop handles `MOUSEBUTTONDOWN`, so taps
-reach the games (and the existing face tap reaction) with no extra code. Things to check on the
-hardware:
+The 7" screen's capacitive touch is a USB multi-touch device: no driver, no overlay, not yet tested
+on the robot - see [DISPLAY_SETUP.md](DISPLAY_SETUP.md) section 3. The compositor maps it to the
+screen, and SDL delivers each touch to the window as a finger event **and** a synthesised left mouse
+click (the first finger only); the display loop handles `MOUSEBUTTONDOWN`, so taps reach the games
+(and the face's tap reaction) with no extra code. Things to check on the hardware:
 
 1. `sudo evtest` shows the touchscreen and sensible coordinates.
 2. Start Bubble Pop from the dashboard and tap a bubble: it should pop where you touched. If taps
-   land in the wrong place, calibrate (DISPLAY_SETUP.md 5.3/5.4) - targets are big (bubbles
-   have ~18 px of slack) but not that forgiving. `scripts/calibrate_touch.py` does it for you.
+   land in the wrong place, calibrate (DISPLAY_SETUP.md section 3) - targets are big (a bubble is
+   about 1-1.5 cm across on the 7" glass, with some slack) but not that forgiving.
+   `scripts/calibrate_touch.py` does it for you.
 3. If touches do nothing at all while `evtest` works, SDL may not be synthesising mouse events
    (`SDL_HINT_TOUCH_MOUSE_EVENTS=0`); handling `FINGERDOWN` in `face/display.py` would then be needed.
 
@@ -117,9 +117,11 @@ first.
 face_rect, dt)` draws the game *instead of* the face (overlays such as the setup code, debug and
 help still draw on top), left clicks / taps go to `games.handle_tap(nx, ny)` (never falling through
 to the face's giggle or the simulator's pretend camera face), keys go to `games.handle_key(name)`
-first, and the frame rate is held at `display.fps`. Games draw on a 720x480 canvas - exactly the
-robot's screen mode, so no scaling there; any other face rect (desktop window) gets a smooth-scaled
-copy. A game that throws is logged; after 30 bad frames it is stopped and the face returns.
+first, and the frame rate is held at `display.fps`. Games draw on a 1024x600 canvas - exactly the
+robot's 7" screen, so no scaling there; any other face rect (desktop window) gets a smooth-scaled
+copy. Sizes grow with the canvas (`k = h / 480`, 1.25 on the 7" screen) and positions come from its
+width and height; the board games use the extra width for side panels (scores, best times, the
+pattern's progress). A game that throws is logged; after 30 bad frames it is stopped and the face returns.
 
 Without a window (headless runs, tests) a small watchdog task keeps the game's clock running, so
 time limits and finales still happen.
@@ -143,7 +145,8 @@ or "scissors" from it. Games never start listening themselves.
 ## Adding a game
 
 1. Subclass `littlebot.games.base.Game`; override `step(dt)` (logic), `render(surface)` (draw the
-   whole 720x480 canvas), `on_tap(x, y)` (canvas pixels) and optionally `on_key`, `hear`,
+   whole 1024x600 canvas; size things from `self.w` / `self.h`), `on_tap(x, y)` (canvas pixels;
+   tap targets at least ~90 px, ~110 px for babies) and optionally `on_key`, `hear`,
    `summary`, `finale_text`, `status_extra`. Keep update and draw separate; ask the host for
    sounds (`self.host.sound("pop")`).
 2. Add a `GameInfo` to `catalog.GAMES`.

@@ -1,5 +1,12 @@
 # LittleBot hardware: 3D-printable enclosures
 
+> **The screen changed (November 2026).** LittleBot now uses a **GeeekPi 7" 1024×600 touch screen** (HDMI
+> picture, USB touch, about 165 × 107 mm of board, [docs/DISPLAY_SETUP.md](../docs/DISPLAY_SETUP.md)). Both
+> designs below were made for the 3.5" MPI3508 plugged onto the Pi and **do not fit the 7" screen**: its
+> glass alone is wider than either head. Until a head is designed around it, stand the screen on its own
+> stand behind or above the body. The rest of each design (camera, mic, speaker, servos, base) still
+> applies, and the GPIO header is now free (no stacking header needed for the servo board).
+
 Two complete designs. Both are parametric OpenSCAD models with ready-to-slice STLs and automated interference checks, and both hold the same parts:
 - Raspberry Pi 5 (2 GB) + official Active Cooler, with the MPI3508 3.5" HDMI screen **plugged straight onto its GPIO header** – the screen + Pi stack sits in the head;
 - InnoMaker U20CAM-1080P camera;

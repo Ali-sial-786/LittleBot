@@ -133,7 +133,7 @@ tokens in and under 200 out:
 
 | Request | About | Cost each (uncached / cached) |
 |---|---|---|
-| card decision | 2,700 tokens in | ≈ $0.0003 / $0.00005 |
+| card decision | about 4,500 tokens in (the 7" cards' fuller catalogue) | ≈ $0.0005 / $0.0001 |
 | hand-off (tools offered) | 3,700 tokens in | ≈ $0.0004 / $0.0001 |
 | decider question | a few hundred tokens | < $0.0001 |
 | web search | | $10 per 1,000 searches (1 cent each), on top |

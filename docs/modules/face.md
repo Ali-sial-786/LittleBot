@@ -164,8 +164,12 @@ cached by the quantised shape.
 * Runs on the main thread until the window is closed / Q / Esc (calls
   `robot.request_shutdown`) or `robot.shutdown_event` is set; then returns (`main.py`
   calls `robot.shutdown()`). Only `pygame.display` is quit, never the mixer.
-* Renders natively at `display.width x display.height` (480x320) and scales smoothly to
-  `display.scale` (windowed) or to the screen (fullscreen, aspect preserved, black borders).
+* `display.width x display.height` is the screen: the 7" panel's 1024x600. The face is drawn at
+  `frame.face_size(width, height)`: 320 px tall and as wide as the screen's shape (546x320 here; 480x320
+  on a 3:2 screen), centred, with screen-wide extras (confetti, rising hearts, corner sparkles) spread
+  across the width and face-anchored ones (zzz, "?", the thought cloud) moved with its centre. It is
+  then scaled smoothly to the window (`display.scale` on a desktop) or the whole screen (fullscreen,
+  aspect preserved). Cards and games draw at the screen's own 1024x600, unscaled.
 * Frame rate: `display.fps` while anything animates, `display.idle_fps` when calm, 10 fps
   while dozing, 5 fps while hidden (`controller.target_fps()`); pygame's `Clock.tick` sleeps in between.
 * If the display cannot open (no X/Wayland/KMS, bad `SDL_VIDEODRIVER`) or frames keep
@@ -178,11 +182,12 @@ cached by the quantised shape.
   with a 1.5 s cooldown. Disable with `TAP_REACTION_ENABLED = False` in `face/display.py`.
 * Edge swipes (MX Player style, `face/edge_controls.py`), on the idle face only (not over a game,
   an info card, the setup banner, a hidden face or a video holding the screen lease): press in the
-  outer 14 % of the width and slide up / down (past a 12 px slop, mostly vertical). The right edge
+  outer 10 % of the width (about 15 mm on the 7" glass) and slide up / down (past a 14 px slop on the
+  1024x600 canvas, about 2 mm, mostly vertical). The right edge
   sets the speaker volume (`audio.set_volume`, 0..`audio.speaker.max_volume`, applied ~10 times a
   second off the display thread, with a soft `blip` at most every 0.25 s while the speaker is free),
-  the left edge the brightness (setting `display.brightness`, 0.15..1). A sweep of 70 % of the
-  height covers the whole range, relative to where the finger started. A rounded bar with the
+  the left edge the brightness (setting `display.brightness`, 0.15..1). A sweep of 60 % of the
+  height (about 5 cm) covers the whole range, relative to where the finger started. A rounded bar with the
   icon and percentage shows while sliding and 3 s after, then fades; it also shows when the volume
   changes elsewhere (dashboard, voice). A press at the edge that doesn't slide is the usual tap
   (its giggle waits for the release, or 0.3 s of a resting finger) or long press. Brightness uses
@@ -191,8 +196,8 @@ cached by the quantised shape.
   re-made only when the level changes. Each swipe logs one INFO line (`touch: volume 45% -> 70%`).
 * Camera sign: while a parent watches the camera live on the dashboard (`vision.live_view`
   with `active: true`; read from `vision.status()` when the window opens), a small rounded
-  camera with a dot sits in the face's top-right corner (30x22 px at 480x320, scaled with the
-  window), over the face, a game or the video veil, so watching is never hidden. It uses the
+  camera with a dot sits in the face's top-right corner (45 px wide on the 600 px tall screen,
+  `OVERLAY_REF_H`, scaled with the window), over the face, a game or the video veil, so watching is never hidden. It uses the
   face's palette: plum ink at ~60 % with a raspberry dot on the pastel screen, the eye colour on a
   dark one. Drawn 4x and smooth-scaled once per size (cached), so it costs one blit a frame;
   still, never animated, so it doesn't pull a child's attention.
@@ -286,8 +291,8 @@ simulator window (`window.png`, `window_help.png`, `window_debug.png`).
 
 ## Performance (Xeon 2.8 GHz container, Python 3.13, pygame-ce 2.5.8)
 
-`scripts/benchmark_face.py --frames 150` (headless, 480x320, update + render per frame),
-measured 2026-10-23 with the cartoon eyes:
+`scripts/benchmark_face.py --frames 150` (headless, update + render per frame; then 480x320 with
+no scaling), measured 2026-10-23 with the cartoon eyes:
 
 | Scenario | mean ms | p95 ms | cpu @ 30 fps |
 |---|---|---|---|
@@ -310,8 +315,11 @@ worst scenario (expression changed every 0.4 s) 4.2-4.5 ms vs 3.5-3.6 ms. The li
 looks cost the same; the resting mouth is one cached blit, a mouth cache miss costs
 0.13-0.38 ms, and lip-synced talking renders at ~1.2 ms/frame.
 
-`--scale 2` (desktop window 960x640) adds ~2 ms/frame of smooth-scaling (desktop only;
-the Pi runs at scale 1 / fullscreen 480x320).
+The 7" screen (2026-11-09, same container): `benchmark_face.py` now draws the way the robot does,
+the 546x320 face scaled to the whole 1024x600 screen: overall mean **1.8 ms/frame**, worst scenario
+3.2 ms (spin_eyes), worst p95 5.7 ms. The drawing alone (`--scale 0`) is 0.9 ms mean, so the scaling
+to the screen costs about 0.9 ms a frame. Expect 2-3x that on the Pi 5: roughly 4-5 ms, 12-15 % of one
+core at 30 fps while animating (less at the idle frame rate).
 
 Real-time run of the display loop (dummy video driver, scale 1, no panel, 6 s; measured
 2026-10-20, before the cartoon eyes):
@@ -322,8 +330,10 @@ animating (the PERFORMANCE.md budget); measure on the Pi with the benchmark scri
 
 ## Known limitations
 
-* Hardware unverified: the 480x320 HDMI panel, KMS/Wayland fullscreen and touch input are
-  untested on the real Pi (see DISPLAY_SETUP.md). With `SDL_VIDEODRIVER=kmsdrm` pygame owns
+* Hardware unverified: the 7" 1024x600 HDMI panel, KMS/Wayland fullscreen and its USB touch are
+  untested on the real Pi (see DISPLAY_SETUP.md). The face is drawn at 546x320 and scaled up 1.875x,
+  so its edges are a little soft on the 7" glass; drawing it at the screen's size would need the
+  renderer's pixel constants scaled (and more CPU on a cache miss). With `SDL_VIDEODRIVER=kmsdrm` pygame owns
   the screen, so the Chromium video player cannot appear on top.
 * The hidden state only draws a calm screen; it does not iconify the window. The media
   module's kiosk browser is expected to sit on top while a video plays.

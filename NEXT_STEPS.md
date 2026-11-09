@@ -8,8 +8,9 @@ Follow `HARDWARE_ARRIVAL_CHECKLIST.md` top to bottom. In short:
 
 1. **Power first.** Bring the Pi 5 up on the official 27 W USB-C PSU. Only then test the power bank
    under load while watching `scripts/diagnose.py` (under-voltage / throttling flags). See `docs/POWER.md`.
-2. **Display.** HDMI video first (`docs/DISPLAY_SETUP.md`). If the panel rejects 480×320, use the
-   documented 720×480 fallback (same 3:2 shape; the face letterboxes correctly). Do **not** run the
+2. **Display.** The 7" GeeekPi screen: HDMI picture at 1024×600 first, then its USB touch
+   (`docs/DISPLAY_SETUP.md`; LittleBot asks for 1024×600 itself). Coming from the 3.5" screen, undo its
+   settings (section 7 there). Do **not** run the
    vendor's LCD-show script. Touch is optional.
 3. **Install.** `scripts/install_pi.sh` (dry-run first), then `scripts/diagnose.py`.
 4. **Devices.** `scripts/check_camera.py`, `scripts/check_audio.py --play`, `--record 3`;
@@ -32,7 +33,11 @@ Follow `HARDWARE_ARRIVAL_CHECKLIST.md` top to bottom. In short:
   device" fallback (`media.player: none`) or audio-only songs. `docs/YOUTUBE_ON_PI.md`.
 * Cloud AI: add an API key to `.env` (separate paid API account), enable in the dashboard, press
   **Test**. Check latency and the daily budget numbers.
-* Touchscreen (MPI3508 resistive, SPI): only after HDMI works; overlay parameters on Pi 5 are unverified.
+* Touchscreen (7" capacitive, USB): should work with no driver; check taps land right and the edge swipes.
+* The 7" screen's current draw on the Pi's USB (estimated 0.4-0.7 A): with a 3 A-only supply it is over
+  the 600 mA USB limit (`docs/POWER.md` section 2).
+* Enclosure: the 3D-printed head in `hardware/` holds the 3.5" screen on the Pi; the 7" screen needs a new
+  head (or a separate stand for now).
 
 ## P2 – servos (only after P0/P1 and the safety doc)
 

@@ -9,7 +9,8 @@ real and which are simulated.
 ```
                        ┌──────────────────────── main thread ────────────────────────┐
                        │  face/display.py  pygame loop @30 fps (idle 15–20 fps)       │
-                       │  renders FaceController → 480×320 surface → window/HDMI      │
+                       │  FaceController 546×320 → scaled to 1024×600 → window/HDMI   │
+                       │  (cards and games: their own 1024×600 canvas, unscaled)      │
                        │  keyboard / touch / simulator panel                          │
                        └───────────────▲──────────────────────────────┬───────────────┘
                                        │ thread-safe FaceAPI commands  │ runtime.submit()
@@ -112,7 +113,7 @@ activity + media stopped, all leases revoked, state IDLE, neutral face.
 
 | | simulation | pi | offline |
 |---|---|---|---|
-| Window | scaled 2×, simulator side panel | fullscreen 480×320 | scaled |
+| Window | 1024×600 (`display.scale`), simulator side panel | fullscreen 1024×600 (7" HDMI screen) | 1024×600 |
 | Camera | webcam if present, else mock | USB UVC | mock |
 | Mic / speaker | computer devices if present | USB devices | mock mic, speaker if present |
 | TTS / STT | espeak-ng if installed / mock | espeak-ng (piper optional) / mock or vosk | local only |

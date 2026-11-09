@@ -119,7 +119,7 @@ Config (`config/default.yaml`, `browser:`):
 | `enabled` | `true` | `false`: no browser view at all, whatever the parent's switch says |
 | `idle_seconds` | `30` | how long it stays after the chat with nobody touching it |
 | `moved_on_seconds` | `20` | during the chat: how long it stays after they talked about something else |
-| `zoom` | `1.4` | how big pages are drawn (0.75 to 2.5) |
+| `zoom` | `1.25` | how big pages are drawn (0.75 to 2.5); on the 7" 1024x600 screen a page is laid out 819 px wide |
 | `mobile_layout` | `false` | claim to be an Android phone so sites send their phone layout (Google then asks "are you a robot?" more often) |
 | `kiosk` | (Pi only) | full-screen kiosk window; off: an app window (the desktop simulator) |
 | `read_chars` | `3000` | how much of a page "what does it say?" gives the voice |

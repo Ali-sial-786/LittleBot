@@ -56,18 +56,10 @@ PCA9685 PWM board on the Raspberry Pi 5's I2C bus. It is meant for a ~10-month-o
    channel 2 -> right_arm
 ```
 
-**With the MPI3508 screen plugged onto the header** (the way LittleBot's enclosures mount it),
-the screen's socket covers pins 1-26, so pins 1, 3, 5 and 6 can't take jumper wires, and pins
-27-40 have only about 7.5 mm under the screen: too little for jumper housings. Reach the same
-pins in one of these ways:
-
-* a **GPIO stacking header** between the Pi and the screen (its long pins stick out beside the
-  screen's socket; it also raises the screen about 8.5 mm, which the enclosure models handle with
-  one parameter, `pi_hdr_h` = 11: see `hardware/enclosure_v2/README.md`);
-* a **GPIO splitter / extender** with two 40-pin sockets; or
-* wires **soldered to the underside** of the Pi's header pins 1, 3, 5 and 6.
-
-Same pins, same rules (3.3 V for VCC); only the way to reach them changes.
+**The 7" screen leaves the header free** (it uses HDMI and USB), so the four jumper wires go straight
+onto pins 1, 3, 5 and 6. (The old 3.5" MPI3508 sat on the header and covered pins 1-26: it needed a
+GPIO stacking header, a splitter or wires soldered under the Pi; see `hardware/enclosure_v2/README.md`
+if you still build that head.)
 
 The Pi 5 keeps its own official 5 V / 5 A USB-C supply. **Never** power servos from the
 Pi's 5 V pins: stall and inrush currents brown out the Pi, corrupt the SD card and can

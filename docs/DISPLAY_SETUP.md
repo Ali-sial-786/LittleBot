@@ -1,217 +1,102 @@
-# Display setup: DORHEA MPI3508 3.5" HDMI screen on the Raspberry Pi 5
+# Display setup: the GeeekPi 7" 1024x600 touch screen on the Raspberry Pi 5
 
-The MPI3508 ("3.5inch HDMI Display-B") is two separate devices on one board:
+LittleBot's screen is a **GeeekPi 7" capacitive touch screen**: a 1024x600 IPS panel with an HDMI input,
+5-point capacitive touch over USB and two small speakers of its own. It replaced the 3.5" DORHEA MPI3508
+(480x320, plugged onto the GPIO header) in November 2026; the end of this page says what to undo from that
+screen.
 
-| Part | How it connects | Status on Pi 5 |
+| Part | How it connects | Status |
 |---|---|---|
-| **Picture** | HDMI (micro-HDMI to HDMI cable from the Pi 5) | should work through the standard KMS driver; the mode needs care (below) - **UNVERIFIED** |
-| **Power** | 5 V from the GPIO header (pins 2/4, GND pin 6) when plugged onto the header | standard |
-| **Resistive touch** | SPI on the GPIO header (an XPT2046/ADS7846-type controller, driven by the kernel `ads7846` overlay) | **UNVERIFIED on Pi 5**; optional - LittleBot works without touch |
+| **Picture** | HDMI: micro-HDMI (the Pi 5's HDMI0) to the screen's HDMI socket | standard KMS driver, 1024x600 at 60 Hz - **UNVERIFIED on the robot** |
+| **Touch** | USB: the screen's touch port to one of the Pi's USB-A ports (a standard USB HID multi-touch device, no driver, no overlay) | **UNVERIFIED on the robot**; optional, LittleBot works without touch |
+| **Power** | on these boards the touch USB port usually powers the screen too (some have a separate 5 V power port) | budget it: [POWER.md](POWER.md) |
+| **Speakers** | fed by the HDMI audio | optional: LittleBot keeps its USB speaker (section 6) |
 
-Panel facts (vendor page, [lcdwiki 3.5inch HDMI Display-B](http://www.lcdwiki.com/3.5inch_HDMI_Display-B)):
-native **480x320**, HDMI input accepted "480x320 ~ 1920x1080" (the board has a scaler),
-resistive touch. Bring the picture up first; leave touch for later.
+Panel facts: 1024x600 pixels on about 154 x 86 mm of glass (7" diagonal), so **one pixel is about
+0.15 mm**. The GPIO header is no longer used by the screen: all 40 pins are free (the servo board's I2C pins
+are easy to reach now, [MOTION_SAFETY.md](MOTION_SAFETY.md)).
 
-> **Do NOT run the vendor's `LCD-show` / `MPI3508-show` script.** It was written for
-> older Pis and the X11 desktop. Reading the script
-> ([goodtft/LCD-show, MPI3508-show](https://github.com/goodtft/LCD-show/blob/master/MPI3508-show))
-> shows that it overwrites `/boot/config.txt` wholesale with its own copy, edits
-> `cmdline.txt`, installs X11 `xserver-xorg-input-evdev` and an X11 calibration file,
-> copies its own `/etc/inittab`, appends an `xrandr` call to the LXDE (X11) autostart
-> and reboots. On Raspberry Pi OS Bookworm/Trixie (Wayland/labwc, config in
-> `/boot/firmware/`) that can leave you with a broken or unbootable setup, and none of the
-> X11 parts apply. We only borrow its *parameters* (touch overlay values, mode choice) below.
+## What LittleBot draws on it
 
----
+* `display.width` x `display.height` = **1024 x 600**: the screen in pixels (`config/default.yaml`).
+* **Cards and games** draw on a 1024x600 canvas, pixel for pixel: nothing is scaled on the robot.
+  Text sizes are set for reading across a room (body text 36 px, about 3.6 mm tall on the glass; at most
+  8 lines at a time): see the readability rules in [SCREENS.md](SCREENS.md).
+* **The face** is drawn 320 px tall and as wide as the screen's shape (546x320,
+  `littlebot/face/frame.py` `face_size`), then scaled to the whole screen once per frame: it fills the
+  screen edge to edge with no bars. (On the 3:2 3.5" screen it was 480x320.)
+* The **YouTube player** and the **browser view** are 1024x600 windows; the browser draws pages 1.25x
+  bigger (`browser.zoom`; "zoom in" / "zoom out" change it).
+* Edge swipes (volume on the right edge, brightness on the left) start within about 15 mm of the edge.
 
-## 1. Physical connection and fit
+## 1. Connect it (Pi off)
 
-1. Use the Pi 5's **HDMI0** port (the micro-HDMI next to the USB-C power socket). In Linux
-   it is the connector **`HDMI-A-1`**; HDMI1 is `HDMI-A-2`.
-2. The Pi 5 has micro-HDMI, so the screen's rigid U-shaped HDMI adapter (made for full-size
-   HDMI on Pi 3/4) does not fit: use the micro-HDMI to HDMI cable.
-3. **Clearance with the active cooler (UNVERIFIED):** mounted directly on the GPIO header,
-   the screen sits a few millimetres above the board - check that it does not touch the
-   cooler's fan and that the fan can still breathe. If it is tight, use a GPIO stacking
-   header/extender or connect only the needed pins with short jumper wires (5V, GND for
-   power; plus the SPI pins later for touch). A blocked fan means thermal throttling.
-4. Never connect or disconnect anything on the GPIO header while the Pi is powered.
+1. **HDMI**: a micro-HDMI to HDMI cable from the Pi 5's **HDMI0** (the micro-HDMI next to the USB-C power
+   socket; in Linux the connector `HDMI-A-1`) to the screen's HDMI socket.
+2. **USB**: the screen's touch / power USB port to one of the Pi's USB-A ports. A black USB 2 port is
+   enough for touch; keep the camera on a blue USB 3 port ([POWER.md](POWER.md)).
+3. Never plug or unplug anything on the GPIO header while the Pi is powered.
 
-## 2. First boot: see what the screen offers (EDID)
+## 2. First boot: check the mode
 
-Boot with no display settings changed. Then, from SSH or a terminal:
+Boot with no display settings changed, then from SSH or a terminal:
 
 ```bash
 for c in /sys/class/drm/card*-HDMI-A-*; do echo "$c: $(cat $c/status)"; head -5 $c/modes; done
-.venv/bin/python scripts/diagnose.py --section display     # also decodes the EDID name / preferred mode
-wlr-randr                                                   # in the desktop terminal: active mode
+.venv/bin/python scripts/diagnose.py --section display     # EDID name, modes, preferred mode
+wlr-randr                                                   # in the desktop terminal: the active mode
 ```
 
-Three possible outcomes:
+* **1024x600 is listed and current**: done. LittleBot also asks for it at start-up (`display.output_mode:
+  "1024x600@60"` in `config/pi.yaml`), so a desktop that picked another mode is put back on the panel's own
+  pixels.
+* **The EDID offers other modes too** (some of these boards also list 1280x720 or 1920x1080, which their
+  scaler squeezes into 1024x600 and makes soft): nothing to do, LittleBot sets 1024x600. To have it from
+  boot on, add `video=HDMI-A-1:1024x600@60` to the kernel command line (below).
+* **Black screen / "no signal"**: force the mode with `video=HDMI-A-1:1024x600@60D` (the `D` forces the
+  output on even when the screen's hot-plug signal isn't seen).
 
-- **The EDID lists `480x320`** -> select it (section 3, option A) and you are done.
-- **The EDID prefers something else** (often `800x480`, `1024x768`, `1280x720`, `1920x1080`):
-  the screen scales it down to 480x320 - text looks soft and the aspect ratio may be
-  squashed. Pick a better mode (section 3).
-- **Black screen / "no signal"**: the board might not send usable EDID. Force a mode with
-  the kernel command line (section 3, options B-D).
-
-> **Measured on the real MPI3508 (2026-10-22, Pi 5, Trixie):** the EDID is named `MPI3508` and
-> offers 1280x720 (preferred), 1920x1080, 1920x1080i, 1280x1024, 1440x900 and 1024x768, with no
-> 480x320 and no 720x480. At the preferred 1280x720 the face looked squashed. A custom
-> **720x480@60** mode (`wlr-randr --output HDMI-A-1 --custom-mode 720x480@60`) is accepted and
-> the face looks right. LittleBot now requests it itself at start-up (`display.output_mode` in
-> `config/pi.yaml`; set it to `null` to keep the desktop's mode).
-
-## 3. Choosing the HDMI mode
-
-On the Pi 5 the display is driven by the KMS driver (`dtoverlay=vc4-kms-v3d`, the default).
-The legacy firmware settings the vendor documents (`hdmi_group=2`, `hdmi_mode=87`,
-`hdmi_cvt 480 320 60 6 0 0 0`, `hdmi_timings`, `display_rotate`) are **ignored by KMS**
-(diagnose.py warns if it finds them). Modes are set at runtime by the desktop
-(Screen Configuration / `wlr-randr`) or at boot with a `video=` entry on the kernel
-command line ([kernel modedb syntax](https://www.kernel.org/doc/html/latest/fb/modedb.html)).
-
-**Editing `cmdline.txt` safely**: it is `/boot/firmware/cmdline.txt` on Bookworm and Trixie
-(`/boot/cmdline.txt` only on older releases). It must stay **one single line**; add the
-`video=` option at the end, separated by a space. Keep a backup and a way back: if the
-screen stays black you can remove the option from your computer (the boot partition is
-FAT and readable everywhere) or over SSH.
+**Editing `cmdline.txt` safely**: it is `/boot/firmware/cmdline.txt` on Bookworm and Trixie. It must stay
+**one single line**; add the option at the end, separated by a space. Keep a backup: if the screen stays
+black, remove the option from your computer (the boot partition is FAT) or over SSH.
 
 ```bash
 sudo cp /boot/firmware/cmdline.txt /boot/firmware/cmdline.txt.bak
-sudo nano /boot/firmware/cmdline.txt     # append e.g.  video=HDMI-A-1:720x480@60
+sudo nano /boot/firmware/cmdline.txt     # append:  video=HDMI-A-1:1024x600@60
 sudo reboot
 cat /proc/cmdline | tr ' ' '\n' | grep ^video=     # check it was applied
 ```
 
-Try these in order (all **UNVERIFIED** with this screen - record which one works in the
-checklist):
+The Pi 5 uses the KMS driver (`dtoverlay=vc4-kms-v3d`): the old firmware settings (`hdmi_group`,
+`hdmi_mode`, `hdmi_cvt`, `hdmi_timings`, `display_rotate`) are **ignored** (diagnose.py warns about them).
 
-| Option | `cmdline.txt` addition | Why |
-|---|---|---|
-| A. native mode from EDID | none - pick 480x320 in Screen Configuration or `wlr-randr --output HDMI-A-1 --mode 480x320` | sharpest; only if the EDID offers it |
-| B. **720x480** (recommended fallback) | `video=HDMI-A-1:720x480@60` | standard 480p mode every HDMI receiver supports (27 MHz pixel clock), and exactly **3:2 like 480x320**, so the scaler shrinks it by 1.5x with no distortion |
-| C. native 480x320 via CVT | `video=HDMI-A-1:480x320M@60` | `M` = compute CVT timings. Gives a ~10-12 MHz pixel clock, below the 25 MHz HDMI minimum - many HDMI transmitters/receivers reject it. Try if you want pixel-exact output |
-| D. 640x480 (vendor's choice) | `video=HDMI-A-1:640x480M@60` | what the current vendor script uses on new OS releases; universally supported but 4:3, so the face is squashed ~11 % vertically |
+**Turn screen blanking off** (raspi-config -> Display Options -> Screen Blanking -> No), otherwise the face
+disappears after 10 minutes. LittleBot has its own sleep face.
 
-Append `D` (e.g. `720x480@60D`) to force the output on even if the screen's hot-plug
-signal is not detected (the KMS equivalent of `hdmi_force_hotplug=1`).
+## 3. Touch
 
-**LittleBot is not tied to the HDMI mode.** `display.width/height: 480x320` in
-`config/local.yaml` is the face's drawing size; in fullscreen the face module scales it to
-whatever mode the desktop runs (lead/face module to confirm on hardware: aspect-preserving
-scale, black borders if the aspect differs).
-
-### Make the desktop mode stick (Wayland/labwc)
-
-- Use **Screen Configuration** (Raspberry Pi menu -> Preferences; on Trixie also in the
-  Control Centre) to choose the resolution; it saves the layout for the session
-  (Raspberry Pi OS uses `kanshi` for this under labwc - UNVERIFIED details).
-- Or test from a desktop terminal first:
-
-  ```bash
-  wlr-randr                                           # list outputs and modes
-  wlr-randr --output HDMI-A-1 --mode 720x480
-  wlr-randr --output HDMI-A-1 --custom-mode 480x320@60   # custom mode attempt (may be rejected)
-  ```
-
-- `raspi-config` -> *Display Options* on Bookworm/Trixie offers screen blanking and, on
-  some versions, resolution - menu contents differ between releases.
-- **Turn screen blanking off** for the robot (raspi-config -> Display Options -> Screen
-  Blanking -> No), otherwise the face disappears after 10 minutes. LittleBot handles its
-  own sleep face.
-
-## 4. Rotation
-
-Needed only if the screen is mounted upside down or portrait.
-
-- Desktop (Wayland): Screen Configuration -> right-click the screen -> Orientation, or
-  `wlr-randr --output HDMI-A-1 --transform 180` (values `normal`, `90`, `180`, `270`).
-- Boot console: add `video=HDMI-A-1:720x480@60,rotate=180` (rotation for the text console
-  only; supported values 0/90/180/270 on recent kernels - UNVERIFIED for this panel).
-- `display_rotate=` / `lcd_rotate=` in `config.txt` do nothing under KMS.
-- If touch is enabled, rotate the touch input to match (section 5.4).
-
-## 5. Touch (later; optional)
-
-The face and the parent dashboard (on a phone) do not need the touchscreen. Do this only
-once everything else works, and keep a backup of `config.txt`.
-
-### 5.1 Enable SPI and the ads7846 overlay (UNVERIFIED on Pi 5)
-
-The Pi 5's GPIO header is driven by the RP1 chip but keeps the same pin functions
-(SPI0 on GPIO 7-11, GPIO 25 for the pen interrupt), and the `ads7846` overlay ships with
-Raspberry Pi OS. Values below are taken from the vendor's MPI3508 script (`cs=1`, pen IRQ
-on GPIO 25) and have **not** been tested on a Pi 5:
+The touch is a USB HID multi-touch device: Raspberry Pi OS needs no driver and no overlay. Check it:
 
 ```bash
-sudo cp /boot/firmware/config.txt /boot/firmware/config.txt.bak
-sudo nano /boot/firmware/config.txt
-```
-
-Add at the end, under `[all]`:
-
-```ini
-dtparam=spi=on
-dtoverlay=ads7846,cs=1,penirq=25,penirq_pull=2,speed=50000,keep_vref_on=0,swapxy=0,pmax=255,xohms=150,xmin=200,xmax=3900,ymin=200,ymax=3900
-```
-
-Reboot, then check:
-
-```bash
-ls /sys/bus/spi/devices/                 # spi0.1 expected
-dmesg | grep -i ads7846                  # driver probe messages
-grep -A4 -i ads7846 /proc/bus/input/devices   # "ADS7846 Touchscreen" + eventN
-sudo apt install -y evtest && sudo evtest      # pick the touchscreen, tap the screen
+grep -B1 -A4 -i -E 'touch|ctp' /proc/bus/input/devices      # its name and eventN
+sudo apt install -y evtest && sudo evtest                    # pick it, tap the screen
 .venv/bin/python scripts/diagnose.py --section touch
 ```
 
-If nothing appears: re-check the screen is fully seated on the header (touch uses pins
-19/21/23/26 + GPIO 25 on pin 22), and that no other overlay uses SPI0 CE1.
-Remove the two lines to undo.
+With one screen the desktop (labwc) maps the touch to it by itself. LittleBot reads taps, holds and drags
+as the mouse (SDL turns the first finger into mouse events): a tap makes LittleBot giggle, a 1 s hold opens
+the games menu, a slide up or down at the edge changes the volume or the brightness.
 
-### 5.2 Which screen does touch belong to?
-
-On Wayland the compositor maps touch input to an output. With a single screen this is
-automatic. With two screens, labwc (0.7+) supports in `~/.config/labwc/rc.xml`:
-
-```xml
-<touch deviceName="ADS7846 Touchscreen" mapToOutput="HDMI-A-1" />
-```
-
-(UNVERIFIED with this panel; `labwc --reconfigure` or log out/in to apply.)
-
-### 5.3 Calibration
-
-If taps land in the wrong place (mirrored, swapped, shifted), run LittleBot's own calibration:
+**If taps land in the wrong place** (usually only after rotating the screen):
 
 ```bash
-.venv/bin/python scripts/calibrate_touch.py      # touch the 5 crosses, then: sudo reboot
-.venv/bin/python scripts/calibrate_touch.py --reset   # undo (then reboot)
+.venv/bin/python scripts/calibrate_touch.py          # touch the 5 crosses, then: sudo reboot
+.venv/bin/python scripts/calibrate_touch.py --reset  # undo (then reboot)
 ```
 
-It stops LittleBot while it shows crosses on the screen, reads the raw touch readings and saves a
-libinput calibration matrix in `/etc/udev/rules.d/99-littlebot-touch.rules` (option 2 below, worked
-out for you; any swap, mirror, rotation, offset or stretch). The middle cross checks the result.
-
-`xinput_calibrator` and the vendor's `99-calibration.conf` are X11-only and do nothing on
-Wayland. By hand on Wayland:
-
-1. Adjust the overlay's `xmin/xmax/ymin/ymax` (raw ADC limits, 0-4095) until the corners
-   line up - use `evtest` to read the raw values at each corner.
-2. Or a libinput calibration matrix via udev (applies to Wayland compositors):
-
-   ```bash
-   sudo tee /etc/udev/rules.d/99-littlebot-touch.rules <<'EOF'
-   ATTRS{name}=="ADS7846 Touchscreen", ENV{LIBINPUT_CALIBRATION_MATRIX}="1 0 0 0 1 0"
-   EOF
-   sudo udevadm control --reload && sudo reboot
-   ```
-
-### 5.4 Rotating touch with the screen
-
-The overlay can swap axes (`swapxy=1`) but not invert them; use the matrix:
+It stops LittleBot while it shows crosses, reads the raw touch readings and saves a libinput calibration
+matrix in `/etc/udev/rules.d/99-littlebot-touch.rules` (any swap, mirror, rotation, offset or stretch). By
+hand, the same rule with one of these matrices:
 
 | Screen transform | `LIBINPUT_CALIBRATION_MATRIX` |
 |---|---|
@@ -220,21 +105,58 @@ The overlay can swap axes (`swapxy=1`) but not invert them; use the matrix:
 | 180 | `-1 0 1 0 -1 1` |
 | 270 | `0 1 0 -1 0 1` |
 
-## 6. Console-only / no-desktop option (not the default)
+```bash
+sudo tee /etc/udev/rules.d/99-littlebot-touch.rules <<'EOF'
+ATTRS{name}=="<the name from /proc/bus/input/devices>", ENV{LIBINPUT_CALIBRATION_MATRIX}="-1 0 1 0 -1 1"
+EOF
+sudo udevadm control --reload && sudo reboot
+```
 
-pygame can also draw directly on the KMS display without a desktop
-(`SDL_VIDEODRIVER=kmsdrm`), saving the ~150-250 MB the desktop uses. LittleBot's YouTube
-player needs Chromium, which needs a compositor, so this is only an option if video is
-not wanted. UNVERIFIED; to try it, stop the desktop session (or use Raspberry Pi OS Lite)
-and run from the text console: `SDL_VIDEODRIVER=kmsdrm .venv/bin/python -m littlebot --mode pi`
-(the autostart launcher waits for a desktop and is not meant for this mode).
-The rotation matrices in section 5.4 follow libinput's convention; if touch moves the wrong
-way, try the 90/270 rows swapped.
+## 4. Rotation
 
-## 7. What to record for the next development session
+Only if the screen is mounted upside down: `wlr-randr --output HDMI-A-1 --transform 180` (or Screen
+Configuration -> right-click the screen -> Orientation), then rotate the touch to match (section 3). LittleBot
+always draws landscape 1024x600: a portrait mounting is not supported.
+
+## 5. Brightness
+
+Most HDMI screens like this one set their backlight with their own button or knob, not from the Pi:
+`/sys/class/backlight` stays empty. LittleBot then dims in software (a veil over the face, never darker than
+15 %) when someone slides the left edge or uses the dashboard. Set the screen's own brightness once to a
+comfortable level for the room, then leave it.
+
+## 6. The screen's speakers
+
+The two small speakers play the Pi's HDMI audio. LittleBot keeps using its **USB speaker**
+(`audio.speaker.device: null` never picks HDMI while a USB speaker is plugged in): the echo canceller and the
+barge-in were tuned with it. To try the screen's speakers, set `audio.speaker.device: "hdmi"` in
+`config/local.yaml` (the Pi 5 names it `vc4-hdmi-0`), re-run `scripts/setup_echo_cancel.sh` and test a voice
+chat (LittleBot must not hear itself). `scripts/check_audio.py --list` shows the device names.
+
+## 7. Coming from the 3.5" MPI3508
+
+Undo what the old screen needed:
+
+* `config/local.yaml`: delete the `display:` lines `width: 480`, `height: 320` and
+  `output_mode: "720x480@60"` (or `scripts/set_config.py --unset display.width`, then `display.height`,
+  then `display.output_mode`). Until you do, LittleBot reads them as the 7" screen's values and logs a
+  warning at start-up.
+* `/boot/firmware/cmdline.txt`: remove a `video=HDMI-A-1:720x480@60` you added (or change it to
+  `1024x600@60`).
+* `/boot/firmware/config.txt`: remove the `dtoverlay=ads7846,...` line (and `dtparam=spi=on` unless
+  something else uses SPI). With no 3.5" screen on the header, the resistive touch driver only reads noise
+  and can turn it into phantom taps; `diagnose.py --section touch` warns while it is there.
+* `/etc/udev/rules.d/99-littlebot-touch.rules`: an old calibration names the ADS7846 touch and does
+  nothing for the new screen; delete it (`calibrate_touch.py --reset`) unless you calibrate again.
+
+The 3D-printed head in `hardware/` was designed around the 3.5" screen plugged onto the Pi; the 7" screen
+does not fit it (see `hardware/README.md`).
+
+## 8. What to record for the next development session
 
 - Output of `.venv/bin/python scripts/diagnose.py --section display --section touch --json`
 - `cat /sys/class/drm/card*-HDMI-A-1/modes` and `wlr-randr`
-- Which option (A-D) gave a stable, sharp picture; photo of the face on the screen
-- Whether the screen physically clears the active cooler
-- (later) touch: `dmesg | grep -i ads7846`, `evtest` corner values
+- The touch device's name in `/proc/bus/input/devices`
+- A photo of the face and of a card (`scripts/screen_preview.py` renders the same cards as PNGs)
+- `scripts/benchmark_face.py` and `scripts/perf_monitor.py` with a card and a game on screen
+- The screen's current draw on a USB power meter, at the brightness you use

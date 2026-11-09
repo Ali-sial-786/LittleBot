@@ -48,7 +48,7 @@ checked through rendered screenshots.
 | Subsystem | Status | What's verified | Awaiting hardware / credentials |
 |---|---|---|---|
 | Core (config, events, state, arbiter, settings, storage) | ✅ | Config layering + env overrides + secrets, bus delivery modes, transition rules, leases/preemption, SQLite persistence | – |
-| Face (`littlebot/face`) | ✅ | All expressions/states/animations render; deterministic animator; thread-safe API; display loop; simulator panel; on-screen setup code | 480×320 HDMI panel, fullscreen on Pi, touch input, Pi FPS/CPU |
+| Face (`littlebot/face`) | ✅ | All expressions/states/animations render; deterministic animator; thread-safe API; display loop; simulator panel; on-screen setup code | 7" 1024×600 HDMI panel, fullscreen on Pi, USB touch input, Pi FPS/CPU |
 | Activities (`littlebot/activities`) | ✅ | 43 YAML activities (6 m – 5 y), pause/resume/stop/interrupt, caregiver prompts, branching, songs, profile placeholders, opt-in history | Real-world use with a caregiver and child |
 | Dashboard (`littlebot/dashboard`) | ✅ | 80+ endpoints, setup-code first run, Host allowlist, body caps, global login lockout, scrypt passwords, server-side sessions, CSRF + Origin checks, rate limits, CSP, no secrets in responses, phone-first UI | Phone access over home Wi-Fi (`--lan`) |
 | Audio (`littlebot/audio`) | 🧪 | 20 synthesised gentle sound effects, melody synth, espeak-ng voice (real), half-duplex, volume ceiling, privacy, device fallback, OpenAI TTS/STT (mock transport) | USB speaker + mic on Pi (PipeWire/ALSA), VAD threshold, real STT (Vosk/OpenAI) |
@@ -116,7 +116,9 @@ tunnels; rebinding pages never send "localhost"); LAN mode is plain HTTP (truste
 - **Speech recognition**: with default settings and no Vosk model or cloud key, real microphone speech
   is detected but not transcribed (push-to-talk then says it didn't hear). Simulated speech always works.
 - **Gesture (wave) detection** is experimental and off by default.
-- **Display**: the MPI3508 may not accept 480×320 over HDMI; 720×480 fallback documented. Touch on Pi 5 unverified.
+- **Display**: the 7" GeeekPi 1024×600 HDMI screen (Nov 2026, replacing the 3.5" MPI3508): cards and games
+  draw at its 1024×600, the face at 546×320 scaled up. Its mode, USB touch and current draw are unverified on
+  the robot. The 3D-printed head was designed for the 3.5" screen and doesn't take the 7" one.
 - **Power**: the power bank is unverified; a 5 V/3 A source limits USB peripherals to 600 mA total.
 - **Servos**: physical motion is disabled in configuration and requires calibration plus per-session parent arming.
 - **Physical toy safety is not established by software tests.** The enclosure must be evaluated for small

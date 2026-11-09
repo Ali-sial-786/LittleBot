@@ -1,5 +1,8 @@
 # LittleBot enclosure – version 2 ("companion")
 
+> Designed for the old 3.5" MPI3508 screen; it does not take the 7" 1024×600 screen LittleBot uses now
+> (see [../README.md](../README.md)).
+
 The second design, inspired by the companion-robot reference picture:
 - a round helmet head with LED-ring ears, a black visor around the screen and the camera in a pod on top;
 - a rounded torso with a chest speaker grille, a microphone and two jointed-looking arms;

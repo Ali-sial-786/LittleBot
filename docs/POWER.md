@@ -71,17 +71,21 @@ and prefer a supply that negotiates 5 A properly.
 | Pi 5 (2 GB) idle, desktop | USB-C in | 0.5-0.6 A | - | TO MEASURE |
 | Pi 5 busy (face + vision + Chromium) | USB-C in | 1.0-1.5 A | ~2 A | TO MEASURE |
 | Active cooler fan | Pi (shares the USB current limit) | 0.05 A | 0.1 A | TO MEASURE |
-| MPI3508 screen (backlight) | GPIO 5 V pins | 0.15-0.3 A | - | TO MEASURE |
+| GeeekPi 7" screen (backlight, touch; its speakers if used) | its USB port on the Pi (**shares the USB limit**) | 0.4-0.7 A | ~1 A with its speakers loud | TO MEASURE |
 | U20CAM-1080P camera (USB 2.0 UVC) | USB | 0.15-0.25 A | 0.3 A | TO MEASURE |
 | Mini USB microphone | USB | 0.02-0.1 A | - | TO MEASURE |
 | Mini USB speaker | USB | 0.1-0.3 A | 0.5 A at high volume | TO MEASURE |
-| **USB total** (camera + mic + speaker) | | **~0.3-0.65 A** | **~0.9 A** | TO MEASURE |
+| **USB total** (screen + camera + mic + speaker) | | **~0.7-1.35 A** | **~1.9 A** | TO MEASURE |
 | Servos (3x MG90S) | **separate supply** - never the Pi | 0.1-0.3 A moving each | ~0.7-0.8 A stall each | TO MEASURE |
 
-The USB total sits **right at the 600 mA limit** a 3 A supply allows - which is why a
-3 A-only power bank may work at low volume and then drop the speaker or camera when the
-speaker gets loud. Plug the camera into a **blue USB 3 port** (lower latency, and keep it
-away from the speaker's cable); a powered USB hub is the fallback if the budget does not fit.
+With the 7" screen on a USB port the USB total is **well over the 600 mA limit** a 3 A supply allows
+(the old 3.5" screen took its 0.2 A from the GPIO 5 V pins instead). So the robot needs a supply that
+negotiates **5 A** (the official 27 W PSU, or a UPS HAT / bank that really gives 5 A, section 1), or the
+screen powered from its own 5 V supply when it has a separate power socket. On a 3 A-only supply expect
+the screen to flicker or the camera / speaker to drop out. The screen's estimate is from similar 7"
+1024x600 panels (the backlight is most of it): measure it with a USB power meter at the brightness you use.
+Plug the camera into a **blue USB 3 port** (lower latency, and keep it away from the speaker's cable); a
+powered USB hub is the fallback if the budget does not fit.
 
 ## 3. Bring-up on the official PSU
 
