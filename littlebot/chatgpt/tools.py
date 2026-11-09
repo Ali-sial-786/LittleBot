@@ -161,8 +161,9 @@ TOOLS: tuple[_Tool, ...] = (
           "for 'what time is it?', 'what day is it?', 'what's the date?' or how long until something, instead of "
           "guessing.", _obj({"place": {**_STR, "description": "a city, for the time somewhere else; leave out for "
                                                             "here"}})),
-    _Tool("show_on_screen", "Show an info card on LittleBot's screen while your answer is said: the gist (a forecast, "
-          "a word's meaning, key points, a recipe, a timer, a sum, a list), not the words. A timer card is a real "
+    _Tool("show_on_screen", "Show an info card on LittleBot's 7-inch screen while your answer is said: the gist and "
+          "the useful details (a forecast, a word's meaning, key points, a recipe with its ingredients and steps, a "
+          "timer, a sum, a list or a comparison), not your words. A timer card is a real "
           "timer: it counts down, chimes and tells them when it is done, so \"set a timer\" is this card (never say "
           "you can't set one). Cards (* required):",
           _obj({"card": {**_STR, "description": "the card's kind"},

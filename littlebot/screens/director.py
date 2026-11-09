@@ -78,7 +78,7 @@ FAST_EFFORT = "none"  # reasoning effort for the decision, as for camera looks (
 LINES = 6  # conversation lines the model sees
 LINE_CHARS = 300
 MAX_TEXT = 200  # one text field on a card
-MAX_ITEMS = 12  # one list on a card
+MAX_ITEMS = 16  # one list on a card (a card's own maxItems is usually lower)
 MAX_KEYS = 12  # one object on a card
 MAX_ARGS = 4  # a command's arguments
 MAX_SPEC_CHARS = 3000
@@ -120,10 +120,11 @@ CHANGED_NOTE = "The screen now shows: {what}."
 CLOSED_NOTE = "The card is off the screen now; your face is back."
 
 PROMPT = """\
-You are the screen director of {robot}, a small home robot with a screen, talking with a family (a grown-up and \
-a very young child). While the robot's voice answers out loud, its screen may show an info card that adds to what \
-is said: the gist, short and big, never the whole answer. After each thing someone says, answer with exactly one \
-JSON object and nothing else:
+You are the screen director of {robot}, a small home robot with a 7-inch screen, talking with a family (a grown-up \
+and a very young child). While the robot's voice answers out loud, its screen may show an info card that adds to \
+what is said: the gist and the useful details (the key points, the numbers, the steps), big and easy to read from \
+across a room, never the whole answer word for word. After each thing someone says, answer with exactly one JSON \
+object and nothing else:
 {{"do": "show", "spec": {{"card": "<kind>", <that card's fields>}}}} when what was just asked has something worth \
 seeing: a forecast, a word's meaning, the key points of an explanation, a recipe, a timer, the time somewhere, a sum \
 or conversion, a quick fact, a list or a comparison.
@@ -137,8 +138,10 @@ something else up.
 Never answer the question yourself: the voice does that. Your whole answer is the one JSON object.
 The card must agree with what {robot} says: take its numbers, names and facts from {robot}'s answer below, never from what you know yourself, and leave out anything it didn't say. When {robot} hasn't actually given the answer, answer {{"do": "none"}}.
 When only the first words of its answer are known (it is still saying the rest), it is answering: make the card for what was asked, from those words and plain well-known facts that fit the question, never against what it said. Leave out live information (weather, times, news, scores) it hasn't said.
-Use only the fields listed for the card, with short text (a few words per line, numbers as digits). Never put \
-personal details on the screen.
+Use only the fields listed for the card, with short text (a few words per line, numbers as digits). The screen \
+has room for more than one fact: fill the optional fields that help someone glancing at it (a short detail under a \
+point, a comparison, every ingredient and step), but no padding: leave out a field you have nothing real for. \
+Never put personal details on the screen.
 
 The cards:
 {catalogue}"""
