@@ -24,6 +24,7 @@ import pygame
 
 from littlebot.games import art
 from littlebot.screens.base import BODY_PX, SMALL_PX, Card, CardHost, CardType, H, W, register
+from littlebot.screens.cards import _kit as kit
 from littlebot.screens.cards import candy
 
 log = logging.getLogger("littlebot.screens.maths")
@@ -308,18 +309,7 @@ def check(expression: str, result: str) -> str:
     return f"{format_number(right, places)} {r[1]}"
 
 
-# Signs the card's font has no glyph for (they would show as an empty box): what to write instead.
-_NO_GLYPH = (("\u2248", "~"), ("\u2192", "->"), ("\u2190", "<-"), ("\u221e", "infinity"), ("\u2713", ""),
-             ("\u2032", "'"), ("\u2033", '"'), ("\u20b9", "Rs "))
-
-
-def typeset(text: str) -> str:
-    """``text`` with only signs the card's font can draw: " ≈ " becomes " = about ", "→" "->" and so on."""
-    s = re.sub(r"^\s*\u2248\s*", "about ", str(text or ""))
-    s = re.sub(r"\s\u2248\s*", " = about ", s)
-    for sign, instead in _NO_GLYPH:
-        s = s.replace(sign, instead)
-    return " ".join(s.split())
+typeset = kit.typeset  # signs the font has no glyph for, written out (the kit does it for every card)
 
 
 def pretty(expression: str) -> str:

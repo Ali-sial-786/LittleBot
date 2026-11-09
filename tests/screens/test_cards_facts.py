@@ -52,8 +52,14 @@ async def test_every_sample_builds_and_draws() -> None:
 
 
 @pytest.mark.parametrize(("spec", "said"), [
-    (sample("number"), "Eiffel Tower: 330 m tall"),
-    (sample("score"), "Arsenal 2, Chelsea 1, Full time"),
+    (sample("number"), "Eiffel Tower: 330 m tall (Built: 1889; Steps: 1,665; Visitors: 7 million a year)"),
+    ({**sample("number"), "stats": []}, "Eiffel Tower: 330 m tall"),
+    (sample("score"), "Arsenal 2 (Saka 23', Havertz 70'), Chelsea 1 (Palmer 81'), Full time"),
+    ({"layout": "score", "teams": [{"name": "A", "score": "2"}, {"name": "B", "score": "1"}], "status": "Full time"},
+     "A 2, B 1, Full time"),
+    (sample("profile"), "Giraffe (Animal): Tallest animal on land; Sleeps only about 30 minutes a day; Its tongue is "
+                        "about 50 cm long; Lives in African savannas (Height: 5.5 m; Weight: 1,200 kg; "
+                        "Lives: 25 years; Top speed: 60 km/h)"),
     (sample("item"), ("Today in history: 24 October 1945: The United Nations was founded, to help countries work "
                      "together for peace.")),
     (sample("compare"), ("Lion or tiger?: Lion vs Tiger: Weight: 190 kg, 220 kg; Lives in: Africa, Asia; "
@@ -172,12 +178,28 @@ async def test_pictures_only_for_layouts_that_show_them() -> None:
         assert bool(host.asked_pictures) == wants, layout
 
 
-async def test_list_pages() -> None:
+async def test_eight_short_items_share_one_page_in_two_columns() -> None:
     card = await make(sample("list"))
+    assert [len(p) for p in card.pages()] == [8] and card.list_columns == 2  # all eight planets at once
+    assert card.describe() == "Planets in order: Mercury, Venus, Earth, Mars, Jupiter, Saturn, Uranus, Neptune"
+    assert not card.tap(50, 200)  # one page: nothing to turn
+    pic = await make({**sample("list"), "picture_query": "planets"},
+                     base.RecordingHost(pictures={"planets": Pic(pygame.Surface((300, 200)))}))
+    assert pic.list_columns == 1 and sum(len(p) for p in pic.pages()) == 8  # beside a picture: one column
+    long = await make({"layout": "list", "items": ["a rather long item that needs most of a line here"] * 6})
+    assert long.list_columns == 1
+    few = await make({"layout": "list", "items": ["one", "two", "three"]})
+    assert few.list_columns == 1
+    preview.surface(card, seconds=1)
+
+
+async def test_list_pages() -> None:
+    card = await make(sample("list", 2))  # twelve names
     pages = card.pages()
-    assert [len(p) for p in pages] == [4, 4]  # eight planets, evenly paged
-    assert card.describe() == "Planets in order: Mercury, Venus, Earth, Mars (page 1 of 2)"
-    assert card.command("next", {}) and card.describe() == "Planets in order: Jupiter, Saturn, Uranus, Neptune (page 2 of 2)"
+    assert [len(p) for p in pages] == [6, 6] and card.list_columns == 2  # evenly paged, MAX_LINES at most
+    assert card.describe() == "Baby names this year: Olivia, Noah, Amelia, Muhammad, Isla, Oliver (page 1 of 2)"
+    assert card.command("next", {}) and card.describe() == ("Baby names this year: Lily, George, Freya, Leo, Ava, "
+                                                            "Arthur (page 2 of 2)")
     assert card.command("next", {}) and card.page == 1
     assert card.command("prev", {}) and card.page == 0
     assert card.command("page", {"n": 2}) and card.page == 1
@@ -197,10 +219,13 @@ async def test_text_fits_and_pages_hold_at_most_max_lines() -> None:
     for pic in (Pic(pygame.Surface((300, 200))), None):
         host = base.RecordingHost(pictures={"x": pic} if pic else None)
         card = await make({"layout": "list", "title": "Long", "items": long_items, "picture_query": "x"}, host)
-        width = card._text_right(card.slot.wanted) - (kit.PANEL.x + kit.PAD + 58)
+        width = card._text_right(card.slot.wanted) - (kit.PANEL.x + kit.PAD + facts.LIST_INDENT)
         for page in card.pages():
             assert sum(len(lines) for _, lines in page) <= base.MAX_LINES
             assert all(kit.text_w(s, facts.LIST_PX) <= width for _, lines in page for s in lines)
+            pitch = kit.line_h(facts.LIST_PX)
+            height = sum(pitch * len(ls) for _, ls in page) + facts.LIST_GAP * (len(page) - 1)
+            assert height <= card.inner.h  # nothing runs off the panel
     card = await make({"layout": "profile", "title": "Owl", "subtitle": "Bird",
                        "facts": ["a fact that is long enough to wrap onto more than one line"] * 3})
     for page in card.pages():
@@ -231,11 +256,16 @@ async def test_compare_without_row_labels_lines_facts_up() -> None:
 
 async def test_item_text_size_and_lines() -> None:
     short = await make({"layout": "item", "text": "Octopuses have three hearts."})
-    size, lines = kit.fit(short.text, facts.ITEM_SIZES, 600)
-    assert size == facts.ITEM_SIZES[0] and len(lines) <= base.MAX_LINES
-    long = "word " * 45
-    size, lines = kit.fit(long.strip(), facts.ITEM_SIZES, 380)
-    assert size >= base.BODY_PX
+    size, lines = facts.item_fit(short.text, 900, 380)
+    assert size == facts.ITEM_SIZES[0] and len(lines) == 1
+    long = " ".join(["word"] * 45)
+    for width, height in ((900, 380), (500, 300), (500, 120)):
+        size, lines = facts.item_fit(long, width, height)
+        assert size >= base.BODY_PX and len(lines) <= base.MAX_LINES
+        assert kit.line_h(size) * (len(lines) - 1) + art.font(size).get_height() <= max(height, kit.line_h(size))
+        assert all(kit.text_w(s, size) <= width for s in lines)
+    size, lines = facts.item_fit(long, 500, 120)
+    assert size == base.BODY_PX and lines[-1].endswith("...")  # too much even at BODY_PX: cut short, not shrunk
 
 
 async def test_presenter_box_stays_free_and_text_sizes_are_readable(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -256,3 +286,92 @@ async def test_presenter_box_stays_free_and_text_sizes_are_readable(monkeypatch:
         assert pygame.image.tobytes(surf.subsurface(box), "RGB") == pygame.image.tobytes(bg.subsurface(box), "RGB")
         assert sizes and min(sizes) >= base.SMALL_PX, spec["layout"]
         monkeypatch.setattr(art, "font", real)
+
+
+@pytest.mark.parametrize(("raw", "stats"), [
+    (["Height: 5.5 m", {"label": "Weight", "value": "1,200 kg"}, "Fast", 7, None, {"label": "x"}, ":"],
+     [("Height", "5.5 m"), ("Weight", "1,200 kg"), ("", "Fast"), ("", "7")]),  # four at most, junk dropped
+    ("Built: 1889", [("Built", "1889")]),  # one stat as a plain string
+    ([{"name": "Speed", "number": 60}], [("Speed", "60")]),
+    (None, []),
+])
+async def test_stats(raw: Any, stats: list[tuple[str, str]]) -> None:
+    card = await make({"layout": "number", "value": "1", "stats": raw})
+    assert card.stats == stats
+
+
+async def test_stat_tiles_fit_the_width_in_even_rows() -> None:
+    card = await make(sample("profile"))
+    for width in (card.inner.w, 536, 300):
+        rows = card._stat_rows(width)
+        assert sorted(i for r in rows for i in r) == list(range(len(card.stats)))
+        assert max(len(r) for r in rows) - min(len(r) for r in rows) <= 1  # 4 tiles: 4, or 2 + 2, never 3 + 1
+        per_row = max(len(r) for r in rows)
+        assert per_row == 1 or per_row * facts.STAT_MIN_W + (per_row - 1) * facts.STAT_GAP <= width
+    assert card._stat_rows(card.inner.w) == [[0, 1, 2, 3]]  # the full width: one row
+    tile = facts.stat_tile("Top speed", "60 km/h", 220, art.SKY)
+    assert tile.get_width() == 220 and tile.get_height() >= facts.STAT_H
+
+
+async def test_profile_with_a_picture_and_stats_fits_one_page() -> None:
+    card = await make(sample("profile"), base.RecordingHost(pictures={"giraffe": Pic(pygame.Surface((300, 200)))}))
+    assert card.slot.wanted and len(card.pages()) == 1 and len(card.pages()[0]) == 4
+    five = await make({**sample("profile"), "facts": ["a fact that is long enough to wrap onto two lines here"] * 5})
+    for page in five.pages():  # the stats row takes a line of the budget
+        assert sum(len(ls) for _, ls in page) <= base.MAX_LINES - len(five._stat_rows(five.inner.w))
+    assert len(five.facts) == facts.MAX_FACTS == 5
+
+
+async def test_compare_holds_four_columns_and_eight_rows() -> None:
+    card = await make(sample("compare", 2))
+    assert [c["name"] for c in card.columns] == ["Lion", "Tiger", "Leopard", "Cheetah"]
+    x0, col_w, label_w = card._col_geometry()
+    assert label_w == facts.LABEL_W_NARROW and col_w >= 150
+    assert x0 + 4 * col_w + 3 * facts.COL_GAP <= card.inner.right
+    assert card.describe().startswith("The big cats: Lion vs Tiger vs Leopard vs Cheetah: Weight: 190 kg, 220 kg, ")
+    five = await make({"layout": "compare", "columns": [{"name": n, "facts": ["1"]} for n in "ABCDE"]})
+    assert len(five.columns) == facts.MAX_COLUMNS == 4
+    rows = await make({"layout": "compare", "rows": [f"R{i}" for i in range(12)],
+                       "columns": [{"name": "A", "facts": [str(i) for i in range(12)]},
+                                   {"name": "B", "facts": [str(i) for i in range(12)]}]})
+    assert len(rows.rows) == facts.MAX_ROWS and sum(len(p) for p in rows.pages()) == facts.MAX_ROWS
+    table, labels = facts._table([], [["", "A", "B", "C", "D", "E"], ["Size", "1", "2", "3", "4", "5"]], "")
+    assert [c["name"] for c in table] == ["A", "B", "C", "D"] and labels == ["Size"]
+
+
+async def test_long_column_names_take_two_lines_in_the_header() -> None:
+    card = await make({"layout": "compare", "columns": [{"name": "Breast milk from mum", "facts": ["a"]},
+                                                        {"name": "Formula", "facts": ["b"]},
+                                                        {"name": "Cow's milk", "facts": ["c"]},
+                                                        {"name": "Oat drink", "facts": ["d"]}]})
+    assert card._head_lines() == 2 and card._head_h() > facts.HEAD_H
+    preview.surface(card, seconds=1)
+
+
+async def test_a_team_can_say_who_scored() -> None:
+    card = await make({"layout": "score", "teams": [{"name": "A", "score": "1", "scorers": "Kane 9'"},
+                                                    {"name": "B", "score": "0", "detail": ""}]})
+    assert card.teams == [{"name": "A", "score": "1", "detail": "Kane 9'"}, {"name": "B", "score": "0"}]
+    assert card.describe() == "A 1 (Kane 9'), B 0"
+    preview.surface(card, seconds=1)
+
+
+async def test_the_note_shows_under_a_list_and_a_comparison() -> None:
+    for spec in (sample("list"), sample("compare", 2)):
+        card = await make(spec)
+        assert card.note and len(card.pages()) == 1  # still room for everything on one page
+        preview.surface(card, seconds=1)
+
+
+async def test_the_fields_tell_the_ai_the_new_limits() -> None:
+    fields = base.card_types()["facts"].fields
+    assert fields["columns"]["maxItems"] == 4 and fields["items"]["maxItems"] == 12
+    assert fields["facts"]["maxItems"] == 5 and fields["stats"]["maxItems"] == 4
+    assert "detail" in fields["teams"]["items"]["properties"]
+    from littlebot.screens.director import clean_spec
+
+    cleaned, why = clean_spec({**sample("profile"), "stats": ["Height: 5.5 m", {"label": "Weight", "value": "1 t"}]},
+                              base.card_types())
+    assert cleaned is not None and cleaned["stats"] == ["Height: 5.5 m", {"label": "Weight", "value": "1 t"}], why
+    cleaned, why = clean_spec(sample("score"), base.card_types())
+    assert cleaned is not None and cleaned["teams"][0]["detail"] == "Saka 23', Havertz 70'", why

@@ -51,13 +51,26 @@ ACCENTS: tuple[art.Color, ...] = (art.STRAWBERRY, art.SKY, art.MINT, art.TANGERI
 # ---------------------------------------------------------------- spec cleaning
 _SPACE = re.compile(r"\s+")
 _MARKUP = re.compile(r"[*_`#>]+")
+# Signs the card's font has no glyph for (they would show as an empty box): what to write instead.
+_NO_GLYPH = (("\u2248", "~"), ("\u2192", "->"), ("\u2190", "<-"), ("\u221e", "infinity"), ("\u2713", ""),
+             ("\u2032", "'"), ("\u2033", '"'), ("\u20b9", "Rs "))
+
+
+def typeset(text: str) -> str:
+    """``text`` with only signs the card's font can draw: " ≈ " becomes " = about ", "→" "->" and so on."""
+    s = re.sub(r"^\s*\u2248\s*", "about ", str(text or ""))
+    s = re.sub(r"\s\u2248\s*", " = about ", s)
+    for sign, instead in _NO_GLYPH:
+        s = s.replace(sign, instead)
+    return " ".join(s.split())
 
 
 def clean(value: Any, limit: int = 120) -> str:
-    """One tidy line from whatever the AI sent (no markdown, no newlines, at most ``limit`` chars)."""
+    """One tidy line from whatever the AI sent (no markdown, no newlines, only signs the font can draw, at most
+    ``limit`` chars)."""
     if value is None or isinstance(value, (dict, list, tuple)):
         return ""
-    s = _SPACE.sub(" ", _MARKUP.sub("", str(value))).strip()
+    s = typeset(_SPACE.sub(" ", _MARKUP.sub("", str(value))).strip())
     if len(s) > limit:
         s = s[:limit].rsplit(" ", 1)[0].rstrip(",;:-") + "..."
     return s
@@ -150,6 +163,38 @@ def paged(blocks: Sequence[int], max_lines: int = MAX_LINES) -> list[list[int]]:
     return pages
 
 
+def pages_by_height(heights: Sequence[int], lines: Sequence[int], *, gap: int, room: int,
+                    max_lines: int = MAX_LINES) -> list[list[int]]:
+    """Items (``heights[i]`` px and ``lines[i]`` lines of text each) split into as few pages as fit ``room``
+    px and ``max_lines`` lines, then evened out (8 points: 4 + 4, not 6 + 2); an item too big for a page gets
+    one of its own. (The explain, definition and facts cards page with it.)"""
+
+    def greedy(limit: int) -> list[list[int]]:
+        pages: list[list[int]] = []
+        cur: list[int] = []
+        px = n = 0
+        for i, (h, k) in enumerate(zip(heights, lines)):
+            add = h + (gap if cur else 0)
+            if cur and (px + add > limit or n + k > max_lines):
+                pages.append(cur)
+                cur, px, n, add = [], 0, 0, h
+            cur.append(i)
+            px += add
+            n += k
+        if cur:
+            pages.append(cur)
+        return pages
+
+    pages = greedy(room)
+    if len(pages) > 1:
+        total = sum(heights) + gap * max(0, len(heights) - len(pages))
+        for limit in range(max(max(heights), total // len(pages)), room + 1, 4):
+            even = greedy(limit)
+            if len(even) == len(pages):
+                return even
+    return pages
+
+
 def _greedy(blocks: Sequence[int], max_lines: int) -> list[list[int]]:
     pages: list[list[int]] = []
     cur: list[int] = []
@@ -218,7 +263,7 @@ def outlined_fit(word: str, sizes: Sequence[int], width: int, color: Sequence[in
 
 def chip(label: str, color: Sequence[int], *, size: int = SMALL_PX, fg: Sequence[int] = art.WHITE) -> pygame.Surface:
     """A candy label (part of speech, "Step 3 of 8"). White text on a darkened candy colour for contrast."""
-    return art.pill(label, size, fg, art.inkier(color, 0.22) if fg == art.WHITE else color, pad=(16, 7))
+    return art.pill(label, size, fg, art.inkier(color, 0.22) if fg == art.WHITE else color, pad=(18, 8))
 
 
 def number_badge(n: int | str, color: Sequence[int], r: int = 25) -> pygame.Surface:
@@ -389,5 +434,5 @@ def placeholder(surf: pygame.Surface, rect: pygame.Rect, t: float) -> None:
 
 __all__ = ["ACCENTS", "BODY_PX", "GUTTER", "HEADER", "MAX_LINES", "PAD", "PANEL", "PIC_W", "SMALL_PX", "TEXT", "TEXT_SOFT", "TITLE_PX",
            "PictureSlot", "appear", "arrow", "as_int", "background", "blit_alpha", "chip", "clean", "ellipsize",
-           "fit", "header_title", "line_h", "number_badge", "outlined_fit", "page_dots", "paged", "panel",
-           "placeholder", "str_list", "text_block", "text_w", "wrap"]
+           "fit", "header_title", "line_h", "number_badge", "outlined_fit", "page_dots", "paged", "pages_by_height", "panel",
+           "placeholder", "str_list", "text_block", "text_w", "typeset", "wrap"]
