@@ -28,11 +28,15 @@ BEAT_S = 0.42
 REVEAL_S = 2.3
 LOOK_GIVE_UP_S = 4.0  # the camera never answered: ask instead
 GO_WORDS = {"go", "ready", "shoot", "play", "again", "start"}
+# The layout for a 480 px tall canvas; a game scales it to its own (x1.25 on the 1024x600 screen) and puts
+# LittleBot's and your bubbles a quarter of the way in from either side, "VS" between them.
 GO_W, GO_H = 440, 120
 BTN_W, BTN_H = 196, 140
 BTN_Y = 322
+BTN_GAP = 24
 BUBBLE_R = 76
-BOT_X, YOU_X, ARENA_Y = 196, 524, 222
+ARENA_Y = 222
+BOT_AT, YOU_AT = 0.27, 0.73  # the two bubbles, as a share of the width
 
 
 def outcome(you: str, bot: str) -> str:
@@ -128,7 +132,12 @@ class RockPaperScissors(Game):
         self.result: str | None = None
         self.wins = self.losses = self.draws = 0
         self.beat = -1
-        self.eyes = art.EyeState(BOT_X, 108, 0.6, self.eye_color)
+        k = self.k = self.h / 480  # px scale (1.25 on the 1024x600 screen)
+        self.bot_x, self.you_x, self.arena_y = self.w * BOT_AT, self.w * YOU_AT, ARENA_Y * k
+        self.bubble_r = BUBBLE_R * k
+        self.btn_w, self.btn_h, self.btn_y = int(BTN_W * k), int(BTN_H * k), int(BTN_Y * k)
+        self.go_w, self.go_h = int(GO_W * k), int(GO_H * k)
+        self.eyes = art.EyeState(self.bot_x, 108 * k, 0.6 * k, self.eye_color)
 
     def begin(self) -> None:
         super().begin()
@@ -200,14 +209,16 @@ class RockPaperScissors(Game):
             self.score += 1
             self.host.sound("yay")
             self.eyes.feel("surprised", 1.6)
-            self.burst(YOU_X, ARENA_Y, list(art.CANDY), 30, speed=(150, 360), life=(0.7, 1.3), size=(6, 11),
-                       kinds=("star", "confetti", "dot"), gravity=240)
+            k = self.k
+            self.burst(self.you_x, self.arena_y, list(art.CANDY), 30, speed=(150 * k, 360 * k), life=(0.7, 1.3),
+                       size=(6 * k, 11 * k), kinds=("star", "confetti", "dot"), gravity=240 * k)
         elif self.result == "lose":
             self.losses += 1
             self.host.sound("boing")
             self.eyes.feel("happy", 1.6)
-            self.burst(BOT_X, ARENA_Y, [art.SKY, art.WHITE, art.LEMON], 16, speed=(120, 260), life=(0.6, 1.0),
-                       size=(6, 10), kinds=("star", "dot"))
+            k = self.k
+            self.burst(self.bot_x, self.arena_y, [art.SKY, art.WHITE, art.LEMON], 16, speed=(120 * k, 260 * k),
+                       life=(0.6, 1.0), size=(6 * k, 10 * k), kinds=("star", "dot"))
         else:
             self.draws += 1
             self.host.sound("boop")
@@ -234,17 +245,17 @@ class RockPaperScissors(Game):
         self.eyes.update(dt, self.rng)
 
     def button_rect(self, i: int) -> pygame.Rect:
-        cx = self.w / 2 + (i - 1) * (BTN_W + 24)
-        return pygame.Rect(int(cx - BTN_W / 2), BTN_Y, BTN_W, BTN_H)
+        cx = self.w / 2 + (i - 1) * (self.btn_w + BTN_GAP * self.k)
+        return pygame.Rect(int(cx - self.btn_w / 2), self.btn_y, self.btn_w, self.btn_h)
 
     def button_at(self, x: float, y: float) -> str | None:
         for i, name in enumerate(CHOICES):
-            if self.button_rect(i).inflate(20, 24).collidepoint(x, y):
+            if self.button_rect(i).inflate(int(20 * self.k), int(24 * self.k)).collidepoint(x, y):
                 return name
         return None
 
     def go_rect(self) -> pygame.Rect:
-        return pygame.Rect(int(self.w / 2 - GO_W / 2), BTN_Y + 10, GO_W, GO_H)
+        return pygame.Rect(int(self.w / 2 - self.go_w / 2), int(self.btn_y + 10 * self.k), self.go_w, self.go_h)
 
     def shows_buttons(self) -> bool:
         """The three choice buttons (always when tapping; with the camera only to say what you showed)."""
@@ -291,46 +302,56 @@ class RockPaperScissors(Game):
         return ("Ready?" if self.camera else "Pick one!"), art.WHITE, art.STRAWBERRY
 
     def draw_bubble(self, surf: pygame.Surface, x: float, who: str, choice: str | None) -> None:
+        z, ay, br = self.k, self.arena_y, self.bubble_r
         winner = self.phase == "reveal" and ((who == "you" and self.result == "win") or
                                              (who == "bot" and self.result == "lose"))
         if winner:
-            art.blit_center(surf, art.glow(BUBBLE_R * 1.7, art.LEMON, 2.0), (x, ARENA_Y))
+            art.blit_center(surf, art.glow(br * 1.7, art.LEMON, 2.0), (x, ay))
         color = (255, 250, 253) if not winner else art.lighten(art.LEMON, 0.55)
-        art.blit_center(surf, art.circle(BUBBLE_R + 5, art.inkier((246, 196, 220), 0.25)), (x, ARENA_Y + 4))
-        art.blit_center(surf, art.circle(BUBBLE_R, color), (x, ARENA_Y))
+        art.blit_center(surf, art.circle(br + 5 * z, art.inkier((246, 196, 220), 0.25)), (x, ay + 4 * z))
+        art.blit_center(surf, art.circle(br, color), (x, ay))
         if self.phase == "count" or (self.phase == "look" and who == "bot"):
-            hop = abs(math.sin(self.phase_t / BEAT_S * math.pi)) * 22 if self.phase == "count" else 0
-            art.blit_center(surf, icon_sprite("rock", 104), (x, ARENA_Y + 6 - hop))
+            hop = abs(math.sin(self.phase_t / BEAT_S * math.pi)) * 22 * z if self.phase == "count" else 0
+            art.blit_center(surf, icon_sprite("rock", int(104 * z)), (x, ay + 6 * z - hop))
         elif self.phase == "reveal" and choice is not None:
             k = art.ease_out_back(min(1.0, self.phase_t / 0.35), 2.2)
-            art.blit_center(surf, art.scaled(icon_sprite(choice, 112), k), (x, ARENA_Y))
+            art.blit_center(surf, art.scaled(icon_sprite(choice, int(112 * z)), k), (x, ay))
         else:
-            q = art.text_outlined("?", 86, art.WHITE, art.INK_SOFT, 3)
-            art.blit_center(surf, q, (x, ARENA_Y + math.sin(self.t * 3 + x) * 5))
+            q = art.text_outlined("?", int(86 * z), art.WHITE, art.INK_SOFT, 3)
+            art.blit_center(surf, q, (x, ay + math.sin(self.t * 3 + x) * 5 * z))
 
     def render(self, surf: pygame.Surface) -> None:
+        k = self.k
         surf.blit(art.background(self.size, seed=17), (0, 0))
         self.eyes.draw(surf)
-        art.blit_text(surf, "You", 36, (YOU_X, 112), art.INK)
-        self.draw_bubble(surf, BOT_X, "bot", self.bot)
-        self.draw_bubble(surf, YOU_X, "you", self.you if self.phase != "pick" else None)
-        art.blit_center(surf, art.text_outlined("VS", 46, art.WHITE, art.INK, 3), (self.w / 2, ARENA_Y))
+        art.blit_text(surf, "You", int(36 * k), (self.you_x, 112 * k), art.INK)
+        self.draw_bubble(surf, self.bot_x, "bot", self.bot)
+        self.draw_bubble(surf, self.you_x, "you", self.you if self.phase != "pick" else None)
+        art.blit_center(surf, art.text_outlined("VS", int(52 * k), art.WHITE, art.INK, 4), (self.w / 2, self.arena_y))
+        if self.draws:
+            art.blit_center(surf, art.pill(f"Draws {self.draws}", int(26 * k), art.INK_SOFT, art.WHITE, pad=(14, 6)),
+                            (self.w / 2, self.arena_y + 60 * k))
         if self.shows_buttons():
             self.render_buttons(surf)
         elif self.phase == "pick":
             r = self.go_rect()
-            surf.blit(art.rounded_rect(GO_W, GO_H, 36, art.MINT, shadow=6, border=art.inkier(art.MINT, 0.2),
-                                       border_w=4), r.topleft)
-            art.blit_text(surf, "Go!", 52, (r.centerx, r.y + 46), art.WHITE)
-            art.blit_text(surf, "Show me your hand on Shoot!", 24, (r.centerx, r.bottom - 22), art.INK)
+            surf.blit(art.rounded_rect(self.go_w, self.go_h, int(36 * k), art.MINT, shadow=6,
+                                       border=art.inkier(art.MINT, 0.2), border_w=4), r.topleft)
+            art.blit_text(surf, "Go!", int(52 * k), (r.centerx, r.y + 46 * k), art.WHITE)
+            art.blit_text(surf, "Show me your hand on Shoot!", int(26 * k), (r.centerx, r.bottom - 24 * k), art.INK)
         else:
             hint = (f"I saw {LABELS[self.you]}!" if self.phase == "reveal" and self.you
                     else "Show me rock, paper or scissors!")
-            art.blit_center(surf, art.pill(hint, 30, art.INK, art.WHITE), (self.w / 2, BTN_Y + 70))
+            art.blit_center(surf, art.pill(hint, int(30 * k), art.INK, art.WHITE, pad=(20, 8)),
+                            (self.w / 2, self.btn_y + 70 * k))
         text, fg, bg = self.label()
-        art.blit_center(surf, art.pill(text, 32, fg, bg), (self.w / 2, 34))
-        art.blit_center(surf, art.pill(f"You {self.wins}", 26, art.INK, art.WHITE), (self.w - 92, 34))
-        art.blit_center(surf, art.pill(f"LittleBot {self.losses}", 26, art.INK, art.WHITE), (104, 34))
+        y = 36 * k
+        art.blit_center(surf, art.pill(text, int(32 * k), fg, bg, pad=(22, 8)), (self.w / 2, y))
+        score = int(28 * k)
+        you = art.pill(f"You {self.wins}", score, art.INK, art.WHITE, pad=(18, 7))
+        bot = art.pill(f"LittleBot {self.losses}", score, art.INK, art.WHITE, pad=(18, 7))
+        art.blit_center(surf, you, (self.w - 20 * k - you.get_width() / 2, y))
+        art.blit_center(surf, bot, (20 * k + bot.get_width() / 2, y))
 
     def render_buttons(self, surf: pygame.Surface) -> None:
         asking = self.phase == "ask"
@@ -339,11 +360,13 @@ class RockPaperScissors(Game):
             chosen = self.phase != "pick" and not asking and self.you == name
             dim = self.phase != "pick" and not asking and not chosen
             color = art.lighten(art.LEMON, 0.35) if chosen else ((246, 232, 240) if dim else art.WHITE)
-            lift = -6 if chosen else 0
-            surf.blit(art.rounded_rect(BTN_W, BTN_H, 30, color, shadow=6, border=(246, 196, 220) if not chosen else
+            k = self.k
+            lift = -6 * k if chosen else 0
+            surf.blit(art.rounded_rect(r.w, r.h, int(30 * k), color, shadow=6, border=(246, 196, 220) if not chosen else
                                        art.inkier(art.LEMON, 0.2), border_w=4), (r.x, r.y + lift))
-            art.blit_center(surf, icon_sprite(name, 84), (r.centerx, r.y + 56 + lift), 140 if dim else None)
-            art.blit_text(surf, LABELS[name], 30, (r.centerx, r.bottom - 20 + lift), art.INK_SOFT if dim else art.INK)
+            art.blit_center(surf, icon_sprite(name, int(84 * k)), (r.centerx, r.y + 56 * k + lift), 140 if dim else None)
+            art.blit_text(surf, LABELS[name], int(32 * k), (r.centerx, r.bottom - 22 * k + lift),
+                          art.INK_SOFT if dim else art.INK)
 
     def summary(self) -> str:
         return f"You {self.wins} - LittleBot {self.losses}" + (f" - draws {self.draws}" if self.draws else "")

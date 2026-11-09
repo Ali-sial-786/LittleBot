@@ -60,14 +60,56 @@ def test_every_game_has_a_finale_then_finishes(info, host, surface):
     game.wrap_up()  # idempotent
 
 
-def test_games_draw_at_any_size(host):
-    from littlebot.games.memory import MemoryLights
-
-    game = MemoryLights(host, seed=1)
+@pytest.mark.parametrize("size", [(1024, 600), (720, 480), (1280, 720)])
+@pytest.mark.parametrize("info", GAMES, ids=[g.id for g in GAMES])
+def test_games_draw_at_any_size(info, host, size):
+    """The robot's 1024x600 screen is the default canvas; a game made for another size still lays out and draws."""
+    game = info.load()(host, seed=1, size=size)
     game.begin()
     run(game, 0.5)
-    game.draw(pygame.Surface(game.size))  # the service scales the canvas, games always draw 720x480
-    assert game.size == (art.W, art.H)
+    surf = pygame.Surface(game.size)
+    game.draw(surf)
+    assert game.size == size and distinct_colors(surf) > 4
+    assert info.load()(host, seed=1).size == (art.W, art.H) == (1024, 600)
+
+
+def test_board_games_fill_the_7_inch_screen(host):
+    """1024x600: boards as tall as the screen allows, big targets, the scores in panels either side."""
+    from littlebot.games.memory import MemoryLights
+    from littlebot.games.reaction import ReactionRace
+    from littlebot.games.rps import RockPaperScissors
+    from littlebot.games.tictactoe import TicTacToe
+
+    screen = pygame.Rect(0, 0, art.W, art.H)
+    memory = MemoryLights(host)
+    pads = [memory.pad_rect(i) for i in range(4)]
+    assert all(screen.contains(r) and r.w >= 220 and r.h >= 200 for r in pads)
+    assert memory.side_w >= 180 and pads[3].bottom > art.H * 0.9  # the whole height, panels beside it
+
+    ttt = TicTacToe(host)
+    cells = [ttt.cell_rect(i) for i in range(9)]
+    assert all(screen.contains(r) and r.w >= 130 for r in cells)
+    assert ttt.side_w >= 180 and cells[8].bottom > art.H * 0.85
+
+    rps = RockPaperScissors(host)
+    buttons = [rps.button_rect(i) for i in range(3)]
+    assert all(screen.contains(r) and r.w >= 200 and r.h >= 150 for r in buttons)
+    vs_half = 60  # "VS" at the middle never sits on either bubble
+    assert rps.you_x - rps.bubble_r > art.W / 2 + vs_half and rps.bot_x + rps.bubble_r < art.W / 2 - vs_half
+
+    race = ReactionRace(host)
+    assert race.side_w >= 180 and race.cx - race.light_r > race.side_w + 24  # stats and tries beside the light
+
+
+def test_baby_game_targets_grow_with_the_screen(host):
+    from littlebot.games.bubbles import RADII, BubblePop
+    from littlebot.games.follow_star import CATCH_RADIUS, FollowTheStar
+    from littlebot.games.peekaboo import BLOCK_W, PeekabooFriends
+
+    assert min(BubblePop(host).radii) == round(min(RADII) * art.H / 480) >= 45  # 90 px wide and more
+    assert FollowTheStar(host).catch_radius == CATCH_RADIUS * art.H / 480
+    small = PeekabooFriends(host, size=(720, 480))
+    assert small.block_w == BLOCK_W and PeekabooFriends(host).block_w > BLOCK_W
 
 
 # ------------------------------------------------------------------ Bubble Pop
@@ -126,18 +168,20 @@ def test_peekaboo_animals_peek_by_themselves(host):
 
 
 def test_peekaboo_tap_block_reveals_and_tap_animal_giggles(host):
-    from littlebot.games.peekaboo import BLOCK_TOP, PHRASES, PeekabooFriends
+    from littlebot.games.peekaboo import PHRASES, PeekabooFriends
 
     game = PeekabooFriends(host, seed=2)
     game.begin()
     game.next_peek = 99  # no automatic peeks in this test
     sp = game.spots[0]
-    game.tap(sp.x, BLOCK_TOP + 60)
+    top = game.block_top
+    assert game.block_w >= 200 and top > game.h / 2  # big blocks in the lower half of the 1024x600 screen
+    game.tap(sp.x, top + 60)
     assert sp.state == "rising" and game.peeks == 1 and game.score == 1
     assert host.spoken[-1] == PHRASES[sp.animal]
     run(game, 0.6)
     assert sp.state == "up"
-    game.tap(sp.x, BLOCK_TOP - 40)  # the animal's head
+    game.tap(sp.x, top - 40)  # the animal's head
     assert game.giggles == 1 and host.sounds[-1] == "giggle" and sp.jump > 0
     run(game, 4.5)
     assert sp.state == "hidden"

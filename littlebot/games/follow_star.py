@@ -15,9 +15,11 @@ import pygame
 from littlebot.games import art
 from littlebot.games.base import Game
 
+# px on a 480 px tall canvas; a game scales them to its own (x1.25 on the 1024x600 screen)
 STAR_R = 46
 CATCH_RADIUS = 86  # generous: babies swipe near it
 SPEED = 150.0
+TWINKLES = 22
 CHILD_LOOK_EVERY = (6.0, 9.0)
 CHILD_LOOK_SECONDS = 1.8
 SKY_TOP: art.Color = (255, 226, 240)
@@ -41,7 +43,10 @@ class FollowTheStar(Game):
 
     def __init__(self, host: Any = None, *, size: tuple[int, int] = (art.W, art.H), seed: int | None = None) -> None:
         super().__init__(host, size=size, seed=seed)
-        self.eyes = art.EyeState(self.w / 2, self.h / 2 + 6, 1.55, self.eye_color)
+        k = self.k = self.h / 480  # px scale (1.25 on the 1024x600 screen)
+        self.star_r = STAR_R * k
+        self.catch_radius = CATCH_RADIUS * k
+        self.eyes = art.EyeState(self.w / 2, self.h / 2 + 6 * k, 1.55 * k, self.eye_color)
         self.star = Star(self.w * 0.2, self.h * 0.25)
         self.pick_target(far=True)
         self.caught = 0
@@ -49,8 +54,8 @@ class FollowTheStar(Game):
         self.child_look_in = self.rng.uniform(*CHILD_LOOK_EVERY)
         self.child_look_left = 0.0
         self.child_looks = 0
-        self.twinkles = [(self.rng.uniform(20, self.w - 20), self.rng.uniform(16, self.h - 16),
-                          self.rng.uniform(0, 6.28), self.rng.choice((10, 12, 14))) for _ in range(16)]
+        self.twinkles = [(self.rng.uniform(20 * k, self.w - 20 * k), self.rng.uniform(16 * k, self.h - 16 * k),
+                          self.rng.uniform(0, 6.28), int(self.rng.choice((10, 12, 14)) * k)) for _ in range(TWINKLES)]
 
     def begin(self) -> None:
         super().begin()
@@ -59,12 +64,13 @@ class FollowTheStar(Game):
     # ------------------------------------------------------------ logic
     def pick_target(self, *, far: bool = False, x: float | None = None, y: float | None = None) -> None:
         st = self.star
+        k = self.k
         if x is not None and y is not None:
-            st.tx, st.ty = art.clamp(x, 50, self.w - 50), art.clamp(y, 50, self.h - 50)
+            st.tx, st.ty = art.clamp(x, 50 * k, self.w - 50 * k), art.clamp(y, 50 * k, self.h - 50 * k)
             return
         for _ in range(12):
-            tx, ty = self.rng.uniform(70, self.w - 70), self.rng.uniform(60, self.h - 60)
-            if art.dist(tx, ty, st.x, st.y) > (260 if far else 180):
+            tx, ty = self.rng.uniform(70 * k, self.w - 70 * k), self.rng.uniform(60 * k, self.h - 60 * k)
+            if art.dist(tx, ty, st.x, st.y) > (260 if far else 180) * k:
                 break
         st.tx, st.ty = tx, ty
 
@@ -83,10 +89,10 @@ class FollowTheStar(Game):
         else:
             dx, dy = st.tx - st.x, st.ty - st.y
             d = math.hypot(dx, dy)
-            if d < 26:
+            if d < 26 * self.k:
                 self.pick_target()
             else:
-                sp = SPEED * min(1.0, d / 110) + 30
+                sp = (SPEED * min(1.0, d / (110 * self.k)) + 30) * self.k
                 k = min(1.0, 2.4 * dt)
                 st.vx += (dx / d * sp - st.vx) * k
                 st.vy += (dy / d * sp - st.vy) * k
@@ -97,15 +103,16 @@ class FollowTheStar(Game):
                 self.trail_t = 0.045
                 self.particles.burst(st.x - st.vx * 0.08, st.y - st.vy * 0.08, 1,
                                      [art.LEMON, art.WHITE, art.BUBBLEGUM][self.rng.randrange(3):][:1],
-                                     speed=(5, 40), life=(0.6, 1.0), size=(5, 9), kinds=("spark", "star"))
+                                     speed=(5 * self.k, 40 * self.k), life=(0.6, 1.0), size=(5 * self.k, 9 * self.k),
+                                     kinds=("spark", "star"))
         child = self.child_point()
         if self.child_look_left > 0:
             self.child_look_left -= dt
             if child is not None:
-                self.eyes.look_at_point(child[0], child[1], 300)
+                self.eyes.look_at_point(child[0], child[1], 300 * self.k)
         else:
             if st.gone <= 0:
-                self.eyes.look_at_point(st.x, st.y, 300)
+                self.eyes.look_at_point(st.x, st.y, 300 * self.k)
             self.child_look_in -= dt
             if self.child_look_in <= 0:
                 self.child_look_in = self.rng.uniform(*CHILD_LOOK_EVERY)
@@ -119,8 +126,10 @@ class FollowTheStar(Game):
     def respawn(self) -> None:
         st = self.star
         side = self.rng.randrange(4)
-        across, down = self.rng.uniform(60, self.w - 60), self.rng.uniform(60, self.h - 60)
-        st.x, st.y = [(-40.0, down), (self.w + 40.0, down), (across, -40.0), (across, self.h + 40.0)][side]
+        k = self.k
+        across, down = self.rng.uniform(60 * k, self.w - 60 * k), self.rng.uniform(60 * k, self.h - 60 * k)
+        off = 40.0 * k
+        st.x, st.y = [(-off, down), (self.w + off, down), (across, -off), (across, self.h + off)][side]
         st.vx = st.vy = 0.0
         st.gone = 0.0
         st.born = self.t
@@ -132,18 +141,21 @@ class FollowTheStar(Game):
         self.caught += 1
         self.score += 1
         st.gone = 0.9
-        self.burst(st.x, st.y, [art.LEMON, art.WHITE, art.TANGERINE, art.BUBBLEGUM], 26, speed=(160, 380),
-                   life=(0.6, 1.2), size=(6, 12), kinds=("star", "spark", "dot"), gravity=200)
+        k = self.k
+        self.burst(st.x, st.y, [art.LEMON, art.WHITE, art.TANGERINE, art.BUBBLEGUM], 26, speed=(160 * k, 380 * k),
+                   life=(0.6, 1.2), size=(6 * k, 12 * k), kinds=("star", "spark", "dot"), gravity=200 * k)
         self.eyes.feel("happy", 1.4)
         self.host.sound("sparkle")
 
     def on_tap(self, x: float, y: float) -> bool:
         st = self.star
-        if st.gone <= 0 and art.dist(x, y, st.x, st.y) <= CATCH_RADIUS:
+        if st.gone <= 0 and art.dist(x, y, st.x, st.y) <= self.catch_radius:
             self.catch()
         elif st.gone <= 0:
             self.pick_target(x=x, y=y)
-            self.burst(x, y, [art.WHITE, art.LEMON], 5, speed=(40, 110), life=(0.4, 0.7), size=(6, 9), kinds=("spark",))
+            k = self.k
+            self.burst(x, y, [art.WHITE, art.LEMON], 5, speed=(40 * k, 110 * k), life=(0.4, 0.7), size=(6 * k, 9 * k),
+                       kinds=("spark",))
             self.host.sound("boop", volume=0.5)
         return True
 
@@ -165,15 +177,17 @@ class FollowTheStar(Game):
             return
         pulse = 1.0 + 0.08 * math.sin(self.t * 5)
         grow = art.ease_out_back(min(1.0, (self.t - st.born) / 0.5)) if self.t - st.born < 0.5 else 1.0
-        art.blit_center(surf, art.glow(STAR_R * 2.3 * pulse * grow, art.LEMON, 1.0), (st.x, st.y))
-        spr = art.star(STAR_R * grow, art.LEMON, rot_deg=math.sin(self.t * 1.7) * 14)
+        r = self.star_r
+        art.blit_center(surf, art.glow(r * 2.3 * pulse * grow, art.LEMON, 1.0), (st.x, st.y))
+        spr = art.star(r * grow, art.LEMON, rot_deg=math.sin(self.t * 1.7) * 14)
         art.blit_center(surf, spr, (st.x, st.y))
         child = self.child_point()
+        reach = 200 * self.k
         if child is not None:
-            look = ((child[0] - st.x) / 200, (child[1] - st.y) / 200)
+            look = ((child[0] - st.x) / reach, (child[1] - st.y) / reach)
         else:
-            look = ((self.eyes.x - st.x) / 200, (self.eyes.y - st.y) / 200)
-        art.cute_face(surf, st.x, st.y + 5 * grow, STAR_R * 1.7 * grow, look=look)
+            look = ((self.eyes.x - st.x) / reach, (self.eyes.y - st.y) / reach)
+        art.cute_face(surf, st.x, st.y + 5 * self.k * grow, r * 1.7 * grow, look=look)
 
     def summary(self) -> str:
         return f"{self.caught} star{'s' if self.caught != 1 else ''} caught"

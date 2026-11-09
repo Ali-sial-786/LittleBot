@@ -13,11 +13,13 @@ import pygame
 from littlebot.games import art
 from littlebot.games.base import Game
 
-MAX_BUBBLES = 8
-TAP_SLOP = 18.0  # px of forgiveness around a bubble (little fingers, uncalibrated touch)
+MAX_BUBBLES = 9  # sparse on the 1024x600 screen: big, easy targets
+# Sizes below are for a 480 px tall canvas and grow with it (x1.25 on the robot's 1024x600 screen).
+TAP_SLOP = 18.0  # px of forgiveness around a bubble (little fingers)
 GOLDEN_EVERY = (14.0, 22.0)
 NEW_BUBBLE_COOLDOWN = 0.22
 RADII = (38, 44, 50, 56, 62)  # a few fixed sizes keep the sprite cache small
+GOLDEN_R = 70
 
 
 @dataclass(eq=False)
@@ -76,6 +78,8 @@ class BubblePop(Game):
 
     def __init__(self, host: Any = None, *, size: tuple[int, int] = (art.W, art.H), seed: int | None = None) -> None:
         super().__init__(host, size=size, seed=seed)
+        self.k = self.h / 480  # px scale (1.25 on the 1024x600 screen)
+        self.radii = tuple(int(round(r * self.k)) for r in RADII)
         self.bubbles: list[Bubble] = []
         self.rings: list[Ring] = []
         self.spawn_in = 0.4
@@ -83,14 +87,14 @@ class BubblePop(Game):
         self.popped = 0
         self.self_popped = 0
         self.last_new = -1.0
-        self.eyes = art.EyeState(self.w / 2, self.h - 52, 0.75, self.eye_color)
+        self.eyes = art.EyeState(self.w / 2, self.h - 52 * self.k, 0.75 * self.k, self.eye_color)
         self._color_i = self.rng.randrange(len(art.CANDY))
 
     # ------------------------------------------------------------ lifecycle
     def begin(self) -> None:
         super().begin()
         for i in range(4):
-            b = self.spawn(y=self.h * (0.35 + 0.17 * i) + self.rng.uniform(-20, 20))
+            b = self.spawn(y=self.h * (0.35 + 0.17 * i) + self.rng.uniform(-20, 20) * self.k)
             b.grow = 0.0
         self.host.sound("boop", volume=0.6)
 
@@ -101,21 +105,22 @@ class BubblePop(Game):
 
     def spawn(self, x: float | None = None, y: float | None = None, r: float | None = None,
               golden: bool = False) -> Bubble:
-        r = float(round(r)) if r is not None else float(self.rng.choice(RADII))
+        k = self.k
+        r = float(round(r)) if r is not None else float(self.rng.choice(self.radii))
         if golden:
-            r = 70.0
+            r = float(round(GOLDEN_R * k))
         if x is None:
             # spread out: avoid starting right under the newest bubble
             for _ in range(6):
-                x = self.rng.uniform(r + 10, self.w - r - 10)
-                if not self.bubbles or abs(x - self.bubbles[-1].x0) > 120:
+                x = self.rng.uniform(r + 10 * k, self.w - r - 10 * k)
+                if not self.bubbles or abs(x - self.bubbles[-1].x0) > 150 * k:
                     break
         y = y if y is not None else self.h + r + 4
-        speed = self.rng.uniform(42, 70) * (1.25 - (r - 38) / 100)
+        speed = self.rng.uniform(42, 70) * k * (1.25 - (r / k - 38) / 100)
         b = Bubble(x0=float(x), y=float(y), r=float(r), color=art.LEMON if golden else self.next_color(),
                    vy=-speed * (0.8 if golden else 1.0), phase=self.rng.uniform(0, 2 * math.pi),
-                   wobble=self.rng.uniform(10, 26), pop_y=self.rng.uniform(56, 150), born=self.t, golden=golden,
-                   x=float(x), grow=0.0)
+                   wobble=self.rng.uniform(10, 26) * k, pop_y=self.rng.uniform(56, 150) * k, born=self.t,
+                   golden=golden, x=float(x), grow=0.0)
         self.bubbles.append(b)
         return b
 
@@ -142,12 +147,12 @@ class BubblePop(Game):
                 self.rings.remove(ring)
         target = self.bubbles[-1] if self.bubbles else None
         if target is not None and self.eyes.mood == "neutral":
-            self.eyes.look_at_point(target.x, target.y, 300)
+            self.eyes.look_at_point(target.x, target.y, 300 * self.k)
         self.eyes.update(dt, self.rng)
 
     def bubble_at(self, x: float, y: float) -> Bubble | None:
         for b in reversed(self.bubbles):  # front-most first
-            if art.dist(x, y, b.x, b.y) <= b.r * max(0.6, b.grow) + TAP_SLOP:
+            if art.dist(x, y, b.x, b.y) <= b.r * max(0.6, b.grow) + TAP_SLOP * self.k:
                 return b
         return None
 
@@ -157,17 +162,18 @@ class BubblePop(Game):
         self.bubbles.remove(b)
         light = art.lighten(b.color, 0.45)
         self.rings.append(Ring(b.x, b.y, b.r, light))
+        k = self.k
         if by_tap:
             self.popped += 1
             self.score += 1
-            self.burst(b.x, b.y, [b.color, light, art.WHITE], 16, speed=(120, 300), life=(0.4, 0.8),
-                       size=(4, 9), radius=b.r * 0.6)
-            self.burst(b.x, b.y, [art.WHITE, art.LEMON], 5, speed=(40, 140), life=(0.5, 0.9), size=(6, 10),
-                       kinds=("spark",))
-            self.eyes.look_at_point(b.x, b.y, 300)
+            self.burst(b.x, b.y, [b.color, light, art.WHITE], 16, speed=(120 * k, 300 * k), life=(0.4, 0.8),
+                       size=(4 * k, 9 * k), radius=b.r * 0.6)
+            self.burst(b.x, b.y, [art.WHITE, art.LEMON], 5, speed=(40 * k, 140 * k), life=(0.5, 0.9),
+                       size=(6 * k, 10 * k), kinds=("spark",))
+            self.eyes.look_at_point(b.x, b.y, 300 * k)
             if b.golden:
-                self.burst(b.x, b.y, list(art.CANDY), 40, speed=(150, 380), life=(0.8, 1.4), size=(6, 11),
-                           kinds=("star", "confetti", "dot"), gravity=260)
+                self.burst(b.x, b.y, list(art.CANDY), 40, speed=(150 * k, 380 * k), life=(0.8, 1.4),
+                           size=(6 * k, 11 * k), kinds=("star", "confetti", "dot"), gravity=260 * k)
                 self.eyes.feel("happy", 1.6)
                 self.host.sound("sparkle")
             else:
@@ -175,8 +181,8 @@ class BubblePop(Game):
                 self.host.sound("pop")
         else:
             self.self_popped += 1
-            self.burst(b.x, b.y, [b.color, light], 8, speed=(60, 160), life=(0.3, 0.6), size=(3, 6),
-                       radius=b.r * 0.6)
+            self.burst(b.x, b.y, [b.color, light], 8, speed=(60 * k, 160 * k), life=(0.3, 0.6),
+                       size=(3 * k, 6 * k), radius=b.r * 0.6)
             self.host.sound("pop", volume=0.3)
 
     def on_tap(self, x: float, y: float) -> bool:
@@ -186,12 +192,14 @@ class BubblePop(Game):
             return True
         if self.t - self.last_new >= NEW_BUBBLE_COOLDOWN:
             self.last_new = self.t
-            nb = self.spawn(x=art.clamp(x, 40, self.w - 40), y=art.clamp(y, 40, self.h - 20),
-                            r=self.rng.choice(RADII[:2]))
+            k = self.k
+            nb = self.spawn(x=art.clamp(x, 40 * k, self.w - 40 * k), y=art.clamp(y, 40 * k, self.h - 20 * k),
+                            r=self.rng.choice(self.radii[:2]))
             nb.vy *= 1.15
-            self.burst(x, y, [art.WHITE], 4, speed=(40, 100), life=(0.3, 0.5), size=(5, 8), kinds=("spark",))
+            self.burst(x, y, [art.WHITE], 4, speed=(40 * k, 100 * k), life=(0.3, 0.5), size=(5 * k, 8 * k),
+                       kinds=("spark",))
             self.host.sound("blip", volume=0.5)
-            self.eyes.look_at_point(x, y, 300)
+            self.eyes.look_at_point(x, y, 300 * k)
         return True
 
     def on_key(self, name: str) -> bool:
@@ -205,7 +213,7 @@ class BubblePop(Game):
         surf.blit(art.background(self.size), (0, 0))
         self.eyes.draw(surf)
         for b in self.bubbles:
-            r = int(round(b.r + 1.4 * math.sin(self.t * 3.1 + b.phase)))  # gentle breathing
+            r = int(round(b.r + 1.4 * self.k * math.sin(self.t * 3.1 + b.phase)))  # gentle breathing
             spr = bubble_sprite(r, b.color)
             k = art.ease_out_back(b.grow) if b.grow < 1 else 1.0
             if k != 1.0:

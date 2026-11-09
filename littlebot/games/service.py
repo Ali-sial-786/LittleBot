@@ -570,7 +570,10 @@ class GamesService(Service):
 
         rect = pygame.Rect(rect) if rect is not None else surface.get_rect()
         if rect.size == game.size and surface.get_rect().contains(rect):
+            # The robot's screen is the game's own size (1024x600): drawn straight into it, no scaling. The
+            # scaling buffers (two full frames, from a desktop window) are let go.
             game.draw(surface.subsurface(rect))
+            self._canvas = self._scaled = None
             return
         if self._canvas is None or self._canvas.get_size() != game.size:
             self._canvas = pygame.Surface(game.size, 0, 32)

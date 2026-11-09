@@ -18,10 +18,11 @@ from littlebot.games.base import Game
 
 LINES = ((0, 1, 2), (3, 4, 5), (6, 7, 8), (0, 3, 6), (1, 4, 7), (2, 5, 8), (0, 4, 8), (2, 4, 6))
 HUMAN, BOT = "X", "O"
+# The board for a 480 px tall canvas; a game scales it to its own (on the 1024x600 screen: cells of 141 px,
+# "You" and LittleBot in panels either side).
 CELL, GAP = 118, 12
-BOARD = 3 * CELL + 2 * GAP
-BX = (art.W - BOARD) // 2
 BY = 80
+SIDE_MIN_W = 150  # narrower room beside the board than this: no panels behind the scores
 X_COLOR = art.STRAWBERRY
 O_COLOR: art.Color = (64, 182, 236)
 SKILL_START, SKILL_MIN, SKILL_MAX = 0.55, 0.25, 0.97
@@ -132,7 +133,18 @@ class TicTacToe(Game):
         self.adaptive = adaptive
         self.wins = self.losses = self.draws = 0
         self.rounds = 0
-        self.eyes = art.EyeState(self.w - BX / 2, 150, 0.62, self.eye_color)
+        k = self.k = self.h / 480  # px scale (1.25 on the 1024x600 screen)
+        self.cell, self.gap = int(round(CELL * k * 0.96)), int(round(GAP * k * 0.96))
+        self.board_px = 3 * self.cell + 2 * self.gap
+        self.bx, self.by = (self.w - self.board_px) // 2, int(round(BY * k))
+        side = int(min(250 * k, self.bx - 40 * k))
+        self.side_w = side if side >= SIDE_MIN_W else 0
+        self.eyes = art.EyeState(self.w - self.bx / 2, self.side_y(0.2), 0.62 * k, self.eye_color)
+
+    def side_y(self, f: float) -> float:
+        """A height in the side panels, ``f`` of the way down (they are as tall as the board's panel)."""
+        top = self.by - 14 * self.k
+        return top + f * (self.board_px + 28 * self.k)
 
     def begin(self) -> None:
         super().begin()
@@ -213,11 +225,11 @@ class TicTacToe(Game):
             if self.glance_t <= 0 and empty:
                 self.glance_t = 0.28
                 cx, cy = self.cell_center(self.rng.choice(empty))
-                self.eyes.look_at_point(cx, cy, 300)
+                self.eyes.look_at_point(cx, cy, 300 * self.k)
             if self.phase_t >= self.think_for and not self.in_finale:
                 cell = self.choose_move()
                 cx, cy = self.cell_center(cell)
-                self.eyes.look_at_point(cx, cy, 300)
+                self.eyes.look_at_point(cx, cy, 300 * self.k)
                 self.place(cell, BOT)
         elif self.phase == "over" and self.phase_t >= 2.6 and not self.in_finale:
             self.new_round()
@@ -226,7 +238,8 @@ class TicTacToe(Game):
         self.eyes.update(dt, self.rng)
 
     def cell_rect(self, i: int) -> pygame.Rect:
-        return pygame.Rect(BX + (i % 3) * (CELL + GAP), BY + (i // 3) * (CELL + GAP), CELL, CELL)
+        c, g = self.cell, self.gap
+        return pygame.Rect(self.bx + (i % 3) * (c + g), self.by + (i // 3) * (c + g), c, c)
 
     def cell_center(self, i: int) -> tuple[float, float]:
         r = self.cell_rect(i)
@@ -234,7 +247,7 @@ class TicTacToe(Game):
 
     def cell_at(self, x: float, y: float) -> int | None:
         for i in range(9):
-            if self.cell_rect(i).inflate(GAP, GAP).collidepoint(x, y):
+            if self.cell_rect(i).inflate(self.gap, self.gap).collidepoint(x, y):
                 return i
         return None
 
@@ -266,52 +279,65 @@ class TicTacToe(Game):
         return "LittleBot's turn...", art.INK, art.WHITE
 
     def render(self, surf: pygame.Surface) -> None:
+        k = self.k
         surf.blit(art.background(self.size, seed=8), (0, 0))
-        panel = art.rounded_rect(BOARD + 28, BOARD + 28, 34, (255, 244, 249), shadow=6, border=(246, 196, 220),
-                                 border_w=4)
-        surf.blit(panel, (BX - 14, BY - 14))
+        pad = int(14 * k)
+        panel = art.rounded_rect(self.board_px + 2 * pad, self.board_px + 2 * pad, int(34 * k), (255, 244, 249),
+                                 shadow=6, border=(246, 196, 220), border_w=4)
+        surf.blit(panel, (self.bx - pad, self.by - pad))
+        mark_px = int(self.cell * 0.81)
         for i in range(9):
             r = self.cell_rect(i)
             win_cell = self.line is not None and i in self.line
             color = (255, 255, 255) if not win_cell else art.lighten(art.LEMON, 0.45)
-            surf.blit(art.rounded_rect(CELL, CELL, 24, color, shadow=4), r.topleft)
+            surf.blit(art.rounded_rect(self.cell, self.cell, int(24 * k), color, shadow=4), r.topleft)
             mark = self.board[i]
             if mark:
-                spr = x_sprite(96) if mark == HUMAN else o_sprite(96)
+                spr = x_sprite(mark_px) if mark == HUMAN else o_sprite(mark_px)
                 age = self.t - self.placed[i]
                 if age < 0.35:
                     spr = art.scaled(spr, art.ease_out_back(age / 0.35, 2.2))
                 art.blit_center(surf, spr, (r.centerx, r.centery + 1))
         if self.line is not None:
             self.draw_win_line(surf)
-        # side panels
-        lx = BX / 2
-        art.blit_center(surf, x_sprite(64), (lx, 150))
-        art.blit_text(surf, "You", 34, (lx, 214), art.INK)
-        art.blit_center(surf, art.text_outlined(str(self.wins), 76, art.WHITE, art.INK, 3), (lx, 272))
-        rx = self.w - BX / 2
+        # the two players either side of the board
+        lx, rx = self.bx / 2, self.w - self.bx / 2
+        if self.side_w:
+            for x in (lx, rx):
+                w, h = self.side_w, self.board_px + 2 * pad
+                surf.blit(art.rounded_rect(w, h, int(30 * k), art.CREAM, shadow=4, border=(246, 196, 220), border_w=3),
+                          (int(x - w / 2), self.by - pad))
+        sy = self.side_y
+        art.blit_center(surf, x_sprite(int(80 * k)), (lx, sy(0.2)))
+        art.blit_text(surf, "You", int(36 * k), (lx, sy(0.42)), art.INK)
+        art.blit_center(surf, art.text_outlined(str(self.wins), int(80 * k), art.WHITE, X_COLOR, 4), (lx, sy(0.6)))
         self.eyes.draw(surf)
-        art.blit_text(surf, "LittleBot", 30, (rx, 214), art.INK)
-        art.blit_center(surf, art.text_outlined(str(self.losses), 76, art.WHITE, art.INK, 3), (rx, 272))
-        art.blit_center(surf, o_sprite(52), (rx, 340))
+        art.blit_text(surf, "LittleBot", int(32 * k), (rx, sy(0.42)), art.INK)
+        art.blit_center(surf, art.text_outlined(str(self.losses), int(80 * k), art.WHITE, O_COLOR, 4), (rx, sy(0.6)))
+        art.blit_center(surf, o_sprite(int(52 * k)), (rx, sy(0.84)))
         if self.draws:
-            art.blit_center(surf, art.pill(f"Draws {self.draws}", 24, art.INK_SOFT, art.WHITE), (lx, 340))
+            art.blit_center(surf, art.pill(f"Draws {self.draws}", int(28 * k), art.INK_SOFT, art.WHITE, pad=(16, 6)),
+                            (lx, sy(0.84)))
+        elif self.rounds:
+            art.blit_center(surf, art.pill(f"Round {self.rounds + 1}", int(28 * k), art.INK_SOFT, art.WHITE,
+                                           pad=(16, 6)), (lx, sy(0.84)))
         text, fg, bg = self.label()
-        art.blit_center(surf, art.pill(text, 32, fg, bg), (self.w / 2, 38))
+        art.blit_center(surf, art.pill(text, int(32 * k), fg, bg, pad=(22, 8)), (self.w / 2, (self.by - pad) / 2))
 
     def draw_win_line(self, surf: pygame.Surface) -> None:
         a, _b, c = self.line or (0, 0, 0)
         (x0, y0), (x1, y1) = self.cell_center(a), self.cell_center(c)
-        ext = 46
+        k = self.k
+        ext = 46 * k
         d = math.hypot(x1 - x0, y1 - y0)
         ux, uy = (x1 - x0) / d, (y1 - y0) / d
         x0, y0, x1, y1 = x0 - ux * ext, y0 - uy * ext, x1 + ux * ext, y1 + uy * ext
         p = art.ease_out_cubic(self.phase_t / 0.4)
         color = X_COLOR if self.result == HUMAN else O_COLOR
         end = (x0 + (x1 - x0) * p, y0 + (y1 - y0) * p)
-        art.capsule(surf, art.inkier(color, 0.3), (x0, y0), end, 24)
-        art.capsule(surf, art.lighten(color, 0.3), (x0, y0), end, 16)
-        art.capsule(surf, art.lighten(color, 0.7), (x0, y0 - 3), (end[0], end[1] - 3), 4)
+        art.capsule(surf, art.inkier(color, 0.3), (x0, y0), end, 24 * k)
+        art.capsule(surf, art.lighten(color, 0.3), (x0, y0), end, 16 * k)
+        art.capsule(surf, art.lighten(color, 0.7), (x0, y0 - 3 * k), (end[0], end[1] - 3 * k), 4 * k)
 
     def summary(self) -> str:
         return f"You {self.wins} - LittleBot {self.losses}" + (f" - draws {self.draws}" if self.draws else "")

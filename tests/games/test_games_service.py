@@ -259,15 +259,21 @@ async def test_watchdog_task_drives_the_session(svc, clock, monkeypatch):
 
 # ------------------------------------------------------------------ display hooks
 async def test_render_draws_the_game_native_and_scaled(svc, surface):
+    assert surface.get_size() == (1024, 600)  # the robot's 7" screen
     assert svc.render(surface, surface.get_rect(), 1 / 30) is False  # nothing running
     await svc.start("memory")
+    assert svc._session.game.size == (1024, 600)
     assert svc.render(surface, surface.get_rect(), 1 / 30) is True
     assert distinct_colors(surface) > 8
-    big = pygame.Surface((1260, 660))
-    rect = pygame.Rect(150, 10, 960, 640)
+    assert svc._canvas is None and svc._scaled is None  # the screen's own size: drawn straight in, no scaling
+    big = pygame.Surface((1460, 760))
+    rect = pygame.Rect(150, 10, 1280, 750)  # a desktop window: drawn, then scaled into the face rect
     assert svc.render(big, rect, 1 / 30) is True
     assert big.get_at((10, 10))[:3] == (0, 0, 0)  # outside the face rect untouched
     assert big.get_at(rect.center)[:3] != (0, 0, 0)
+    assert svc._scaled is not None and svc._scaled.get_size() == rect.size
+    assert svc.render(surface, surface.get_rect(), 1 / 30) is True
+    assert svc._canvas is None and svc._scaled is None  # back on the screen: the buffers are let go
     assert svc.status()["drawn"] is True
 
 

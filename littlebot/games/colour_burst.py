@@ -15,7 +15,9 @@ from littlebot.games import art
 from littlebot.games.base import Game
 
 NOTES = ("C4", "D4", "E4", "G4", "A4", "C5", "D5", "E5", "G5")  # pentatonic: every note sounds nice
-MAX_MARKS = 20
+MAX_MARKS = 22
+SIZES = (92, 104, 116)  # px on a 480 px tall canvas; a game scales them (x1.25 on the 1024x600 screen)
+AUTO_SIZE = 80
 LIFE = 9.0
 FADE = 2.0
 APPEAR = 0.42
@@ -63,7 +65,7 @@ def splat_sprite(seed: int, color: art.Color, size: int) -> pygame.Surface:
                 drops.append((c + math.cos(a) * d, c + math.sin(a) * d, rng.uniform(0.07, 0.16) * r))
                 drops.append((c + math.cos(a) * d * 0.82, c + math.sin(a) * d * 0.82, rng.uniform(0.04, 0.08) * r))
             for x, y, rr in [(c, c, r * 0.95), *blobs, *drops]:
-                pygame.draw.circle(s, dark, (x, y), rr + 2.5 * k)
+                pygame.draw.circle(s, dark, (x, y), rr + max(2.5, size * 0.024) * k)
             for x, y, rr in [(c, c, r * 0.95), *blobs, *drops]:
                 pygame.draw.circle(s, color, (x, y), rr)
             pygame.draw.circle(s, art.lighten(color, 0.38), (c - r * 0.32, c - r * 0.34), r * 0.24)
@@ -79,6 +81,7 @@ def stamp_sprite(shape: str, color: art.Color, size: int) -> pygame.Surface:
 
     def make() -> pygame.Surface:
         span = int(size * 1.25)
+        ol = max(2.5, size * 0.024)  # the outline grows with the shape
         out = pygame.Surface((span, span), pygame.SRCALPHA)
         c = span / 2
         face_y = c
@@ -91,17 +94,17 @@ def stamp_sprite(shape: str, color: art.Color, size: int) -> pygame.Surface:
             face_y = c - size * 0.04
         elif shape == "flower":
             petal = art.circle(size * 0.2, art.lighten(color, 0.1))
-            edge = art.circle(size * 0.2 + 2.5, art.inkier(color, 0.35))
+            edge = art.circle(size * 0.2 + ol, art.inkier(color, 0.35))
             for i in range(6):
                 a = i * math.pi / 3
                 art.blit_center(out, edge, (c + math.cos(a) * size * 0.3, c + math.sin(a) * size * 0.3))
             for i in range(6):
                 a = i * math.pi / 3
                 art.blit_center(out, petal, (c + math.cos(a) * size * 0.3, c + math.sin(a) * size * 0.3))
-            art.blit_center(out, art.circle(size * 0.25 + 2.5, art.inkier(art.LEMON, 0.35)), (c, c))
+            art.blit_center(out, art.circle(size * 0.25 + ol, art.inkier(art.LEMON, 0.35)), (c, c))
             art.blit_center(out, art.circle(size * 0.25, art.LEMON), (c, c))
         else:
-            art.blit_center(out, art.circle(size * 0.45 + 3, art.inkier(color, 0.35)), (c, c))
+            art.blit_center(out, art.circle(size * 0.45 + ol * 1.2, art.inkier(color, 0.35)), (c, c))
             art.blit_center(out, art.circle(size * 0.45, color), (c, c))
             shine = art.circle(size * 0.12, art.lighten(color, 0.55), 170)
             art.blit_center(out, shine, (c - size * 0.2, c - size * 0.22))
@@ -116,13 +119,14 @@ class ColourBurst(Game):
 
     def __init__(self, host: Any = None, *, size: tuple[int, int] = (art.W, art.H), seed: int | None = None) -> None:
         super().__init__(host, size=size, seed=seed)
+        self.k = self.h / 480  # px scale (1.25 on the 1024x600 screen)
         self.marks: list[Mark] = []
         self.last_tap = 0.0
         self.next_invite = 1.0
         self.painted = 0
         self._ci = self.rng.randrange(len(art.CANDY))
         self._kind_i = 0
-        self.eyes = art.EyeState(self.w / 2, self.h - 50, 0.62, self.eye_color)
+        self.eyes = art.EyeState(self.w / 2, self.h - 50 * self.k, 0.62 * self.k, self.eye_color)
 
     def begin(self) -> None:
         super().begin()
@@ -138,19 +142,21 @@ class ColourBurst(Game):
         color = art.CANDY[self._ci]
         self._kind_i += 1
         kind = "shape" if self._kind_i % 2 == 0 else "splat"
-        size = self.rng.choice((92, 104, 116)) if not auto else 80
+        k = self.k
+        size = int(round((self.rng.choice(SIZES) if not auto else AUTO_SIZE) * k))
         m = Mark(x=float(x), y=float(y), kind=kind, shape=self.rng.choice(SHAPES), color=color, size=size,
                  born=self.t, rot=self.rng.uniform(-14, 14), seed=self.rng.randrange(1 << 30), auto=auto)
         self.marks.append(m)
         live = [mk for mk in self.marks if mk.dying < 0]
         for old in live[: max(0, len(live) - MAX_MARKS)]:
             old.dying = 0.0
-        self.burst(x, y, [color, art.lighten(color, 0.4), art.WHITE], 14, speed=(140, 320), life=(0.45, 0.9),
-                   size=(4, 9), radius=size * 0.3)
-        self.burst(x, y, [art.WHITE, art.LEMON], 5, speed=(60, 180), life=(0.5, 0.9), size=(7, 11), kinds=("spark",))
+        self.burst(x, y, [color, art.lighten(color, 0.4), art.WHITE], 14, speed=(140 * k, 320 * k), life=(0.45, 0.9),
+                   size=(4 * k, 9 * k), radius=size * 0.3)
+        self.burst(x, y, [art.WHITE, art.LEMON], 5, speed=(60 * k, 180 * k), life=(0.5, 0.9), size=(7 * k, 11 * k),
+                   kinds=("spark",))
         note = self.note_for(x)
         self.host.melody([(note, 0.5)], tempo_bpm=150)
-        self.eyes.look_at_point(x, y, 320)
+        self.eyes.look_at_point(x, y, 320 * k)
         self.eyes.feel("happy" if not auto else "neutral", 0.6)
         if not auto:
             self.painted += 1
@@ -168,7 +174,9 @@ class ColourBurst(Game):
         if self.t - self.last_tap > IDLE_INVITE and not self.in_finale:
             self.next_invite -= dt
             if self.next_invite <= 0:
-                self.add_mark(self.rng.uniform(90, self.w - 90), self.rng.uniform(80, self.h - 140), auto=True)
+                k = self.k
+                self.add_mark(self.rng.uniform(90 * k, self.w - 90 * k), self.rng.uniform(80 * k, self.h - 140 * k),
+                              auto=True)
                 self.next_invite = 3.5
         self.eyes.update(dt, self.rng)
 
@@ -180,7 +188,8 @@ class ColourBurst(Game):
 
     def on_key(self, name: str) -> bool:
         if name in ("space", "return"):
-            self.on_tap(self.rng.uniform(80, self.w - 80), self.rng.uniform(80, self.h - 80))
+            m = 80 * self.k
+            self.on_tap(self.rng.uniform(m, self.w - m), self.rng.uniform(m, self.h - m))
             return True
         return False
 
