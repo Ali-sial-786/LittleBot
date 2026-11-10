@@ -27,12 +27,12 @@ To look like the concept, v4 is bigger than v3: 437 mm tall, the head 242 × 158
 | Arms | Shoulder, arm and hand in one smooth piece | They splay out 16° and stand clear of the body. Each hand has 4 fingers and a thumb at the front. |
 
 Reused as printed (not on the plates):
-- **from v2:** the floor (Pi 5 + UPS), the stack keeper, the PCA9685 clamps, the coupler, the ring gear, the pinion, the servo frame and the camera bracket;
+- **from v2:** the floor (Pi 5 + UPS), the PCA9685 clamps, the coupler, the ring gear, the pinion, the servo frame and the camera bracket;
 - **from v3:** the neck plate, if you printed it (v4's is identical): then skip plate 5.
 
-![the 8 parts reused from v2](reused_from_v2.png)
+![the 7 parts reused from v2](reused_from_v2.png)
 
-Everything else is new. That includes the base ring (v3's shape, with its 4 screw tabs moved to the back) and the UPS slider (13 mm longer than v3's, so its tab reaches out through the dark panel).
+Everything else is new. That includes the base ring (v3's shape, with its 4 screw tabs moved to the back), the UPS slider (13 mm longer than v3's, so its tab reaches out through the dark panel) and the stack keeper (much stronger than v2's: below).
 
 ## Files
 
@@ -40,11 +40,11 @@ Everything else is new. That includes the base ring (v3's shape, with its 4 scre
 |---|---|
 | `littlebot_v4.scad` | the model (it includes `../enclosure_v3/littlebot_v3.scad`, which includes v2) |
 | `LittleBot_v4_A1.3mf` | **the Bambu Studio project: 5 plates, colours, supports and brims set** |
-| `LittleBot_v4_extras_A1.3mf` | one plate: the glue-in camera cradle (only for a head frame printed before 10 Nov 2026) and a spare stack keeper |
+| `LittleBot_v4_extras_A1.3mf` | one plate: the glue-in camera cradle (only for a head frame printed before 10 Nov 2026) and v4's stack keeper |
 | `LittleBot_v4_assembled.3mf` | the whole robot assembled and coloured, to look at (not to print) |
 | `stl/*.stl` | each part on its own, in its print orientation (`head_inlay` is the head frame's dark arch; `camera_cradle` only for a head frame printed before 10 Nov 2026) |
 | `plates_v4.png` | top view of the 5 plates |
-| `checks_v4.scad`, `run_checks_v4.sh` | 63 checks (`OPENSCAD=... ./run_checks_v4.sh`), all passing. They cover interference, the arms' sweep and finger pinch with the head turned, the glass never touched, room to push each plug in, the slider, the AA box in the head, the speaker and mic, the dark panel, the camera's pivot screws (a clear path in, and they reach the bracket) and the glue-in camera cradle. |
+| `checks_v4.scad`, `run_checks_v4.sh` | 64 checks (`OPENSCAD=... ./run_checks_v4.sh`), all passing. They cover interference, the arms' sweep and finger pinch with the head turned, the glass never touched, room to push each plug in, the slider, the AA box in the head, the speaker and mic, the dark panel, the camera's pivot screws (a clear path in, and they reach the bracket), the glue-in camera cradle and the stack keeper's fit. |
 | `LittleBot_v4_assembly.mp4` | **the assembly video** (4 minutes): every part, screw, nut and cable going in, in the order below, each screw turned in by its tool with its size on a tag |
 | `assembly_video/` | re-makes the video (`OPENSCAD=... ./make_video.sh`). The screws, nuts, cable routes and part positions come from the model (`video4.scad`). |
 | `export_v4.sh`, `make_v4_project.py`, `make_v4_assembly.py` | re-make the STLs, the project and the assembled 3MF |
@@ -72,7 +72,7 @@ Filament slots: **1 white**, **2 dark grey**.
 | 1 | white | **body** (upright), **both arms** (flat, inside the body's footprint), **UPS slider** | 5 mm brim on the body. |
 | 2 | white + dark | **head frame** (face down) | The dark arch is part of the same print: its first 8 layers switch filament where the arch is. **Tree supports from the build plate**, under the screen's 4 bosses. |
 | 3 | white | **head back** (rim down) | **Tree supports from the build plate**, inside its dome. |
-| 4 | dark | **base ring** (upright), **black neck** (top down), **port panel** (upright, as it sits) | 3 mm brim on the panel. |
+| 4 | dark | **base ring** (upright), **black neck** (top down), **port panel** (upright, as it sits), **stack keeper** (top face down) | 3 mm brims on the panel and the keeper. |
 | 5 | white | **neck plate** (top face down) | Skip it if you printed v3's: it's the same part. |
 
 ## What to buy
@@ -146,13 +146,19 @@ In total: 18 × M3 × 12, 5 × M3 × 10, 5 × M3 × 8 and 8 M3 nuts (v2's neck s
 That head frame held the camera bracket on 2 small holders that touch the roof by a sliver only (they wobble and break), and its screws had no way in. Don't reprint the head frame for it:
 
 1. Snap the 2 holders off with pliers and trim what's left flush.
-2. Print `LittleBot_v4_extras_A1.3mf` (the cradle and a spare stack keeper on one plate), or just `stl/camera_cradle.stl`: white, plate down, no supports, about 22 g.
+2. Print `LittleBot_v4_extras_A1.3mf` (the cradle and v4's stack keeper on one plate), or just `stl/camera_cradle.stl`: white, plate down, no supports, about 22 g.
 3. On the bench: clip the camera into v2's bracket and set the bracket between the cradle's 2 cheeks, lens through the window. Fit 2 × M3 × 12 from outside the cheeks into its pivots, set the tilt and snug them.
 4. Scuff the cradle's plate and the inside of the face above the screen. Glue the plate flat onto the face (CA gel or 2-part epoxy), with the lens centred in the face's lens hole. Then plug the 5-pin cable into the board's back.
 
 The tilt stays adjustable: the 2 screws are reached from behind, with the head's back off.
 
 ![the cradle glued inside the face, seen from below and behind](camera_cradle.png)
+
+### The stack keeper is v4's own
+
+v2's keeper was a 1.6 mm bar (0.6 mm over its V-groove) so it fitted under v2's base. Its screw recesses were wider than the bar, and its ends sat 0.65 mm into the floor's front wall, so tightening the screws bent it: it broke. v4 has room above the stack: a 9 × 9 mm bar, 11 mm wide round the screw heads, clear of the wall. It goes on the same floor with the same 2 × M3 × 20 (the heads sit 9 mm down: a 2 mm hex key). It's on plate 4 and in `LittleBot_v4_extras_A1.3mf`; print it top face down.
+
+![v2's keeper and v4's](stack_keeper_v4.png)
 
 ## Measure before printing
 

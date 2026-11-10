@@ -21,7 +21,7 @@ export -f one; export tmp OPENSCAD
     if (($#)); then printf '%s\n' "$@"; else
     for c in body_vs_electronics ring_vs_electronics body_vs_floor ring_vs_floor body_vs_ring body_vs_plate plate_vs_neck frame_vs_plate \
              slider_vs_parts slider_grips_knob slider_moves_knob chest_vs_neck panel_vs_body box_vs_head head_vs_screen plugs_go_in glass_untouched cover_vs_frame hood_vs_camera \
-             pivot_screws_clear pivot_screws_bite cradle_vs_frame cradle_vs_camera cradle_screws_clear selftest_must_fail; do echo "$c"; done
+             pivot_screws_clear pivot_screws_bite cradle_vs_frame cradle_vs_camera cradle_screws_clear keeper_fit selftest_must_fail; do echo "$c"; done
     for h in -60 0 60; do echo "body_vs_neck -D head_angle=$h"; echo "head_vs_body -D head_angle=$h"; echo "puck_vs_static -D head_angle=$h"; echo "puck_vs_coupler -D head_angle=$h"; done
     for a in -90 -60 -30 0 8 30 60 90 95; do echo "arms_vs_body -D arm_angle=$a"; echo "arms_vs_plate -D arm_angle=$a"; done
     for h in -60 0 60; do for a in 60 90 95; do echo "pinch_arm_head -D head_angle=$h -D arm_angle=$a"; done; done

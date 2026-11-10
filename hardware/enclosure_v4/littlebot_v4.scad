@@ -413,6 +413,40 @@ module sa_arm() difference() {
 }
 
 // -----------------------------------------------------------------------------
+// STACK KEEPER (overrides v2's): v2's was a 1.6 mm bar (0.6 mm over its V-groove) so it fitted under v2's base, and its
+// 6.4 mm screw recesses were wider than the 6 mm bar: it broke. v4 has room above the stack: a 9 x 9 mm bar over the
+// same V, the ends 11 mm wide round the screw heads. The same seat, so the same 2 x M3 x 20 into v2's floor.
+// Robot coordinates; prints top face down.
+// -----------------------------------------------------------------------------
+keeper4_h = 9;                           // the bar's top, above its V's mouth
+keeper4_w = 9;                           // the bar's width (across the plate)
+keeper4_end = [11, 5.5];                 // the ends: width round the screw heads, reach beyond the screws
+keeper4_top = keeper_mouth(ups_plate_t, ups_plate[1]) + keeper4_h;
+module stack_keeper() {
+    zm = keeper_mouth(ups_plate_t, ups_plate[1]);
+    x0 = keeper_x[0] - keeper4_end[1]; x1 = keeper_x[1] + keeper4_end[1];
+    px0 = stk_x0 + ups_l/2 - plate_l_max/2 - 0.2; px1 = stk_x0 + ups_l/2 + plate_l_max/2 + 0.2;   // where a plate can be
+    wz1 = keeper_mouth_lo - 1;                                                       // the floor's wall in front: its top
+    seat = zm + keeper_t - 1.8;                                                      // the screw heads' seat, as v2's keeper
+    difference() {
+        union() {
+            translate([x0, stk_yc - keeper4_w/2, zm]) cube([x1 - x0, keeper4_w, keeper4_h]);                       // the bar
+            for (e = [[x0, px0], [px1, x1]]) {
+                translate([e[0], wall_y1 + 0.2, zm - keeper_drop]) cube([e[1] - e[0], stk_yc + keeper4_w/2 - wall_y1 - 0.2, keeper_drop + eps]);   // down to the bosses
+                translate([e[0], stk_yc - keeper4_end[0]/2, wz1 + 0.4]) cube([e[1] - e[0], keeper4_end[0], zm + keeper4_h - wz1 - 0.4]);   // round the heads
+            }
+        }
+        vee_cut(px0, px1, zm, false);
+        // room for the upper long standoffs (a short, thin plate puts them up to 0.53 mm above the mouth)
+        for (u = [3.5, 84.5]) translate([stk_x0 + u - 4.2, stk_yc + 0.6, zm - 1]) cube([8.4, 5, 1 + 1.1]);
+        for (x = keeper_x) translate([x, stk_yc, zm - keeper_drop - 1]) {
+            cylinder(d = clear_m3, h = 30, $fn = fn_small);
+            translate([0, 0, seat - (zm - keeper_drop - 1)]) cylinder(d = 6.4, h = 20, $fn = 24);              // the head, sunk
+        }
+    }
+}
+
+// -----------------------------------------------------------------------------
 // LAYOUT
 // -----------------------------------------------------------------------------
 module eyes4_2d() for (sx = [-1, 1]) translate([sx * 38, 4]) intersection() {   // happy closed eyes, as the concept
@@ -462,6 +496,7 @@ module print4(w) {
     if (w == "arm_right")   mirror([0, 1, 0]) print4("arm_left");
     if (w == "ups_slider")  translate([0, 0, sl_z0 + sl_h]) mirror([0, 0, 1]) v3_ups_slider();               // top down
     if (w == "camera_cradle") translate([0, 0, -(y4f + H4_face_t)]) rotate([90, 0, 0]) sa_cam_cradle();     // plate down (old head frames only)
+    if (w == "stack_keeper") translate([0, 0, keeper4_top]) mirror([0, 0, 1]) stack_keeper();                // top face down
 }
 if (part == "print4") print4(which);
 

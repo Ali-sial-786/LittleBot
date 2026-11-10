@@ -61,8 +61,9 @@ function usb_box4(v, h) = [stk(pi_l + 3, v + 7, stk_pi_w1 + h - 4), stk(pi_l + 2
 function usb_end(v, h) = stk(pi_l + 21, v, stk_pi_w1 + h);
 function pca_ch4(k) = [pca_x0 + 12 + 2.54 * k, pca_y0_floor + pca_w - 4, floor_low + floor_low_t + pca_standoff + 1.6];
 pca_vp = [pca_x0 + 34, pca_y0_floor + pca_w - 5, floor_low + floor_low_t + pca_standoff + 1.6];   // its V+ screw terminal (servo power)
-function lead_route(top, x) = concat(top, [[x, 95 - (x + 10) / 8, 78], [x, 95 - (x + 10) / 8, servo_lead_z], [x, 70, servo_lead_z], [x, 52, servo_lead_z],
-    [x, 44.5, servo_lead_z], [x, 42, 60], [x, 40, 45]]);
+lead_z = max(servo_lead_z, keeper4_top + 1.5);                            // the servo leads: over the stack and its keeper
+function lead_route(top, x) = concat(top, [[x, 95 - (x + 10) / 8, lead_z + 6], [x, 95 - (x + 10) / 8, lead_z], [x, 70, lead_z], [x, 52, lead_z],
+    [x, 43, lead_z], [x, 41, 60], [x, 40, 45]]);
 function servo_plug(k) = [pca_ch4(k) - [1.3, 4, 0], pca_ch4(k) + [1.3, 4, 16.5]];
 hs_exit = torso_pt([sv_l - sv_shaft_off + 7.5, pinion_yt, hs_spline_z - sv_spline_h + 3.5]);
 function as_exit(s) = sh_pt(s, sv_arm([sv_l - sv_shaft_off + 7.5, 0, -sv_spline_h + 3.5]));

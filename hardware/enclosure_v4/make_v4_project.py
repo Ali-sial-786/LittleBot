@@ -35,11 +35,11 @@ GROUPS = {"head_frame": [("head_frame", "white"), ("head_inlay", "dark")]}     #
 PLATES = [("body", "white", ["body", "arm_left", "arm_right", "ups_slider"]),
           ("head", "white", ["head_frame"]),
           ("back", "white", ["head_back"]),
-          ("dark", "dark", ["ring", "puck", "port_panel"]),
+          ("dark", "dark", ["ring", "puck", "port_panel", "stack_keeper"]),
           ("neck", "white", ["neck_plate"])]
-# a small extra project: the glue-in camera cradle (for a head frame printed before 2026-11-10) and a spare stack keeper (v2's)
+# a small extra project: the glue-in camera cradle (for a head frame printed before 2026-11-10) and v4's stronger stack keeper
 EXTRAS = [("camera cradle + stack keeper", "white", ["camera_cradle", "stack_keeper"])]
-SOURCE = {"stack_keeper": HERE.parent / "enclosure_v2" / "stl" / "stack_keeper.stl"}   # parts that aren't in stl/
+SOURCE = {}                             # parts that aren't in stl/
 SUPPORT = {"head_frame", "head_back"}   # tree supports from the build plate only
 NO_NEST = {"head_frame", "head_back"}   # nothing inside their footprint (their supports go there)
 BRIM = {"body": 5.0, "port_panel": 3.0, "stack_keeper": 3.0}
