@@ -21,9 +21,13 @@ async function open() {
   console.log('total seconds', first.info.total.toFixed(1), 'steps', first.info.steps);
   if (process.env.TIMELINE) console.log(JSON.stringify(await first.page.evaluate(() => window.timeline())));
   const times = ONLY ? ONLY.split(',').map(Number) : Array.from({ length: Math.ceil(first.info.total * FPS) }, (_, k) => k / FPS);
+  // RANGE="t0-t1,t2-t3" (seconds): only the frames in these spans, keeping their numbers (to patch a rendered video)
+  const spans = (process.env.RANGE || '').split(',').filter(Boolean).map(r => r.split('-').map(Number));
+  const keep = k => !spans.length || spans.some(([a, b]) => times[k] >= a && times[k] <= b);
   const t0 = Date.now(); let done = 0;
   const work = async (w, ctx) => {
     for (let k = w; k < times.length; k += WORKERS) {
+      if (!keep(k)) continue;
       await ctx.page.evaluate(t => window.render(t), times[k]);
       await ctx.page.screenshot({ path: path.join(OUT, `f${String(k).padStart(5, '0')}.jpg`), type: 'jpeg', quality: 92 });
       if (++done % 300 === 0) console.log(`frame ${done}/${times.length}  ${((Date.now() - t0) / 1000).toFixed(0)} s`);

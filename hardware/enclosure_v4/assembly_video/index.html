@@ -391,7 +391,9 @@ function drawTool(draws, m, w, travel, spin, goff, alpha, W, eye) {
   if (m.lever) { const ex = R3.app(A, [1, 0, 0]), ey = R3.app(A, [0, 1, 0]); base = Math.atan2(V.dot(ey, m.lever), V.dot(ex, m.lever)) * 180 / Math.PI; }
   const back = clamp((w - SAPP - SDRV) / SRET), a = alpha * clamp(w / 0.2) * (1 - back);
   if (a <= 0.003) return;
-  const R = R3.mul(A, R3.axis([0, 0, 1], base + spin));
+  // an L-key can't go round where it's used (under the roof, under the head): it swings back and forth
+  const turn = m.tool === 'lkey' ? 20 * Math.sin(2 * Math.PI * 3 * clamp((w - SAPP) / SDRV)) : spin;
+  const R = R3.mul(A, R3.axis([0, 0, 1], base + turn));
   const off = V.add(V.add(m.pos, goff), V.mul(d, -(travel + m.head_h + 0.2 + 30 * ease(back))));
   draws.push({ p, R, piv: Z3, off, alpha: a, hi: 0, grow: 1, dist: Math.hypot(...V.sub(toWorld(W, off), eye)) });
 }

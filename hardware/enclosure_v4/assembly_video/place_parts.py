@@ -190,7 +190,7 @@ def screw_group(step, what, pos):   # the assembly a screw moves with
     if step == "stack": return "floor" if what.startswith("M3") else "stack"
     return {"ring_gear": "neck", "puck": "neck", "plate_in": "neck", "arm_servos": "body", "pca": "floor", "floor_in": "floor",
             "panel": "ring", "head_on": "head", "screen": "head", "camera": "head", "back": "head"}[step]
-LEVER = {"camera": lambda p: [0, 1, 0], "back": lambda p: [np.sign(p[0]), 0, 0]}   # where an L-key's long leg points
+LEVER = {"camera": lambda p: [0, 1, -0.35], "back": lambda p: [np.sign(p[0]), 0, 0]}   # where an L-key's long leg points
 screw_list = []
 for k, (step, what, d, l, head, pos, v) in enumerate(screws):
     v = np.asarray(v, float); v /= np.linalg.norm(v); R = to_z(v)
