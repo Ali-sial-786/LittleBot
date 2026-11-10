@@ -40,6 +40,7 @@ Everything else is new. That includes the base ring (v3's shape, with its 4 scre
 |---|---|
 | `littlebot_v4.scad` | the model (it includes `../enclosure_v3/littlebot_v3.scad`, which includes v2) |
 | `LittleBot_v4_A1.3mf` | **the Bambu Studio project: 5 plates, colours, supports and brims set** |
+| `LittleBot_v4_extras_A1.3mf` | one plate: the glue-in camera cradle (only for a head frame printed before 10 Nov 2026) and a spare stack keeper |
 | `LittleBot_v4_assembled.3mf` | the whole robot assembled and coloured, to look at (not to print) |
 | `stl/*.stl` | each part on its own, in its print orientation (`head_inlay` is the head frame's dark arch; `camera_cradle` only for a head frame printed before 10 Nov 2026) |
 | `plates_v4.png` | top view of the 5 plates |
@@ -145,7 +146,7 @@ In total: 18 × M3 × 12, 5 × M3 × 10, 5 × M3 × 8 and 8 M3 nuts (v2's neck s
 That head frame held the camera bracket on 2 small holders that touch the roof by a sliver only (they wobble and break), and its screws had no way in. Don't reprint the head frame for it:
 
 1. Snap the 2 holders off with pliers and trim what's left flush.
-2. Print `stl/camera_cradle.stl`: white, plate down, no supports, about 22 g.
+2. Print `LittleBot_v4_extras_A1.3mf` (the cradle and a spare stack keeper on one plate), or just `stl/camera_cradle.stl`: white, plate down, no supports, about 22 g.
 3. On the bench: clip the camera into v2's bracket and set the bracket between the cradle's 2 cheeks, lens through the window. Fit 2 × M3 × 12 from outside the cheeks into its pivots, set the tilt and snug them.
 4. Scuff the cradle's plate and the inside of the face above the screen. Glue the plate flat onto the face (CA gel or 2-part epoxy), with the lens centred in the face's lens hole. Then plug the 5-pin cable into the board's back.
 

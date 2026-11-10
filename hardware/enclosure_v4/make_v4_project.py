@@ -2,7 +2,8 @@
 """LittleBot v4 "Soft Arc": pack the printed parts onto 256 mm plates and write ONE Bambu Studio project
 (Bambu Lab A1, 0.4 nozzle, 0.20 mm Standard, Bambu PLA Basic, Textured PEI plate).
 
-    ./export_v4.sh && python3 make_v4_project.py      # reads stl/*.stl, writes LittleBot_v4_A1.3mf + plates_v4.png
+    ./export_v4.sh && python3 make_v4_project.py      # reads stl/*.stl, writes LittleBot_v4_A1.3mf + plates_v4.png,
+                                                      # and LittleBot_v4_extras_A1.3mf (camera cradle + a spare stack keeper)
 
 Plates (colours never mixed on a plate, except the head frame's dark arch, printed in the same job):
   1  white: body, both arms inside its footprint (5 mm brim on the body)
@@ -36,15 +37,18 @@ PLATES = [("body", "white", ["body", "arm_left", "arm_right", "ups_slider"]),
           ("back", "white", ["head_back"]),
           ("dark", "dark", ["ring", "puck", "port_panel"]),
           ("neck", "white", ["neck_plate"])]
+# a small extra project: the glue-in camera cradle (for a head frame printed before 2026-11-10) and a spare stack keeper (v2's)
+EXTRAS = [("camera cradle + stack keeper", "white", ["camera_cradle", "stack_keeper"])]
+SOURCE = {"stack_keeper": HERE.parent / "enclosure_v2" / "stl" / "stack_keeper.stl"}   # parts that aren't in stl/
 SUPPORT = {"head_frame", "head_back"}   # tree supports from the build plate only
 NO_NEST = {"head_frame", "head_back"}   # nothing inside their footprint (their supports go there)
-BRIM = {"body": 5.0, "port_panel": 3.0}
+BRIM = {"body": 5.0, "port_panel": 3.0, "stack_keeper": 3.0}
 
 
 def load(name):
     """An object: [(part name, colour, triangles)], all shifted by the object's common minimum."""
     parts = GROUPS.get(name, [(name, None)])
-    meshes = [(p, c, read_stl(HERE / "stl" / f"{p}.stl").astype(float)) for p, c in parts]
+    meshes = [(p, c, read_stl(SOURCE.get(p, HERE / "stl" / f"{p}.stl")).astype(float)) for p, c in parts]
     lo = np.concatenate([m.reshape(-1, 3) for _, _, m in meshes]).min(0)
     return [(p, c, m - lo) for p, c, m in meshes]
 
@@ -116,7 +120,7 @@ def mesh_xml(oid, name, tris, centre):
     return f'<object id="{oid}" name="{name}" type="model"><mesh><vertices>{v}</vertices><triangles>{t}</triangles></mesh></object>'
 
 
-def project(plates, out):
+def project(plates, out, title="LittleBot v4 Soft Arc"):
     objects, items, obj_cfg, plate_cfg, assemble = [], [], [], [], []
     k = 0; nparts = 0
     cols = int(round(len(plates) ** 0.5)) + (1 if len(plates) ** 0.5 > round(len(plates) ** 0.5) else 0)   # as Bambu Studio lays plates out
@@ -158,7 +162,7 @@ def project(plates, out):
     model = ('<?xml version="1.0" encoding="UTF-8"?>\n<model unit="millimeter" xml:lang="en-US" '
              'xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02" xmlns:BambuStudio="http://schemas.bambulab.com/package/2021">\n'
              f' <metadata name="Application">{bp.APP}</metadata>\n <metadata name="BambuStudio:3mfVersion">1</metadata>\n'
-             f' <metadata name="Title">LittleBot v4 Soft Arc</metadata>\n <resources>{"".join(objects)}</resources>\n <build>{"".join(items)}</build>\n</model>\n')
+             f' <metadata name="Title">{title}</metadata>\n <resources>{"".join(objects)}</resources>\n <build>{"".join(items)}</build>\n</model>\n')
     config = '<?xml version="1.0" encoding="UTF-8"?>\n<config>\n' + "".join(obj_cfg) + "".join(plate_cfg) + "  <assemble>\n" + "".join(assemble) + "  </assemble>\n</config>\n"
     settings = bp.project_settings(["main", "black"], "A1")
     settings["filament_colour"] = [COLOURS[s] for s in SLOTS]
@@ -197,3 +201,4 @@ if __name__ == "__main__":
     plates = [(pname, colour, pack(names)) for pname, colour, names in PLATES]
     project(plates, HERE / "LittleBot_v4_A1.3mf")
     preview(plates, HERE / "plates_v4.png")
+    project([(pname, colour, pack(names)) for pname, colour, names in EXTRAS], HERE / "LittleBot_v4_extras_A1.3mf", "LittleBot v4 extras")
