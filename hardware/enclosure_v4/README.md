@@ -102,7 +102,7 @@ Because everything is 45 mm taller than v3, a few leads have to reach further:
 | Head back → head frame | 2 × M3 × 12, from under the head | the frame's 2 bosses (2 tabs hold the back's top) |
 | Camera bracket | 2 × M3 × 12, from inside the head (2 mm L-key), through the 2 cheeks | the bracket's pivots |
 | ReSpeaker Lite → its holder | 2 × M2 × 8, through the board's 2 holes | the holder's 2 posts |
-| Servo horns → pinion, arms | 6 × M1.4 × 5 self-tapping pan heads (2 per horn). Not in most servo bags: a micro screw assortment (M1–M1.7) has them. If one won't pass the horn, open its hole with a 1.5 mm drill | the 1.3 mm pilot holes in the pinion's and arms' pockets |
+| Servo horns → pinion, arms | 6 × M1.4 × 5 self-tapping pan heads (2 per horn). Not in most servo bags: a micro screw assortment (M1–M1.7) has them. If one won't pass the horn, open its hole with a 1.5 mm drill. Or skip them and glue each horn into its pocket (epoxy or CA): it must be one or the other | the 1.3 mm pilot holes in the pinion's and arms' pockets |
 | Arm servos, arms | as v3 (tab screws and the spline screws from the servo bags) | |
 
 In total: 18 × M3 × 12, 5 × M3 × 10, 5 × M3 × 8, 8 M3 nuts 2 × M2 × 8 and 6 × M1.4 × 5 self-tappers (v2's neck screws included).
