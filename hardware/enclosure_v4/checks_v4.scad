@@ -69,6 +69,11 @@ if (check == "cover_vs_frame")       intersection() { sa_head_frame_body(); sa_h
 module pivot_screw(s, from_x, to_x, d) translate([s * from_x, y4f + cam_board_y + cam_pivot_dy, cam4_z]) rotate([0, -s * 90, 0]) cylinder(d = d, h = from_x - to_x, $fn = 16);
 if (check == "pivot_screws_clear")   intersection() { sa_head_frame_body(); for (s = [-1, 1]) { pivot_screw(s, cam4_scr_x + 20, cam4_scr_x, 5.9); pivot_screw(s, cam4_scr_x, cam4_scr_x - 12, 2.9); } }
 if (check == "pivot_screws_bite")    intersection() { place_cam4() camera_bracket(); for (s = [-1, 1]) pivot_screw(s, cam4_scr_x, cam4_scr_x - 12, 3.0); }
+// the glue-in camera cradle (for head frames printed with the old bosses): it fits the frame without its cheeks (touching
+// only the inside of the face, where it's glued), the camera swings free in it, its screws' way in is clear
+if (check == "cradle_vs_frame")      intersection() { sa_cam_cradle(); sa_head_frame_body(false); }
+if (check == "cradle_vs_camera")     intersection() { sa_cam_cradle(); union() { camera_s(); place_cam4() camera_bracket(); for (a = [-10, 10]) place_cam4() translate([0, cam_pivot_dy, 0]) rotate([a, 0, 0]) translate([0, -cam_pivot_dy, 0]) camera_bracket(); } }
+if (check == "cradle_screws_clear")  intersection() { sa_cam_cradle(); for (s = [-1, 1]) { pivot_screw(s, cam4_scr_x + 20, cam4_scr_x, 5.9); pivot_screw(s, cam4_scr_x, cam4_scr_x - 12, 2.9); } }
 if (check == "hood_vs_camera")       intersection() { union() { sa_head_frame_body(); sa_head_back(); } union() { camera_s(); place_cam4() camera_bracket(); } }
 if (check == "head_vs_body")         intersection() { union() { sa_body(); v3_neck_plate(); }; head_all(head_angle); }
 // arms

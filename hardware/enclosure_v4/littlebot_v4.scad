@@ -103,7 +103,7 @@ function head_top(Y, x = 0) = let (k = k4(Y - Yc)) z4c + H4[1] * k * pow(max(0, 
 hood_c = z4c + H4[1] + hood_rise - hood_ab[1];
 cam4_z = hood_c + 6;                     // the lens's centre
 module place_cam4() translate([0, y4f + cam_board_y, cam4_z]) children();
-cam4_scr_x = 26;                         // the pivot screws' heads (|x|): 12 mm reach 5 mm into the bracket's pivots, as v2
+cam4_scr_x = 26;                         // the pivot screws' heads (|x|, on the cheeks): 12 mm reach 5 mm into the bracket's pivots, as v2
 /* [4xAA box in the head] */
 bat4_y = 61;                             // its front face, from the face (behind the cables' bore)
 bat4_clr = 0.5;
@@ -281,7 +281,31 @@ module bat4_cradle() intersection() {
     }
 }
 module bat4_dummy() color("#151515") translate([-bat[0] / 2, y4f + bat4_y + bat4_clr, bat4_z0]) cube([bat[0], bat[2], bat[1]]);
-module sa_head_frame_body() {
+// the camera bracket hangs between 2 cheeks: walls beside it from the face back past its pivots, up into the roof (they
+// print straight up from the face). Its 2 pivot screws (M3 x 12) go in from inside the head: heads on the cheeks' outer
+// faces, at |x| = cam4_scr_x, 5 mm into the bracket's pivots.
+cheek4_x = [cam_brk_wo + 0.2, cam4_scr_x];              // 19.2 .. 26
+cam_piv = [y4f + cam_board_y + cam_pivot_dy, cam4_z];    // the pivots (y, z)
+module cam_cheeks() for (s = [-1, 1]) mirror([s < 0 ? 1 : 0, 0, 0]) translate([cheek4_x[0], 0, 0]) rotate([90, 0, 90])
+    linear_extrude(cheek4_x[1] - cheek4_x[0]) hull() {
+        translate([y4f + H4_face_t - 0.01, cam4_z - 14]) square([4, 44]);             // along the face
+        translate(cam_piv) circle(r = 7, $fn = 40);                                     // round the pivot
+        translate([cam_piv[0] - 7, cam4_z]) square([14, 30]);                          // up into the roof
+    }
+// for a head frame printed with the old bosses (before 2026-11-10): the cheeks on a plate glued inside the face
+cradle_win = [20, 26];                                   // the lens's window through the plate (its tilt)
+module sa_cam_cradle() difference() {
+    intersection() {
+        union() { head4_shape(H4_wall + 0.4); hood_shape(H4_wall + 0.4); }
+        union() {
+            cam_cheeks();
+            translate([-cheek4_x[1], y4f + H4_face_t, cam4_z - 18]) cube([2 * cheek4_x[1], 2.5, 36]);
+        }
+    }
+    translate([0, 0, cam4_z]) rotate([-90, 0, 0]) linear_extrude(200) rr(cradle_win[0], cradle_win[1], 4);
+    for (s = [-1, 1]) translate([s * 24, cam_piv[0], cam_piv[1]]) rotate([0, 90, 0]) cylinder(d = clear_m3, h = 20, center = true, $fn = fn_small);
+}
+module sa_head_frame_body(cheeks = true) {
     zt = hd_z0 + 2 * H4[1];
     difference() {
         union() {
@@ -313,14 +337,8 @@ module sa_head_frame_body() {
                 intersection() { head4_shape(0.01); translate([x - 5.7, y4f + H4_split - 12, cov4_tab_z]) cube([11.4, 12, 40]); }
                 translate([x - 5.7, y4f + H4_split - 1, cov4_tab_z]) cube([11.4, 11, 2.5]);
             }
-            // the camera bracket's pivot bosses, from the hood's sides (45 degrees towards the face: prints face down)
-            for (s = [-1, 1]) intersection() {
-                hood_shape(0.01);
-                translate([s * (cam_brk_wo + 0.2), y4f + cam_board_y + cam_pivot_dy, cam4_z]) rotate([0, s * 90, 0]) hull() {
-                    cylinder(d = 11, h = 30, $fn = 32);
-                    translate([0, -10, 0]) cylinder(d = 0.1, h = 30);
-                }
-            }
+            // the camera bracket's 2 cheeks, fused to the face and the roof
+            if (cheeks) intersection() { union() { head4_shape(0.01); hood_shape(0.01); } cam_cheeks(); }
         }
         // the screen: its opening (bz_gap clear of the glass all round) and its pocket
         translate([0, y4f - 1, scr_cz]) rotate([-90, 0, 0]) linear_extrude(H4_face_t + 2) rr(scr[0] + 2 * bz_gap, scr[1] + 2 * bz_gap, 0.8);
@@ -334,13 +352,9 @@ module sa_head_frame_body() {
         translate([0, neck_y, hd_z0 - 1]) cylinder(r = neck_bore_r, h = 10, $fn = 48);
         for (a = head4_scr) translate([0, neck_y, 0]) rotate(a) translate([head_screw_r, 0, hd_z0 - 1]) cylinder(d = clear_m3, h = 10, $fn = fn_small);
         for (x = cov4_scr) translate([x, y4f + H4_split + 5, hd_z0]) cylinder(d = pilot_m3, h = 16, $fn = fn_small);   // the cover's screws
-        // camera: the lens, the pivot screws (M3 x 12, from inside the head: the bosses' ends are in the head, under
-        // its roof; each head sits at x = 26, down a 6.4 mm bore through the boss, as v2's pod)
+        // camera: the lens, the pivot screws through the cheeks (M3 x 12, from inside the head)
         translate([0, y4f - 1, cam4_z]) rotate([-90, 0, 0]) cylinder(d = cam_aperture, h = H4_face_t + 2, $fn = 48);
-        for (s = [-1, 1]) translate([s * 24, y4f + cam_board_y + cam_pivot_dy, cam4_z]) {
-            rotate([0, 90, 0]) cylinder(d = clear_m3, h = 20, center = true, $fn = fn_small);
-            translate([s * (cam4_scr_x - 24), 0, 0]) rotate([0, s * 90, 0]) cylinder(d = 6.4, h = 30, $fn = 24);
-        }
+        for (s = [-1, 1]) translate([s * 24, cam_piv[0], cam_piv[1]]) rotate([0, 90, 0]) cylinder(d = clear_m3, h = 20, center = true, $fn = fn_small);
     }
 }
 module sa_head_frame() difference() { sa_head_frame_body(); arch_inlay(); }   // white
@@ -447,6 +461,7 @@ module print4(w) {
     if (w == "arm_left")    rotate([0, -90, 0]) translate([-arm_gap3, 0, 0]) sa_arm();                         // inner face down
     if (w == "arm_right")   mirror([0, 1, 0]) print4("arm_left");
     if (w == "ups_slider")  translate([0, 0, sl_z0 + sl_h]) mirror([0, 0, 1]) v3_ups_slider();               // top down
+    if (w == "camera_cradle") translate([0, 0, -(y4f + H4_face_t)]) rotate([90, 0, 0]) sa_cam_cradle();     // plate down (old head frames only)
 }
 if (part == "print4") print4(which);
 
@@ -466,6 +481,7 @@ module assy4(w) {
     if (w == "head_inlay")  place_head3(head_angle) sa_head_inlay();
     if (w == "head_back")   place_head3(head_angle) sa_head_back();
     if (w == "camera_bracket") place_head3(head_angle) place_cam4() camera_bracket();
+    if (w == "camera_cradle") place_head3(head_angle) sa_cam_cradle();
     if (w == "floor")       base_floor();
     if (w == "floor_clips") { stack_keeper(); pca_clamp(0); pca_clamp(1); }
     if (w == "coupler")     place_torso() translate([0, neck_yt, torso_h]) coupler();
