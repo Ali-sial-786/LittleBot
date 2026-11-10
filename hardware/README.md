@@ -22,7 +22,7 @@ Side and back views, same scale: [side](comparison/littlebot_v1_to_v4_side.png),
 | Body | camera in the chest, speaker + PCA9685 on the floor plate | speaker + mic in the chest; Pi on its UPS battery, PCA9685, wheel wells, sensor/light-bar plate in the base | one-piece bell on a dark base ring; v2's floor inside; 4×AA servo box on the front; arms with hands | smooth egg on a dark base; v2's floor inside; USB-C + power switch in a dark back panel; one-piece arms with hands |
 | Future phases | servo supply jack | wheels (TT motors), casters, HC-SR04, ESP32 + TB6612FNG, LED strips | wheels: a new base ring + floor | same as v3 |
 | Screws | M2.5 + M3 | one M3 kit (4 lengths); nothing drilled or forced | the M3 kit + 4 M2.5 for the screen | same |
-| Checks | 48 | 118 (incl. 12 mm finger-pinch clearance for the arms, every cable route and every screw) | 50 (incl. finger pinch, glass never touched, room to plug in) | 65 |
+| Checks | 48 | 118 (incl. 12 mm finger-pinch clearance for the arms, every cable route and every screw) | 50 (incl. finger pinch, glass never touched, room to plug in) | 68 |
 | Assembly video | none | [`assembly_video/`](enclosure_v2/assembly_video) (renders it) | none | [`LittleBot_v4_assembly.mp4`](enclosure_v4/LittleBot_v4_assembly.mp4): every part, screw, nut and cable |
 
 v1 is quicker to print and smaller. v2 is the more "toy-like" character and is ready for driving around later. v3 has the big touch screen and the fewest parts to print. v4 is the Soft Arc concept: the same insides as v3 in a softer shell.

@@ -13,8 +13,7 @@ module servo_shrunk() {
 }
 module arm_servo_s(k) place_sh(k) translate([sv_spline_top, 0, 0]) rotate([0, 90, 0]) rotate(90) servo_shrunk();
 module head_servo_s() place_torso() translate([0, pinion_yt, hs_spline_z]) servo_shrunk();
-module mic_s() { translate([mic3[0] + s, mic3[1] + s, mic3[2] - mic_w/2 + s]) cube([mic_l - 2*s, mic_t - 2*s, mic_w - 2*s]);
-                 translate([mic3[0] + mic_body + s, mic3[1] + mic_t/2 - 4.75, mic3[2] - 9]) cube([32, 9.5, 18]); }   // + extension socket
+module mic_s() place_rsl() { rsl_board(s); rsl_plug(s); }   // the ReSpeaker Lite and its USB-C cable's plug
 module bat4_s() translate([-bat[0] / 2 + s, y4f + bat4_y + bat4_clr + s, bat4_z0 + s]) cube([bat[0], bat[2], bat[1]] - [2*s, 2*s, 2*s]);
 module speaker_s() translate([-spk_w/2 + s, spk3_c[1] + s, spk3_c[2] - spk_h/2 + s]) cube([spk_w - 2*s, spk_d - 2*s, spk_h - 2*s]);
 module base_electronics_s() { ups_stack(s); ups_plugs(s); pca_floor(s); usbc_socket(s); charge_cable(s); }
@@ -79,6 +78,11 @@ if (check == "keeper_fit")           intersection() { stack_keeper(); union() { 
                                                                              pca_floor(0); pca_clamp(0); pca_clamp(1); v3_ups_slider(); } }
 // its arms rest on the boards' top edges (0.2 mm lower, they'd dig in: must NOT be empty)
 if (check == "keeper_rests")         intersection() { translate([0, 0, -0.2]) keeper4_arms(); ups_stack(0); }
+// the ReSpeaker's holder: on the chest's inside (touching only), round the old mic sleeve; the board clips in touching only
+// the holder; its mics behind their dots (the drill guides line up with the body's holes)
+if (check == "mic_holder_vs_body")   intersection() { sa_rsl_holder(); sa_body(); }
+if (check == "mic_fit")              intersection() { place_rsl() { rsl_board(0); rsl_plug(0); } union() { sa_rsl_holder(); sa_body(); } }
+if (check == "mic_vs_parts")         intersection() { union() { sa_rsl_holder(); mic_s(); } union() { speaker_s(); arm_servo_s(-1); arm_servo_s(1); neck_static(); head_servo_s(); neck_moving(head_angle); v3_neck_plate(); } }
 if (check == "hood_vs_camera")       intersection() { union() { sa_head_frame_body(); sa_head_back(); } union() { camera_s(); place_cam4() camera_bracket(); } }
 if (check == "head_vs_body")         intersection() { union() { sa_body(); v3_neck_plate(); }; head_all(head_angle); }
 // arms

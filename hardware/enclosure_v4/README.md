@@ -20,7 +20,7 @@ To look like the concept, v4 is bigger than v3: 437 mm tall, the head 242 × 158
 | Head, back half | The 4×AA servo box, standing behind the neck, lid backwards | Take the back off (2 screws from under the head) to swap the cells. The box balances the screen's weight. Its leads go down the neck to the PCA9685. |
 | Head, back | 2 × 4 slits, as the concept | Vents. |
 | Neck | A black puck on v2's coupler, under the head | It turns with the head and raises it 8 mm, so the black neck shows. |
-| Chest | 2 dots of 7 small holes each (the USB mic is behind the left one), and a speaker grille | The USB speaker sits behind the grille, facing forward. The software already uses it. |
+| Chest | 4 dots of 7 small holes (the ReSpeaker Lite's 2 mics behind the outer pair), and a speaker grille | The ReSpeaker Lite sits in a holder glued inside the chest, its mics facing out. The USB speaker sits behind the grille, facing forward. |
 | Back, high | 7 intake slits | Fresh air in. |
 | Back, low | A dark panel with the USB-C charging socket and the UPS power switch | The switch's white tab stands 5 mm out of the panel: push it left or right. |
 | Base (inside) | Pi 5 + UPS on v2's floor | The Pi's fan blows down through the floor's vents and out through the notches under the base. |
@@ -40,11 +40,11 @@ Everything else is new. That includes the base ring (v3's shape, with its 4 scre
 |---|---|
 | `littlebot_v4.scad` | the model (it includes `../enclosure_v3/littlebot_v3.scad`, which includes v2) |
 | `LittleBot_v4_A1.3mf` | **the Bambu Studio project: 5 plates, colours, supports and brims set** |
-| `LittleBot_v4_extras_A1.3mf` | one plate: the glue-in camera cradle (only for a head frame printed before 10 Nov 2026) and v4's stack keeper |
+| `LittleBot_v4_extras_A1.3mf` | one plate: the ReSpeaker Lite's holder, the glue-in camera cradle (only for a head frame printed before 10 Nov 2026) and v4's stack keeper |
 | `LittleBot_v4_assembled.3mf` | the whole robot assembled and coloured, to look at (not to print) |
 | `stl/*.stl` | each part on its own, in its print orientation (`head_inlay` is the head frame's dark arch; `camera_cradle` only for a head frame printed before 10 Nov 2026) |
 | `plates_v4.png` | top view of the 5 plates |
-| `checks_v4.scad`, `run_checks_v4.sh` | 65 checks (`OPENSCAD=... ./run_checks_v4.sh`), all passing. They cover interference, the arms' sweep and finger pinch with the head turned, the glass never touched, room to push each plug in, the slider, the AA box in the head, the speaker and mic, the dark panel, the camera's pivot screws (a clear path in, and they reach the bracket), the glue-in camera cradle, and the stack keeper (it fits, and its arms rest on the boards). |
+| `checks_v4.scad`, `run_checks_v4.sh` | 68 checks (`OPENSCAD=... ./run_checks_v4.sh`), all passing. They cover interference, the arms' sweep and finger pinch with the head turned, the glass never touched, room to push each plug in, the slider, the AA box in the head, the speaker and mic, the dark panel, the camera's pivot screws (a clear path in, and they reach the bracket), the glue-in camera cradle, the stack keeper (it fits, and its arms rest on the boards) and the ReSpeaker's holder (on the chest's inside round the old mic sleeve, the board clear of everything). |
 | `LittleBot_v4_assembly.mp4` | **the assembly video** (4 minutes): every part, screw, nut and cable going in, in the order below, each screw turned in by its tool with its size on a tag |
 | `assembly_video/` | re-makes the video (`OPENSCAD=... ./make_video.sh`). The screws, nuts, cable routes and part positions come from the model (`video4.scad`). |
 | `export_v4.sh`, `make_v4_project.py`, `make_v4_assembly.py` | re-make the STLs, the project and the assembled 3MF |
@@ -114,7 +114,7 @@ In total: 18 × M3 × 12, 5 × M3 × 10, 5 × M3 × 8 and 8 M3 nuts (v2's neck s
 3. **In the body:**
    - Arm servos: slide each in from outside through its shoulder slot and screw its tabs.
    - Speaker: push it into its ribs behind the grille.
-   - Mic: plug it into its USB extension and push it into its pocket behind the left dot.
+   - Mic: the ReSpeaker Lite in its holder (see *The mic* below).
 4. **Body onto the base ring:**
    - Drop 4 nuts into the ring's tabs and lower the body onto the ring's lip.
    - Slider: push it in from outside through the slot in the back, fork first.
@@ -146,7 +146,7 @@ In total: 18 × M3 × 12, 5 × M3 × 10, 5 × M3 × 8 and 8 M3 nuts (v2's neck s
 That head frame held the camera bracket on 2 small holders that touch the roof by a sliver only (they wobble and break), and its screws had no way in. Don't reprint the head frame for it:
 
 1. Snap the 2 holders off with pliers and trim what's left flush.
-2. Print `LittleBot_v4_extras_A1.3mf` (the cradle and v4's stack keeper on one plate), or just `stl/camera_cradle.stl`: white, plate down, no supports, about 22 g.
+2. Print `LittleBot_v4_extras_A1.3mf` (the cradle, v4's stack keeper and the mic holder on one plate), or just `stl/camera_cradle.stl`: white, plate down, no supports, about 22 g.
 3. On the bench: clip the camera into v2's bracket and set the bracket between the cradle's 2 cheeks, lens through the window. Fit 2 × M3 × 12 from outside the cheeks into its pivots, set the tilt and snug them.
 4. Scuff the cradle's plate and the inside of the face above the screen. Glue the plate flat onto the face (CA gel or 2-part epoxy), with the lens centred in the face's lens hole. Then plug the 5-pin cable into the board's back.
 
@@ -159,6 +159,17 @@ The tilt stays adjustable: the 2 screws are reached from behind, with the head's
 v2's keeper was a 1.6 mm bar (0.6 mm over its V-groove) so it fitted under v2's base. Its screw recesses were wider than the bar, and its ends sat 0.65 mm into the floor's front wall, so tightening the screws bent it: it broke. v4 has room above the stack: a 9 × 9 mm bar, 11 mm wide round the screw heads, clear of the wall. Two arms reach back over the stack's ends and rest on the UPS board's and the Pi's top edges (clear of their ports, the standoffs and the switch slider), so the Pi end can't rock, and 3 fingers beside the boards' ends stop the stack sliding along its plate. It goes on the same floor with the same 2 × M3 × 20 (the heads sit 9 mm down: a 2 mm hex key). It's on plate 4 and in `LittleBot_v4_extras_A1.3mf`; print it top face down. If the Pi end still moves, a strip of foam tape under each arm takes up the play.
 
 ![v2's keeper and v4's](stack_keeper_v4.png)
+
+### The mic: a ReSpeaker Lite in a holder
+
+The mic is a Seeed ReSpeaker Lite (USB, 2 mics, 82 × 34 mm), not v2's Adafruit USB mic: the chest's old mic pocket is too small for it. Its holder (`stl/mic_holder.stl`, in `LittleBot_v4_extras_A1.3mf`) glues to the inside of the chest and fits round the old pocket, so nothing has to be cut off. The board lies across the chest with its back (the mics' side) towards the wall and its USB-C towards the robot's left (+x, the Pi's USB end). Rigid hooks hold its lower edge and springy clips its upper edge; they touch only the bare 0.6 mm strip along its edges. A tube runs from each mic to its dot. Sizes are from Seeed's 3D model of the board (v1.1).
+
+1. Print the holder: base down, **tree supports from the build plate** under its curved base (set in the 3MF), about 12 g.
+2. **Body printed before 10 Nov 2026** (it has only the 2 old dots): push a toothpick through the middle hole of the right dot, from outside. Fit the holder over it from inside, its cut-out round the old mic pocket, and glue its base to the wall (CA gel or 2-part epoxy; scuff both faces first). When it's set, drill the 2 new dots from inside through the holder's guide holes (14 holes, 1.5 or 1.6 mm drill), down the 2 tubes.
+   **Body printed since:** it has the 2 new dots already. Line the holder up with toothpicks through them, glue it, nothing to drill.
+3. Plug a USB-C data cable into the board first (a 30–50 cm USB-C to USB-A cable to a Pi USB port). Then hook the board's lower edge under the 2 hooks, back towards the wall, and press its upper edge in until the 2 clips click over it.
+
+![the ReSpeaker Lite's holder](mic_holder.png)
 
 ## Measure before printing
 
