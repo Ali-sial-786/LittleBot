@@ -24,7 +24,7 @@ function nk(o, z) = [o[0], neck_y + o[1], z];                              // a 
 horn_scr = [[0, 10.5], [180, 10.5]];                                      // the arm horn's 2 screws (angle, radius on the horn)
 function hw4_screws() = concat(
     [for (a = ring_screw_angles) ["ring_gear", "M3 × 12", 3, 12, "btn", torso_pt([ring_screw_r * cos(a), neck_yt + ring_screw_r * sin(a), gear_z0 + 1.8]), [0, 0, 1]]],
-    [for (a = [0, 180]) ["head_servo", "horn screws", 2, 5, "pan", torso_pt([7.5 * cos(a + 7.5), pinion_yt + 7.5 * sin(a + 7.5), gear_z0 + 0.6]), [0, 0, 1]]],
+    [for (a = [0, 180]) ["head_servo", "M1.4 × 5 horn screws", 1.4, 5, "pan", torso_pt([7.5 * cos(a + 7.5), pinion_yt + 7.5 * sin(a + 7.5), gear_z0 + 0.6]), [0, 0, 1]]],
     [for (hx = [sv_hole_a, sv_hole_b]) ["head_servo", "servo screws", 2, 8, "pan", torso_pt([hx, pinion_yt, hs_tab_top]), [0, 0, -1]]],
     [for (k = [0, 1]) let (o = k == 0 ? 1 : -1) ["head_servo", "M3 × 10", 3, 10, "btn",
         torso_pt([frame_pillar_x[k] - o * 4.5, pinion_yt + 7.6, hs_tab_top - sv_tab_t + collar_h/2]), [o, 0, 0]]],
@@ -41,7 +41,7 @@ function hw4_screws() = concat(
     [for (h = scr_holes) let (q = hole_xz(h)) ["screen", "M2.5 × 6", 2.5, 6, "pan", [q[0], scr_back_y + scr_standoff_h + 2, q[1]], [0, -1, 0]]],
     [for (s = [-1, 1]) ["camera", "M3 × 12", 3, 12, "btn", [s * cam4_scr_x, y4f + cam_board_y + cam_pivot_dy, cam4_z], [-s, 0, 0]]],
     [for (x = cov4_scr) ["back", "M3 × 12", 3, 12, "btn", [x, y4f + H4_split + 5, head_bot(H4_split + 5, x)], [0, 0, 1]]],
-    [for (s = [-1, 1]) for (h = horn_scr) ["arms", "horn screws", 2, 6, "pan", arm_pt(s, [arm_gap3, h[1] * cos(h[0]), h[1] * sin(h[0])]), arm_dir(s, [1, 0, 0])]],
+    [for (s = [-1, 1]) for (h = horn_scr) ["arms", "M1.4 × 5 horn screws", 1.4, 5, "pan", arm_pt(s, [arm_gap3, h[1] * cos(h[0]), h[1] * sin(h[0])]), arm_dir(s, [1, 0, 0])]],
     [for (s = [-1, 1]) ["arms", "spline screw", 2.5, 5, "pan", arm_pt(s, [arm_gap3 + horn_plate_t, 0, 0]), arm_dir(s, [-1, 0, 0])]]
 );
 
