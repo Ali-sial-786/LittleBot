@@ -44,7 +44,7 @@ Everything else is new. That includes the base ring (v3's shape, with its 4 scre
 | `LittleBot_v4_assembled.3mf` | the whole robot assembled and coloured, to look at (not to print) |
 | `stl/*.stl` | each part on its own, in its print orientation (`head_inlay` is the head frame's dark arch; `camera_cradle` only for a head frame printed before 10 Nov 2026) |
 | `plates_v4.png` | top view of the 5 plates |
-| `checks_v4.scad`, `run_checks_v4.sh` | 64 checks (`OPENSCAD=... ./run_checks_v4.sh`), all passing. They cover interference, the arms' sweep and finger pinch with the head turned, the glass never touched, room to push each plug in, the slider, the AA box in the head, the speaker and mic, the dark panel, the camera's pivot screws (a clear path in, and they reach the bracket), the glue-in camera cradle and the stack keeper's fit. |
+| `checks_v4.scad`, `run_checks_v4.sh` | 65 checks (`OPENSCAD=... ./run_checks_v4.sh`), all passing. They cover interference, the arms' sweep and finger pinch with the head turned, the glass never touched, room to push each plug in, the slider, the AA box in the head, the speaker and mic, the dark panel, the camera's pivot screws (a clear path in, and they reach the bracket), the glue-in camera cradle, and the stack keeper (it fits, and its arms rest on the boards). |
 | `LittleBot_v4_assembly.mp4` | **the assembly video** (4 minutes): every part, screw, nut and cable going in, in the order below, each screw turned in by its tool with its size on a tag |
 | `assembly_video/` | re-makes the video (`OPENSCAD=... ./make_video.sh`). The screws, nuts, cable routes and part positions come from the model (`video4.scad`). |
 | `export_v4.sh`, `make_v4_project.py`, `make_v4_assembly.py` | re-make the STLs, the project and the assembled 3MF |
@@ -156,7 +156,7 @@ The tilt stays adjustable: the 2 screws are reached from behind, with the head's
 
 ### The stack keeper is v4's own
 
-v2's keeper was a 1.6 mm bar (0.6 mm over its V-groove) so it fitted under v2's base. Its screw recesses were wider than the bar, and its ends sat 0.65 mm into the floor's front wall, so tightening the screws bent it: it broke. v4 has room above the stack: a 9 × 9 mm bar, 11 mm wide round the screw heads, clear of the wall. It goes on the same floor with the same 2 × M3 × 20 (the heads sit 9 mm down: a 2 mm hex key). It's on plate 4 and in `LittleBot_v4_extras_A1.3mf`; print it top face down.
+v2's keeper was a 1.6 mm bar (0.6 mm over its V-groove) so it fitted under v2's base. Its screw recesses were wider than the bar, and its ends sat 0.65 mm into the floor's front wall, so tightening the screws bent it: it broke. v4 has room above the stack: a 9 × 9 mm bar, 11 mm wide round the screw heads, clear of the wall. Two arms reach back over the stack's ends and rest on the UPS board's and the Pi's top edges (clear of their ports, the standoffs and the switch slider), so the Pi end can't rock, and 3 fingers beside the boards' ends stop the stack sliding along its plate. It goes on the same floor with the same 2 × M3 × 20 (the heads sit 9 mm down: a 2 mm hex key). It's on plate 4 and in `LittleBot_v4_extras_A1.3mf`; print it top face down. If the Pi end still moves, a strip of foam tape under each arm takes up the play.
 
 ![v2's keeper and v4's](stack_keeper_v4.png)
 

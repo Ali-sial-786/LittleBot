@@ -75,7 +75,10 @@ if (check == "cradle_vs_frame")      intersection() { sa_cam_cradle(); sa_head_f
 if (check == "cradle_vs_camera")     intersection() { sa_cam_cradle(); union() { camera_s(); place_cam4() camera_bracket(); for (a = [-10, 10]) place_cam4() translate([0, cam_pivot_dy, 0]) rotate([a, 0, 0]) translate([0, -cam_pivot_dy, 0]) camera_bracket(); } }
 if (check == "cradle_screws_clear")  intersection() { sa_cam_cradle(); for (s = [-1, 1]) { pivot_screw(s, cam4_scr_x + 20, cam4_scr_x, 5.9); pivot_screw(s, cam4_scr_x, cam4_scr_x - 12, 2.9); } }
 // the stack keeper: on the clear plate's top edge (contact only), clear of the floor (its wall, its bosses) and the stack
-if (check == "keeper_fit")           intersection() { stack_keeper(); union() { base_floor(false); ups_stack(0); pca_floor(0); pca_clamp(0); pca_clamp(1); } }
+if (check == "keeper_fit")           intersection() { stack_keeper(); union() { base_floor(false); ups_stack(0); for (i = [0, 2, 4, 5]) ups_plug(i, 0); charge_cable(0);
+                                                                             pca_floor(0); pca_clamp(0); pca_clamp(1); v3_ups_slider(); } }
+// its arms rest on the boards' top edges (0.2 mm lower, they'd dig in: must NOT be empty)
+if (check == "keeper_rests")         intersection() { translate([0, 0, -0.2]) keeper4_arms(); ups_stack(0); }
 if (check == "hood_vs_camera")       intersection() { union() { sa_head_frame_body(); sa_head_back(); } union() { camera_s(); place_cam4() camera_bracket(); } }
 if (check == "head_vs_body")         intersection() { union() { sa_body(); v3_neck_plate(); }; head_all(head_angle); }
 // arms

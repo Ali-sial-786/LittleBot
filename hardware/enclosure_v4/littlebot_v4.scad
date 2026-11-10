@@ -416,12 +416,25 @@ module sa_arm() difference() {
 // STACK KEEPER (overrides v2's): v2's was a 1.6 mm bar (0.6 mm over its V-groove) so it fitted under v2's base, and its
 // 6.4 mm screw recesses were wider than the 6 mm bar: it broke. v4 has room above the stack: a 9 x 9 mm bar over the
 // same V, the ends 11 mm wide round the screw heads. The same seat, so the same 2 x M3 x 20 into v2's floor.
+// Two arms reach back over the stack's ends and rest on the UPS board's and the Pi's top edges (clear of their ports,
+// the standoffs and the slider), so the Pi end can't rock; fingers beside the boards' ends stop it sliding along the plate.
 // Robot coordinates; prints top face down.
 // -----------------------------------------------------------------------------
 keeper4_h = 9;                           // the bar's top, above its V's mouth
 keeper4_w = 9;                           // the bar's width (across the plate)
 keeper4_end = [11, 5.5];                 // the ends: width round the screw heads, reach beyond the screws
 keeper4_top = keeper_mouth(ups_plate_t, ups_plate[1]) + keeper4_h;
+keeper4_arm = 10;                        // the arms' width, centred on the UPS board's ends
+module keeper4_arms() {
+    zb = stk_ztop;                                                                   // the boards' top (port) edges
+    ups_y = [stk_y0 + stk_ups_w0, stk_y0 + stk_ups_w0 + ups_pcb_t]; pi_y = [stk_y0 + stk_pi_w0, stk_y0 + stk_pi_w1];
+    y0 = stk_yc + keeper4_w/2 - eps; y1 = pi_y[1] + 2.5;
+    for (xb = [stk_x0, stk_x0 + ups_l]) translate([xb - keeper4_arm/2, y0, zb]) cube([keeper4_arm, y1 - y0, keeper4_top - zb]);
+    // fingers 0.3 mm beyond the boards' ends, 4 mm down: the UPS board's two ends, the Pi's left end (its USB / Ethernet
+    // jacks overhang its right end)
+    for (f = [[stk_x0 - 1.4, ups_y], [stk_x0 + ups_l + 0.3, ups_y], [stk_x0 - 1.4, pi_y]])
+        translate([f[0], f[1][0] - 1, zb - 4]) cube([1.1, f[1][1] - f[1][0] + 2, 4 + eps]);
+}
 module stack_keeper() {
     zm = keeper_mouth(ups_plate_t, ups_plate[1]);
     x0 = keeper_x[0] - keeper4_end[1]; x1 = keeper_x[1] + keeper4_end[1];
@@ -431,6 +444,7 @@ module stack_keeper() {
     difference() {
         union() {
             translate([x0, stk_yc - keeper4_w/2, zm]) cube([x1 - x0, keeper4_w, keeper4_h]);                       // the bar
+            keeper4_arms();
             for (e = [[x0, px0], [px1, x1]]) {
                 translate([e[0], wall_y1 + 0.2, zm - keeper_drop]) cube([e[1] - e[0], stk_yc + keeper4_w/2 - wall_y1 - 0.2, keeper_drop + eps]);   // down to the bosses
                 translate([e[0], stk_yc - keeper4_end[0]/2, wz1 + 0.4]) cube([e[1] - e[0], keeper4_end[0], zm + keeper4_h - wz1 - 0.4]);   // round the heads

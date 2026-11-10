@@ -147,7 +147,7 @@ function defineSteps() {
   // ---- the floor (v2's), on the bench
   { id: 'floor', title: 'The floor (v2’s), on the bench', detail: 'The electronics go onto v2’s floor first, outside the robot, where you can reach everything.',
     hide: BENCH_FLOOR, phases: [{ parts: [['floor', null, { label: 'floor (v2)' }]] }], view: { t: [0, 78, -205], az: -35, el: 32, d: 580 } },
-  { id: 'stack', title: 'Pi 5 + UPS', detail: 'Cells into the UPS HAT (E). Pi onto it with the UPS kit’s 4 × M2.5 screws, Active Cooler on. Stand the clear plate in the floor’s groove, ports up, and press its top edge down with the keeper: 2 × M3 × 20.',
+  { id: 'stack', title: 'Pi 5 + UPS', detail: 'Cells into the UPS HAT (E). Pi onto it with the UPS kit’s 4 × M2.5 screws, Active Cooler on. Stand the clear plate in the floor’s groove, ports up. The keeper presses its top edge down, its arms rest on the boards’ top edges: 2 × M3 × 20.',
     hide: BENCH_FLOOR, phases: [{ parts: [['ups_plate', [0, 0, 50]], ['ups_cells', [0, 0, 50]], ['ups_standoffs', [0, 0, 50]], ['ups_board', [0, 0, 50], { label: 'UPS HAT (E) + cells' }]], gap: 0.25 },
              { parts: [['pi', [0, 70, 0], { label: 'Pi 5' }]] }, { screws: 'M2.5 × 6 (UPS kit)' }, { parts: [['cooler', [0, 60, 0]]] },
              { move: ['stack', [0, 0, 0], 1.8] }, { parts: [['keeper', [0, 0, 50], { label: 'stack keeper' }]] }, { screws: 'M3 × 20' }],
