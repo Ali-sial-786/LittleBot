@@ -44,6 +44,7 @@ Everything else is new. That includes the base ring (v3's shape, with its 4 scre
 | `LittleBot_v4_assembled.3mf` | the whole robot assembled and coloured, to look at (not to print) |
 | `stl/*.stl` | each part on its own, in its print orientation (`head_inlay` is the head frame's dark arch; `camera_cradle` only for a head frame printed before 10 Nov 2026) |
 | `plates_v4.png` | top view of the 5 plates |
+| `plates_v4_extras.png` | top view of the extras plate (mic holder, camera cradle, stack keeper) |
 | `checks_v4.scad`, `run_checks_v4.sh` | 68 checks (`OPENSCAD=... ./run_checks_v4.sh`), all passing. They cover interference, the arms' sweep and finger pinch with the head turned, the glass never touched, room to push each plug in, the slider, the AA box in the head, the speaker and mic, the dark panel, the camera's pivot screws (a clear path in, and they reach the bracket), the glue-in camera cradle, the stack keeper (it fits, and its arms rest on the boards) and the ReSpeaker's holder (on the chest's inside round the old mic sleeve, the board clear of everything). |
 | `LittleBot_v4_assembly.mp4` | **the assembly video** (4 minutes): every part, screw, nut and cable going in, in the order below, each screw turned in by its tool with its size on a tag |
 | `assembly_video/` | re-makes the video (`OPENSCAD=... ./make_video.sh`). The screws, nuts, cable routes and part positions come from the model (`video4.scad`). |

@@ -202,4 +202,6 @@ if __name__ == "__main__":
     plates = [(pname, colour, pack(names)) for pname, colour, names in PLATES]
     project(plates, HERE / "LittleBot_v4_A1.3mf")
     preview(plates, HERE / "plates_v4.png")
-    project([(pname, colour, pack(names)) for pname, colour, names in EXTRAS], HERE / "LittleBot_v4_extras_A1.3mf", "LittleBot v4 extras")
+    extras = [(pname, colour, pack(names)) for pname, colour, names in EXTRAS]
+    project(extras, HERE / "LittleBot_v4_extras_A1.3mf", "LittleBot v4 extras")
+    preview(extras, HERE / "plates_v4_extras.png")
