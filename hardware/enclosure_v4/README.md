@@ -30,6 +30,8 @@ Reused as printed (not on the plates):
 - **from v2:** the floor (Pi 5 + UPS), the stack keeper, the PCA9685 clamps, the coupler, the ring gear, the pinion, the servo frame and the camera bracket;
 - **from v3:** the neck plate, if you printed it (v4's is identical): then skip plate 5.
 
+![the 8 parts reused from v2](reused_from_v2.png)
+
 Everything else is new. That includes the base ring (v3's shape, with its 4 screw tabs moved to the back) and the UPS slider (13 mm longer than v3's, so its tab reaches out through the dark panel).
 
 ## Files
