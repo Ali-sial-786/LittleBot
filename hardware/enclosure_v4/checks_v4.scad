@@ -81,8 +81,13 @@ if (check == "keeper_rests")         intersection() { translate([0, 0, -0.2]) ke
 // the ReSpeaker's holder: on the chest's inside (touching only), round the old mic sleeve; the board clips in touching only
 // the holder; its mics behind their dots (the drill guides line up with the body's holes)
 if (check == "mic_holder_vs_body")   intersection() { sa_rsl_holder(); sa_body(); }
-if (check == "mic_fit")              intersection() { place_rsl() { rsl_board(0); rsl_plug(0); } union() { sa_rsl_holder(); sa_body(); } }
-if (check == "mic_vs_parts")         intersection() { union() { sa_rsl_holder(); mic_s(); } union() { speaker_s(); arm_servo_s(-1); arm_servo_s(1); neck_static(); head_servo_s(); neck_moving(head_angle); v3_neck_plate(); } }
+if (check == "mic_fit")              intersection() { place_rsl() { rsl_board(0); rsl_plug(0); } union() { sa_rsl_holder(); sa_body(); sa_rsl_key(false); } }
+if (check == "mic_vs_parts")         intersection() { union() { sa_rsl_holder(); sa_rsl_key(false); mic_s(); } union() { speaker_s(); arm_servo_s(-1); arm_servo_s(1); neck_static(); head_servo_s(); neck_moving(head_angle); v3_neck_plate(); } }
+// the key: in the old pocket and on the holder's base (touching only; its crush ribs left out), the screws in their posts
+if (check == "mic_key_fit")          intersection() { sa_rsl_key(false); union() { sa_body(); sa_rsl_holder(); } }
+if (check == "mic_key_clamps")       intersection() { translate([0, -0.2, 0]) sa_rsl_key(false); sa_rsl_holder(); }   // must NOT be empty: its head bears on the base
+if (check == "mic_key_slides_in")    intersection() { for (d = [2.5, 5, 7.5, 10]) translate([d, 0, 0]) sa_rsl_key(false); union() { sa_body(); sa_rsl_holder(); } }   // on its way in
+if (check == "mic_screws_bite")      intersection() { place_rsl() rsl_screws(); sa_rsl_holder(); }                     // must NOT be empty
 if (check == "hood_vs_camera")       intersection() { union() { sa_head_frame_body(); sa_head_back(); } union() { camera_s(); place_cam4() camera_bracket(); } }
 if (check == "head_vs_body")         intersection() { union() { sa_body(); v3_neck_plate(); }; head_all(head_angle); }
 // arms

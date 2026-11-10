@@ -181,27 +181,30 @@ module dot_holes() {
 }
 
 // -----------------------------------------------------------------------------
-// THE MIC: a Seeed ReSpeaker Lite (USB, 2 mics; it replaced v2's Adafruit mic) in a holder glued inside the chest.
+// THE MIC: a Seeed ReSpeaker Lite (USB, 2 mics; it replaced v2's Adafruit mic) on a holder inside the chest.
 // The board lies across the chest, its back (the mics' side: their sound holes face out) towards the wall, its USB-C
-// towards +x (the Pi's USB end). The holder fits round the old mic sleeve (nothing to cut off); its base follows the
-// wall (the glue face), and guides a 1.6 mm drill for the mics' 2 dots (7 holes each, as the chest's dots).
+// towards +x (the Pi's USB end), screwed to the holder through its own 2 holes (2 x M2 x 8). The holder's base rests
+// on the wall round the old mic sleeve (nothing to cut off, no glue): a key slides tight into the sleeve's pocket (the
+// old mic's) and clamps the base to the wall. A tube runs from each mic straight out to its dot; the base guides a
+// 1.6 mm drill for the 2 dots (7 holes each, as the chest's dots) on a body printed before they were added.
 // Board frame (Seeed's 3D model, v1.1): x along it from its plain end (0) to its connector end (82), y across it from
 // its top edge, z out of its back face through the board (it's z 0 .. 1.51; the mics and 2 buttons stand off its back).
 // -----------------------------------------------------------------------------
 rsl = [82, 34, 1.51];
 rsl_mic_x = [5.5, 76.5]; rsl_mic_y = 17.0; rsl_mic_h = 1.28;   // its 2 mics (MSM261D3526H1CPM, top port), on its back
 rsl_back_h = 2.58;                       // its tallest part on the back: 2 buttons at the plain end
-rsl_conn_x = 64;                         // the top face is bare 0.6 mm in from both long edges up to here; beyond, the
-                                         // 3.5 mm jack, the speaker JST and the USB-C reach the edges
-rsl_hooks = [1, 40]; rsl_clips = [10, 55];   // rigid hooks over its lower edge, springy clips over its upper edge (x)
+rsl_conn_x = 64;                         // beyond here the 3.5 mm jack, the speaker JST and the USB-C
+rsl_holes = [[2.49, 31.58], [60.2, 2.66]]; rsl_hole_d = 2.2;   // its 2 mounting holes (M2)
+rsl_scr = [2, 8];                        // M2 x 8 into the holder's 2 posts
 rsl_base_t = 1.6;                        // the holder's base, on the wall
 rsl_z = mic_dot[1];                      // the mics' height: the chest's row of dots
 rsl_a = atan((front_y(0, rsl_z + 5) - front_y(0, rsl_z - 5)) / 10);   // how far the wall leans back there
 rsl_t = [0, -sin(rsl_a), -cos(rsl_a)];   // down the board (its y)
 rsl_n = [0, cos(rsl_a), -sin(rsl_a)];    // through it, from its back into the body (its z)
 rsl_zb = rsl_z - rsl_mic_h * sin(rsl_a); // so the mics' faces sit at rsl_z
-// the old sleeve (sa_mic_sleeve): its block and the 45-degree wedge under it, which the board must clear
+// the old sleeve (sa_mic_sleeve): its block and the 45-degree wedge under it, which the board must clear; its pocket
 sl4_x = [mic3[0] - 2, mic3[0] + mic_body]; sl4_z = [mic3[2] - mic_w/2 - 2.4, mic3[2] + mic_w/2 + 2.4]; sl4_y1 = mic3[1] + mic_t + 2.5;
+sl4_pocket = [[mic3[0], sl4_x[1]], [mic3[2] - mic_w/2 - 0.4, mic3[2] + mic_w/2 + 0.4], mic3[1] + mic_t + 0.4];   // x, z, its back (y)
 function sl4_y(z) = z >= sl4_z[0] ? sl4_y1 : sl4_y1 - (sl4_z[0] - z);
 // how far behind the wall the board's back must sit: its back parts (+ 0.6) clear the holder's base everywhere, and the
 // old sleeve where they pass in front of it (only 1.3 mm stands off its back, but 2.6 at its 2 buttons)
@@ -214,29 +217,31 @@ function rsl_pt(p) = [p[0] - rsl[0]/2, rsl_yb + (p[1] - rsl_mic_y) * rsl_t[1] + 
 rsl_M = let (o = rsl_pt([0, 0, 0])) [[1, 0, 0, o[0]], [0, rsl_t[1], rsl_n[1], o[1]], [0, rsl_t[2], rsl_n[2], o[2]], [0, 0, 0, 1]];
 module place_rsl() multmatrix(rsl_M) children();
 module rsl_board(s = 0) {                // board frame; s > 0 shrinks it (checks), s < 0 grows it
-    translate([s, s, s]) cube(rsl - [2*s, 2*s, 2*s]);
+    difference() {
+        translate([s, s, s]) cube(rsl - [2*s, 2*s, 2*s]);
+        for (h = rsl_holes) translate([h[0], h[1], -1]) cylinder(d = rsl_hole_d + 2*s, h = 4, $fn = 16);
+    }
     for (x = rsl_mic_x) translate([x - 1.33 + s, 15.26 + s, -rsl_mic_h + s]) cube([2.65 - 2*s, 3.5 - 2*s, rsl_mic_h]);
     for (b = [[0.83, 6.23], [8.52, 13.92]]) translate([b[0] + s, 4.11 + s, -rsl_back_h + s]) cube([b[1] - b[0] - 2*s, 3.3 - 2*s, rsl_back_h]);
     translate([39.9 + s, 14.18 + s, -1.19 + s]) cube([2.1 - 2*s, 3.77 - 2*s, 1.19]);                 // its LEDs
-    translate([0.9 + s, 0.75 + s, 1.5]) cube([rsl_conn_x - 0.9 - 2*s, 32.5 - 2*s, 2.6 - s]);         // its top parts (4.03 high)
+    translate([4.9 + s, 0.75 + s, 1.5]) cube([rsl_conn_x - 4.9 - 2*s, 32.5 - 2*s, 2.6 - s]);         // its top parts (4.03 high,
+    translate([0.9 + s, 0.75 + s, 1.5]) cube([4 - 2*s, 28.5 - 2*s, 2.6 - s]);                        // clear of the screws' heads)
     translate([rsl_conn_x + s, 2.18 + s, 0.65 + s]) cube([83.6 - rsl_conn_x - 2*s, 31.42 - 2*s, 8.4 - 2*s]);   // jack, JST, USB-C
 }
+module rsl_screws() for (h = rsl_holes) translate([h[0], h[1], rsl[2]]) {   // board frame: M2 x 8, pan heads on its top face
+    translate([0, 0, -rsl_scr[1]]) cylinder(d = rsl_scr[0], h = rsl_scr[1], $fn = 12); cylinder(d = 3.8, h = 1.4, $fn = 16); }
 module rsl_plug(s = 0) translate([82.9 + s, 21.8 + s, -0.6 + s]) cube([30 - 2*s, 12 - 2*s, 7.2 - 2*s]);   // a USB-C cable's plug
+// the sound tubes: straight out from each mic to its dot (along y, as the dots), ending clear of the board's back
+function rsl_mic(i) = rsl_pt([rsl_mic_x[i], rsl_mic_y, -rsl_mic_h]);
+function rsl_tube_end(i, r) = rsl_mic(i)[1] - (0.3 + r * sin(rsl_a)) / cos(rsl_a);
+module rsl_tubes() for (i = [0, 1]) let (m = rsl_mic(i)) translate([m[0], 0, m[2]]) rotate([-90, 0, 0]) difference() {
+    translate([0, 0, -40]) cylinder(d = 9.6, h = 40 + rsl_tube_end(i, 4.8), $fn = 40);
+    translate([0, 0, front_y(m[0], m[2]) + (b_wall + rsl_base_t) / cos(rsl_a)]) cylinder(d = 7.2, h = 60, $fn = 40);   // the base stays: its floor
+}
 module rsl_holder_raw() {                // board frame; reaches back past the wall (clipped to the body's inside)
     zb = -40;
     for (y = [[0.3, 2.5], [31.5, 33.7]]) translate([0.5, y[0], zb]) cube([81, y[1] - y[0], -zb]);             // back pads
-    for (x = rsl_hooks) translate([x, 0, 0]) {                                                                // hooks
-        translate([0, 34.25, zb]) cube([8, 1.4, -zb + 2.86]);
-        translate([0, 33.4, 1.66]) cube([8, 2.25, 1.2]);
-    }
-    for (x = rsl_clips) translate([x, 0, 0]) {                                                                // clips
-        translate([0, -1.25, zb]) cube([8, 1.0, -zb + 3.3]);
-        rotate([90, 0, 90]) linear_extrude(8) polygon([[-0.3, 1.66], [0.6, 1.66], [-0.3, 3.3]]);
-    }
-    translate([-1.6, 12, zb]) cube([1.3, 10, -zb + 2.2]);                                                     // end stops
-    translate([82.3, 11.5, zb]) cube([1.3, 9.5, -zb + 1.4]);
-    for (x = rsl_mic_x) translate([x, rsl_mic_y, zb]) difference() {                                         // sound tubes
-        cylinder(d = 9.6, h = -zb - rsl_mic_h - 0.3, $fn = 40); translate([0, 0, -1]) cylinder(d = 7.2, h = 100, $fn = 40); }
+    for (h = rsl_holes) translate([h[0], h[1], zb]) cylinder(d = 5.6, h = -zb, $fn = 32);                     // the screws' posts
 }
 module sl4_envelope(g) hull() {          // the old sleeve, grown by g
     translate([sl4_x[0] - g, -40, sl4_z[0] - g]) cube([sl4_x[1] - sl4_x[0] + 2*g, sl4_y1 + 40 + g, sl4_z[1] - sl4_z[0] + 2*g]);
@@ -246,12 +251,30 @@ module sa_rsl_holder() difference() {
     union() {
         intersection() { difference() { body_outer(b_wall); body_outer(b_wall + rsl_base_t); }
                          place_rsl() translate([-3, -4.5, -60]) cube([rsl[0] + 6, rsl[1] + 9, 60]); }     // the base
-        intersection() { body_outer(b_wall); place_rsl() rsl_holder_raw(); }
+        intersection() { body_outer(b_wall); union() { place_rsl() rsl_holder_raw(); rsl_tubes(); } }
     }
     sl4_envelope(0.3);
-    place_rsl() rsl_board(-0.15);
-    for (x = rsl_mic_x) let (m = rsl_pt([x, rsl_mic_y, -rsl_mic_h])) dot7(m[0], m[2]);                      // drill guides
-    dot7(mic_dot[0], mic_dot[1]);        // over the right dot: a toothpick through its middle hole lines the holder up
+    place_rsl() { rsl_board(-0.15); for (h = rsl_holes) translate([h[0], h[1], -rsl_scr[1] + rsl[2] - 0.8]) cylinder(d = 1.75, h = 10, $fn = 12); }   // M2 pilots
+    for (i = [0, 1]) let (m = rsl_mic(i)) dot7(m[0], m[2]);                                                // drill guides
+}
+// the key: slides tight into the old sleeve's pocket from its open end (crush ribs on its back), its head clamps the
+// holder's base to the wall beside the pocket. Prints on its side (its top face down).
+rsl_key_head = 8;                        // the head's length beyond the pocket
+module sa_rsl_key(ribs = true) {
+    px = sl4_pocket[0]; pz = sl4_pocket[1]; c = 0.15;
+    difference() {
+        union() {
+            // in the pocket and out over the holder's base (its head); its underside 0.1 over the base's level all along, so it
+            // slides in over the base, and its crush ribs press the head down on the base
+            intersection() { body_outer(b_wall + rsl_base_t + 0.1);
+                             translate([px[0] + 0.4, -40, pz[0] + c]) cube([px[1] + 0.3 + rsl_key_head - px[0] - 0.4, sl4_pocket[2] - c + 40, pz[1] - pz[0] - 2*c]); }
+            if (ribs) for (z = [pz[0] + 4, (pz[0] + pz[1]) / 2, pz[1] - 4]) hull() {      // crush ribs, a lead-in at the tip
+                translate([px[0] + 3, sl4_pocket[2] - c - 0.01, z - 0.4]) cube([px[1] - px[0] - 3, 0.25, 0.8]);
+                translate([px[0] + 0.4, sl4_pocket[2] - c - 0.01, z - 0.4]) cube([0.01, 0.01, 0.8]);
+            }
+        }
+        translate([px[0] + 0.4, sl4_pocket[2] - c, pz[0]]) rotate([0, 0, 45]) cube([1.5, 1.5, pz[1] - pz[0]], center = false);   // a lead-in on the tip's back edge
+    }
 }
 module rsl_dummy() { color("#1b1d22") place_rsl() rsl_board(); }
 // fresh air in, high on the back
@@ -593,6 +616,7 @@ module print4(w) {
     if (w == "camera_cradle") translate([0, 0, -(y4f + H4_face_t)]) rotate([90, 0, 0]) sa_cam_cradle();     // plate down (old head frames only)
     if (w == "stack_keeper") translate([0, 0, keeper4_top]) mirror([0, 0, 1]) stack_keeper();                // top face down
     if (w == "mic_holder")  rsl_print();                                                                     // base down (tree supports under it)
+    if (w == "mic_key")     translate([0, 0, -sl4_pocket[1][0] - 0.15]) sa_rsl_key();                     // its bottom face down
 }
 if (part == "print4") print4(which);
 
@@ -614,6 +638,7 @@ module assy4(w) {
     if (w == "camera_bracket") place_head3(head_angle) place_cam4() camera_bracket();
     if (w == "camera_cradle") place_head3(head_angle) sa_cam_cradle();
     if (w == "mic_holder")  sa_rsl_holder();
+    if (w == "mic_key")     sa_rsl_key();
     if (w == "respeaker")   { place_rsl() rsl_board(); }
     if (w == "floor")       base_floor();
     if (w == "floor_clips") { stack_keeper(); pca_clamp(0); pca_clamp(1); }

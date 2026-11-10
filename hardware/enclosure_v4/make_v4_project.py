@@ -39,7 +39,7 @@ PLATES = [("body", "white", ["body", "arm_left", "arm_right", "ups_slider"]),
           ("neck", "white", ["neck_plate"])]
 # a small extra project: the ReSpeaker's holder, the glue-in camera cradle (for a head frame printed before 2026-11-10) and
 # v4's stronger stack keeper
-EXTRAS = [("camera cradle + stack keeper + mic holder", "white", ["mic_holder", "camera_cradle", "stack_keeper"])]
+EXTRAS = [("camera cradle + stack keeper + mic holder", "white", ["mic_holder", "camera_cradle", "stack_keeper", "mic_key"])]
 SOURCE = {}                             # parts that aren't in stl/
 SUPPORT = {"head_frame", "head_back", "mic_holder"}   # tree supports from the build plate only (the mic holder: under its curved base)
 NO_NEST = {"head_frame", "head_back"}   # nothing inside their footprint (their supports go there)
