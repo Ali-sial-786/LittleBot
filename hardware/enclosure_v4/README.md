@@ -26,11 +26,11 @@ To look like the concept, v4 is bigger than v3: 437 mm tall, the head 242 × 158
 | Base (inside) | Pi 5 + UPS on v2's floor | The Pi's fan blows down through the floor's vents and out through the notches under the base. |
 | Arms | Shoulder, arm and hand in one smooth piece | They splay out 16° and stand clear of the body. Each hand has 4 fingers and a thumb at the front. |
 
-Reused as printed:
+Reused as printed (not on the plates):
 - **from v2:** the floor (Pi 5 + UPS), the stack keeper, the PCA9685 clamps, the coupler, the ring gear, the pinion, the servo frame and the camera bracket;
-- **from v3:** the neck plate and the UPS slider (the slider is now printed white).
+- **from v3:** the neck plate, if you printed it (v4's is identical): then skip plate 5.
 
-The base ring is v3's shape, with its 4 screw tabs moved to the back, so it needs reprinting.
+Everything else is new. That includes the base ring (v3's shape, with its 4 screw tabs moved to the back) and the UPS slider (13 mm longer than v3's, so its tab reaches out through the dark panel).
 
 ## Files
 
@@ -70,7 +70,7 @@ Filament slots: **1 white**, **2 dark grey**.
 | 2 | white + dark | **head frame** (face down) | The dark arch is part of the same print: its first 8 layers switch filament where the arch is. **Tree supports from the build plate**, under the screen's 4 bosses. |
 | 3 | white | **head back** (rim down) | **Tree supports from the build plate**, inside its dome. |
 | 4 | dark | **base ring** (upright), **black neck** (top down), **port panel** (upright, as it sits) | 3 mm brim on the panel. |
-| 5 | white | **neck plate** (top face down) | |
+| 5 | white | **neck plate** (top face down) | Skip it if you printed v3's: it's the same part. |
 
 ## What to buy
 
