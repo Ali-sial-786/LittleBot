@@ -46,7 +46,7 @@ Everything else is new. That includes the base ring (v3's shape, with its 4 scre
 | `plates_v4.png` | top view of the 5 plates |
 | `plates_v4_extras.png` | top view of the extras plate (mic holder, camera cradle, stack keeper) |
 | `checks_v4.scad`, `run_checks_v4.sh` | 72 checks (`OPENSCAD=... ./run_checks_v4.sh`), all passing. They cover interference, the arms' sweep and finger pinch with the head turned, the glass never touched, room to push each plug in, the slider, the AA box in the head, the speaker and mic, the dark panel, the camera's pivot screws (a clear path in, and they reach the bracket), the glue-in camera cradle, the stack keeper (it fits, and its arms rest on the boards) and the ReSpeaker's holder (round the old mic pocket, its key slides in and clamps it, the board's screws reach its posts, the board clear of everything). |
-| `LittleBot_v4_assembly.mp4` | **the assembly video** (4 minutes): every part, screw, nut and cable going in, in the order below, each screw turned in by its tool with its size on a tag |
+| `LittleBot_v4_assembly.mp4` | **the assembly video** (4½ minutes): every part, screw, nut and cable going in, in the order below, each screw turned in by its tool with its size on a tag; the horns glued into their pockets, the ReSpeaker on its holder, the stack keeper, and at the end how it charges |
 | `assembly_video/` | re-makes the video (`OPENSCAD=... ./make_video.sh`). The screws, nuts, cable routes and part positions come from the model (`video4.scad`). |
 | `export_v4.sh`, `make_v4_project.py`, `make_v4_assembly.py` | re-make the STLs, the project and the assembled 3MF |
 
@@ -105,13 +105,14 @@ Because everything is 45 mm taller than v3, a few leads have to reach further:
 | Servo horns → pinion, arms | 6 × M1.4 × 5 self-tapping pan heads (2 per horn). Not in most servo bags: a micro screw assortment (M1–M1.7) has them. If one won't pass the horn, open its hole with a 1.5 mm drill. Or skip them and glue each horn into its pocket (epoxy or CA): it must be one or the other | the 1.3 mm pilot holes in the pinion's and arms' pockets |
 | Arm servos, arms | as v3 (tab screws and the spline screws from the servo bags) | |
 
-In total: 18 × M3 × 12, 5 × M3 × 10, 5 × M3 × 8, 8 M3 nuts 2 × M2 × 8 and 6 × M1.4 × 5 self-tappers (v2's neck screws included).
+In total: 18 × M3 × 12, 5 × M3 × 10, 5 × M3 × 8, 8 M3 nuts, 2 × M2 × 8 and 6 × M1.4 × 5 self-tappers or epoxy for the horns (v2's neck screws included).
 
 ## Assembly order
 
 1. **Neck plate, on the bench (as v3):**
    - Put v2's coupler through the plate.
    - Screw the ring gear to it from below.
+   - Glue the trimmed horn into the pinion's pocket (or 2 × M1.4 × 5): see *The horns* below.
    - Hang the servo frame with the head servo and pinion, and mesh the gears with the servo centred.
 2. **Black neck:** screw the puck onto the coupler (3 × M3 × 12).
 3. **In the body:**
@@ -123,6 +124,7 @@ In total: 18 × M3 × 12, 5 × M3 × 10, 5 × M3 × 8, 8 M3 nuts 2 × M2 × 8 an
    - Slider: push it in from outside through the slot in the back, fork first.
    - Dark panel: hold it on and fit the 4 × M3 × 12 along its bottom, then 1 × M3 × 8 at its top.
 5. **v2 floor:**
+   - On the bench first: the Pi + UPS under the stack keeper, the PCA9685, and the charging cable (its plug in the UPS's USB-C marked POWER, never the Pi's own; its socket zip-tied into the holder at the back, opening backwards).
    - Turn the robot upside down and fit 4 × M3 × 12 through the ring's sides.
    - Turn it upright and work the slider so the switch's knob sits in its fork.
 6. **Neck plate in:**
@@ -140,9 +142,12 @@ In total: 18 × M3 × 12, 5 × M3 × 10, 5 × M3 × 8, 8 M3 nuts 2 × M2 × 8 an
      - set the tilt and tighten.
    - AA box: stand it between its rails behind the neck, lid backwards, with its leads down the neck.
    - Back: hook its 2 slots over the frame's tabs, swing it down and fit 2 × M3 × 12 from under the head.
-8. **Arms:** fit the horn on each arm, push it onto its spline at the neutral angle, and fit the spline screw.
+8. **Arms:** glue the horn into each arm's pocket (see *The horns* below) and let it cure. Push each arm onto its spline at the neutral angle, and fit the spline screw.
+9. **Charging:** a USB-C PD charger plugs into the socket in the dark panel on the back (the UPS takes up to 40 W). The white tab beside it is the UPS switch. Charge on a hard surface, with someone nearby.
 
 **Arm range:** −90° to **+95°**, checked with the head turned ±60°.
+
+**The horns** (the pinion's and the arms'): each horn must be fixed into its printed pocket, or the part slides off it. The pocket's cross shape carries the turning, and the spline screw holds the horn on the servo, not the part on the horn. Glue them: sand the horn's plate, put a thin bead of 2-part epoxy along the pocket and into its small holes (the cured epoxy pins the horn even where it doesn't stick well), keep it off the centre hole and the hub, press the horn in and let it cure. Or use 2 × M1.4 × 5 self-tapping screws per horn. Never glue a horn to its servo.
 
 ### Head frame printed before 10 Nov 2026: the glue-in camera cradle
 

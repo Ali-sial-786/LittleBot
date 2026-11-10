@@ -21,15 +21,14 @@ function nk(o, z) = [o[0], neck_y + o[1], z];                              // a 
 
 // --- screws: [step, what, d, length, head, where the head bears, the way it goes in]. head "btn" = an M3 / M2.5 button
 // head (hex socket: 2 mm key), "pan" = a Phillips pan head (screwdriver). Listed in the order they go in.
-horn_scr = [[0, 10.5], [180, 10.5]];                                      // the arm horn's 2 screws (angle, radius on the horn)
 function hw4_screws() = concat(
     [for (a = ring_screw_angles) ["ring_gear", "M3 × 12", 3, 12, "btn", torso_pt([ring_screw_r * cos(a), neck_yt + ring_screw_r * sin(a), gear_z0 + 1.8]), [0, 0, 1]]],
-    [for (a = [0, 180]) ["head_servo", "M1.4 × 5 horn screws", 1.4, 5, "pan", torso_pt([7.5 * cos(a + 7.5), pinion_yt + 7.5 * sin(a + 7.5), gear_z0 + 0.6]), [0, 0, 1]]],
     [for (hx = [sv_hole_a, sv_hole_b]) ["head_servo", "servo screws", 2, 8, "pan", torso_pt([hx, pinion_yt, hs_tab_top]), [0, 0, -1]]],
     [for (k = [0, 1]) let (o = k == 0 ? 1 : -1) ["head_servo", "M3 × 10", 3, 10, "btn",
         torso_pt([frame_pillar_x[k] - o * 4.5, pinion_yt + 7.6, hs_tab_top - sv_tab_t + collar_h/2]), [o, 0, 0]]],
     [for (a = puck_scr) ["puck", "M3 × 12", 3, 12, "btn", [head_screw_r * cos(a), neck_y + head_screw_r * sin(a), pz0 + puck_t - 4.5], [0, 0, -1]]],
     [for (s = [-1, 1]) for (hy = [sv_hole_a, sv_hole_b]) ["arm_servos", "servo screws", 2, 8, "pan", sh_pt(s, [sv_tab_top, hy, 0]), sh_dir(s, [-1, 0, 0])]],
+    [for (h = rsl_holes) ["mic", "M2 × 8", rsl_scr[0], rsl_scr[1], "pan", rsl_pt([h[0], h[1], rsl[2]]), -rsl_n]],      // the ReSpeaker onto its holder's posts
     [for (x = keeper_x) ["stack", "M3 × 20", 3, 20, "btn", [x, stk_yc, keeper_mouth(ups_plate_t, ups_plate[1]) + keeper_t - 1.8], [0, 0, -1]]],
     [for (p = pi_hole_pts) ["stack", "M2.5 × 6 (UPS kit)", 2.5, 6, "pan", stk(p[0], p[1], stk_pi_w1), [0, -1, 0]]],
     [for (x = pca_clamp_x) ["pca", "M3 × 10", 3, 10, "btn", [x, pca_y0_floor + pca_w/2, floor_low + floor_low_t + pca_standoff + 1.6 + pca_clamp_t], [0, 0, -1]]],
@@ -41,7 +40,6 @@ function hw4_screws() = concat(
     [for (h = scr_holes) let (q = hole_xz(h)) ["screen", "M2.5 × 6", 2.5, 6, "pan", [q[0], scr_back_y + scr_standoff_h + 2, q[1]], [0, -1, 0]]],
     [for (s = [-1, 1]) ["camera", "M3 × 12", 3, 12, "btn", [s * cam4_scr_x, y4f + cam_board_y + cam_pivot_dy, cam4_z], [-s, 0, 0]]],
     [for (x = cov4_scr) ["back", "M3 × 12", 3, 12, "btn", [x, y4f + H4_split + 5, head_bot(H4_split + 5, x)], [0, 0, 1]]],
-    [for (s = [-1, 1]) for (h = horn_scr) ["arms", "M1.4 × 5 horn screws", 1.4, 5, "pan", arm_pt(s, [arm_gap3, h[1] * cos(h[0]), h[1] * sin(h[0])]), arm_dir(s, [1, 0, 0])]],
     [for (s = [-1, 1]) ["arms", "spline screw", 2.5, 5, "pan", arm_pt(s, [arm_gap3 + horn_plate_t, 0, 0]), arm_dir(s, [-1, 0, 0])]]
 );
 
@@ -72,13 +70,14 @@ xe = -scr[0] / 2; zh = scr_pt([0, scr_ports[3]])[1]; zu = scr_pt([0, scr_ports[2
 fpc_lo = [xe - fpc_plug[0], g3_y + 1, zh - fpc_plug[1]/2]; usbc_lo = [xe - usbc_l[0], g3_y + 1, zu - usbc_l[1]/2];
 cam_sock = [cam_conn[0], y4f + cam_board_y + cam_pcb_t, cam4_z - 16 + cam_conn[1]];
 bat_lead = [-bat[0]/2 + 10, y4f + bat4_y + bat4_clr, bat4_z0 + 4];
+rsl_plug_end = rsl_pt([112.9, 27.8, 3]);                                  // where the cable leaves its plug (rsl_plug)
 function hw4_cables() = let (v2c = hw_cables(), hdmi0 = stk(25.8, -0.5, stk_pi_w1 + 1.7)) [
     v2c[0],                                                                // charging: the UPS's USB-C -> the socket at the back (v2's)
     v2c[1],                                                                // I2C: Pi pins 1, 3, 5, 6 -> the PCA9685 (v2's)
     ["speaker", "cables_body", "none", "#16a085", 3.5, "speaker → Pi USB",
         [[spk_w/2 + 1.6, spk3_c[1] + spk_d/2, spk3_c[2] + spk_h/2 - 4], [56, 30, 132], [72, 72, 92], [78, 106, 42], [74, 113.5, 15.5], usb_end(47, 4)], [usb_box4(47, 4)]],
-    ["mic", "cables_body", "none", "#e67e22", 3.5, "mic → Pi USB",
-        [[mic3[0] + mic_body + 32, mic3[1] + mic_t/2, mic3[2]], [30, 30, 172], [58, 82, 112], [80, 116, 46], [76, 121.5, 15.5], usb_end(47, 12)], [usb_box4(47, 12)]],
+    ["mic", "cables_body", "none", "#e67e22", 3.5, "ReSpeaker USB-C → Pi USB",
+        [rsl_plug_end, rsl_plug_end + [2, 8, -6], [66, 56, 140], [62, 84, 108], [80, 116, 46], [76, 121.5, 15.5], usb_end(47, 12)], [usb_box4(47, 12)]],
     ["servo_left", "cables_body", "none", "#8d6e63", 2.4, "left arm servo → PCA9685 channel 1",
         concat(lead_route([as_exit(1), [50, 104, 186], [24, 102, 120]], -6), [pca_ch4(1) + [0, 0, 16.5]]), [servo_plug(1)]],
     ["servo_right", "cables_body", "none", "#8d6e63", 2.4, "right arm servo → PCA9685 channel 2",
@@ -114,6 +113,16 @@ function hw4_cables() = let (v2c = hw_cables(), hdmi0 = stk(25.8, -0.5, stk_pi_w
         [nk(nko("aa"), join_z), nk(nko("aa"), join_z + 4), [bat_lead[0], bat_lead[1] - 6, bat_lead[2]], bat_lead], []]
 ];
 
+// --- glue: [name, step, group, the bead's route, the way into the pocket]. A cross along the pocket's 4 arms (over the
+// screw holes), on its floor; the horn presses in over it.
+function cross_route(f, r) = [f(r, 0), f(0, 0), f(0, r), f(0, 0), f(-r, 0), f(0, 0), f(0, -r)];
+function pin_pt(u, v) = let (c = cos(7.5), s = sin(7.5)) torso_pt([u * c - v * s, pinion_yt + u * s + v * c, gear_z0 + 1.5]);
+function hw4_glue() = concat(
+    [["g_pinion", "pinion_glue", "hservo", cross_route(function (u, v) pin_pt(u, v), 9.5), [0, 0, 1]]],
+    [for (s = [-1, 1]) [s < 0 ? "g_arm_r" : "g_arm_l", "arm_glue", s < 0 ? "arm_a" : "arm_b",
+        cross_route(function (u, v) arm_pt(s, [arm_gap3 + 1.5, u, v]), 11.5), arm_dir(s, [1, 0, 0])]]
+);
+
 // what place_parts.py needs to put the electronics where they are
 function hw4_params() = concat(video_params(), [
     ["keeper_x", keeper_x], ["pca_clamp_x", pca_clamp_x], ["hd_z0", hd_z0], ["neck_y", neck_y], ["b_top", b_top],
@@ -125,9 +134,11 @@ function hw4_params() = concat(video_params(), [
     ["arm_gap3", arm_gap3], ["horn_plate_t", horn_plate_t], ["pinion_horn", torso_pt([0, pinion_yt, gear_z0 + 0.6])],
     ["tab_hinge", [y4f + H4_split, cov4_tab_z + 1.25]], ["mic_ext", [mic3[0] + mic_body, mic3[1] + mic_t/2 - 4.75, mic3[2] - 9]],
     ["slider_travel", ups_knob[2]], ["torso_z0", torso_z0], ["pp4", [pp4[0], pp4[1], pp4_z0]],
-    ["spk", [spk3_c, [spk_w, spk_d, spk_h]]], ["mic", [mic3, [mic_l, mic_t, mic_w]]]
+    ["spk", [spk3_c, [spk_w, spk_d, spk_h]]],
+    ["chg", [rear_x, base_d - base_wall - 0.5, rear_z, back_y(rear_x, rear_z) + pp4_t]], ["chg_slot", [16.6, 8.6]],
+    ["arm_pocket", [for (s = [-1, 1]) arm_pt(s, [arm_gap3, 0, 0])]], ["rsl_c", rsl_pt([41, 17, 0])]
 ]);
-if (part == "hw4") echo(hw4 = [hw4_screws(), hw4_nuts(), hw4_cables(), hw4_params()]);
+if (part == "hw4") echo(hw4 = [hw4_screws(), hw4_nuts(), hw4_cables(), hw4_params(), hw4_glue()]);
 
 // --- small parts, each where it sits (part = "vid4", which = name) ---
 module horn() {   // a cross horn: hub on the spline, plate in the pocket (z = 0 .. horn_plate_t)
@@ -153,6 +164,7 @@ module vid4(w) {
     if (w == "usbc_plug")  translate([xe - usbc_l[0], g3_y + 1, zu - usbc_l[1]/2]) cube([usbc_l[0], usbc_l[2], usbc_l[1]]);
     if (w == "coupler4")   translate([cpl_c[0] - hdmi_cpl[0]/2, cpl_c[1] - hdmi_cpl[2]/2, cpl_c[2] - hdmi_cpl[1]/2]) cube([hdmi_cpl[0], hdmi_cpl[2], hdmi_cpl[1]]);
     if (w == "hdmi_plug")  translate([cpl_c[0] + hdmi_cpl[0]/2, cpl_c[1] - hdmi_plug[2]/2, cpl_c[2] - hdmi_plug[1]/2]) cube([hdmi_plug[0], hdmi_plug[2], hdmi_plug[1]]);
+    if (w == "mic_plug")   place_rsl() rsl_plug();                       // the ReSpeaker's USB-C cable's plug
     if (w == "eyes")       translate([0, g3_y - 0.05, scr_cz]) rotate([90, 0, 0]) linear_extrude(0.4) eyes4_2d();
 }
 if (part == "vid4") vid4(which);

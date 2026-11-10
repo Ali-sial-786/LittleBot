@@ -120,9 +120,11 @@ function defineSteps() {
     view: { t: [0, 82, 245], az: -32, el: 30, d: 430 } },
   { id: 'ring_gear', title: 'Ring gear, from below', detail: 'Turn the plate over and screw the ring gear onto the coupler’s spigot: 3 × M3 × 12.',
     phases: [{ parts: [['ring_gear', [0, 0, -60]]] }, { screws: true }], view: { t: [0, 82, 236], az: -30, el: -38, d: 330 } },
-  { id: 'head_servo', title: 'Head servo and pinion', detail: 'Horn into the pinion’s pocket: 2 × M1.4 × 5 horn screws (self-tapping). Servo onto its frame: 2 servo screws. Servo at 90°, pinion on its spline; push it all up (the pinion meshes, the collars go over the 2 pillars) and pinch the collars: 2 × M3 × 10.',
-    phases: [{ parts: [['pinion', [0, 0, -40]], ['horn_head', [0, 0, -55], { label: 'servo horn' }]] }, { screws: 'M1.4 × 5 horn screws' },
-             { parts: [['servo_frame', [0, 0, -45]], ['servo_head', [0, 0, -60], { label: 'head servo' }]] }, { screws: 'servo screws' },
+  { id: 'pinion_glue', title: 'Glue the horn into the pinion', detail: 'Sand the horn’s plate. A thin bead of 2-part epoxy along the pinion’s pocket, into its small holes but not the centre hole. Press the horn in and let it cure. (Or 2 × M1.4 × 5 self-tapping screws.)',
+    phases: [{ parts: [['pinion', [0, 0, -40]]] }, { glue: true }, { parts: [['horn_head', [0, 0, -45], { label: 'servo horn' }]] }],
+    view: { t: V.add(SCENE.pinion_horn, G0.hservo), az: -12, el: -34, d: 230 } },
+  { id: 'head_servo', title: 'Head servo', detail: 'Servo onto its frame: 2 servo screws. Servo at 90°, the pinion’s horn onto its spline. Push it all up (the pinion meshes, the collars go over the 2 pillars) and pinch the collars: 2 × M3 × 10.',
+    phases: [{ parts: [['servo_frame', [0, 0, -45]], ['servo_head', [0, 0, -60], { label: 'head servo' }]] }, { screws: 'servo screws' },
              { move: ['hservo', [0, 0, 0], 1.8] }, { screws: 'M3 × 10' }],
     view: { t: [0, 62, 196], az: -40, el: 6, d: 470 } },
   { id: 'puck', title: 'Black neck', detail: 'The puck sits on the coupler: 3 × M3 × 12 down through it, heads sunk.',
@@ -133,8 +135,10 @@ function defineSteps() {
     view: { t: [0, 82, 196], az: -22, el: 12, d: 640 } },
   { id: 'speaker', title: 'Speaker', detail: 'Down through the open top, into its ribs behind the chest grille, facing forwards.',
     hide: ['neck'], see: SEE_BODY, phases: [{ parts: [['speaker', [0, 0, 170], { label: 'USB speaker' }]] }], view: { t: [0, 30, 150], az: -28, el: 16, d: 580 } },
-  { id: 'mic', title: 'Microphone', detail: 'Plug the mic into its USB extension and push it into its pocket behind the left dot, holes forwards.',
-    hide: ['neck'], see: SEE_BODY, phases: [{ parts: [['mic', [0, 0, 150], { label: 'USB mic + extension' }]] }], view: { t: [0, 25, 182], az: -28, el: 16, d: 520 } },
+  { id: 'mic', title: 'Microphone: ReSpeaker Lite', detail: 'Holder against the chest’s inside, round the old mic pocket. Push its key into the pocket from the robot’s left until its head sits flat (a firm push). The board onto the 2 posts, mics to the wall, its USB-C cable plugged in: 2 × M2 × 8.',
+    hide: ['neck'], see: SEE_BODY, phases: [{ parts: [['mic_holder', [0, 45, 110], { label: 'mic holder' }]] }, { parts: [['mic_key', [45, 0, 0], { label: 'key' }]] },
+             { parts: [['respeaker', [0, 60, 0], { label: 'ReSpeaker Lite' }]] }, { parts: [['mic_plug', [35, 0, 0], { label: 'USB-C cable' }]] }, { screws: true }],
+    view: { t: [0, 20, 186], az: 150, el: 22, d: 340 } },
   { id: 'ring_nuts', title: 'Base ring: 4 nuts', detail: 'Lift the body off. Drop an M3 nut into each of the ring’s 4 tabs at the back.',
     hide: ['neck'], phases: [{ move: ['body', [0, 0, 170], 1.4] }, { parts: [['ring', null, { label: 'base ring' }]], with: true }, { nuts: true }],
     view: { t: [0, 118, 70], az: 150, el: 34, d: 640 } },
@@ -155,15 +159,16 @@ function defineSteps() {
   { id: 'pca', title: 'Servo board', detail: 'PCA9685 onto its 4 pins, servo pins to the back; a clamp over each end: 1 × M3 × 10 each. Jumpers from Pi pins 1, 3, 5, 6 to its I2C pins.',
     hide: BENCH_FLOOR, phases: [{ parts: [['pca', [0, 0, 45], { label: 'PCA9685' }], ['clamp0', [0, 0, 35]], ['clamp1', [0, 0, 35]]] }, { screws: true }, { cables: ['i2c'] }],
     view: { t: [-10, 40, -222], az: -38, el: 36, d: 470 } },
-  { id: 'charge', title: 'Charging cable', detail: 'USB-C extension: its plug into the UPS’s USB-C (on the blue UPS board), never the Pi’s own. Its socket goes into the floor’s cradle at the back.',
-    hide: BENCH_FLOOR, phases: [{ parts: [['usbc_socket', [0, 40, 0], { label: 'charging socket' }]] }, { cables: ['charging'] }],
+  { id: 'charge', title: 'Charging cable', detail: 'A USB-C extension. Its plug into the UPS’s USB-C (marked POWER, on the blue UPS board), never the Pi’s own. The cable loops up over the cooler and down the back. Zip-tie its socket into the holder at the back, opening backwards.',
+    hide: BENCH_FLOOR, marks: [['ups_usbc', 'UPS USB-C (POWER): plug in here', '#2d6cb5', 0.4], ['pi_usbc', 'Pi’s own USB-C: leave it empty', '#c0392b', 1.0]],
+    phases: [{ wait: 1.8 }, { cables: ['charging'] }, { parts: [['usbc_socket', [0, 40, 0], { label: 'its socket end' }]] }, { parts: [['zip_tie', [0, 0, 30], { label: 'zip tie' }]] }],
     view: { t: [8, 112, -188], az: 155, el: 30, d: 430 } },
   // ---- the floor into the robot
   { id: 'floor_in', title: 'Floor into the base', detail: 'First plug the speaker and mic into the Pi and the arm servos into the PCA9685 (next step). Turn the robot over, lower the floor in: 4 × M3 × 12 through the ring’s sides. Turn it back and work the slider: the switch’s knob drops into its fork.',
     hide: ['neck'], phases: [{ wait: 0.7 }, { flip: 180 }, { move: ['floor', [0, 0, 0], 2.2] }, { mark: true }, { screws: true }, { flip: 0 },
              { wiggle: ['ups_slider', [1, 0, 0], SCENE.slider_travel] }],
     view: { t: [0, 78, 205], az: -34, el: 10, d: 1250 }, view2: { t: [0, 78, 140], az: -58, el: 14, d: 820 } },
-  { id: 'cables_body', title: 'Body cables', detail: 'Speaker and mic into the Pi’s USB ports. Arm servos into the PCA9685: the robot’s left arm channel 1, its right arm channel 2.',
+  { id: 'cables_body', title: 'Body cables', detail: 'The speaker’s and the ReSpeaker’s cables into the Pi’s USB ports. Arm servos into the PCA9685: the robot’s left arm channel 1, its right arm channel 2.',
     hide: ['neck'], see: SEE_BODY, phases: [{ cables: ['speaker', 'mic', 'servo_left', 'servo_right'] }], view: { t: [0, 75, 115], az: -36, el: 14, d: 860 } },
   { id: 'cables_up', title: 'Cables up the neck', detail: 'Up out of the body’s top: the HDMI (its micro end in the Pi), the screen’s USB-C and the camera’s USB (both in the Pi’s USB ports), and the AA box’s leads (from the PCA9685’s V+ terminal).',
     hide: ['neck'], see: SEE_BODY, phases: [{ cables: ['hdmi', 'usbc', 'camera', 'aa'] }], view: { t: [0, 92, 150], az: 148, el: 10, d: 860 } },
@@ -195,10 +200,17 @@ function defineSteps() {
   { id: 'back', title: 'Head back', detail: 'Hook its 2 slots over the frame’s 2 tabs, swing it down, then 2 × M3 × 12 from under the head.',
     phases: [{ parts: [['head_back', [0, 50, 40], { rot: { axis: [1, 0, 0], angle: 55, pivot: hinge } }]] }, { screws: true }],
     view: { t: [0, 120, 300], az: 128, el: 4, d: 680 } },
-  { id: 'arms', title: 'Arms', detail: 'Horn into each arm’s pocket: 2 × M1.4 × 5 horn screws (self-tapping). Servos at their neutral angle: push each arm onto its spline, then the spline screw through the hole in the arm.',
-    phases: [{ parts: [['arm_a', null], ['arm_b', null]], gap: 0 }, { parts: [['horn_r', out(-1, -30)], ['horn_l', out(1, -30)]] }, { screws: 'M1.4 × 5 horn screws' },
-             { move: ['arm_a', [0, 0, 0], 2.0] }, { move: ['arm_b', [0, 0, 0], 2.0], with: true }, { screws: 'spline screw' }],
+  { id: 'arm_glue', title: 'Glue the horns into the arms', detail: 'Both arms the same, on the bench: sand the horn’s plate, a thin bead of epoxy along the arm’s pocket and into its small holes (not the centre hole), press the horn in and let it cure. (Or 2 × M1.4 × 5 self-tapping screws each.)',
+    hide: ['neck', 'body', 'ring', 'wires', 'head', 'floor'], phases: [{ parts: [['arm_a', null, { label: 'arm' }], ['arm_b', null]], gap: 0 }, { glue: true },
+             { parts: [['horn_r', out(-1, -30), { label: 'servo horn' }], ['horn_l', out(1, -30)]] }],
+    view: { t: V.add(SCENE.arm_pocket[0], out(-1, 150)), az: 75, el: 16, d: 280 } },
+  { id: 'arms', title: 'Arms', detail: 'Glue cured, servos at their neutral angle: push each arm (its horn) onto its spline, then the spline screw through the hole in the arm.',
+    phases: [{ move: ['arm_a', [0, 0, 0], 2.0] }, { move: ['arm_b', [0, 0, 0], 2.0], with: true }, { screws: 'spline screw' }],
     view: { t: [0, 82, 200], az: -22, el: 10, d: 1000 } },
+  { id: 'charging', title: 'Charging', detail: 'A USB-C PD charger into the socket in the dark panel on the back (the UPS takes up to 40 W). The white tab beside it is the UPS switch: slide it to turn LittleBot on or off. Charge on a hard surface, with a grown-up nearby.',
+    see: { body: 0.35, ring: 0.35, port_panel: 0.35 }, marks: [['socket', 'charging socket', '#2d6cb5', 0.3], ['ups_slider', 'UPS switch', '#39404a', 0.5]],
+    phases: [{ parts: [['chg_plug', [0, 80, 0], { label: 'charger’s USB-C plug' }]] }, { cables: ['charger'] }, { parts: [['charger', [0, 0, 40], { label: 'USB-C PD charger' }]] }],
+    view: { t: [70, 236, 34], az: 140, el: 18, d: 560 } },
   { title: 'Done!', detail: 'Keep motion switched off until the servos are calibrated (docs/MOTION_SAFETY.md).', fixed: 8.0, outro: true, view: { ...ROBOT, az: -20 } },
   ];
 }
@@ -208,6 +220,7 @@ const PGAP = 0.35, PFADE = 0.3, PMOVE = 1.4, PROT = 1.3;     // parts: gap betwe
 const SDT = 1.3, SAPP = 0.3, SDRV = 0.9, SRET = 0.35, TURNS = 4;   // screws: one after another, approach, drive (4 turns), tool away
 const NDT = 0.45, NDUR = 0.75;                                 // nuts
 const CDT = 0.6, CGROW = 1.9;                                  // cables
+const GDT = 0.3, GAPP = 0.5, GGROW = 2.6, GRET = 0.5;              // glue: approach, trace the bead, syringe away
 const FLIP = 1.9, WIG = 2.0, HOLD = 1.2;
 const EV = {}, GK = {}, WK = [], WIGS = [];
 let TOTAL = 0;
@@ -230,6 +243,7 @@ function build() {
       const own = kind => Object.keys(P).filter(n => P[n].m.kind === kind && P[n].m.step === s.id && !EV[n]);
       if (ph.screws) own('screw').filter(n => ph.screws === true || P[n].m.screw === ph.screws).forEach((n, k) => {
         EV[n] = { step: i, t0: start + k * SDT }; end = Math.max(end, start + k * SDT + SAPP + SDRV + SRET); });
+      if (ph.glue) own('glue').forEach((n, k) => { EV[n] = { step: i, t0: start + k * GDT }; end = Math.max(end, start + k * GDT + GAPP + GGROW + GRET); });
       if (ph.nuts) own('nut').forEach((n, k) => { EV[n] = { step: i, t0: start + k * NDT }; end = Math.max(end, start + k * NDT + NDUR); });
       if (ph.cables) ph.cables.map(c => 'c_' + c).forEach((n, k) => {
         if (!P[n]) throw 'no cable ' + n; EV[n] = { step: i, t0: start + k * CDT }; end = Math.max(end, start + k * CDT + CGROW); });
@@ -291,8 +305,13 @@ function stepLabels(i) {
   for (const name in P) {
     const e = EV[name], m = P[name].m; if (!e || e.step !== i) continue;
     if (m.kind === 'part' && e.o.label) outL.push({ at: P[name].centre, group: m.group, text: e.o.label, col: '#2d6cb5', t: e.t0 + 0.5 });
-    if (m.kind === 'cable') outL.push({ at: m.label_at, group: m.group, text: m.label, col: m.colour === '#1d1d1d' ? '#333' : m.colour, t: e.t0 + 0.9 });
+    if (m.kind === 'glue' && m.label) outL.push({ at: m.label_at, group: m.group, text: m.label, col: '#a86a12', t: e.t0 + GAPP + 0.5 });
+    if (m.kind === 'cable') outL.push({ at: m.label_at, group: m.group, text: m.label, col: m.colour === '#1d1d1d' ? '#333' : P[name].col.reduce((a, c) => a + c) > 2.4 ? '#5b6470' : m.colour, t: e.t0 + 0.9 });
     if (m.kind === 'screw' || m.kind === 'nut') { const key = (m.screw || 'nut') + '|' + m.group; (sets[key] = sets[key] || []).push(name); }
+  }
+  for (const [k, text, col, t] of s.marks || []) {
+    const sc = SCENE.marks[k]; if (!sc && !P[k]) throw 'no mark ' + k;
+    outL.push({ at: sc || P[k].centre, group: sc ? 'floor' : P[k].m.group, text, col, t: t ?? 0.8 });
   }
   for (const key in sets) {
     const list = sets[key].sort((a, b) => EV[a].t0 - EV[b].t0), m0 = P[list[0]].m;
@@ -338,6 +357,7 @@ function render(T) {
     const p = P[name], m = p.m;
     if (m.kind === 'tool') continue;
     if (show) {
+      if (m.group === 'charger' || m.kind === 'glue') continue;
       if (m.group === 'eyes' && s.intro && u > s.dur - 0.8) continue;
       p.emit = m.group === 'eyes' ? 1 : 0;
       push(p, { alpha: s.intro ? clamp((s.dur - u) / 0.6) : 1 });
@@ -367,6 +387,12 @@ function render(T) {
       if (e.step === i && w < SAPP + SDRV + SRET) drawTool(draws, m, w, travel, spin, groupOff(m.group, T), alpha, W, eye);
     } else if (m.kind === 'nut') {
       if (e.step === i) { alpha *= clamp(w / 0.25); off = V.add(off, [0, 0, 35 * (1 - ease(w / NDUR))]); hi = clamp(Math.min(w / 0.2, (NDUR + 0.6 - w) / 0.4)); }
+    } else if (m.kind === 'glue') {
+      if (e.step === i) {
+        const k = clamp((w - GAPP) / GGROW); grow = k; hi = clamp(Math.min(w / 0.3, (GAPP + GGROW + 0.8 - w) / 0.6));
+        if (w < GAPP + GGROW + GRET) drawGlue(draws, m, w, k, groupOff(m.group, T), alpha, W, eye);
+        if (grow <= 0) continue;
+      }
     } else if (m.kind === 'cable') {
       if (e.step === i) { grow = ease(w / CGROW); hi = clamp(Math.min(w / 0.3, (CGROW + 0.8 - w) / 0.6)); if (grow <= 0) continue; }
     }
@@ -396,6 +422,19 @@ function drawTool(draws, m, w, travel, spin, goff, alpha, W, eye) {
   const R = R3.mul(A, R3.axis([0, 0, 1], base + turn));
   const off = V.add(V.add(m.pos, goff), V.mul(d, -(travel + m.head_h + 0.2 + 30 * ease(back))));
   draws.push({ p, R, piv: Z3, off, alpha: a, hi: 0, grow: 1, dist: Math.hypot(...V.sub(toWorld(W, off), eye)) });
+}
+// the epoxy syringe: its nozzle on the bead's tip as the bead grows, tilted a little; in along the pocket's axis, back out
+function drawGlue(draws, m, w, k, goff, alpha, W, eye) {
+  const p = P.tool_glue; if (!p) return;
+  const f = m.frac, r = m.route; let j = 1; while (j < f.length - 1 && f[j] < k) j++;
+  const tip = V.lerp(r[j - 1], r[j], f[j] > f[j - 1] ? clamp((k - f[j - 1]) / (f[j] - f[j - 1])) : 1);
+  const back = clamp((w - GAPP - GGROW) / GRET), come = 1 - clamp(w / GAPP), a = alpha * clamp(w / 0.25) * (1 - back);
+  if (a <= 0.003) return;
+  // held from above where it can be (the barrel leans up, off the pocket), else leaning sideways in the picture
+  const d = m.dir, up = V.sub([0, 0, 1], V.mul(d, d[2])), tw = toWorld(W, V.add(tip, goff));
+  const ax = Math.hypot(...up) > 0.3 ? V.norm(V.sub(d, V.mul(V.norm(up), 1.5))) : V.norm(V.add(d, V.mul(V.norm(V.cross(d, V.sub(eye, tw))), 0.6)));
+  const off = V.add(V.add(tip, goff), V.mul(ax, -(1.0 + 35 * ease(Math.max(come, back)))));
+  draws.push({ p, R: R3.toZ(ax), piv: Z3, off, alpha: a, hi: 0, grow: 1, dist: Math.hypot(...V.sub(toWorld(W, off), eye)) });
 }
 // labels: a leader from the point to a tag beside it. Tags without their own offset go out sideways and are spread
 // so they don't overlap; they keep clear of the caption.

@@ -22,7 +22,7 @@ from stl_tools import read_stl  # noqa: E402
 
 OUT = Path(sys.argv[1] if len(sys.argv) > 1 else HERE / "build")
 (OUT / "meshes").mkdir(parents=True, exist_ok=True)
-screws, nuts, cables, params = json.loads((HERE / "hardware4.json").read_text())
+screws, nuts, cables, params, glue = json.loads((HERE / "hardware4.json").read_text())
 P = dict(params)
 I = np.eye(3)
 
@@ -115,7 +115,8 @@ ASSY = HERE.parent / "stl" / "assembled"; SMALL = OUT / "stl"
 for name, colour, group in [("ring", DARK, "ring"), ("body", WHITE, "body"), ("port_panel", DARK, "ring"), ("ups_slider", WHITE, "ring"),
                             ("neck_plate", WHITE, "neck"), ("coupler", "#7fb3d5", "neck"), ("servo_frame", GREY, "hservo"), ("puck", DARK, "neck"),
                             ("head_frame", WHITE, "head"), ("head_inlay", DARK, "head"), ("head_back", WHITE, "head"),
-                            ("camera_bracket", GREY, "head"), ("floor", "#d9d4c8", "floor")]:
+                            ("camera_bracket", GREY, "head"), ("floor", "#d9d4c8", "floor"),
+                            ("mic_holder", WHITE, "body"), ("mic_key", "#c8c2b4", "body"), ("respeaker", "#1f2328", "body")]:
     add(name, load(ASSY / f"{name}.stl"), colour, group)
 add("arm_a", load(ASSY / "arm_left.stl"), WHITE, "arm_a")         # x < 0: the robot's right arm
 add("arm_b", load(ASSY / "arm_right.stl"), WHITE, "arm_b")        # x > 0: the robot's left arm
@@ -124,7 +125,8 @@ for name, colour, group in [("ring_gear", "#e6b35a", "neck"), ("pinion", "#e6b35
                             ("horn_r", "#f7f7f7", "arm_a"), ("horn_l", "#f7f7f7", "arm_b"), ("keeper", "#c8c2b4", "floor"),
                             ("clamp0", "#c8c2b4", "floor"), ("clamp1", "#c8c2b4", "floor"), ("pca", "#2a8a2a", "floor"),
                             ("screen", "#15171c", "head"), ("fpc", "#c9a74a", "head"), ("usbc_plug", "#3a3d44", "head"),
-                            ("coupler4", "#16181c", "head"), ("hdmi_plug", "#2a2d33", "head"), ("eyes", "#4fe3e0", "eyes")]:
+                            ("coupler4", "#16181c", "head"), ("hdmi_plug", "#2a2d33", "head"), ("mic_plug", "#3a3d44", "body"),
+                            ("eyes", "#4fe3e0", "eyes")]:
     add(name, load(SMALL / f"{name}.stl"), colour, group)
 
 # the Pi 5 on the UPS HAT (E), on its side on the floor (v2's ups_stack): u along the boards, v down, w across
@@ -147,12 +149,28 @@ add("pi", cat(sbox(0, 85, 0, 56, pi_w0, pi_w1), pbox(7.13, 57.93, 50.02, 55, 0, 
 ch = P["cooler_h"]
 add("cooler", cat(pbox(6.5, 64, 9, 49, 0, 3), pbox(7, 27.5, 9, 49, 0, ch), pbox(27.5, 64, 18, 49, 0, ch)), "#8a8f98", "stack")
 us, (rx, rz), base_d, base_wall = P["usbc_sock"], P["rear"], P["base_d"], P["base_wall"]
-add("usbc_socket", box([rx - us[0] / 2, base_d - base_wall - 0.5 - us[2], rz - us[1] / 2], [rx + us[0] / 2, base_d - base_wall - 0.5, rz + us[1] / 2]), "#333333", "floor")
-# speaker, mic and its USB extension (in the body)
-(sc, (sw, sd, sh)), (mc, (ml, mt, mw)) = P["spk"], P["mic"]
+sy1 = base_d - base_wall - 0.5                                     # the socket's mouth (it opens backwards)
+add("usbc_socket", cat(box([rx - us[0] / 2, sy1 - us[2], rz - us[1] / 2], [rx + us[0] / 2, sy1, rz + us[1] / 2]),
+                       dark(box([rx - 4.2, sy1 - 6.5, rz - 1.3], [rx + 4.2, sy1 + 0.05, rz + 1.3]))), "#333333", "floor")
+# the zip tie round the socket and its holder's cradle (its lock on top)
+zy, zx0, zx1, zz0, zz1, zt = sy1 - us[2] / 2, rx - us[0] / 2 - 3.3, rx + us[0] / 2 + 0.8, rz - us[1] / 2 - 3.3, rz + us[1] / 2 + 0.8, 0.9
+add("zip_tie", cat(box([zx0, zy - 1.6, zz1 - zt], [zx1, zy + 1.6, zz1]), box([zx0, zy - 1.6, zz0], [zx1, zy + 1.6, zz0 + zt]),
+                   box([zx0, zy - 1.6, zz0], [zx0 + zt, zy + 1.6, zz1]), box([zx1 - zt, zy - 1.6, zz0], [zx1, zy + 1.6, zz1]),
+                   box([rx - 2.5, zy - 2.2, zz1], [rx + 2.5, zy + 2.2, zz1 + 2.6])), "#26282c", "floor")
+# the charger: its USB-C plug into the socket from behind (through the dark panel's slot), its cable down to the table, the brick
+cx, cy1, cz, cy_out = P["chg"]
+z_table = float(load(ASSY / "ring.stl")[..., 2].min())
+pl = 24.0                                                          # the plug's moulding: 11 x 6.5 x 24, its tongue 6.6 long
+add("chg_plug", cat(dark(box([cx - 4.15, cy1 - 6.6, cz - 1.25], [cx + 4.15, cy1 + 0.6, cz + 1.25])),
+                    box([cx - 5.5, cy1 + 0.6, cz - 3.25], [cx + 5.5, cy1 + 0.6 + pl, cz + 3.25]),
+                    xf(cyl(5, 0, 8, 16), to_z([0, 1, 0]), [cx, cy1 + 0.6 + pl, cz])), "#ededed", "charger")
+brick_lo, brick_hi = [cx + 70, cy_out + 95, z_table], [cx + 116, cy_out + 125, z_table + 52]
+add("charger", cat(box(brick_lo, brick_hi), dark(box([cx + 88.5, cy_out + 94.95, z_table + 40], [cx + 97.5, cy_out + 95.5, z_table + 43.2]))), "#ededed", "charger")
+chg_route = [[cx, cy1 + 8.6 + pl, cz], [cx, cy1 + 40 + pl, cz - 2], [cx + 18, cy_out + 52, z_table + 3], [cx + 70, cy_out + 70, z_table + 3],
+             [cx + 93, cy_out + 82, z_table + 30], [cx + 93, cy_out + 88, z_table + 41.6], [cx + 93, cy_out + 95, z_table + 41.6]]
+# speaker (in the body)
+(sc, (sw, sd, sh)) = P["spk"]
 add("speaker", box([sc[0] - sw / 2, sc[1], sc[2] - sh / 2], [sc[0] + sw / 2, sc[1] + sd, sc[2] + sh / 2]), "#202124", "body")
-add("mic", cat(box([mc[0], mc[1], mc[2] - mw / 2], [mc[0] + ml, mc[1] + mt, mc[2] + mw / 2]),
-               box(P["mic_ext"], np.add(P["mic_ext"], [32, 9.5, 18]))), "#45474d", "body")
 # the camera (v2's board and lens) in the hood
 cy, cz, ct, cw = P["cam"]
 add("cam_board", cat(box([-cw / 2, cy, cz - cw / 2], [cw / 2, cy + ct, cz + cw / 2]), xf(cyl(14, 0, P["cam_lens_l"]), to_z([0, -1, 0]), [0, cy, cz])), "#8a3b3b", "head")
@@ -188,7 +206,7 @@ def screw_group(step, what, pos):   # the assembly a screw moves with
     if step == "arms": return "arm_a" if pos[0] < 0 else "arm_b"
     if step == "head_servo": return "neck" if what.startswith("M3") else "hservo"
     if step == "stack": return "floor" if what.startswith("M3") else "stack"
-    return {"ring_gear": "neck", "puck": "neck", "plate_in": "neck", "arm_servos": "body", "pca": "floor", "floor_in": "floor",
+    return {"ring_gear": "neck", "puck": "neck", "plate_in": "neck", "arm_servos": "body", "mic": "body", "pca": "floor", "floor_in": "floor",
             "panel": "ring", "head_on": "head", "screen": "head", "camera": "head", "back": "head"}[step]
 LEVER = {"camera": lambda p: [0, 1, -0.35], "back": lambda p: [np.sign(p[0]), 0, 0]}   # where an L-key's long leg points
 screw_list = []
@@ -205,6 +223,9 @@ for k, (step, c, axis) in enumerate(nuts):
 # the tools: local frame, the tip at the origin, the tool behind it (z < 0); index.html turns +z onto the screw's axis
 add("tool_hexdriver", cat(prism(2.3, 2.3, 0, -42, 6), cyl(5.5, -42, -48, 16), prism(17, 18, -48, -104, 8, 0, 2), prism(18, 12, -104, -108, 8)), "#e08a1e", "tool", kind="tool")
 add("tool_phdriver", cat(prism(1.2, 3, 0, -4, 8), cyl(3, -4, -46, 12), cyl(6, -46, -52, 16), prism(17, 18, -52, -108, 8, 0, 2), prism(18, 12, -108, -112, 8)), "#c0392b", "tool", kind="tool")
+# a 2-part epoxy syringe: mixing nozzle (dark), barrel, plunger
+add("tool_glue", cat(dark(prism(1.1, 3.6, 0, -16, 12)), cyl(5, -16, -20, 12), cyl(13, -20, -78, 20), cyl(22, -78, -80, 20), cyl(4, -80, -94, 8),
+                     cyl(13, -94, -96, 16)), "#e9e4d8", "tool", kind="tool")
 add("tool_lkey", cat(prism(2.3, 2.3, 0, -20, 6), ball([0, 0, -20], 1.25, 8, 6), xf(prism(2.3, 2.3, 0, 42, 6), to_z([1, 0, 0]), [0, 0, -20])), "#3c4250", "tool", kind="tool")
 
 # ---------------------------------------------------------------- cables (they grow along their routes)
@@ -216,6 +237,15 @@ for name, step, group, colour, d, label, route, plugs in cables:
         t = np.concatenate([t, with_s(b, 1.0 if end else 0.0)])
     add(f"c_{name}", t, colour, "head" if group == "head" else "floor" if group == "floor" else "wires", kind="cable", step=step,
         label=label.replace("->", "→"), label_at=[round(float(c), 1) for c in route[-1 if name in LABEL_AT_END else 0]])
+
+add("c_charger", tube(chg_route, 2.0), "#ededed", "charger", kind="cable", step="charging", label="charger's cable", label_at=[round(float(c), 1) for c in chg_route[3]])
+
+# the epoxy beads in the horns' pockets (they grow along their routes; the syringe follows the tip)
+for name, step, group, route, v in glue:
+    r = np.asarray(route, float); L = np.r_[0, np.cumsum(np.linalg.norm(np.diff(r, axis=0), axis=1))]
+    add(name, tube(route, 0.8), "#e0a526", group, kind="glue", step=step, route=[[round(float(c), 3) for c in q] for q in route],
+        frac=[round(float(x), 4) for x in L / L[-1]], dir=list(np.round(np.asarray(v, float) / np.linalg.norm(v), 4)),
+        label="2-part epoxy" if name in ("g_pinion", "g_arm_r") else "", label_at=[round(float(c), 1) for c in route[0]])
 
 # ---------------------------------------------------------------- write
 manifest = []
@@ -229,7 +259,12 @@ for name, tris, colour, group, extra in parts:
                      "lo": [round(float(c), 1) for c in lo], "hi": [round(float(c), 1) for c in hi],
                      **{k: (float(v) if isinstance(v, (np.floating,)) else v) for k, v in extra.items()}})
 (OUT / "manifest.json").write_text(json.dumps(manifest, indent=0))
-(OUT / "scene.json").write_text(json.dumps({"sh": P["sh"], "tab_hinge": P["tab_hinge"], "slider_travel": P["slider_travel"]}))   # for index.html
+marks = {"ups_usbc": [stk_x0 + P["ups_ports"][2][0], stk_y0 + ups_top + P["ups_ports"][2][2] / 2, stk_ztop + 0.5],   # their mouths
+         "pi_usbc": [stk_x0 + 11.2, stk_y0 + pi_w1 + 1.6, stk_ztop + 0.5],
+         "socket": [rx, sy1 - us[2] / 2, rz + us[1] / 2], "slot": [cx, cy_out, cz]}
+(OUT / "scene.json").write_text(json.dumps({"sh": P["sh"], "tab_hinge": P["tab_hinge"], "slider_travel": P["slider_travel"], "marks": marks,
+                                            "pinion_horn": P["pinion_horn"], "arm_pocket": P["arm_pocket"], "rsl_c": P["rsl_c"],
+                                            "chg": P["chg"], "z_table": z_table}))   # for index.html
 kinds = {}
 for m in manifest: kinds[m.get("kind", "part")] = kinds.get(m.get("kind", "part"), 0) + 1
 print(kinds, "triangles", sum(m["tris"] for m in manifest))
