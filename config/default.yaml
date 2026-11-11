@@ -205,6 +205,11 @@ capture:
   min_free_mb: 1000        # no new photo or video when the storage has less than this free
   share_hours: 24          # a link sent to a phone works this long (dashboard: "Stop every share link" ends them sooner)
   push_attach: true        # the phone notification shows a preview, which the ntfy app fetches from LittleBot
+  # "Always recording": the last 3 minutes of video (with sound), in RAM only, thrown away as it goes unless
+  # someone says "save that". Dashboard Photos page: auto (while plugged in) | on | off.
+  buffer_enabled: true     # false: off whatever the dashboard says
+  buffer_minutes: 3
+  buffer_dir: /dev/shm/littlebot-buffer   # a RAM disk (tmpfs), never the SD card
 
 power:
   # The battery (docs/POWER.md section 8): an RP2040-Zero battery monitor on a USB port. Without one

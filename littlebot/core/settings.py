@@ -157,6 +157,10 @@ def build_defaults(cfg: LittleBotConfig) -> dict[str, Any]:
         # photos and videos by voice (littlebot/capture): the parent's switch, and the room's sound in videos
         "capture.enabled": True,
         "capture.video_sound": cfg.capture.video_sound,
+        # "always recording" (littlebot/capture/buffer.py): the last few minutes of video kept in RAM, saved only
+        # when asked ("save that"). auto: while plugged in; on: on the battery too (until it is low, then back to
+        # auto); off. ``capture.buffer_enabled: false`` in the config switches it off whatever this says.
+        "capture.always_recording": "auto",
         # Android (Waydroid) on the screen when asked (littlebot/android): the parent's switch
         "android.enabled": True,
         # fast decision models (littlebot/decide): the provider (off | jev | openai | claude) and each feature's mode
@@ -210,7 +214,20 @@ def flag_value(value: Any) -> bool:
     raise ValueError(f"expected true or false, not {value!r}")
 
 
-BUILTIN_VALIDATORS: dict[str, Callable[[Any], Any]] = {"display.theme": theme_value, "display.flipped": flag_value}
+ALWAYS_RECORDING = ("auto", "on", "off")
+
+
+def always_recording_value(value: Any) -> str:
+    """``capture.always_recording``: "auto", "on" or "off" (True / False mean on / off)."""
+    v = ("on" if value else "off") if isinstance(value, bool) else str(value).strip().lower()
+    v = {"automatic": "auto", "true": "on", "false": "off", "always": "on", "never": "off"}.get(v, v)
+    if v not in ALWAYS_RECORDING:
+        raise ValueError(f"capture.always_recording must be auto, on or off, not {value!r}")
+    return v
+
+
+BUILTIN_VALIDATORS: dict[str, Callable[[Any], Any]] = {"display.theme": theme_value, "display.flipped": flag_value,
+                                                       "capture.always_recording": always_recording_value}
 
 
 class Settings:

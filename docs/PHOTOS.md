@@ -35,6 +35,68 @@ A recording also stops by itself:
 What was recorded up to then is always saved. A recording cut off by a power cut is lost, and its unfinished file
 is removed on the next start.
 
+## Always recording (the last 3 minutes)
+
+LittleBot can keep the **last 3 minutes** of video, with the room's sound, so that something that just happened
+can still be saved. It forgets them as it goes: nothing is kept unless someone asks.
+
+| You say | What happens |
+|---|---|
+| "Save that" / "clip that" / "save that clip" / "save the last 3 minutes" | Everything it holds becomes one video in the gallery. "Saved the last 3 minutes." |
+| "Save the last minute" / "save the last 30 seconds" | Only that much (rounded up to a whole 10-second piece). |
+| "Turn on always recording" / "turn off always recording" | Changes the setting below to **On** / **Off**. |
+
+The same **Save the last 3 minutes** button is on the dashboard's Photos page and in LittleBot's own settings
+panel (hold a finger on the screen for 5 seconds; the last two rows). From a button, LittleBot says "Saved the last
+3 minutes." out loud, so the room knows. The saved clip is a normal video: it shows in the gallery ("show me the
+video") and can be sent to a phone. It isn't put on the screen by itself (a new video isn't either).
+
+**When it records** (`capture.always_recording`, on the Photos page and in the settings panel):
+
+* **Automatic** (the default): while LittleBot is plugged in, a full battery on the charger included. A LittleBot
+  with no battery monitor counts as plugged in. Unplugged, it stops; what it held can still be saved for 3 more
+  minutes, then it is wiped.
+* **On**: on the battery too. When the battery gets low (the low level on the Home page, 20 %), it stops,
+  LittleBot says "My battery is low, so I've stopped always recording.", and the setting goes back to Automatic.
+  Plugging LittleBot back in also puts it back to Automatic.
+* **Off**: nothing is recorded, and what was held is wiped at once.
+
+**What it keeps, and where**
+
+* 1280x720 at 30 pictures a second, H.264 with AAC sound, in pieces of about 10 seconds (MPEG-TS, which join
+  without re-encoding), in `/dev/shm/littlebot-buffer`. That folder is **RAM** (tmpfs): never the SD card, gone at
+  a power cut or a reboot. LittleBot refuses a `buffer_dir` that isn't a RAM disk.
+* A piece older than 3 minutes is deleted as new ones arrive. The folder is emptied when LittleBot starts, stops
+  and shuts down, and it never grows past `buffer_max_mb` (256 MB): the oldest pieces go first.
+* A **small red dot** at the top centre of the screen (over cards too) shows whenever it is recording. It is
+  still and has no words; the big REC sign takes its place during a recording you asked for.
+
+**What stops it**
+
+* The **camera** privacy switch stops it and **wipes** what it held, at once. So do **Off** and the Photos page's
+  **Photos and videos by voice** switch.
+* The **microphone** switch (and **Sound in videos**) takes the sound out of the pieces recorded from then on. A
+  saved clip whose pieces don't all have sound is saved without sound.
+* While you record a video ("record this"), the buffer **pauses**: there is only ever one encoder. It resumes
+  when the recording ends. What it held before stays saveable for 3 minutes.
+* While a YouTube video plays (the camera is paused) and whenever the camera sends no pictures, it pauses, and
+  resumes by itself.
+* **Asleep**, LittleBot keeps recording as long as the camera keeps sending pictures (it does: the camera stays
+  at 30 pictures a second for the buffer). If fewer than 2 a second arrive for 3 seconds, it pauses.
+* STOP ALL doesn't stop it. Offline mode makes no difference: nothing is uploaded.
+
+**What it costs** (estimates, **to be measured on the robot**)
+
+* CPU: about **one of the Pi 5's four cores** for the encoder (libx264 `veryfast`, 720p30, two threads), all the
+  time it records. The camera also stays at 30 pictures a second instead of dropping to the face detector's 6 (or
+  1.5 asleep), which costs some more. On the battery this shortens the running time: that is why Automatic
+  only records while plugged in.
+* RAM: about **60 to 100 MB** for 3 minutes of pieces, plus about 100 MB for ffmpeg itself.
+* Saving stops the encoder for a second or two (so the last seconds are whole) and starts it again.
+
+If it gets in the way: `capture: {buffer_enabled: false}` in `config/local.yaml` switches it off whatever the
+dashboard says.
+
 ## The dashboard's Photos page
 
 On a phone it is under **More**; on a computer, in the side menu.
@@ -45,6 +107,8 @@ On a phone it is under **More**; on a computer, in the side menu.
 * for each one: **Save** (to the phone or computer you're using), **Send to phone**, **Share link** (a QR code
   and a link to copy, and it can show the QR code on LittleBot's screen too), **Show on LittleBot** and **Delete**;
 * the switches **Allow photos and videos** and **Sound in videos**;
+* **Always recording**: whether it is recording now (or why not), how much video is in memory and how many MB,
+  the Automatic / On / Off choice, and **Save the last 3 minutes**;
 * **Stop every share link**: every link already sent stops working.
 
 ## Sending to a phone
@@ -101,7 +165,10 @@ chat ends when the photo starts.
 
 ## Privacy
 
-* Photos and videos are taken **only when someone asks**. LittleBot never records by itself.
+* Photos and videos are **kept** only when someone asks. The one thing LittleBot records by itself is the
+  [always-recording buffer](#always-recording-the-last-3-minutes): the last 3 minutes, in RAM only, with a red
+  dot on the screen, forgotten as it goes unless someone says "save that". Switching the camera off wipes it;
+  **Off** on the Photos page stops it for good.
 * Everything stays in `data/gallery` on the robot, readable only by LittleBot's user. Delete them on the Photos
   page. Deleting one also stops its links.
 * The **camera** privacy switch stops a recording at once. The **microphone** switch keeps the sound out of new
@@ -128,6 +195,14 @@ In `config/local.yaml` under `capture:` (defaults in `config/default.yaml`):
 | `min_free_mb` | `1000` | no new photo or video when less storage than this is free |
 | `share_hours` | `24` | how long a link sent to a phone works |
 | `push_attach` | `true` | the notification shows a preview (your phone fetches it from LittleBot) |
+| `buffer_enabled` | `true` | always recording: `false` switches it off whatever the dashboard says |
+| `buffer_minutes` | `3` | how much it keeps (0.5 to 10) |
+| `buffer_dir` | `/dev/shm/littlebot-buffer` | where the pieces live. Must be a RAM disk (tmpfs) |
+| `buffer_segment_seconds` | `10` | the length of a piece |
+| `buffer_width` / `buffer_fps` | `1280` / `30` | 720p at 30 pictures a second |
+| `buffer_max_mb` | `256` | the most RAM the pieces may take |
+
+The parent's choice is the setting `capture.always_recording` (`auto`, `on` or `off`), not a config key.
 
 Recording needs **ffmpeg** (`sudo apt install ffmpeg`; it also brings **ffplay**, which plays the videos). Without
 it photos still work.
@@ -142,8 +217,11 @@ it photos still work.
 | "phones can't open LittleBot's links yet" | turn on LAN access (above) |
 | The phone says it can't reach the page | the phone isn't on the home Wi-Fi, or the link is older than 24 hours |
 | `capture: the recording stopped by itself` | the camera stopped sending pictures (unplugged?). What was recorded is saved |
+| "There's nothing to save." | always recording isn't running; LittleBot says why (off, on the battery, the camera off) |
+| The Photos page says "The buffer's folder isn't a RAM disk" | `buffer_dir` must be on tmpfs (`/dev/shm/...`) |
+| `the always-recording encoder stopped` in the log | ffmpeg ended by itself; LittleBot tries again after 30 seconds |
 | A video has no sound | the microphone was off in Privacy, **Sound in videos** was off, or ffmpeg couldn't open the microphone (the log says `no sound`) |
 
-Code: `littlebot/capture/` (service, gallery files, the recorder, the QR code), `littlebot/skills/camera.py` (the
+Code: `littlebot/capture/` (service, gallery files, the recorder, the always-recording buffer, the QR code), `littlebot/skills/camera.py` (the
 voice tools), `littlebot/screens/cards/gallery.py` (the gallery and QR cards),
 `littlebot/dashboard/routes/capture_routes.py` (the dashboard and `/share/` pages).

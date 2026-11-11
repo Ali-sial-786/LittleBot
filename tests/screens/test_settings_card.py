@@ -484,3 +484,57 @@ async def test_drag_through_the_service_scrolls_the_rows_without_pressing_them(c
         assert card.offset > 100 and not card.flipped and ctx.settings.get("display.flipped") is False
     finally:
         ctx.screens.detach()
+
+
+# ---------------------------------------------------------------- always recording (littlebot/capture/buffer.py)
+class _Capture:
+    def __init__(self, ok=True):
+        self.ok = ok
+        self.calls = []
+
+    async def save_buffer(self, seconds=None, **kw):
+        self.calls.append((seconds, kw))
+        if self.ok:
+            return {"ok": True, "words": "Saved the last 3 minutes.", "seconds": 180.0}
+        return {"ok": False, "error": "nothing_buffered", "detail": "There's nothing to save. Always recording is off."}
+
+
+async def test_always_recording_goes_round_auto_on_off(ctx):
+    card = await make(ctx)
+    assert card.always == "auto" and card.status()["always_recording"] == "auto"
+    assert [rid for rid, _kind in S._ROWS][-3:] == ["sleep", "always", "clip"]  # after the rows that were there
+    press(card, "always")
+    assert ctx.settings.get("capture.always_recording") == "on" and card.always == "on"
+    press(card, "always")
+    assert ctx.settings.get("capture.always_recording") == "off"
+    press(card, "always")
+    assert ctx.settings.get("capture.always_recording") == "auto" and "click" in card.host.sounds
+    ctx.settings.set("capture.always_recording", "on")  # changed elsewhere (the voice; a low battery puts it back)
+    card.update(S.POLL_SECONDS + 0.1)
+    assert card.always == "on" and card._row_words("always") == ("Always recording", "On the battery too")
+
+
+async def test_save_the_last_minutes_from_the_panel(ctx):
+    card = await make(ctx)
+    assert card._row_words("clip")[0] == "Save the last 3 minutes"
+    press(card, "clip")  # no capture service: says so
+    assert "isn't available" in card.notice and "uhoh" in card.host.sounds and not card.saving
+    ctx.capture = _Capture()
+    card = await make(ctx)
+    press(card, "clip")
+    for _ in range(50):
+        await asyncio.sleep(0.01)
+        card.update(0.05)
+        if not card.saving:
+            break
+    assert ctx.capture.calls == [(None, {"source": "screen", "announce": True})]  # LittleBot says it itself
+    assert card.notice == "Saved the last 3 minutes." and not card.saving
+    ctx.capture = _Capture(ok=False)
+    card = await make(ctx)
+    press(card, "clip")
+    for _ in range(50):
+        await asyncio.sleep(0.01)
+        card.update(0.05)
+        if not card.saving:
+            break
+    assert "nothing to save" in card.notice and "uhoh" in card.host.sounds

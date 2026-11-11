@@ -71,6 +71,10 @@ docs/    guides
   using the camera, microphone or any network service. Offline mode forces cloud off.
 * `ctx.age_policy()` gives age-aware rules (video gate, cloud AI gate, reply length).
 * Never store audio, images or transcripts by default. Never send camera data anywhere.
+  The one exception, by the owner's choice: "always recording" (`littlebot/capture/buffer.py`) keeps the last
+  3 minutes of video and sound **in RAM only** (`/dev/shm`, never the SD card), deletes them as it goes, shows a
+  red dot on the face while it runs, and is wiped at once by the camera privacy switch. It reaches the gallery
+  only when someone asks ("save that"). Don't add another such buffer, and never write this one to disk.
 * The `cloud_enabled` switch covers services that receive data about the child (cloud AI,
   cloud speech-to-text / text-to-speech). YouTube playback is gated separately by `media.enabled`,
   the allowlist, the age gate and offline mode: it only streams parent-approved videos and sends

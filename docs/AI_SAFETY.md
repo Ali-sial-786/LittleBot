@@ -247,6 +247,15 @@ captions are held in memory only for the dashboard during the call and are clear
 ends. With Recognise family voices on, the wake phrase and the sound of the current turn (at most
 20 s) are held in memory to tell who is talking, then dropped; never written anywhere. Logs and alerts carry end reasons, HTTP statuses and categories, never words.
 
+**One exception, outside the voice chat: always recording.** By the owner's choice, LittleBot's camera feature
+keeps the **last 3 minutes of video and the room's sound** so that a moment can still be saved
+([PHOTOS.md](PHOTOS.md#always-recording-the-last-3-minutes)). To be plain about what that is: the camera and the
+microphone are recording whenever the small red dot is on the screen (by default, whenever LittleBot is plugged
+in). It is held **in RAM only** (never on the SD card, gone at a reboot), deleted as it goes, never uploaded and
+never given to any AI. It becomes a file only when someone says "save that" or presses the button. The camera
+privacy switch stops it and wipes it at once; the microphone switch takes the sound out; **Off** on the Photos
+page (or `capture.buffer_enabled: false`) stops it altogether.
+
 **Known limits.** The checks read OpenAI's captions, not the sound. Words heard before a
 caption is checked can't be taken back, and a caption that doesn't match the audio, or a
 problem of tone, is invisible to the rules. The pattern rules have the same limits as for typed

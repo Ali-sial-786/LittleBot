@@ -795,6 +795,16 @@ class CaptureConfig(_Section):
     push_attach: bool = True
     ffmpeg_command: str = "ffmpeg"  # a name on PATH or an absolute path
     ffplay_command: str = "ffplay"  # plays a video from the gallery full screen
+    # "Always recording" (littlebot/capture/buffer.py): the last ``buffer_minutes`` of video, in RAM only, thrown
+    # away as it goes unless someone says "save that". The parent's choice is the setting
+    # ``capture.always_recording`` (auto | on | off); ``buffer_enabled: false`` switches it off whatever that says.
+    buffer_enabled: bool = True
+    buffer_dir: str = Field(default="/dev/shm/littlebot-buffer", min_length=1, max_length=300)  # must be a RAM disk
+    buffer_minutes: float = Field(default=3.0, ge=0.5, le=10.0)
+    buffer_segment_seconds: int = Field(default=10, ge=2, le=30)  # the pieces it is cut into
+    buffer_width: int = Field(default=1280, ge=320, le=1920)  # 1280x720 ...
+    buffer_fps: int = Field(default=30, ge=5, le=30)  # ... at 30 pictures a second
+    buffer_max_mb: int = Field(default=256, ge=16, le=2048)  # never more RAM than this: the oldest go first
 
 
 class AndroidConfig(_Section):

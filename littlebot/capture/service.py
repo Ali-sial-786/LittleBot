@@ -13,9 +13,14 @@
     await capture.show_share_code(item_id)               -> {ok, url, error}  (the link as a QR code on the screen)
     capture.share_item(token) -> Item | None;  capture.revoke_shares(item_id=None) -> int
     capture.delete(item_id) -> bool;  capture.check(kind) -> error code | None;  capture.status()
+    await capture.save_buffer(seconds=None, source="voice", who=None, announce=False)
+                                                         -> {ok, item, seconds, sound, words, error, detail}
+    await capture.set_always_recording("auto" | "on" | "off", source="voice") -> {ok, setting, running, detail}
+    capture.buffer -> RollingBuffer  ("always recording", littlebot/capture/buffer.py);  capture.buffering -> bool
 
 Error codes: ``ERRORS`` has the words (unavailable, disabled, camera_off, no_camera, disk_full, recording,
-not_recording, no_encoder, no_player, not_found, timeout, no_frames, encoder_stopped, failed, lan_off, busy).
+not_recording, no_encoder, no_player, not_found, timeout, no_frames, encoder_stopped, failed, lan_off, busy,
+nothing_buffered).
 
 What is kept, and where
 -----------------------
@@ -23,6 +28,10 @@ Only what someone asked for: a photo when asked ("take a picture", the dashboard
 "record this" and "stop recording" (or ``capture.max_video_minutes``). The files stay on the robot
 (``data/gallery``, littlebot/capture/gallery.py); nothing is uploaded. The camera's privacy switch stops a
 recording at once (the frames simply stop), and the microphone's switch keeps the sound out of new videos.
+
+The one exception is "always recording" (littlebot/capture/buffer.py): the last 3 minutes of video, in RAM only
+(never on the SD card), thrown away as it goes, with a small dot on the face while it runs. It becomes a video in
+the gallery only when someone asks ("save that"). The camera's privacy switch wipes it at once.
 
 A recording runs on its own: the voice chat that started it ends (LittleBot stops listening while people are
 filmed); "Hey LittleBot, stop recording" ends it. A red REC sign shows on the face meanwhile
@@ -45,7 +54,8 @@ opens it over the home Wi-Fi and saves it from the browser. The link reaches the
 Both need LAN access (``dashboard.lan_access``): otherwise only the robot itself can open the link ("lan_off").
 
 Bus: ``capture.saved`` {id, kind, source}, ``capture.recording`` {active, id, started_at, sound, reason},
-``capture.deleted`` {id}; ``screen.keep_awake`` {kind: "recording"} every 30 s while recording.
+``capture.deleted`` {id}; ``screen.keep_awake`` {kind: "recording"} every 30 s while recording;
+``capture.buffering`` {active, sound} while the always-recording buffer runs.
 """
 
 from __future__ import annotations
@@ -66,6 +76,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
+from littlebot.capture.buffer import BUFFERING, SETTING as ALWAYS_RECORDING, RollingBuffer
 from littlebot.capture.gallery import Gallery, Item, valid_id
 from littlebot.capture.recorder import VideoRecorder
 from littlebot.core.arbiter import Lease, Priority, Resource
@@ -113,7 +124,12 @@ ERRORS = {
     "lan_off": LAN_HELP,
     "busy": "LittleBot's screen is busy with something more important right now.",
     "no_screen": "LittleBot's screen can't show it right now.",
+    "nothing_buffered": "There's nothing to save: always recording isn't running.",
 }
+# What wakes the always-recording buffer's tick at once (littlebot/capture/buffer.py): the charger, the battery,
+# LittleBot's state (a video starting pauses the camera).
+BUFFER_TOPICS = (Topics.POWER_BATTERY, Topics.POWER_UNPLUGGED, Topics.POWER_CHARGING, Topics.POWER_CHARGED,
+                 Topics.POWER_LOW, Topics.POWER_MONITOR, Topics.STATE_CHANGED)
 
 
 @dataclass(eq=False)
@@ -160,7 +176,8 @@ class CaptureService(Service):
     def __init__(self, ctx: Any, *, popen: Callable[..., Any] = subprocess.Popen, launcher: Any = None,
                  which: Callable[[str], str | None] = shutil.which, clock: Callable[[], float] = time.monotonic,
                  wall: Callable[[], float] = time.time, gallery_dir: str | Path | None = None,
-                 screen: bool | None = None) -> None:
+                 screen: bool | None = None, run: Callable[..., Any] = subprocess.run,
+                 buffer_ram_check: Callable[[Path], bool | None] | None = None, buffer_loop: bool = True) -> None:
         super().__init__()
         self.ctx = ctx
         self.cfg = ctx.config.capture
@@ -184,6 +201,8 @@ class CaptureService(Service):
         self._tasks: set[Any] = set()
         self.last: dict[str, Any] | None = None
         self.last_error: str | None = None
+        more = {} if buffer_ram_check is None else {"ram_check": buffer_ram_check}
+        self.buffer = RollingBuffer(self, clock=clock, wall=wall, run=run, loop=buffer_loop, **more)
 
     # ================================================================ lifecycle
     async def start(self) -> None:  # type: ignore[override]
@@ -198,7 +217,9 @@ class CaptureService(Service):
                 bus.subscribe(GAME_STARTED, lambda _e: self.close_player_soon("a game started")),
                 bus.subscribe(Topics.STATE_CHANGED, self._on_state),
                 bus.subscribe(Topics.SETTINGS_CHANGED, self._on_setting),
+                *(bus.subscribe(topic, lambda _e: self.buffer.poke()) for topic in BUFFER_TOPICS),
             ]
+        await self.buffer.start()  # (empties its RAM folder; runs only when everything allows it)
         why = self.unavailable_reason()
         if why is not None:
             self.set_status(ServiceStatus.DISABLED, why)
@@ -222,6 +243,7 @@ class CaptureService(Service):
         for s in self._subs:
             s.cancel()
         self._subs.clear()
+        await self.buffer.stop()  # the encoder killed, the RAM folder emptied
         if self._rec is not None:
             await self.stop_video("shutdown")
         await self.close_player("shutdown")
@@ -408,6 +430,7 @@ class CaptureService(Service):
         async with self._rec_lock:
             if self._rec is not None:
                 return self._fail("recording")
+            await self.buffer.make_way()  # one encoder at a time: always recording pauses meanwhile
             item_id = self.gallery.new_id()
             await asyncio.to_thread(self.gallery.ensure)
             sound = self.video_sound and bool(self.ctx.privacy.microphone_enabled)
@@ -419,6 +442,7 @@ class CaptureService(Service):
             try:
                 self.ctx.vision.add_frame_sink(OWNER, rec.offer, float(self.cfg.video_fps))
             except PhotoUnavailable as e:
+                self.buffer.poke()
                 return self._fail(e.reason if e.reason in ERRORS else "no_camera")
             r = _Rec(id=item_id, recorder=rec, started=self._clock(), started_wall=self._wall(), source=source,
                      who=who, sound=sound)
@@ -458,6 +482,7 @@ class CaptureService(Service):
         async with self._rec_lock:
             if self._rec is r:
                 self._rec = None
+        self.buffer.poke()  # always recording resumes
         self._publish(RECORDING, {"active": False, "id": r.id, "started_at": r.started_wall, "sound": res.audio,
                                   "reason": str(reason)[:60]})
         if item is not None:
@@ -504,6 +529,45 @@ class CaptureService(Service):
         log.warning("capture: the recording stopped by itself (%s)", why)
         await self.stop_video(f"the recorder stopped ({why})",
                               announce="I stopped recording: something went wrong. What I had is saved.")
+
+    # ================================================================ always recording (capture/buffer.py)
+    @property
+    def buffering(self) -> bool:
+        """The always-recording buffer is filming now (the small dot on the face)."""
+        return self.buffer.running
+
+    def status_buffer(self) -> dict[str, Any]:
+        """The buffer's state (``status()["buffer"]``, on its own: cheap)."""
+        return self.buffer.status()
+
+    async def save_buffer(self, seconds: float | None = None, *, source: str = "voice", who: str | None = None,
+                          announce: bool = False) -> dict[str, Any]:
+        """"Save that": the last ``seconds`` of the always-recording buffer (default: all of it) become a video
+        in the gallery. ``announce``: LittleBot says so itself (a button; the voice says the returned words)."""
+        res = await self.buffer.save(seconds, source=source, who=who)
+        if res.get("ok"):
+            item = res["item"]
+            self._publish(SAVED, {"id": item["id"], "kind": "video", "source": source})
+            self.last = {"what": "video", "id": item["id"], "at": self._wall(), "reason": "saved from the buffer"}
+            self.last_error = None
+            res["when"] = _when(float(item["taken_at"]))
+        if announce:
+            self._announce(res["words"] if res.get("ok") else str(res.get("detail") or ERRORS["failed"]))
+        return res
+
+    async def set_always_recording(self, mode: Any, *, source: str = "voice") -> dict[str, Any]:
+        """The parent's choice (``capture.always_recording``): "auto" (while plugged in), "on" (on the battery
+        too, until it is low) or "off". Returns what the buffer does now."""
+        try:
+            value = await asyncio.to_thread(lambda: self.ctx.settings.set(ALWAYS_RECORDING, mode, source=source))
+        except (ValueError, KeyError) as e:
+            return self._fail("failed", str(e)[:200])
+        log.info("capture: always recording set to %s (%s)", value, source)
+        state = await self.buffer.tick()
+        st = self.buffer.status()
+        return {"ok": True, "setting": self.buffer.mode, "asked": value, "state": state,
+                "running": state in ("running", "no_frames"), "detail": st["detail"],
+                "on_battery": st["battery"] and not st["plugged_in"]}
 
     # ================================================================ the screen
     def _play_cb(self, item_id: str) -> None:
@@ -843,12 +907,16 @@ class CaptureService(Service):
                       "hours": float(self.cfg.share_hours), "links": self.share_count(),
                       "lan_help": None if reachable else LAN_HELP},
             "last": dict(self.last) if self.last else None, "last_error": self.last_error,
+            "buffer": self.buffer.status(),
         }
         out.update(self.gallery.usage())
         return out
 
     # ================================================================ bus callbacks (any thread)
     def _on_privacy(self, event: Event) -> None:
+        if not event.get("camera_enabled", True):
+            self.buffer.wipe_now("the camera was switched off in Privacy")  # at once, here
+        self.buffer.poke()  # (the microphone's switch: new pieces without sound)
         if not event.get("camera_enabled", True) and self._rec is not None:
             self._soon(self.stop_video("the camera was switched off in Privacy",
                                        announce="The camera was switched off, so I stopped recording. "
@@ -859,6 +927,8 @@ class CaptureService(Service):
             self.close_player_soon(f"robot {str(event.get('new')).lower()}")
 
     def _on_setting(self, event: Event) -> None:
+        if str(event.get("key") or "").startswith("capture."):
+            self.buffer.poke()
         if event.get("key") == "capture.enabled" and not event.get("value") and self._rec is not None:
             self._soon(self.stop_video("switched off on the dashboard"))
 
@@ -918,4 +988,5 @@ _PUSH_WORDS = {
 }
 
 
-__all__ = ["CaptureService", "ERRORS", "KEEP_AWAKE", "LAN_HELP", "RECORDING", "SAVED", "SHARE_PATH"]
+__all__ = ["ALWAYS_RECORDING", "BUFFERING", "CaptureService", "ERRORS", "KEEP_AWAKE", "LAN_HELP", "RECORDING",
+           "SAVED", "SHARE_PATH"]

@@ -2,7 +2,8 @@
 
 * ``/api/capture/...`` (behind the login like every /api page): the gallery, a photo / a recording from the
   dashboard, delete, show on LittleBot's screen, a share link (with its QR code) or a phone notification, the
-  parent's switches and "stop every share link".
+  parent's switches and "stop every share link"; "always recording" (littlebot/capture/buffer.py): its state, the
+  auto / on / off choice and "Save the last 3 minutes".
 * ``GET /share/{token}`` (+ ``/file``, ``/thumb``): NO login, on purpose: a phone opens it from a notification or
   a QR code. The 22-character random token is the password, for one photo or video, until it runs out
   (``capture.share_hours``). A wrong or old token gets the same plain 404 as any unknown page. The page is static
@@ -15,7 +16,7 @@ from __future__ import annotations
 import base64
 import html
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
@@ -53,6 +54,11 @@ class ShowBody(Body):
 class CaptureSettingsBody(Body):
     enabled: bool | None = None
     video_sound: bool | None = None
+    always_recording: Literal["auto", "on", "off"] | None = None  # the last minutes kept in RAM (capture/buffer.py)
+
+
+class SaveBufferBody(Body):
+    seconds: float | None = Field(default=None, ge=5, le=600)  # none = everything the buffer holds
 
 
 def _svc(dash: DashState) -> Any:
@@ -76,7 +82,7 @@ def _view(dash: DashState) -> dict[str, Any]:
         s = dash.ctx.settings
         return {"available": False, "detail": "not running", "enabled": bool(s.get("capture.enabled", True)),
                 "video_sound": bool(s.get("capture.video_sound", True)), "items": [], "phones": [],
-                "recording": None}
+                "recording": None, "buffer": None}
     out = svc.status()
     out["items"] = [_item_view(it) for it in svc.gallery.items(limit=MAX_ITEMS)]
     out["phones"] = svc.phones()
@@ -117,6 +123,18 @@ async def capture_video_start(dash: DashState = Depends(get_dash)) -> dict[str, 
 @router.post("/api/capture/video/stop")
 async def capture_video_stop(dash: DashState = Depends(get_dash)) -> dict[str, Any]:
     res = await _svc(dash).stop_video("stopped on the dashboard")
+    return {**res, "status": _view(dash)}
+
+
+@router.post("/api/capture/buffer/save")
+async def capture_buffer_save(body: SaveBufferBody | None = None,
+                              dash: DashState = Depends(get_dash)) -> dict[str, Any]:
+    """"Save the last 3 minutes": what the always-recording buffer holds becomes a video in the gallery (LittleBot
+    says so out loud: the room hears that a clip was kept)."""
+    res = await _svc(dash).save_buffer(body.seconds if body is not None else None, source="dashboard",
+                                       announce=True)
+    if res.get("ok"):
+        log.info("dashboard: the last %.0f s saved from the always-recording buffer", res.get("seconds") or 0)
     return {**res, "status": _view(dash)}
 
 
@@ -184,7 +202,7 @@ async def capture_revoke(dash: DashState = Depends(get_dash)) -> dict[str, Any]:
 
 @router.put("/api/capture/settings")
 async def capture_settings(body: CaptureSettingsBody, dash: DashState = Depends(get_dash)) -> dict[str, Any]:
-    if body.enabled is None and body.video_sound is None:
+    if body.enabled is None and body.video_sound is None and body.always_recording is None:
         raise HTTPException(status_code=422, detail="Nothing to change.")
     s = dash.ctx.settings
     if body.enabled is not None:
@@ -193,6 +211,13 @@ async def capture_settings(body: CaptureSettingsBody, dash: DashState = Depends(
     if body.video_sound is not None:
         s.set("capture.video_sound", bool(body.video_sound), source="dashboard")
         log.info("video sound switched %s from dashboard", "on" if body.video_sound else "off")
+    if body.always_recording is not None:
+        svc = getattr(dash.ctx, "capture", None)
+        if svc is not None:  # (the buffer follows at once, and its new state is in the answer)
+            await svc.set_always_recording(body.always_recording, source="dashboard")
+        else:
+            s.set("capture.always_recording", body.always_recording, source="dashboard")
+        log.info("always recording set to %s from dashboard", body.always_recording)
     return {"ok": True, **_view(dash)}
 
 

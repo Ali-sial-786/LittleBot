@@ -9,7 +9,10 @@ stops for it): ``screens.show({"card": "settings"}, source="touch")``. Never off
   service), and so does Esc in the desktop simulator.
 * **Settings**, a row each (drag to scroll, like the games menu): the speaker **Volume** and the screen
   **Brightness** ( - / a bar with the percent / + in steps of 10 %, or a tap on the bar), **Dark mode**, the
-  **Upside-down screen** and **Info cards in chats** (switches: a tap anywhere on the row), and **Go to sleep**.
+  **Upside-down screen** and **Info cards in chats** (switches: a tap anywhere on the row), **Go to sleep**,
+  **Always recording** (a tap goes round Auto, On, Off: the setting ``capture.always_recording``,
+  littlebot/capture/buffer.py) and **Save the last 3 minutes** (what that buffer holds becomes a video in the
+  gallery: ``ctx.capture.save_buffer``, and LittleBot says so).
   The volume goes through ``ctx.audio.set_volume`` (it clamps to the safe maximum and keeps the setting), like the
   voice's tools; the others are settings the display loop and the screen service follow (``display.brightness``,
   ``display.theme``, ``display.flipped``, ``screens.enabled``); sleep is what the voice's ``go_to_sleep`` tool does.
@@ -77,7 +80,12 @@ LOW_BATTERY = 20  # percent: the battery shows red below this (littlebot/face/ba
 # The settings this card shows (and their defaults when there are no settings: a preview).
 VOLUME, BRIGHTNESS, THEME, FLIPPED, CARDS = ("audio.volume", "display.brightness", "display.theme",
                                              "display.flipped", "screens.enabled")
-DEFAULTS: dict[str, Any] = {VOLUME: 0.5, BRIGHTNESS: 1.0, THEME: "light", FLIPPED: False, CARDS: True}
+ALWAYS = "capture.always_recording"  # auto | on | off (littlebot/capture/buffer.py)
+ALWAYS_MODES = ("auto", "on", "off")
+ALWAYS_NAMES = {"auto": "Auto", "on": "On", "off": "Off"}
+ALWAYS_WORDS = {"auto": "While plugged in", "on": "On the battery too", "off": "Nothing is kept"}
+DEFAULTS: dict[str, Any] = {VOLUME: 0.5, BRIGHTNESS: 1.0, THEME: "light", FLIPPED: False, CARDS: True,
+                            ALWAYS: "auto"}
 
 # ---------------------------------------------------------------- layout (the 1024x600 canvas)
 _PX, _PY, _PW, _PH = PRESENTER_BOX
@@ -241,6 +249,38 @@ class RobotLink:
 
         self._offload("sleep", go, None, done=done)
 
+    def clip_minutes(self) -> float:
+        """How many minutes the always-recording buffer keeps (``capture.buffer_minutes``)."""
+        cfg = getattr(getattr(self.ctx, "config", None), "capture", None)
+        return _num(getattr(cfg, "buffer_minutes", None), 3.0)
+
+    def save_clip(self, done: Callable[[bool, str], None]) -> None:
+        """"Save that" from the screen: the always-recording buffer into the gallery, on the robot's loop
+        (``ctx.capture.save_buffer``; LittleBot says what it saved). ``done(ok, words)``."""
+        capture = getattr(self.ctx, "capture", None)
+        if capture is None or not hasattr(capture, "save_buffer"):
+            done(False, "Always recording isn't available.")
+            return
+
+        async def go() -> None:
+            try:
+                res = await capture.save_buffer(source=SOURCE, announce=True)
+            except Exception:  # noqa: BLE001
+                log.exception("saving the last minutes from the settings failed")
+                res = {"ok": False}
+            done(bool(res.get("ok")), str(res.get("words") if res.get("ok") else res.get("detail") or ""))
+
+        runtime = getattr(self.ctx, "runtime", None)
+        coro = go()
+        try:
+            if runtime is not None and getattr(runtime, "running", False):
+                runtime.submit(coro)
+            else:
+                asyncio.get_running_loop().create_task(coro)
+        except RuntimeError:
+            coro.close()
+            done(False, "LittleBot can't save it right now.")
+
     def busy(self, key: str) -> bool:
         """A change of ``key`` is on its way (its row keeps what was tapped meanwhile)."""
         with self._lock:
@@ -362,6 +402,8 @@ class SettingsCard(Card):
         self.flash: tuple[str, float] | None = None  # (control id, when) a tapped control lights up
         self.starting: str | None = None  # a game being started
         self.sleeping = False  # asked to sleep (the service closes the card when LittleBot falls asleep)
+        self.saving = False  # "Save the last 3 minutes" is on its way
+        self.clip_minutes = self.link.clip_minutes()
         self._poll = 0.0
         self._done_lock = threading.Lock()
         self._results: list[tuple[str, bool, str]] = []  # (what, ok, why) from the robot's loop
@@ -386,6 +428,11 @@ class SettingsCard(Card):
     @property
     def cards_on(self) -> bool:
         return bool(self.values.get(CARDS))
+
+    @property
+    def always(self) -> str:
+        v = str(self.values.get(ALWAYS) or "auto").lower()
+        return v if v in ALWAYS_MODES else "auto"
 
     # ------------------------------------------------------------ layout
     def tab_rect(self, name: str) -> pygame.Rect:
@@ -415,7 +462,7 @@ class SettingsCard(Card):
         self.offsets[self.tab] = float(value)
 
     def row_rect(self, i: int) -> pygame.Rect:
-        """The settings tab's row ``i`` (volume, brightness, dark, flip, cards, sleep), scrolled."""
+        """The settings tab's row ``i`` (volume, brightness, dark, flip, cards, sleep, always, clip), scrolled."""
         return pygame.Rect(ROW_X, int(VIEW.y + ROW_PAD + i * ROW_H - self.offsets["settings"]), ROW_W, ROW_H)
 
     def tile_rect(self, i: int) -> pygame.Rect:
@@ -509,6 +556,11 @@ class SettingsCard(Card):
                 self.sleeping = ok
                 if not ok:
                     self.say_notice("LittleBot can't go to sleep right now.")
+                    self.host.sound("uhoh")
+            elif what == "clip":
+                self.saving = False
+                self.say_notice(why or ("Saved." if ok else "That couldn't be saved."))
+                if not ok:
                     self.host.sound("uhoh")
             elif what.startswith("game:"):
                 name = next((g.name for g in self.games if g.id == what[5:]), "That game")
@@ -651,6 +703,10 @@ class SettingsCard(Card):
             self.toggle_cards()
         elif cid == "sleep":
             self.go_to_sleep()
+        elif cid == "always":
+            self.set_always(ALWAYS_MODES[(ALWAYS_MODES.index(self.always) + 1) % len(ALWAYS_MODES)])
+        elif cid == "clip":
+            self.save_clip()
 
     def open_tab(self, name: str) -> None:
         if name not in TABS:
@@ -699,6 +755,24 @@ class SettingsCard(Card):
         self.values[CARDS] = on
         self.host.sound("click")
         self.link.set_setting(CARDS, on)
+
+    def set_always(self, mode: str) -> None:
+        """Always recording: auto (while plugged in), on (on the battery too, until it is low) or off. The capture
+        service follows the setting (and puts "on" back to "auto" by itself)."""
+        if mode not in ALWAYS_MODES:
+            return
+        self.values[ALWAYS] = mode
+        self.link.set_setting(ALWAYS, mode)
+        self.host.sound("click")
+
+    def save_clip(self) -> None:
+        """What the always-recording buffer holds becomes a video in the gallery."""
+        if self.saving:
+            return
+        self.host.sound("click")
+        self.saving = True
+        self.link.save_clip(self._result("clip"))
+        self._take_results()
 
     def go_to_sleep(self) -> None:
         if self.sleeping:
@@ -764,7 +838,8 @@ class SettingsCard(Card):
     def status(self) -> dict[str, Any]:
         return {**super().status(), "tab": self.tab, "volume": round(self.volume, 3),
                 "max_volume": round(self.max_volume, 3), "brightness": round(self.brightness, 3), "dark": self.dark,
-                "flipped": self.flipped, "cards": self.cards_on, "focus": self.focus, "offset": round(self.offset),
+                "flipped": self.flipped, "cards": self.cards_on, "always_recording": self.always,
+                "focus": self.focus, "offset": round(self.offset),
                 "starting": self.starting, "dashboard": list(self.urls), "battery": self.battery}
 
     # ------------------------------------------------------------ drawing
@@ -868,6 +943,12 @@ class SettingsCard(Card):
                 on = {"dark": self.dark, "flip": self.flipped, "cards": self.cards_on}[rid]
                 sw = pygame.Rect(r.right - SWITCH_W, r.centery - SWITCH_H // 2, SWITCH_W, SWITCH_H)
                 surf.blit(_switch(on, col), sw.topleft)
+            elif rid == "always":
+                self._draw_button(surf, controls[rid], ALWAYS_NAMES[self.always], col, "", self._flashing(rid),
+                                  dim=self.always == "off")
+            elif rid == "clip":
+                self._draw_button(surf, controls[rid], "Saving" if self.saving else "Save", col, "",
+                                  self._flashing(rid), dim=self.saving)
             else:
                 self._draw_button(surf, controls[rid], "Sleep now", art.PERIWINKLE, "sleep", self._flashing(rid),
                                   dim=self.sleeping)
@@ -884,6 +965,10 @@ class SettingsCard(Card):
             return "Upside down", "Turn the screen round"
         if rid == "cards":
             return "Info cards", "Pictures and facts in chats"
+        if rid == "always":
+            return "Always recording", ALWAYS_WORDS[self.always]
+        if rid == "clip":
+            return f"Save the last {self.clip_minutes:g} minutes", "As a video in the gallery"
         return "Go to sleep", "Sleepy face, quiet"
 
     def _draw_level(self, surf: Any, rid: str, controls: dict[str, pygame.Rect]) -> None:
@@ -906,11 +991,14 @@ class SettingsCard(Card):
             fill = art.mix(col, art.WHITE, 0.55)
         surf.blit(art.rounded_rect(r.w, r.h, 26, fill, shadow=4, border=art.inkier(col, 0.42), border_w=3), r.topleft)
         fg = art.mix(art.inkier(col, 0.3), art.WHITE, 0.25) if dim else art.WHITE
+        text = art.text(label, BODY_PX, fg, on=fill) if label else None
+        if text is not None and not icon:  # words only
+            surf.blit(text, text.get_rect(center=(r.centerx, r.centery + 1)))
+            return
         glyph = _icon(icon, 44 if label else 40, fg)
-        if not label:
+        if text is None:
             art.blit_center(surf, glyph, r.center)
             return
-        text = art.text(label, BODY_PX, fg, on=fill)
         w = glyph.get_width() + 10 + text.get_width()
         x = r.centerx - w // 2
         surf.blit(glyph, glyph.get_rect(midleft=(x, r.centery)))
@@ -1024,9 +1112,11 @@ class SettingsCard(Card):
 
 # the settings' rows, in order: (id, kind)
 _ROWS: tuple[tuple[str, str], ...] = (("vol", "level"), ("bright", "level"), ("dark", "switch"), ("flip", "switch"),
-                                      ("cards", "switch"), ("sleep", "button"))
+                                      ("cards", "switch"), ("sleep", "button"), ("always", "button"),
+                                      ("clip", "button"))
 _ROW_COLOURS: dict[str, art.Color] = {"vol": art.SKY, "bright": art.TANGERINE, "dark": art.GRAPE,
-                                      "flip": art.PERIWINKLE, "cards": art.MINT, "sleep": art.PERIWINKLE}
+                                      "flip": art.PERIWINKLE, "cards": art.MINT, "sleep": art.PERIWINKLE,
+                                      "always": art.STRAWBERRY, "clip": art.STRAWBERRY}
 
 
 # ---------------------------------------------------------------- sprites (cached per theme by art.cached)
@@ -1251,6 +1341,21 @@ def _icon_sleep(s: pygame.Surface, z: float, c: art.Color) -> None:
         art.capsule(s, c, (x0, y0 + d0), (x0 + d0, y0 + d0), lw)
 
 
+def _icon_record(s: pygame.Surface, z: float, c: art.Color) -> None:
+    """Always recording: a ring with a dot in it."""
+    pygame.draw.circle(s, c, (z / 2, z / 2), z * 0.42, max(2, int(z * 0.08)))
+    pygame.draw.circle(s, c, (z / 2, z / 2), z * 0.2)
+
+
+def _icon_save(s: pygame.Surface, z: float, c: art.Color) -> None:
+    """Save: an arrow down into a tray."""
+    lw = max(2, z * 0.09)
+    art.capsule(s, c, (z * 0.5, z * 0.12), (z * 0.5, z * 0.6), lw)
+    art.capsule(s, c, (z * 0.3, z * 0.42), (z * 0.5, z * 0.62), lw)
+    art.capsule(s, c, (z * 0.7, z * 0.42), (z * 0.5, z * 0.62), lw)
+    art.capsule(s, c, (z * 0.16, z * 0.84), (z * 0.84, z * 0.84), lw)
+
+
 def _icon_globe(s: pygame.Surface, z: float, c: art.Color) -> None:
     lw = max(2, int(z * 0.07))
     pygame.draw.circle(s, c, (z / 2, z / 2), z * 0.42, lw)
@@ -1271,6 +1376,7 @@ _ICONS: dict[str, Callable[[pygame.Surface, float, art.Color], None]] = {
     "settings": _icon_gear, "games": _icon_pad, "about": _icon_info, "close": _icon_close, "minus": _icon_minus,
     "plus": _icon_plus, "vol": _icon_speaker, "bright": _icon_sun, "dark": _icon_moon, "flip": _icon_flip,
     "cards": _icon_card, "sleep": _icon_sleep, "dashboard": _icon_globe, "hold": _icon_hold,
+    "always": _icon_record, "clip": _icon_save,
 }
 
 

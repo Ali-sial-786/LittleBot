@@ -84,6 +84,12 @@ LIVE_BADGE_DOT_DARK = (255, 120, 146, 220)
 REC_TOPIC = "capture.recording"  # littlebot.capture.service.RECORDING
 REC_RED = (232, 44, 52)
 REC_TEXT = 24  # px on a face OVERLAY_REF_H tall (36 px on the 7" screen)
+# While the always-recording buffer runs (littlebot/capture/buffer.py: the last minutes, in RAM only): a small,
+# still, soft red dot in the same place, so the room can see the camera is filming. No words, no blinking: it is
+# there for hours. The REC sign takes its place during an asked-for recording.
+BUFFER_TOPIC = "capture.buffering"  # littlebot.capture.buffer.BUFFERING
+BUFFER_DOT = (226, 62, 74, 185)  # the same on the pastel and the night face (and over cards)
+BUFFER_DOT_RADIUS = 4  # px on a face OVERLAY_REF_H tall (6 px on the 7" screen, about 1 mm)
 STATUS_POLL_SECONDS = 0.5
 MOTION_POLL_SECONDS = 1 / 15
 SCREEN_RETRY_SECONDS = 5.0  # a wlopm call that failed is tried again after this long
@@ -426,6 +432,10 @@ class DisplayLoop:
         self.recording_since: float | None = None
         self._rec_sub: Any = None
         self._rec_label: tuple[str, int, Any] | None = None
+        # The always-recording buffer is filming: the small dot shows.
+        self.buffering = False
+        self._buffer_sub: Any = None
+        self._buffer_dots: dict[int, Any] = {}
         self._game_t: float | None = None  # last frame time while an on-screen game runs
         self._card_t: float | None = None  # last frame time while an info card shows
         self._press: tuple[float, float, float] | None = None  # (nx, ny, when) a finger held on the idle face
@@ -502,6 +512,9 @@ class DisplayLoop:
         if self._rec_sub is not None:
             self._rec_sub.cancel()
             self._rec_sub = None
+        if self._buffer_sub is not None:
+            self._buffer_sub.cancel()
+            self._buffer_sub = None
         if self._levels_sub is not None:
             self._levels_sub.cancel()
             self._levels_sub = None
@@ -569,6 +582,14 @@ class DisplayLoop:
         except Exception:  # noqa: BLE001
             self.recording_since = None
         self._rec_sub = self.ctx.bus.subscribe(REC_TOPIC, self._on_recording)
+        try:  # ... and so may the always-recording buffer
+            self.buffering = bool(getattr(capture, "buffering", False))
+        except Exception:  # noqa: BLE001
+            self.buffering = False
+        self._buffer_sub = self.ctx.bus.subscribe(BUFFER_TOPIC, self._on_buffering)
+
+    def _on_buffering(self, event: Any) -> None:
+        self.buffering = bool(event.get("active"))
 
     def _on_recording(self, event: Any) -> None:
         if not event.get("active"):
@@ -754,6 +775,8 @@ class DisplayLoop:
             self._draw_live_view_badge(win)
         if self.recording_since is not None:
             self._draw_rec_badge(win)
+        elif self.buffering:
+            self._draw_buffer_dot(win)
         if self.show_debug:
             self._draw_debug(win)
         if self.show_help:
@@ -835,6 +858,29 @@ class DisplayLoop:
         dot_r = max(3, int(round(lh * 0.28)))
         w, h = 2 * pad + 2 * dot_r + pad + lw + pad, lh + 2 * pad
         return self._pg.Rect(self.face_rect.centerx - w // 2, self.face_rect.y + max(4, int(round(8 * s))), w, h)
+
+    def _draw_buffer_dot(self, win: Any) -> None:
+        """While the always-recording buffer runs: a small soft red dot, top centre (where REC goes)."""
+        rect = self.buffer_dot_rect()
+        if rect is None:
+            return
+        dot = self._buffer_dots.get(rect.w)
+        if dot is None:  # drawn 4x and smooth-scaled: a soft edge, like the eyes
+            pg = self._pg
+            big = pg.Surface((rect.w * 4, rect.w * 4), pg.SRCALPHA)
+            pg.draw.circle(big, BUFFER_DOT, (rect.w * 2, rect.w * 2), rect.w * 2 - 2)
+            dot = self._buffer_dots[rect.w] = pg.transform.smoothscale(big, rect.size)
+        win.blit(dot, rect.topleft)
+
+    def buffer_dot_rect(self) -> Any:
+        """Where the always-recording dot is drawn (tests / screenshots); None when it isn't (not buffering, or
+        the REC sign is there)."""
+        if not self.buffering or self.recording_since is not None:
+            return None
+        r = self.face_rect
+        s = r.h / OVERLAY_REF_H
+        d = 2 * max(3, int(round(BUFFER_DOT_RADIUS * s)))
+        return self._pg.Rect(r.centerx - d // 2, r.y + max(4, int(round(8 * s))), d, d)
 
     def _draw_live_view_badge(self, win: Any) -> None:
         """While a parent watches the camera live on the dashboard: a small camera sign, top right."""

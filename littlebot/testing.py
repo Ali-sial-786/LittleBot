@@ -431,6 +431,7 @@ def make_test_config(**overrides: Any) -> LittleBotConfig:
         "activities": {"time_scale": 0.0},
         "logging": {"level": "WARNING"},
         "power": {"monitor": "none"},  # never a battery monitor plugged into the test machine
+        "capture": {"buffer_enabled": False},  # never a real always-recording buffer in /dev/shm (tests opt in)
         # ChatGPT as the text model unless a test chooses Claude (config/default.yaml ships Claude first)
         "text": {"provider": "chatgpt"},
         "claude": {"model": None, "fallback_models": [], "thinking": "adaptive"},

@@ -1,5 +1,5 @@
 """Photos and videos by voice: "take a picture", "record this", "stop recording", "show me my photos", "send that to
-my phone".
+my phone", "save that" (the last 3 minutes), "turn on / off always recording".
 
 The service is ``ctx.capture`` (littlebot/capture/service.py); this only checks, answers and hands the start over:
 
@@ -14,6 +14,9 @@ The service is ``ctx.capture`` (littlebot/capture/service.py); this only checks,
   look with the camera (``AssistantService.identify_speaker``). When neither can tell, LittleBot asks whose phone
   ("Ali's or Sara's?") and the answer sends it (:meth:`Camera.reply`). Every phone only when they say so
   ("everyone", "the family").
+* "save that" / "save the last minute": what the always-recording buffer holds (littlebot/capture/buffer.py: the
+  last 3 minutes, in RAM only) becomes a video in the gallery, at once. "Turn on / off always recording" changes
+  the setting ``capture.always_recording`` (on: on the battery too, until it is low; auto: while plugged in).
 
 :meth:`Camera.instant` answers the plain phrases without the model (littlebot/assistant/intents.py).
 """
@@ -78,6 +81,7 @@ REFUSED = {
     "cloud_off": "phone notifications need Cloud communication on (Privacy page); a QR code on the screen works "
                  "instead.",
     "offline": "LittleBot is offline, so it can't send a phone notification; a QR code on the screen works instead.",
+    "nothing_buffered": "there's nothing to save: always recording isn't running.",
     "no_phone": "{name}'s phone isn't set up for LittleBot's notifications yet (it's added on the dashboard: "
                 "Assistant page, Calendars and phones); a QR code on the screen works instead.",
 }
@@ -150,6 +154,16 @@ class Camera(Skill):
                   "how": {"type": "string", "enum": ["phone", "qr", "both"],
                           "description": "phone (default): a notification; qr: a code on the screen to scan"},
                   "to": to}),
+            tool("save_last_minutes", "Save what just happened: the last few minutes of video (up to 3, with "
+                 "sound) that LittleBot's always-recording buffer holds become a video in the gallery. Only when "
+                 "someone asks to save / keep / clip what just happened (\"save that\", \"save the last minute\").",
+                 {"minutes": {"type": "number", "description": "how many of the last minutes (0.5 = 30 seconds); "
+                                                               "leave out for everything it holds"}}),
+            tool("set_always_recording", "Change LittleBot's always-recording buffer (the last 3 minutes of video "
+                 "kept in memory only, saved only when asked). Only when someone asks to turn it on or off.",
+                 {"mode": {"type": "string", "enum": ["auto", "on", "off"],
+                           "description": "on: also on the battery (until it is low); off; auto (the usual): "
+                                          "only while plugged in"}}),
         ]
 
     def prompt_note(self) -> str:
@@ -160,7 +174,9 @@ class Camera(Skill):
                 "talking itself (voice, then the camera) and says when it must ask whose phone. The "
                 "photo and the recording start after you've spoken and this chat ends then: answer in a few words "
                 "(\"Okay, smile!\", \"Recording!\"). Never take a photo or record unless asked. Deleting is on the "
-                "dashboard's Photos page.")
+                "dashboard's Photos page. save_last_minutes when they want to keep what just happened (\"save "
+                "that\", \"clip that\"): LittleBot keeps the last 3 minutes of video in memory only (a small dot "
+                "on its face shows it) and forgets them unless asked; set_always_recording turns that on or off.")
 
     def context_note(self) -> str:
         svc = self._svc()
@@ -179,6 +195,9 @@ class Camera(Skill):
                 latest = svc.describe_latest()
                 if latest and not latest.startswith("no "):
                     parts.append(f"Gallery: newest is {latest}.")
+            buf = svc.status_buffer() if hasattr(svc, "status_buffer") else None
+            if buf and buf.get("running"):
+                parts.append(f"Always recording: on ({_minutes(buf.get('seconds') or 0)} can be saved now).")
             asked = self._pending()
             if asked is not None:
                 then = ("take_photo with then_send true and to" if asked.get("photo_first") else
@@ -206,14 +225,23 @@ class Camera(Skill):
                                     bool(args.get("play")))
         if name == "send_photo_to_phone":
             return await self._send(svc, str(args.get("which") or "latest"), str(args.get("how") or "phone"), to)
+        if name == "save_last_minutes":
+            return await self._save_clip(svc, args.get("minutes"))
+        if name == "set_always_recording":
+            res = await svc.set_always_recording(str(args.get("mode") or "").strip().lower(), source="voice")
+            if not res.get("ok"):
+                return err("say it must be on, off or auto")
+            return ok(f"say this in a few words: {_always_words(res)}")
         return err(f"camera has no tool called {str(name)[:40]}")
 
     # ------------------------------------------------------------ the instant phrases (no model)
-    async def instant(self, what: str, *, kind: str | None = None, to: str | None = None) -> str:
-        """For littlebot/assistant/intents.py: do ``what`` (photo, record, stop_record, show, send) and return the
-        few words to say. ``kind``: "photo" / "video" when the words said which; ``to``: whose phone, in their
-        words ("my", "my wife's", "Ali's"). A photo or a recording is only queued (littlebot/skills/takeover.py):
-        the caller hands it to its host to start after the words."""
+    async def instant(self, what: str, *, kind: str | None = None, to: str | None = None,
+                      seconds: float | None = None) -> str:
+        """For littlebot/assistant/intents.py: do ``what`` (photo, record, stop_record, show, send, save_clip,
+        buffer_on, buffer_off) and return the few words to say. ``kind``: "photo" / "video" when the words said
+        which; ``to``: whose phone, in their words ("my", "my wife's", "Ali's"); ``seconds``: how much of the
+        always-recording buffer "save the last minute" asked for. A photo or a recording is only queued
+        (littlebot/skills/takeover.py): the caller hands it to its host to start after the words."""
         svc = self._svc()
         if svc is None or not self.available():
             return "I can't take photos or videos."
@@ -244,6 +272,16 @@ class Camera(Skill):
             out = await self.send(svc, {"photo": "latest_photo", "video": "latest_video"}.get(kind or "", "screen"),
                                   "phone", to)
             return _sent_words(out)
+        if what == "save_clip":
+            _to, name = self._who()
+            res = await svc.save_buffer(seconds, source="voice", who=name)
+            if res.get("ok"):
+                return str(res.get("words") or "Saved.")
+            return str(res.get("detail") or "") if res.get("error") == "nothing_buffered" else \
+                _sorry(REFUSED.get(str(res.get("error")), "I couldn't save it."))
+        if what in ("buffer_on", "buffer_off"):
+            res = await svc.set_always_recording("on" if what == "buffer_on" else "off", source="voice")
+            return _always_words(res) if res.get("ok") else "I can't change that right now."
         return "Okay."
 
     # ------------------------------------------------------------ the answer to "whose phone?"
@@ -444,6 +482,24 @@ class Camera(Skill):
                   f"stops by itself after {limit:g} minutes. Say \"Recording!\" and that \"Hey LittleBot, stop "
                   f"recording\" stops it, in a few words")
 
+    async def _save_clip(self, svc: Any, minutes: Any) -> str:
+        """The always-recording buffer's last ``minutes`` (default: all of it) into the gallery, now."""
+        seconds = None
+        if minutes not in (None, ""):
+            try:
+                seconds = max(10.0, float(minutes) * 60.0)
+            except (TypeError, ValueError):
+                seconds = None
+        _to, name = self._who()
+        res = await svc.save_buffer(seconds, source="voice", who=name)
+        if not res.get("ok"):
+            code = str(res.get("error"))
+            words = str(res.get("detail") or "") if code == "nothing_buffered" else REFUSED.get(code, "")
+            return err("nothing was saved; say " + (words or "it couldn't be saved."))
+        sound = "with sound" if res.get("sound") else "without sound"
+        return ok(f"a {_minutes(res.get('seconds') or 0)} video ({sound}) is in the gallery now; say "
+                  f"\"{res.get('words')}\" in a few words")
+
     async def _stop(self, svc: Any) -> str:
         dropped = takeover.drop(self.ctx, VIDEO_LABEL)
         if not svc.recording:
@@ -599,6 +655,24 @@ def _sent_words(out: dict[str, Any]) -> str:
         return f"{possessive(out.get('name') or 'That person')} phone isn't set up for me yet, so scan this code " \
                "with a phone's camera."
     return "I can't send a notification, so scan this code with your phone's camera."
+
+
+def _always_words(res: dict[str, Any]) -> str:
+    """What to say after "turn on / off always recording" (``CaptureService.set_always_recording``'s answer)."""
+    asked, now = str(res.get("asked")), str(res.get("setting"))
+    going = res.get("state") in ("running", "no_frames")  # (no_frames: just switched on, the camera is starting)
+    if asked == "off":
+        return "Always recording is off."
+    if asked == "on" and now != "on":
+        return "My battery is too low for always recording."
+    if not going:
+        why = str(res.get("detail") or "").rstrip(".")
+        return f"Always recording is {'on' if asked == 'on' else 'set to automatic'}, but it isn't running now" + \
+            (f": {why[0].lower()}{why[1:]}." if why else ".")
+    if asked == "on":
+        return "Always recording is on, until my battery is low." if res.get("on_battery") else \
+            "Always recording is on."
+    return "Always recording is on while I'm plugged in."
 
 
 def _sorry(result: str) -> str:

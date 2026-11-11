@@ -166,3 +166,50 @@ async def test_csrf_is_needed(authed: Any, capture: Any) -> None:
     assert (await authed.delete("/api/capture/shares")).status_code == 403
     assert capture.gallery.items() == []
     authed.headers["X-CSRF-Token"] = token
+
+
+# ---------------------------------------------------------------- always recording (littlebot/capture/buffer.py)
+async def test_always_recording_its_state_and_the_three_way_choice(authed: Any, dctx: Any, capture: Any) -> None:
+    d = (await authed.get("/api/capture")).json()
+    buf = d["buffer"]
+    assert buf["setting"] == "auto" and buf["running"] is False and buf["seconds"] == 0 and buf["mb"] == 0
+    assert buf["enabled"] is False and buf["state"] in ("stopped", "config") and buf["minutes"] == 3
+    for mode in ("on", "off", "auto"):
+        r = await authed.put("/api/capture/settings", json={"always_recording": mode})
+        assert r.status_code == 200 and r.json()["buffer"]["setting"] == mode
+        assert dctx.settings.get("capture.always_recording") == mode
+    assert (await authed.put("/api/capture/settings", json={"always_recording": "sometimes"})).status_code == 422
+    assert dctx.settings.get("capture.always_recording") == "auto"
+
+
+async def test_save_the_last_minutes_button(authed: Any, client: Any, capture: Any) -> None:
+    calls: list[Any] = []
+
+    async def save_buffer(seconds: Any = None, **kw: Any) -> dict[str, Any]:
+        calls.append((seconds, kw))
+        return {"ok": True, "seconds": 180.0, "sound": True, "words": "Saved the last 3 minutes.",
+                "item": {"id": "20261106-150000", "kind": "video"}}
+
+    real = capture.save_buffer
+    r = await authed.post("/api/capture/buffer/save")  # (the config's master switch is off in tests)
+    assert r.status_code == 200 and r.json()["ok"] is False and r.json()["error"] == "unavailable"
+    capture.save_buffer = save_buffer
+    try:
+        r = await authed.post("/api/capture/buffer/save", json={})
+        d = r.json()
+        assert r.status_code == 200 and d["ok"] is True and d["words"] == "Saved the last 3 minutes."
+        assert "buffer" in d["status"] and calls == [(None, {"source": "dashboard", "announce": True})]
+        await authed.post("/api/capture/buffer/save", json={"seconds": 60})
+        assert calls[-1][0] == 60
+        assert (await authed.post("/api/capture/buffer/save", json={"seconds": 1})).status_code == 422
+    finally:
+        capture.save_buffer = real
+    assert (await client.post("/api/capture/buffer/save")).status_code in (401, 403)  # parents only
+
+
+async def test_always_recording_without_the_service(authed: Any, dctx: Any) -> None:
+    dctx.capture = None
+    assert (await authed.get("/api/capture")).json()["buffer"] is None
+    assert (await authed.post("/api/capture/buffer/save")).status_code == 503
+    r = await authed.put("/api/capture/settings", json={"always_recording": "off"})
+    assert r.status_code == 200 and dctx.settings.get("capture.always_recording") == "off"

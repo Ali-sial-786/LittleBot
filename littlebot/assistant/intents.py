@@ -1,7 +1,8 @@
 """Instant answers: the few things said so often, and so plainly, that waiting for a model would only be slower.
 
 "Stop", "never mind", "louder", "volume 40", "pause", "carry on", "skip", "what time is it?", "thanks", "bye",
-"take a picture", "record this", "stop recording", "show me my photos", "send it to my phone": matched on the whole
+"take a picture", "record this", "stop recording", "show me my photos", "send it to my phone", "save that" (the
+last 3 minutes of the always-recording buffer), "turn on always recording": matched on the whole
 utterance (never a word inside a longer question), answered in a few milliseconds with LittleBot's own tools
 (``chatgpt.tools.RobotToolbox``, the camera skill), and said straight away. Anything else goes to the brain.
 A short, fixed list on purpose: the brain understands everything; this only saves it the trouble.
@@ -123,6 +124,39 @@ SEND_PHOTO = _whole(rf"{_ASK}(?:send|share|airdrop|put) (?:{_THING} )?(?:to|on|o
                     rf"{_ASK}(?:send|share|airdrop) (?:me )?{_MEDIA}|"
                     rf"{_ASK}(?:send|share|airdrop) {_MEDIA} to {_TO}")
 
+# "Always recording" (littlebot/capture/buffer.py): the last 3 minutes are kept in RAM; these save them, or part.
+# Never a question ("did you save that?") and never "save that <something>" (a note, a song): those go to the brain.
+_SPAN_UNIT = r"(?:seconds?|secs?|minutes?|mins?)"
+_SPAN = rf"(?:the )?(?:last|past|previous) (?:(?P<n>\d{{1,3}}|half a|a|one|two|three|four|five|ten|fifteen|twenty|" \
+        rf"thirty|forty[- ]five|sixty|ninety|few|couple(?: of)?) )?(?P<unit>{_SPAN_UNIT})"
+_CLIP = r"(?:clip|video|recording|moment|bit)"
+SAVE_CLIP = _whole(rf"{_ASK}(?:save|clip) (?:that|this|it)(?: {_CLIP})?{_NOW}|"
+                   rf"{_ASK}(?:save|clip|keep) (?:a {_CLIP} of )?{_SPAN}(?: of (?:video|that|this))?{_NOW}|"
+                   rf"{_ASK}(?:save|keep) (?:the|a|that|this) clip{_NOW}")
+_ALWAYS = r"(?:the )?always[- ]recording|(?:the )?(?:rolling|video) buffer"
+ALWAYS_ON = _whole(rf"{_ASK}(?:turn|switch) on (?:{_ALWAYS})|{_ASK}(?:turn|switch) (?:{_ALWAYS}) (?:back )?on|"
+                   rf"{_ASK}(?:start|enable|resume) (?:{_ALWAYS})|always[- ]recording on")
+ALWAYS_OFF = _whole(rf"{_ASK}(?:turn|switch) off (?:{_ALWAYS})|{_ASK}(?:turn|switch) (?:{_ALWAYS}) off|"
+                    rf"{_ASK}(?:stop|disable|end) (?:{_ALWAYS})|always[- ]recording off")
+_SPAN_WORDS = {"half a": 0.5, "a": 1, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "ten": 10, "fifteen": 15,
+               "twenty": 20, "thirty": 30, "forty five": 45, "sixty": 60, "ninety": 90}
+
+
+def _span_seconds(m: re.Match[str]) -> float | None:
+    """"the last minute" -> 60, "the last 30 seconds" -> 30; None for "save that" and "the last few minutes"
+    (everything the buffer holds)."""
+    try:
+        unit = m.group("unit")
+    except IndexError:
+        return None
+    if not unit:
+        return None
+    said = (m.group("n") or "a").lower().replace("-", " ")
+    n = float(said) if said.isdigit() else _SPAN_WORDS.get(said)
+    if n is None:
+        return None
+    return max(5.0, n * (60.0 if unit.lower().startswith("m") else 1.0))
+
 
 def _kind(t: str) -> str | None:
     """"photo" / "video" when the words say which."""
@@ -151,7 +185,7 @@ ACK_OK = ("Okay.", "Sure.", "Done.")
 @dataclasses.dataclass
 class Intent:
     name: str  # stop | thanks | bye | volume | pause | resume | skip | stop_media | time | photo | record |
-    #            stop_record | show_photos | send_photo
+    #            stop_record | show_photos | send_photo | save_clip | always_recording
     say: str = ""  # what to say (may be "")
     end: bool = False  # the session ends after saying it
     args: dict[str, Any] = dataclasses.field(default_factory=dict)
@@ -189,6 +223,13 @@ def match(text: str, *, media_on: bool = False, recording_on: bool = False) -> I
     m = SEND_PHOTO.match(t)
     if m:
         return Intent("send_photo", args={"kind": _kind(t), "to": m.group("to1") or m.group("to2") or None})
+    m = SAVE_CLIP.match(t)
+    if m:
+        return Intent("save_clip", args={"seconds": _span_seconds(m)})
+    if ALWAYS_ON.match(t):
+        return Intent("always_recording", args={"on": True})
+    if ALWAYS_OFF.match(t):
+        return Intent("always_recording", args={"on": False})
     if STOP.match(t):
         return Intent("stop", "", end=True)
     if BYE.match(t):
@@ -280,7 +321,7 @@ async def run(intent: Intent, box: Any, ctx: Any) -> str:
 
 
 CAMERA = {"photo": "photo", "record": "record", "stop_record": "stop_record", "show_photos": "show",
-          "send_photo": "send"}
+          "send_photo": "send", "save_clip": "save_clip", "always_recording": "buffer_on"}
 
 
 def _cam(ctx: Any) -> Any:
@@ -307,6 +348,10 @@ async def _camera(intent: Intent, box: Any, ctx: Any) -> str:
     try:
         if intent.name == "send_photo":
             words = await cam.instant("send", kind=intent.args.get("kind"), to=intent.args.get("to"))
+        elif intent.name == "save_clip":
+            words = await cam.instant("save_clip", seconds=intent.args.get("seconds"))
+        elif intent.name == "always_recording":
+            words = await cam.instant("buffer_on" if intent.args.get("on") else "buffer_off")
         else:
             words = await cam.instant(CAMERA[intent.name], kind=intent.args.get("kind"))
     except Exception:  # noqa: BLE001 - the skill's bug: say sorry rather than break the chat

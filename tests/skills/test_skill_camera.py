@@ -376,3 +376,75 @@ async def test_the_hub_offers_it_only_with_the_service() -> None:
     ctx2 = make_test_context()
     assert SkillHub(ctx2).get("camera") is not None
     ctx2.db.close()
+
+
+# ---------------------------------------------------------------- always recording (littlebot/capture/buffer.py)
+class BufferCapture(FakeCapture):
+    """... with the always-recording buffer's two calls."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.saved: dict[str, Any] = {"ok": True, "seconds": 183.0, "sound": True, "words": "Saved the last 3 minutes.",
+                                      "item": {"id": "20261106-150000", "kind": "video"}}
+        self.mode: dict[str, Any] = {"ok": True, "state": "running", "detail": None, "on_battery": False}
+
+    async def save_buffer(self, seconds: float | None = None, **kw: Any) -> dict[str, Any]:
+        self.calls.append(("save_buffer", (seconds, kw)))
+        return self.saved
+
+    async def set_always_recording(self, mode: str, *, source: str = "voice") -> dict[str, Any]:
+        self.calls.append(("always", mode))
+        if mode not in ("auto", "on", "off"):
+            return {"ok": False, "error": "failed"}
+        return {"asked": mode, "setting": mode, **self.mode}
+
+    def status_buffer(self) -> dict[str, Any]:
+        return {"running": True, "seconds": 95.0}
+
+
+async def test_save_that_saves_the_buffer_at_once() -> None:
+    skill, _old, ctx = _skill(ALI)
+    svc = ctx.capture = BufferCapture()
+    assert await skill.instant("save_clip") == "Saved the last 3 minutes."
+    assert svc.calls == [("save_buffer", (None, {"source": "voice", "who": "Ali"}))]
+    assert takeover.claim(ctx) == []  # nothing waits: it is in the gallery already
+    await skill.instant("save_clip", seconds=60.0)
+    assert svc.calls[-1][1][0] == 60.0
+    out = await skill.run("save_last_minutes", {"minutes": 0.5})
+    assert out.startswith("ok:") and "Saved the last 3 minutes." in out and svc.calls[-1][1][0] == 30.0
+    await skill.run("save_last_minutes", {})
+    assert svc.calls[-1][1][0] is None
+    svc.saved = {"ok": False, "error": "nothing_buffered", "detail": "There's nothing to save. Always recording is off."}
+    assert await skill.instant("save_clip") == "There's nothing to save. Always recording is off."
+    out = await skill.run("save_last_minutes", {})
+    assert out.startswith("error") and "nothing was saved" in out and "Always recording is off" in out
+    svc.saved = {"ok": False, "error": "disk_full", "detail": "full"}
+    assert (await skill.instant("save_clip")).startswith("LittleBot's storage is nearly full")
+    assert "Always recording: on (1 minute 35 seconds can be saved now)" in skill.context_note()
+    ctx.db.close()
+
+
+async def test_always_recording_by_voice() -> None:
+    skill, _old, ctx = _skill()
+    svc = ctx.capture = BufferCapture()
+    assert await skill.instant("buffer_on") == "Always recording is on."
+    assert await skill.instant("buffer_off") == "Always recording is off."
+    assert [c for c in svc.calls if c[0] == "always"] == [("always", "on"), ("always", "off")]
+    svc.mode = {"ok": True, "state": "running", "detail": None, "on_battery": True}
+    assert await skill.instant("buffer_on") == "Always recording is on, until my battery is low."
+    svc.mode = {"ok": True, "state": "camera_off", "detail": "The camera is switched off in Privacy.",
+                "on_battery": False}
+    assert await skill.instant("buffer_on") == \
+        "Always recording is on, but it isn't running now: the camera is switched off in Privacy."
+    out = await skill.run("set_always_recording", {"mode": "auto"})
+    assert out.startswith("ok:") and "set to automatic" in out and svc.calls[-1] == ("always", "auto")
+    assert (await skill.run("set_always_recording", {"mode": "maybe"})).startswith("error")
+
+    async def too_low(mode: str, *, source: str = "voice") -> dict[str, Any]:  # "on" didn't stick: a low battery
+        return {"ok": True, "asked": "on", "setting": "auto", "state": "on_battery", "detail": "", "on_battery": True}
+
+    svc.set_always_recording = too_low  # type: ignore[method-assign]
+    assert await skill.instant("buffer_on") == "My battery is too low for always recording."
+    names = {s["name"] for s in SkillHub(ctx, [skill]).specs()}
+    assert {"save_last_minutes", "set_always_recording"} <= names
+    ctx.db.close()

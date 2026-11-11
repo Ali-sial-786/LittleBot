@@ -1690,7 +1690,8 @@ async def _run_quiet(items: list[Any]) -> None:
 # 2026-11-06).
 INTENT_TOOLS = {"photo": "take_photo", "record": "start_recording", "stop_record": "stop_recording",
                 "show_photos": "show_photos", "send_photo": "send_photo_to_phone", "volume": "set_volume",
-                "pause": "pause_video", "resume": "resume_video", "skip": "skip_video", "stop_media": "stop_video"}
+                "pause": "pause_video", "resume": "resume_video", "skip": "skip_video", "stop_media": "stop_video",
+                "save_clip": "save_last_minutes", "always_recording": "set_always_recording"}
 
 
 def _intent_done(said_by: str, words: str) -> list[str]:

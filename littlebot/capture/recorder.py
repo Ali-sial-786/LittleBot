@@ -148,7 +148,7 @@ class VideoRecorder:
         if t is not None:
             t.join(timeout + 5.0)
         self._done.wait(0.0 if t is None else 1.0)
-        ok = self.state == "done" and self.path.is_file() and self.path.stat().st_size > 0
+        ok = self.state == "done" and self.output_ok()
         return Result(ok=ok, path=self.path, seconds=round(self.seconds(), 1), width=self.size[0], height=self.size[1],
                       frames=self.frames, thumb=self.thumb, audio=self.audio and ok, audio_error=self.audio_error,
                       error=None if ok else (self.error or "failed"))
@@ -210,8 +210,15 @@ class VideoRecorder:
                  "-rc-lookahead", "15"]
         if vin == "1":
             argv += ["-c:a", "aac", "-b:a", "96k"]
-        argv += ["-movflags", "+faststart", "-f", "mp4", str(self.path)]
-        return argv
+        return argv + self.output_args()
+
+    def output_args(self) -> list[str]:
+        """Where ffmpeg writes (the end of the command). A subclass writes something else (capture/buffer.py)."""
+        return ["-movflags", "+faststart", "-f", "mp4", str(self.path)]
+
+    def output_ok(self) -> bool:
+        """ffmpeg left what it was asked for."""
+        return self.path.is_file() and self.path.stat().st_size > 0
 
     def _spawn(self) -> bool:
         """Start ffmpeg; with the sound first, and again without it if the sound is what stops it."""
@@ -340,7 +347,7 @@ class VideoRecorder:
                 proc.kill()
                 code = -9
         ended_by_us = code == 0 or (self.audio and code in (255, -signal.SIGINT))
-        if ended_by_us and self.path.is_file() and self.path.stat().st_size > 0:
+        if ended_by_us and self.output_ok():
             self.state = "done"
         else:
             log.warning("capture: ffmpeg ended with %s (%s)", code, (self._last_error() or "")[:200])

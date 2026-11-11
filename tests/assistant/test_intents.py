@@ -228,3 +228,61 @@ async def test_a_photo_phrase_queues_the_photo_for_after_the_words() -> None:
     ctx.skills = SkillHub(ctx, [])
     assert await intents.run(intents.match("take a picture"), box, ctx) == "I can't take photos or videos."
     ctx.db.close()
+
+# ---------------------------------------------------------------- always recording (littlebot/capture/buffer.py)
+@pytest.mark.parametrize("text,seconds", [
+    ("save that", None), ("Save that.", None), ("Hey LittleBot, save that!", None), ("clip that", None),
+    ("save that clip", None), ("can you save that please", None), ("save the last few minutes", None),
+    ("save the last 3 minutes", 180.0), ("Save the last three minutes.", 180.0), ("save the last minute", 60.0),
+    ("save the last two minutes", 120.0), ("save the last 30 seconds", 30.0), ("clip the last minute", 60.0),
+    ("save the last 3 minutes of video", 180.0),
+])
+def test_save_that(text: str, seconds: float | None) -> None:
+    hit = intents.match(text)
+    assert hit is not None and hit.name == "save_clip" and hit.args["seconds"] == seconds and not hit.end
+
+
+@pytest.mark.parametrize("text,on", [
+    ("turn on always recording", True), ("Turn off always recording.", False), ("turn always recording off", False),
+    ("switch always recording on", True), ("always recording on", True), ("stop always recording", False),
+    ("please turn on always-recording", True), ("can you turn off the always recording", False),
+])
+def test_always_recording_on_and_off(text: str, on: bool) -> None:
+    hit = intents.match(text)
+    assert hit is not None and hit.name == "always_recording" and hit.args["on"] is on
+
+
+@pytest.mark.parametrize("text", [
+    "did you save that?", "what does save that mean", "is always recording on?", "are you always recording?",
+    "why are you always recording", "save that song to my playlist", "save the date", "save", "keep that in mind",
+    "can you save that for later in my notes", "how do I save the last minute?", "what did you save",
+    "save the last dance for me", "always recording", "do you save the last 3 minutes?",
+])
+def test_not_about_always_recording(text: str) -> None:
+    hit = intents.match(text)
+    assert hit is None or hit.name not in ("save_clip", "always_recording")
+
+
+async def test_save_that_goes_to_the_camera_skill_with_how_much() -> None:
+    from littlebot.skills.hub import SkillHub
+
+    class Cam(Skill):
+        name = "camera"
+        asked: list[tuple[str, float | None]] = []
+
+        async def instant(self, what: str, *, kind: str | None = None, to: str | None = None,
+                          seconds: float | None = None) -> str:
+            self.asked.append((what, seconds))
+            return {"save_clip": "Saved the last minute.", "buffer_on": "Always recording is on."}.get(what, "Off.")
+
+    ctx = make_test_context()
+    cam = Cam(ctx)
+    ctx.skills = SkillHub(ctx, [cam])
+    box = RobotToolbox(ctx, mode="chat")
+    assert await intents.run(intents.match("save the last minute"), box, ctx) == "Saved the last minute."
+    assert await intents.run(intents.match("save that"), box, ctx) == "Saved the last minute."
+    assert await intents.run(intents.match("turn on always recording"), box, ctx) == "Always recording is on."
+    assert await intents.run(intents.match("turn off always recording"), box, ctx) == "Off."
+    assert cam.asked == [("save_clip", 60.0), ("save_clip", None), ("buffer_on", None), ("buffer_off", None)]
+    assert box.pending == []  # saved at once: nothing waits for the words to end
+    ctx.db.close()

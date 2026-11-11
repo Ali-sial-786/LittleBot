@@ -1,12 +1,19 @@
 // Photos: the pictures and videos LittleBot took when asked (littlebot/capture, docs/PHOTOS.md). They stay on the
 // robot. Take a photo or record from here, browse them by day, open one full screen to save it, send it to a phone,
-// share a link (with its QR code), show it on LittleBot or delete it; and the parent's switches.
+// share a link (with its QR code), show it on LittleBot or delete it; and the parent's switches. "Always recording"
+// (littlebot/capture/buffer.py): the last minutes of video kept in LittleBot's memory only, its auto / on / off
+// choice and "Save the last 3 minutes".
 
 import { del, get, post, put } from '../api.js';
 import { append, banner, button, clear, confirmDialog, h, icon, pageHead, s, setText, switchRow, toast } from '../ui.js';
 
 const POLL_MS = 3000;
 const POLL_REC_MS = 1000;
+const ALWAYS_MODES = [
+  ['auto', 'Automatic: while LittleBot is plugged in'],
+  ['on', 'On: on the battery too (until it is low)'],
+  ['off', 'Off'],
+];
 const VOICE_HINT = 'Or say “Hey LittleBot, take a picture”, “record this”, “stop recording”, “show my photos” or “send it to my phone”.';
 
 // ---------------------------------------------------------------- formatting
@@ -101,6 +108,28 @@ export default {
       h('div', { class: 'card-head' }, h('h2', {}, icon('camera'), 'Take one now')),
       h('div', { class: 'stack-sm' }, h('div', { class: 'btn-row pg-take' }, photoBtn, recBtn), whyEl, h('p', { class: 'muted', text: VOICE_HINT })));
 
+    // ---- always recording (the last minutes, in memory only)
+    const bufState = h('p', { class: 'muted', role: 'status' });
+    const bufSaveLabel = h('span', { text: 'Save the last 3 minutes' });
+    const bufSaveBtn = h('button', { type: 'button', class: 'btn primary', disabled: true }, saveIcon(), bufSaveLabel);
+    bufSaveBtn.addEventListener('click', saveBuffer);
+    const bufMode = h('select', { id: 'always-recording', 'aria-label': 'Always recording' },
+      ALWAYS_MODES.map(([value, text]) => h('option', { value, text })));
+    let bufSaving = false; // the choice is on its way to LittleBot
+    bufMode.addEventListener('change', async () => {
+      const want = bufMode.value;
+      bufSaving = true;
+      bufMode.disabled = true;
+      const words = { auto: 'Always recording: while plugged in.', on: 'Always recording: on.', off: 'Always recording is off. What was buffered is gone.' };
+      try { await saveSetting({ always_recording: want }, words[want]); } finally { bufSaving = false; }
+      renderBuffer();
+    });
+    const bufAbout = h('p', { class: 'muted' });
+    const bufferCard = h('section', { class: 'card' },
+      h('div', { class: 'card-head' }, h('h2', {}, icon('film'), 'Always recording')),
+      h('div', { class: 'stack-sm' }, bufState, h('div', { class: 'btn-row' }, bufSaveBtn),
+        h('div', { class: 'field' }, h('label', { for: 'always-recording', text: 'When it records' }), bufMode), bufAbout));
+
     // ---- the gallery
     const countEl = h('span', { class: 'muted' });
     const gridBox = h('div', { class: 'pg-days' }, h('p', { class: 'muted', text: 'Loading…' }));
@@ -142,7 +171,7 @@ export default {
 
     view.append(
       pageHead('Photos', 'The pictures and videos LittleBot took. They stay on LittleBot.'),
-      h('div', { class: 'stack' }, banners, takeCard, galleryCard, settingsCard));
+      h('div', { class: 'stack' }, banners, takeCard, bufferCard, galleryCard, settingsCard));
 
     // ---------------------------------------------------------------- rendering
     function reasons() {
@@ -247,10 +276,33 @@ export default {
       setText(aboutEl, `Everything stays on LittleBot: nothing is uploaded. A share link opens only on your home Wi-Fi and stops working after ${hours}. Recordings stop by themselves after ${max}.`);
     }
 
+    function renderBuffer() {
+      const b = data?.buffer || null;
+      bufferCard.hidden = !!data && (!b || b.enabled === false); // switched off in LittleBot's config: not offered
+      const minutes = minutesText(b?.minutes || 3);
+      const secs = Number(b?.seconds) || 0;
+      setText(bufSaveLabel, busy === 'buffer' ? 'Saving…' : `Save the last ${minutes}`);
+      bufSaveBtn.disabled = !!busy || !b || secs < 1;
+      if (!bufSaving) bufMode.value = b?.setting || 'auto';
+      bufMode.disabled = !data || bufSaving;
+      let line = 'Loading…';
+      if (b) {
+        const held = secs >= 1 ? `${clock(secs)} of video in memory (${b.mb} MB)` : 'nothing in memory';
+        if (b.running) line = `Recording${b.sound ? ' with sound' : ' without sound'}: ${held}.`;
+        else {
+          const wipes = b.wipes_in != null && secs >= 1 ? ` It can still be saved for ${clock(b.wipes_in)}, then it is wiped.` : '';
+          line = `Not recording. ${b.detail || ''} ${secs >= 1 ? `There is ${held}.` : ''}${wipes}`.replace(/\s+/g, ' ').trim();
+        }
+      }
+      setText(bufState, line);
+      setText(bufAbout, `LittleBot keeps the last ${minutes} of video in its memory only (never on its storage) and forgets it as it goes, unless someone saves it here, on its screen, or says “Hey LittleBot, save that”. A small red dot at the top of its face shows while it records. Switching the camera off in Privacy wipes it at once.`);
+    }
+
     function renderAll() {
       if (!alive) return;
       renderBanners();
       renderTop();
+      renderBuffer();
       renderGrid();
       renderSettings();
       if (vId !== null) {
@@ -300,6 +352,21 @@ export default {
         busy = '';
         renderAll();
         schedule();
+      }
+    }
+
+    async function saveBuffer() {
+      if (busy) return;
+      busy = 'buffer';
+      renderBuffer();
+      try {
+        const r = await app.act(() => post('/capture/buffer/save', {}, { timeout: 90000 }));
+        took(r);
+        if (r?.ok) toast(`${r.words || 'Saved.'} It’s in the gallery below.`, 'ok');
+        else if (r) toast(r.detail || 'Nothing was saved.', 'error');
+      } finally {
+        busy = '';
+        renderAll();
       }
     }
 
