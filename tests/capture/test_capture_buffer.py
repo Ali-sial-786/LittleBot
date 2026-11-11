@@ -553,6 +553,26 @@ async def test_it_pauses_when_vision_pauses_the_camera_and_when_pictures_stop(en
     await e.runs(3)
 
 
+async def test_it_pauses_while_the_camera_is_lent_to_a_video_call_and_resumes(env: Any) -> None:
+    """WhatsApp has the camera (littlebot/calls): no error, nothing wiped at once, and it carries on afterwards."""
+    e = await env()
+    await e.up()
+    before = e.names()
+    assert len(before) == 1
+    e.vision.camera = "lent"  # vision closed the device for the call
+    assert await e.buf.tick() == "camera_lent"
+    assert e.live() == [] and e.svc.buffering is False
+    assert OWNER in e.vision.sinks  # its sink stays, to see the pictures come back
+    assert e.names() == before  # what was buffered is still there (saveable for buffer_minutes more)
+    for _ in range(5):
+        assert await e.second(frames=0) == "camera_lent"
+    assert e.names() == before and e.buf.status()["state"] == "camera_lent"
+    e.vision.camera = "ok"  # the call ended: the camera is back
+    assert await e.buf.tick() == "no_frames"
+    await e.runs(2)
+    assert e.svc.buffering is True
+
+
 async def test_the_encoder_stopping_by_itself_is_tried_again_later(env: Any) -> None:
     e = await env()
     await e.up()

@@ -159,7 +159,8 @@ class VisionAPI(Protocol):
     async def capture_photo(self, *, max_width: int = 768, quality: int = 80, timeout: float = 3.0) -> bytes:
         """One JPEG of the NEXT camera frame (downscaled to ``max_width``), kept in memory only and
         never stored. Raises ``littlebot.vision.service.PhotoUnavailable(reason)`` with reason
-        camera_off | no_camera | timeout | unavailable. Callers check their own consent switches."""
+        camera_off | no_camera | in_call (the camera is lent to a video call) | timeout | unavailable.
+        Callers check their own consent switches."""
 
     def status(self) -> dict[str, Any]:
         """{camera: ok|disconnected|disabled|unavailable, detail, backend, detector, detector_detail,

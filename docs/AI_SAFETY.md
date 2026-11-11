@@ -350,6 +350,17 @@ the main safeguard; the code checks are a backstop.**
   * **How to delete it:** Profile → Who's who: **Forget voice** next to a person, the bin (the person
     and everything about them) or **Forget all faces** (everyone). Switching the setting off stops it
     and unloads the model but keeps the voiceprints until you delete them.
+* **WhatsApp calls** ([CALLS.md](CALLS.md)) are outside the AI altogether. A grown-up asks for a call (a turn
+  voice recognition says was the child's is refused, and only people on the parent's list can be called);
+  LittleBot opens WhatsApp Web and presses the buttons. Enforced in code: nothing from WhatsApp's page (chat
+  names, messages, previews) is read out, logged, stored or given to any model; the voice's tools take a name
+  from the parent's list and give back fixed sentences; the page scripts answer only whether and where a
+  button is. The chats are hidden on the robot's screen by LittleBot's cover unless a parent switches that off
+  on the dashboard. The camera and microphone go to `web.whatsapp.com` only, and only while WhatsApp is on the
+  screen; the camera Privacy switch off means no camera for WhatsApp either. During a call LittleBot's voice
+  chat ends, so nothing of the call is heard by an AI; always recording is paused. The sign-in to the owner's
+  WhatsApp is kept on the robot (`data/whatsapp-profile`) until "Sign out of WhatsApp on the robot". Not tried
+  on the robot yet.
 * Cloud providers process requests under their own terms and may retain data for a
   period for abuse monitoring — check the provider's data-retention policy before
   enabling cloud conversation.
@@ -432,6 +443,10 @@ speech (TTS / STT) follows the same setting. Offline mode never contacts any ser
   start gates). The microphone/speaker bridge, including the half-duplex gate and the mute on a
   safety cut, is tested separately against a fake PortAudio. **Not yet tested against OpenAI's
   real service or on the Pi's real microphone and speaker.**
+* **WhatsApp calls:** tested against a fake Chromium and a fake WhatsApp page, and against a real headless
+  Chromium with a small local page shaped like WhatsApp Web (the cover hides the page from its first paint, lets
+  only the QR code and the call through; the presses go through it; Chromium is gone afterwards). **Not yet tried
+  against the real WhatsApp Web or on the robot.**
 * **Letting the AI see (camera):** the dashboard route and card are tested with a stand-in for
   the camera look (only the answer text reaches the browser, blocked requests get a plain
   reason, the switch is off by default). **Not yet tested against OpenAI's real service or with

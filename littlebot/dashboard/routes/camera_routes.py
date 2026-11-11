@@ -37,6 +37,7 @@ REASONS: dict[str, tuple[int, str]] = {
     "camera_off": (403, "Camera is off (Privacy)."),
     "paused": (409, "Paused while a video plays on LittleBot. The picture comes back when the video ends."),
     "no_camera": (503, "No camera is connected right now. LittleBot keeps trying."),
+    "in_call": (409, "The camera is being used for a WhatsApp video call. The picture comes back when the call ends."),
     "busy": (409, "Too many devices are watching. Close the camera view on another device."),
     "timeout": (504, "Waiting for the camera…"),
     "stopped": (409, "The live view was stopped."),
@@ -75,6 +76,8 @@ def _blocked_now(dash: DashState, vision: Any, status: dict[str, Any]) -> str | 
         return "camera_off"
     if vision is None:
         return "unavailable"
+    if status.get("camera") == "lent":
+        return "in_call"
     if status.get("detect_mode") == "paused":
         return "paused"
     if status.get("camera") in ("unavailable", "disconnected") or status.get("backend") == "none":

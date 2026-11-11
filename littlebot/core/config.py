@@ -832,6 +832,40 @@ class AndroidConfig(_Section):
     apps: dict[str, str] = Field(default_factory=lambda: {"aosu": "com.glazero.android"})
 
 
+class CallsConfig(_Section):
+    """Video and voice calls through WhatsApp Web on LittleBot's screen (littlebot/calls, docs/CALLS.md): a Chromium
+    window on web.whatsapp.com, linked once to the owner's own WhatsApp (a QR code), and only while it is on the
+    screen: afterwards Chromium is shut down and its memory comes back. Uses the same Chromium as the videos
+    (``media.browser_command``).
+
+    The parent's switch (dashboard Assistant page: ``calls.enabled``) can turn it off; ``enabled: false`` here
+    switches it off whatever the parent chose."""
+
+    enabled: bool = True
+    # Where Chromium keeps the WhatsApp sign-in (a saved, non-incognito profile, so the QR link survives), under
+    # the data folder. "Sign out of WhatsApp on the robot" deletes it.
+    profile_dir: str = Field(default="whatsapp-profile", min_length=1, max_length=120)
+    # It starts only with this much memory free (MemAvailable, MB; Chromium with WhatsApp takes 400 to 700 MB) ...
+    min_free_mb: int = Field(default=700, ge=0, le=4096)
+    # ... and is shut down if free memory falls under this while it runs (LittleBot comes first).
+    min_free_mb_running: int = Field(default=200, ge=0, le=2048)
+    # WhatsApp open with no call and nobody touching it for this long: it is shut down.
+    idle_seconds: float = Field(default=120.0, ge=20.0, le=3600.0)
+    # Its window not in front (another window over it) for this long: it is shut down.
+    off_screen_seconds: float = Field(default=10.0, ge=2.0, le=600.0)
+    # WhatsApp's window: the desktop window whose app id or title has this in it (any case).
+    window_match: str = Field(default="whatsapp", min_length=1, max_length=40)
+    start_timeout_seconds: float = Field(default=30.0, ge=2.0, le=180.0)  # Chromium's DevTools must answer by then
+    # WhatsApp must have shown its QR code or its chats by then, else LittleBot says it didn't load.
+    load_timeout_seconds: float = Field(default=60.0, ge=5.0, le=600.0)
+    zoom: float = Field(default=1.0, ge=0.5, le=2.0)  # the page drawn this much bigger (smaller: more fits)
+    kiosk: bool | None = None  # full screen; None = on the robot (Raspberry Pi) only, a 1024x600 window elsewhere
+    # Who can be called: the name as it is said -> the name as it appears in WhatsApp. The dashboard's list
+    # (setting ``calls.contacts``) starts from this.
+    contacts: dict[str, str] = Field(default_factory=dict)
+    extra_args: list[str] = Field(default_factory=list)  # more Chromium switches
+
+
 class PowerConfig(_Section):
     """Running on the battery (littlebot/power, docs/POWER.md "Running on the battery").
 
@@ -1070,6 +1104,7 @@ class LittleBotConfig(BaseModel):
     nanit: NanitConfig = Field(default_factory=NanitConfig)
     capture: CaptureConfig = Field(default_factory=CaptureConfig)
     android: AndroidConfig = Field(default_factory=AndroidConfig)
+    calls: CallsConfig = Field(default_factory=CallsConfig)
     decide: DecideConfig = Field(default_factory=DecideConfig)
     power: PowerConfig = Field(default_factory=PowerConfig)
     media: MediaConfig = Field(default_factory=MediaConfig)

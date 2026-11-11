@@ -117,6 +117,7 @@ ERRORS = {
     "no_encoder": "ffmpeg isn't installed on LittleBot (sudo apt install ffmpeg).",
     "no_player": "ffplay isn't installed on LittleBot (it comes with ffmpeg: sudo apt install ffmpeg).",
     "not_found": "There's no such photo or video.",
+    "in_call": "The camera is being used for a video call right now.",
     "timeout": "The camera didn't send a picture in time.",
     "no_frames": "The camera didn't send any pictures, so nothing was recorded.",
     "encoder_stopped": "The video recorder stopped by itself.",
@@ -292,6 +293,8 @@ class CaptureService(Service):
             return "camera_off" if "privacy" in str(st.get("detail") or "") else "no_camera"
         if cam in ("unavailable", "disconnected"):
             return "no_camera"
+        if cam == "lent":
+            return "in_call"
         return None
 
     def check(self, kind: str = "photo") -> str | None:

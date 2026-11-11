@@ -163,6 +163,12 @@ def build_defaults(cfg: LittleBotConfig) -> dict[str, Any]:
         "capture.always_recording": "auto",
         # Android (Waydroid) on the screen when asked (littlebot/android): the parent's switch
         "android.enabled": True,
+        # video calls through WhatsApp Web (littlebot/calls): the parent's switch; who can be called (the name as it
+        # is said -> the name as it appears in WhatsApp); and LittleBot's cover over WhatsApp's page, so the chats
+        # never show on the robot's screen (only the QR code and a call do)
+        "calls.enabled": True,
+        "calls.contacts": dict(cfg.calls.contacts),
+        "calls.hide_chats": True,
         # fast decision models (littlebot/decide): the provider (off | jev | openai | claude) and each feature's mode
         # (off | shadow | on); {} = the config's decide.modes / decide.default_mode
         "decide.provider": cfg.decide.provider,

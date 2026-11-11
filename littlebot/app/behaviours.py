@@ -54,6 +54,7 @@ class Behaviours:
             bus.subscribe("media.*", self._touch),
             bus.subscribe("screen.*", self._touch),  # info cards (a running timer keeps LittleBot awake)
             bus.subscribe("android.*", self._touch),  # Android being used (littlebot/android)
+            bus.subscribe("calls.*", self._touch),  # WhatsApp open, a call on (littlebot/calls)
             bus.subscribe(Topics.AUDIO_UTTERANCE, self._touch),
             bus.subscribe(Topics.CAREGIVER_RESPONSE, self._touch),
         ]

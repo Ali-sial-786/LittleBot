@@ -12,7 +12,8 @@ stops for it): ``screens.show({"card": "settings"}, source="touch")``. Never off
   **Upside-down screen** and **Info cards in chats** (switches: a tap anywhere on the row), **Go to sleep**,
   **Always recording** (a tap goes round Auto, On, Off: the setting ``capture.always_recording``,
   littlebot/capture/buffer.py) and **Save the last 3 minutes** (what that buffer holds becomes a video in the
-  gallery: ``ctx.capture.save_buffer``, and LittleBot says so).
+  gallery: ``ctx.capture.save_buffer``, and LittleBot says so) and **WhatsApp** (Open: WhatsApp Web for a video
+  call takes the screen and this card goes, ``ctx.calls.open(source="screen")``; Close while it is open).
   The volume goes through ``ctx.audio.set_volume`` (it clamps to the safe maximum and keeps the setting), like the
   voice's tools; the others are settings the display loop and the screen service follow (``display.brightness``,
   ``display.theme``, ``display.flipped``, ``screens.enabled``); sleep is what the voice's ``go_to_sleep`` tool does.
@@ -281,6 +282,42 @@ class RobotLink:
             coro.close()
             done(False, "LittleBot can't save it right now.")
 
+    def whatsapp_on(self) -> bool:
+        """WhatsApp (littlebot/calls) is on the screen right now."""
+        calls = getattr(self.ctx, "calls", None)
+        return calls is not None and getattr(calls, "active", False) is True
+
+    def whatsapp(self, done: Callable[[bool, str], None]) -> None:
+        """The WhatsApp row: open WhatsApp for a video call (``ctx.calls.open``), or close it when it is open, on
+        the robot's loop. ``done(ok, words)``: the words say why it didn't open."""
+        calls = getattr(self.ctx, "calls", None)
+        if calls is None or not hasattr(calls, "open"):
+            done(False, "WhatsApp calls aren't available.")
+            return
+
+        async def go() -> None:
+            try:
+                if getattr(calls, "active", False) is True:
+                    await calls.hang_up("closed in the settings on the screen")
+                    res: dict[str, Any] = {"ok": True}
+                else:
+                    res = await calls.open(source=SOURCE)
+            except Exception:  # noqa: BLE001
+                log.exception("opening WhatsApp from the settings failed")
+                res = {"ok": False}
+            done(bool(res.get("ok")), "" if res.get("ok") else str(res.get("detail") or "WhatsApp didn't open."))
+
+        runtime = getattr(self.ctx, "runtime", None)
+        coro = go()
+        try:
+            if runtime is not None and getattr(runtime, "running", False):
+                runtime.submit(coro)
+            else:
+                asyncio.get_running_loop().create_task(coro)
+        except RuntimeError:
+            coro.close()
+            done(False, "LittleBot can't open WhatsApp right now.")
+
     def busy(self, key: str) -> bool:
         """A change of ``key`` is on its way (its row keeps what was tapped meanwhile)."""
         with self._lock:
@@ -403,6 +440,8 @@ class SettingsCard(Card):
         self.starting: str | None = None  # a game being started
         self.sleeping = False  # asked to sleep (the service closes the card when LittleBot falls asleep)
         self.saving = False  # "Save the last 3 minutes" is on its way
+        self.calling = False  # the WhatsApp row was tapped: opening (or closing) is on its way
+        self.whatsapp_on = self.link.whatsapp_on()
         self.clip_minutes = self.link.clip_minutes()
         self._poll = 0.0
         self._done_lock = threading.Lock()
@@ -557,6 +596,12 @@ class SettingsCard(Card):
                 if not ok:
                     self.say_notice("LittleBot can't go to sleep right now.")
                     self.host.sound("uhoh")
+            elif what == "whatsapp":
+                self.calling = False
+                self.whatsapp_on = self.link.whatsapp_on()
+                if not ok:
+                    self.say_notice(why or "WhatsApp didn't open.")
+                    self.host.sound("uhoh")
             elif what == "clip":
                 self.saving = False
                 self.say_notice(why or ("Saved." if ok else "That couldn't be saved."))
@@ -707,6 +752,8 @@ class SettingsCard(Card):
             self.set_always(ALWAYS_MODES[(ALWAYS_MODES.index(self.always) + 1) % len(ALWAYS_MODES)])
         elif cid == "clip":
             self.save_clip()
+        elif cid == "whatsapp":
+            self.open_whatsapp()
 
     def open_tab(self, name: str) -> None:
         if name not in TABS:
@@ -772,6 +819,15 @@ class SettingsCard(Card):
         self.host.sound("click")
         self.saving = True
         self.link.save_clip(self._result("clip"))
+        self._take_results()
+
+    def open_whatsapp(self) -> None:
+        """WhatsApp for a video call takes the screen (this card goes); tapped while it is open, it closes."""
+        if self.calling:
+            return
+        self.host.sound("click")
+        self.calling = True
+        self.link.whatsapp(self._result("whatsapp"))
         self._take_results()
 
     def go_to_sleep(self) -> None:
@@ -949,6 +1005,9 @@ class SettingsCard(Card):
             elif rid == "clip":
                 self._draw_button(surf, controls[rid], "Saving" if self.saving else "Save", col, "",
                                   self._flashing(rid), dim=self.saving)
+            elif rid == "whatsapp":
+                label = "Wait" if self.calling else "Close" if self.whatsapp_on else "Open"
+                self._draw_button(surf, controls[rid], label, col, "", self._flashing(rid), dim=self.calling)
             else:
                 self._draw_button(surf, controls[rid], "Sleep now", art.PERIWINKLE, "sleep", self._flashing(rid),
                                   dim=self.sleeping)
@@ -969,6 +1028,8 @@ class SettingsCard(Card):
             return "Always recording", ALWAYS_WORDS[self.always]
         if rid == "clip":
             return f"Save the last {self.clip_minutes:g} minutes", "As a video in the gallery"
+        if rid == "whatsapp":
+            return "WhatsApp", ("On the screen now" if self.whatsapp_on else "Video calls: call or answer")
         return "Go to sleep", "Sleepy face, quiet"
 
     def _draw_level(self, surf: Any, rid: str, controls: dict[str, pygame.Rect]) -> None:
@@ -1113,10 +1174,10 @@ class SettingsCard(Card):
 # the settings' rows, in order: (id, kind)
 _ROWS: tuple[tuple[str, str], ...] = (("vol", "level"), ("bright", "level"), ("dark", "switch"), ("flip", "switch"),
                                       ("cards", "switch"), ("sleep", "button"), ("always", "button"),
-                                      ("clip", "button"))
+                                      ("clip", "button"), ("whatsapp", "button"))
 _ROW_COLOURS: dict[str, art.Color] = {"vol": art.SKY, "bright": art.TANGERINE, "dark": art.GRAPE,
                                       "flip": art.PERIWINKLE, "cards": art.MINT, "sleep": art.PERIWINKLE,
-                                      "always": art.STRAWBERRY, "clip": art.STRAWBERRY}
+                                      "always": art.STRAWBERRY, "clip": art.STRAWBERRY, "whatsapp": art.MINT}
 
 
 # ---------------------------------------------------------------- sprites (cached per theme by art.cached)
@@ -1356,6 +1417,13 @@ def _icon_save(s: pygame.Surface, z: float, c: art.Color) -> None:
     art.capsule(s, c, (z * 0.16, z * 0.84), (z * 0.84, z * 0.84), lw)
 
 
+def _icon_call(s: pygame.Surface, z: float, c: art.Color) -> None:
+    """A video call: a camera body with its lens wedge."""
+    body = pygame.Rect(z * 0.12, z * 0.28, z * 0.5, z * 0.44)
+    pygame.draw.rect(s, c, body, border_radius=max(2, int(z * 0.1)))
+    pygame.draw.polygon(s, c, [(z * 0.66, z * 0.5), (z * 0.88, z * 0.3), (z * 0.88, z * 0.7)])
+
+
 def _icon_globe(s: pygame.Surface, z: float, c: art.Color) -> None:
     lw = max(2, int(z * 0.07))
     pygame.draw.circle(s, c, (z / 2, z / 2), z * 0.42, lw)
@@ -1376,7 +1444,7 @@ _ICONS: dict[str, Callable[[pygame.Surface, float, art.Color], None]] = {
     "settings": _icon_gear, "games": _icon_pad, "about": _icon_info, "close": _icon_close, "minus": _icon_minus,
     "plus": _icon_plus, "vol": _icon_speaker, "bright": _icon_sun, "dark": _icon_moon, "flip": _icon_flip,
     "cards": _icon_card, "sleep": _icon_sleep, "dashboard": _icon_globe, "hold": _icon_hold,
-    "always": _icon_record, "clip": _icon_save,
+    "always": _icon_record, "clip": _icon_save, "whatsapp": _icon_call,
 }
 
 

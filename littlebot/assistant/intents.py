@@ -2,7 +2,8 @@
 
 "Stop", "never mind", "louder", "volume 40", "pause", "carry on", "skip", "what time is it?", "thanks", "bye",
 "take a picture", "record this", "stop recording", "show me my photos", "send it to my phone", "save that" (the
-last 3 minutes of the always-recording buffer), "turn on always recording": matched on the whole
+last 3 minutes of the always-recording buffer), "turn on always recording", "video call Dad", "open WhatsApp",
+"answer on WhatsApp", "hang up" (WhatsApp calls, littlebot/skills/calls.py): matched on the whole
 utterance (never a word inside a longer question), answered in a few milliseconds with LittleBot's own tools
 (``chatgpt.tools.RobotToolbox``, the camera skill), and said straight away. Anything else goes to the brain.
 A short, fixed list on purpose: the brain understands everything; this only saves it the trouble.
@@ -14,6 +15,7 @@ import dataclasses
 import logging
 import random
 import re
+from collections.abc import Callable
 from typing import Any
 
 log = logging.getLogger("littlebot.assistant.intents")
@@ -43,6 +45,8 @@ _STOP_CORE = (r"stop(?: it| that| now| talking(?: to (?:him|her|them|us|me|every
 _STOP_LEAD = (r"hey|hello|hi|no|oh|ok(?:ay)?|alright|all right|just|wait|i said|i told you(?: to)?|"
               r"(?:can|could|would|will) you(?: please)?")
 STOP = _whole(rf"(?:(?:{_STOP_LEAD})[\s,.!]+)*(?:{_STOP_CORE})(?:[\s,.!]+(?:and[\s,]+)?(?:{_STOP_CORE}))*|nothing")
+# A bare "stop" / "cancel" while WhatsApp is on the screen ends the chat, not the call (as for a video or Android).
+STOP_ONLY = _whole(r"stop(?: it| that| now)?|cancel(?: that)?|close(?: it)?|leave(?: it)?|finish|end")
 THANKS = _whole(r"thanks?(?: you)?(?: so much| very much| a lot)?|cheers|perfect|great(?:,? thanks?)?|awesome|"
                 r"got it|cool|nice|good job|well done|appreciate it")
 BYE = _whole(r"(?:good)?bye(?: bye)?|see you(?: later)?|talk (?:to you )?later|good ?night|go to sleep|"
@@ -158,6 +162,47 @@ def _span_seconds(m: re.Match[str]) -> float | None:
     return max(5.0, n * (60.0 if unit.lower().startswith("m") else 1.0))
 
 
+# WhatsApp calls (littlebot/skills/calls.py, littlebot/calls). "Call Dad" is a call only when Dad is on the parent's
+# list of people to call (``call_names``); with WhatsApp named ("call Sam on WhatsApp") it always is, and someone not
+# on the list hears who can be called. While WhatsApp is on the screen, "hang up" / "end the call" / "answer" are
+# about it.
+_WA = r"whats ?app"
+_NOT_NAME = rf"(?!(?:on|with|using|via|through|please|now|a|an|the|it|me|us|this|that|{_WA})\b)"
+_WORD = rf"{_NOT_NAME}[^\W\d_][\w'-]{{0,19}}"
+_PERSON = rf"(?:(?:my|our) )?{_WORD}(?: {_WORD}){{0,2}}"
+_ON_WA = rf"(?: (?:on|with|using|via|through) {_WA})"
+_CALL_KIND = r"(?:(?P<kind>video|voice|audio|phone)[- ]?)?"
+CALL = _whole(rf"{_ASK}{_CALL_KIND}(?:call|ring|phone|dial) (?P<who>{_PERSON})(?P<wa>{_ON_WA})?{_NOW}|"
+              rf"{_ASK}(?P<wa2>{_WA}) (?:(?P<kind2>video|voice|audio) )?(?:call )?(?P<who2>{_PERSON}){_NOW}|"
+              rf"{_ASK}(?:make|start|place) a (?:(?P<kind3>video|voice|audio|phone) )?call (?:to|with) "
+              rf"(?P<who3>{_PERSON})(?P<wa3>{_ON_WA})?{_NOW}")
+OPEN_WHATSAPP = _whole(rf"{_ASK}(?:open|start|show(?: me)?|launch|bring up|go to)(?: up)? {_WA}{_NOW}|{_WA}")
+ANSWER_WHATSAPP = _whole(rf"{_ASK}(?:answer|pick up|take|accept|get)(?: (?:it|that|the call|the phone|the video call|"
+                         rf"my call))?{_ON_WA}{_NOW}|{_ASK}(?:answer|pick up) {_WA}{_NOW}")
+CLOSE_WHATSAPP = _whole(rf"{_ASK}(?:close|quit|exit|shut|leave|stop|turn off)(?: down)? {_WA}{_NOW}")
+# ... only while WhatsApp is on the screen:
+ANSWER_CALL = _whole(rf"{_ASK}(?:answer|pick up|accept|take)(?: (?:it|that|the call|the phone|the video call))?{_NOW}")
+HANG_UP = _whole(rf"{_ASK}(?:hang up|end|stop|finish|leave|close|cancel)(?: (?:it|now|the call|the video call|"
+                 rf"this call|that call|call|the phone))?{_NOW}")
+
+
+def _call_intent(t: str, call_names: Callable[[str], bool]) -> Intent | None:
+    """"Video call Dad", "call Mum on WhatsApp", "WhatsApp Dad": who and which kind; None when it isn't one."""
+    m = CALL.match(t)
+    if not m:
+        return None
+    who = m.group("who") or m.group("who2") or m.group("who3") or ""
+    kind = (m.group("kind") or m.group("kind2") or m.group("kind3") or "video").lower()
+    named = bool(m.group("wa") or m.group("wa2") or m.group("wa3"))
+    try:
+        known = bool(call_names(who))
+    except Exception:  # noqa: BLE001
+        known = False
+    if not known and not named:
+        return None  # "call me a taxi", "call the doctor": the brain answers
+    return Intent("call", args={"name": who, "kind": "video" if kind == "video" else "voice"})
+
+
 def _kind(t: str) -> str | None:
     """"photo" / "video" when the words say which."""
     low = t.lower()
@@ -185,7 +230,7 @@ ACK_OK = ("Okay.", "Sure.", "Done.")
 @dataclasses.dataclass
 class Intent:
     name: str  # stop | thanks | bye | volume | pause | resume | skip | stop_media | time | photo | record |
-    #            stop_record | show_photos | send_photo | save_clip | always_recording
+    #            stop_record | show_photos | send_photo | save_clip | always_recording | call | whatsapp | hang_up
     say: str = ""  # what to say (may be "")
     end: bool = False  # the session ends after saying it
     args: dict[str, Any] = dataclasses.field(default_factory=dict)
@@ -201,13 +246,26 @@ LIGHT_MODE = _whole(rf"{_SWITCH}?(?:the )?(?:light|day|normal){_THEME_WORD}(?: o
                     rf"(?:no|stop|exit|leave) (?:the )?(?:dark|night){_THEME_WORD}")
 
 
-def match(text: str, *, media_on: bool = False, recording_on: bool = False) -> Intent | None:
+def match(text: str, *, media_on: bool = False, recording_on: bool = False, calls_on: bool = False,
+          call_names: Callable[[str], bool] | None = None) -> Intent | None:
     """The instant intent ``text`` is, or None (the brain answers). ``media_on``: a video or music is playing or
     paused for this chat, so "pause", "play", "skip" are about it. ``recording_on``: LittleBot is recording a video,
-    so "stop" / "cut" / "that's it" stop the recording."""
+    so "stop" / "cut" / "that's it" stop the recording. ``call_names(name)``: is that someone on the list of people
+    to call (None: there are no WhatsApp calls on this robot, so none of their phrases match). ``calls_on``:
+    WhatsApp is on the screen, so "hang up", "end the call", "answer" are about it."""
     t = " ".join(str(text or "").replace("’", "'").split())
     if not t or len(t) > 60:
         return None
+    if call_names is not None:
+        if CLOSE_WHATSAPP.match(t) or (calls_on and HANG_UP.match(t) and not STOP_ONLY.match(t)):
+            return Intent("hang_up", end=True)
+        if ANSWER_WHATSAPP.match(t) or (calls_on and ANSWER_CALL.match(t)):
+            return Intent("whatsapp", args={"answer": True})
+        if OPEN_WHATSAPP.match(t):
+            return Intent("whatsapp", args={"answer": False})
+        call = _call_intent(t, call_names)
+        if call is not None:
+            return call
     if recording_on and not media_on and STOP_WHILE_RECORDING.match(t):
         return Intent("stop_record", end=True)
     if STOP_RECORD.match(t):
@@ -317,11 +375,54 @@ async def run(intent: Intent, box: Any, ctx: Any) -> str:
         return intent.say
     if name in CAMERA:
         return await _camera(intent, box, ctx)
+    if name in CALLS:
+        return await _calls_run(intent, box, ctx)
     return intent.say
 
 
 CAMERA = {"photo": "photo", "record": "record", "stop_record": "stop_record", "show_photos": "show",
           "send_photo": "send", "save_clip": "save_clip", "always_recording": "buffer_on"}
+
+
+CALLS = ("call", "whatsapp", "hang_up")
+
+
+def calls_skill(ctx: Any) -> Any:
+    """The WhatsApp calls skill while calls are offered (they exist and the parent's switch is on), else None."""
+    hub = getattr(ctx, "skills", None)
+    skill = hub.get("calls") if hub is not None and hasattr(hub, "get") else None
+    try:
+        return skill if skill is not None and skill.available() else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def calls_flags(ctx: Any) -> dict[str, Any]:
+    """``match``'s ``calls_on`` and ``call_names`` for this robot right now."""
+    skill = calls_skill(ctx)
+    if skill is None:
+        return {}
+    return {"calls_on": bool(skill.active), "call_names": skill.knows}
+
+
+async def _calls_run(intent: Intent, box: Any, ctx: Any) -> str:
+    """A WhatsApp phrase through the calls skill."""
+    skill = calls_skill(ctx)
+    if skill is None:
+        return "I can't make WhatsApp calls."
+    try:
+        if intent.name == "hang_up":
+            words = await skill.instant("hang_up")
+        elif intent.name == "whatsapp":
+            words = await skill.instant("answer" if intent.args.get("answer") else "open")
+        else:
+            words = await skill.instant("call", name=str(intent.args.get("name") or ""),
+                                        kind=str(intent.args.get("kind") or "video"))
+    except Exception:  # noqa: BLE001 - the skill's bug: say sorry rather than break the chat
+        log.warning("assistant: the WhatsApp phrase failed", exc_info=True)
+        return "Sorry, WhatsApp didn't work."
+    _claim(box, ctx)
+    return words
 
 
 def _cam(ctx: Any) -> Any:
@@ -385,4 +486,4 @@ async def camera_reply(text: str, box: Any, ctx: Any) -> str | None:
     return words
 
 
-__all__ = ["Intent", "camera_asking", "camera_reply", "match", "run"]
+__all__ = ["Intent", "calls_flags", "calls_skill", "camera_asking", "camera_reply", "match", "run"]

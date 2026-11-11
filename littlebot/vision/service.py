@@ -4,7 +4,9 @@ Everything runs in ONE daemon thread ("littlebot-vision"); the asyncio loop is
 never blocked. Per cycle the thread:
 
 1. manages the camera: open / reconnect every ``camera.reconnect_seconds`` /
-   release immediately when privacy turns the camera off;
+   release immediately when privacy turns the camera off closed while it is lent to a video
+   call (``lend_camera`` / ``return_camera``: a USB camera serves one program at a time; the privacy
+   switch is not touched, the camera's status reads "lent");
 2. grabs the newest frame at most at ``detect_fps`` (or ``gesture_fps`` when
    the experimental gestures are on), downscales it to ``process_width`` and
    runs the detector at most at ``detect_fps`` (CPU budget for the Pi);
@@ -70,6 +72,8 @@ BROWSER_OPENED, BROWSER_CLOSED = "browser.opened", "browser.closed"  # littlebot
 MAX_FACES_EVENT_HZ = 15.0  # hard cap for vision.faces events
 IDLE_WAIT = 1.0  # longest sleep when nothing is going on (events wake the thread earlier)
 PHOTO_RETRY = 0.05  # retry interval while a photo request waits for a frame
+LEND_TIMEOUT = 3.0  # lend_camera waits this long for the device to be closed
+LENT_DETAIL = "the camera is being used for a video call"
 WARM_EVERY = 0.5  # keep_photo_warm: seconds between refreshes (~5 ms of encoding each on a Pi 5)
 WARM_WIDTH = 640
 WARM_QUALITY = 75
@@ -149,6 +153,7 @@ class VisionService(Service):
         # camera
         self._camera: CameraDevice | None = None
         self._camera_allowed = True
+        self._lent: frozenset[str] = frozenset()  # who has borrowed the camera device (a video call: lend_camera)
         self._ever_opened = False
         self._next_open_at = 0.0
         self._read_fail_since: float | None = None
@@ -414,6 +419,8 @@ class VisionService(Service):
             raise PhotoUnavailable("camera_off", "camera turned off in privacy settings")
         if self._kind == "none":
             raise PhotoUnavailable("no_camera", "disabled in config (camera.backend: none)")
+        if self._lent:
+            raise PhotoUnavailable("in_call", LENT_DETAIL)
         status, detail = self._cam_status
         if self._camera is None and status in ("unavailable", "disconnected"):
             raise PhotoUnavailable("no_camera", detail)
@@ -627,6 +634,8 @@ class VisionService(Service):
     def _check_live_view(self) -> None:
         if not self.ctx.privacy.camera_enabled or not self._camera_allowed:
             raise PhotoUnavailable("camera_off", "camera turned off in privacy settings")
+        if self._lent:
+            raise PhotoUnavailable("in_call", LENT_DETAIL)
         if self._kind == "none":
             raise PhotoUnavailable("no_camera", "disabled in config (camera.backend: none)")
         if self._mode_for(self._robot_state) == "paused":
@@ -756,6 +765,45 @@ class VisionService(Service):
                     self.log.exception("frame sink %s failed", owner)
                 if self._sink_errors >= 30:
                     self.remove_frame_sink(owner)
+
+    # ------------------------------------------------------------ lending the camera (a video call)
+    async def lend_camera(self, owner: str, *, timeout: float = LEND_TIMEOUT) -> bool:
+        """Hand the camera device to another program (WhatsApp's Chromium during a call, littlebot/calls): vision
+        closes it and leaves it alone until ``return_camera(owner)``. The camera's privacy switch is not touched.
+        Returns once the device is closed (True), or False when it wasn't within ``timeout`` (still lent)."""
+        with self._lock:
+            first = not self._lent
+            self._lent = self._lent | {str(owner)}
+        if first:
+            self.log.info("camera lent to %s (face tracking, photos and always recording pause)", owner)
+        cam = self._camera
+        if cam is not None:
+            cam.cancel_read()  # the vision thread closes the device right away
+        self._wake.set()
+        if not self.thread_alive:  # no vision thread (tests, a stopped service): close it here
+            self._manage_camera(self._clock())
+            self._refresh_snapshot(self._clock())
+        end = time.monotonic() + max(0.0, float(timeout))
+        while self._camera is not None and time.monotonic() < end:
+            await asyncio.sleep(0.05)
+        return self._camera is None
+
+    def return_camera(self, owner: str) -> bool:
+        """The borrower is done: vision opens the camera again on its next cycle. True if ``owner`` had it."""
+        with self._lock:
+            had = str(owner) in self._lent
+            self._lent = self._lent - {str(owner)}
+            back = had and not self._lent
+        if back:
+            self.log.info("camera back from %s", owner)
+            self._next_open_at = self._clock()
+        self._wake.set()
+        return had
+
+    @property
+    def camera_lent(self) -> bool:
+        """The camera device is lent to another program right now (``lend_camera``)."""
+        return bool(self._lent)
 
     def face_seen_within(self, seconds: float) -> bool:
         """Someone's face was in front of the camera in the last ``seconds`` (the wake word's "hey bot" check)."""
@@ -922,6 +970,17 @@ class VisionService(Service):
 
     # ----------------------------------------------------------------- camera
     def _manage_camera(self, now: float) -> None:
+        if self._lent and self._kind != "none" and self._camera_allowed:
+            # lent to a video call: the device is closed (a USB camera serves one program at a time) and not
+            # reopened until it is given back; privacy is untouched, and frame sinks stay to see the pictures return
+            self._drop_warm()
+            if self._camera is not None:
+                self._close_camera()
+            self._set_cam_status("lent", LENT_DETAIL)
+            self._next_open_at = now  # reopened right away when it comes back
+            self._fail_photos("in_call", LENT_DETAIL)
+            self._end_live_view(LENT_DETAIL, "in_call")
+            return
         if self._kind == "none" or not self._camera_allowed:
             self._drop_warm()
             if self._camera is not None:
@@ -954,8 +1013,8 @@ class VisionService(Service):
             self._fail_photos("no_camera", status)
             self._end_live_view(f"camera {status}", "no_camera")
             return
-        if not self._camera_allowed or self._stop_evt.is_set():  # privacy flipped while opening
-            cam.release()
+        if not self._camera_allowed or self._lent or self._stop_evt.is_set():  # privacy flipped (or the camera
+            cam.release()  # was lent) while opening
             return
         self._camera = cam
         self._ever_opened = True
@@ -1029,6 +1088,8 @@ class VisionService(Service):
                             "" if self._kind == "real" else f"{self._backend_label()} camera")
         elif status == "disabled":
             self.set_status(ServiceStatus.DISABLED, detail)
+        elif status == "lent":
+            self.set_status(ServiceStatus.RUNNING, detail)
         else:
             self.set_status(ServiceStatus.DEGRADED, f"camera {status}")
 
@@ -1089,6 +1150,7 @@ class VisionService(Service):
             "photo_warm": bool(self._warm_owners),  # a live conversation keeps one recent photo in memory
             "live_view": self._live_view_status(now),  # the dashboard's Camera page (who watches, no images)
             "recording": sorted(self._sinks),  # who is recording a video (littlebot/capture), no images
+            "lent_to": sorted(self._lent),  # who has borrowed the camera device (a video call), else []
         }
         with self._lock:
             self._snapshot = snap

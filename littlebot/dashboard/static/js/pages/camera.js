@@ -121,6 +121,7 @@ export default {
     function badgeFor(d) {
       if (d.blocked === 'camera_off') return ['', 'Turned off'];
       if (d.blocked === 'paused') return ['warn', 'Paused'];
+      if (d.blocked === 'in_call') return ['warn', 'In a video call'];
       if (d.blocked === 'no_camera') return ['danger', d.camera === 'disconnected' ? 'Disconnected' : 'No camera'];
       if (d.blocked === 'unavailable') return ['', 'Not available'];
       if (d.simulated) return ['warn', 'Simulated'];

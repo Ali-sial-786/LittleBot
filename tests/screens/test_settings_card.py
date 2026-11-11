@@ -502,7 +502,7 @@ class _Capture:
 async def test_always_recording_goes_round_auto_on_off(ctx):
     card = await make(ctx)
     assert card.always == "auto" and card.status()["always_recording"] == "auto"
-    assert [rid for rid, _kind in S._ROWS][-3:] == ["sleep", "always", "clip"]  # after the rows that were there
+    assert [rid for rid, _kind in S._ROWS][-4:-1] == ["sleep", "always", "clip"]  # after the rows that were there
     press(card, "always")
     assert ctx.settings.get("capture.always_recording") == "on" and card.always == "on"
     press(card, "always")
@@ -538,3 +538,60 @@ async def test_save_the_last_minutes_from_the_panel(ctx):
         if not card.saving:
             break
     assert "nothing to save" in card.notice and "uhoh" in card.host.sounds
+
+
+# ---------------------------------------------------------------- WhatsApp (littlebot/calls)
+class _Calls:
+    def __init__(self, ok=True):
+        self.ok = ok
+        self.active = False
+        self.log = []
+
+    async def open(self, **kw):
+        self.log.append(("open", kw))
+        if not self.ok:
+            return {"ok": False, "error": "low_memory", "detail": "There isn't enough free memory for WhatsApp right now."}
+        self.active = True
+        return {"ok": True}
+
+    async def hang_up(self, reason):
+        self.log.append(("hang_up", reason))
+        self.active = False
+        return {"ok": True, "was_call": False, "closed": True}
+
+
+async def _settled(card):
+    for _ in range(50):
+        await asyncio.sleep(0.01)
+        card.update(0.05)
+        if not card.calling:
+            break
+
+
+async def test_the_whatsapp_row_opens_and_closes_it(ctx):
+    card = await make(ctx)
+    assert [rid for rid, _kind in S._ROWS][-1] == "whatsapp"  # the last row, after the ones that were there
+    assert card._row_words("whatsapp") == ("WhatsApp", "Video calls: call or answer")
+    c = card.control("whatsapp")
+    assert c is not None and c.rect.h >= S.BUTTON and c.rect.w >= S.BUTTON  # a finger-sized button like the others
+    assert card.content_height() == 2 * S.ROW_PAD + len(S._ROWS) * S.ROW_H  # one more row to scroll to
+    press(card, "whatsapp")  # no calls service: says so
+    assert "aren't available" in card.notice and "uhoh" in card.host.sounds and not card.calling
+    ctx.calls = _Calls()
+    card = await make(ctx)
+    press(card, "whatsapp")
+    await _settled(card)
+    assert ctx.calls.log == [("open", {"source": "screen"})] and card.whatsapp_on and not card.notice
+    assert card._row_words("whatsapp")[1] == "On the screen now"
+    press(card, "whatsapp")  # tapped while it is open: it closes
+    await _settled(card)
+    assert ctx.calls.log[-1] == ("hang_up", "closed in the settings on the screen") and not card.whatsapp_on
+    card.draw(pygame.Surface((W, H)))  # the row draws (Open / Close / Wait)
+
+
+async def test_whatsapp_that_cannot_open_says_why(ctx):
+    ctx.calls = _Calls(ok=False)
+    card = await make(ctx)
+    press(card, "whatsapp")
+    await _settled(card)
+    assert "enough free memory" in card.notice and "uhoh" in card.host.sounds and not card.whatsapp_on

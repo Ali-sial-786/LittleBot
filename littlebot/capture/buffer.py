@@ -23,7 +23,7 @@ The setting ``capture.always_recording``: "auto" (while plugged in; no battery m
   so, and the setting goes back to "auto". Plugging back in also puts "on" back to "auto".
 * The camera's privacy switch, ``capture.enabled`` off and "off" stop it and WIPE what was buffered, at once.
 * Anything else that stops it (unplugged in "auto", a low battery, an asked-for recording, the camera paused for a
-  YouTube video, no pictures from the camera) keeps what was buffered saveable for ``buffer_minutes`` more, then
+  YouTube video or lent to a WhatsApp video call, no pictures from the camera) keeps what was buffered saveable for ``buffer_minutes`` more, then
   wipes it.
 * One encoder at a time: while an asked-for recording runs ("record this"), the buffer pauses, and resumes after.
 * The microphone's privacy switch (and ``capture.video_sound``) restart the encoder without sound: new pieces are
@@ -76,7 +76,7 @@ RAM_FILESYSTEMS = ("tmpfs", "ramfs")
 # What stops it AND wipes what was buffered at once (everything else keeps it saveable for a while).
 WIPES = frozenset({"config", "unavailable", "off", "disabled", "camera_off"})
 # ... and what leaves vision's frame sink in place, to see the pictures come back.
-WAITS_FOR_FRAMES = frozenset({"camera_paused", "no_frames", "retrying"})
+WAITS_FOR_FRAMES = frozenset({"camera_paused", "camera_lent", "no_frames", "retrying"})
 
 WORDS = {
     "config": "Always recording is switched off in LittleBot's config (capture.buffer_enabled).",
@@ -91,6 +91,7 @@ WORDS = {
     "low_battery": "The battery is low.",
     "recording": "Paused while LittleBot records a video.",
     "camera_paused": "Paused while a video plays.",
+    "camera_lent": "Paused while the camera is used for a video call.",
     "no_frames": "Waiting for the camera's pictures.",
     "retrying": "The recorder stopped by itself; LittleBot tries again in a moment.",
     "stopped": "Not started yet.",
@@ -377,7 +378,7 @@ class RollingBuffer:
         return self._dir[1]
 
     def _camera(self) -> str | None:
-        """Why the camera gives no pictures now (camera_off | no_camera | camera_paused), else None."""
+        """Why the camera gives no pictures now (camera_off | no_camera | camera_lent | camera_paused), else None."""
         vision = getattr(self.ctx, "vision", None)
         if vision is None:
             return "no_camera"
@@ -390,6 +391,8 @@ class RollingBuffer:
             return "camera_off" if "privacy" in str(st.get("detail") or "") else "no_camera"
         if cam in ("unavailable", "disconnected"):
             return "no_camera"
+        if cam == "lent":  # to a video call (littlebot/calls): pause, keep what was buffered, resume after
+            return "camera_lent"
         if st.get("detect_mode") == "paused":
             return "camera_paused"
         return None

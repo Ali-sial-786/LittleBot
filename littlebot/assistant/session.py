@@ -687,7 +687,8 @@ class VoiceSession:
     def _speculable(self, text: str) -> bool:
         """Only the brain's answers start early (an instant intent or a game's move is quicker than that anyway)."""
         video_on, spotify = self._media_on()
-        if intents.match(text, media_on=video_on or spotify is not None, recording_on=self._recording()):
+        if intents.match(text, media_on=video_on or spotify is not None, recording_on=self._recording(),
+                         **intents.calls_flags(self.ctx)):
             return False
         if intents.camera_asking(self.ctx):  # the answer to "whose phone?" sends a photo: never early
             return False
@@ -915,7 +916,8 @@ class VoiceSession:
         if whose is not None:
             return "intent:send_photo", whose, False
         video_on, spotify = self._media_on()
-        hit = intents.match(text, media_on=video_on or spotify is not None, recording_on=self._recording())
+        hit = intents.match(text, media_on=video_on or spotify is not None, recording_on=self._recording(),
+                            **intents.calls_flags(self.ctx))
         if hit is not None:
             if spotify is not None and not video_on and hit.name in SPOTIFY_ACTIONS:
                 try:  # "pause", "next", "carry on" while Spotify plays on LittleBot: no model, no video tools
@@ -1543,13 +1545,15 @@ class VoiceSession:
             await asyncio.sleep(STOP_SOUND_S)
 
     def _sleep_now(self) -> None:
-        """Told to stop: asleep at once (the wake word still wakes it). Not while a video, music or Android is on:
-        "stop" ended the chat, not what they are watching, listening to or using."""
+        """Told to stop: asleep at once (the wake word still wakes it). Not while a video, music, Android or WhatsApp
+        is on: "stop" ended the chat, not what they are watching, listening to or using."""
         video_on, spotify = self._media_on()
         android = getattr(self.ctx, "android", None)
         android_on = android is not None and getattr(android, "active", False) is True
+        calls = getattr(self.ctx, "calls", None)
+        calls_on = calls is not None and getattr(calls, "active", False) is True
         sm = self.ctx.state
-        if video_on or spotify is not None or android_on or sm.state != RobotState.IDLE:
+        if video_on or spotify is not None or android_on or calls_on or sm.state != RobotState.IDLE:
             return
         if sm.transition(RobotState.SLEEPING, "told to stop"):
             log.info("assistant: told to stop; asleep now")
@@ -1691,7 +1695,8 @@ async def _run_quiet(items: list[Any]) -> None:
 INTENT_TOOLS = {"photo": "take_photo", "record": "start_recording", "stop_record": "stop_recording",
                 "show_photos": "show_photos", "send_photo": "send_photo_to_phone", "volume": "set_volume",
                 "pause": "pause_video", "resume": "resume_video", "skip": "skip_video", "stop_media": "stop_video",
-                "save_clip": "save_last_minutes", "always_recording": "set_always_recording"}
+                "save_clip": "save_last_minutes", "always_recording": "set_always_recording",
+                "call": "whatsapp_call", "whatsapp": "open_whatsapp", "hang_up": "close_whatsapp"}
 
 
 def _intent_done(said_by: str, words: str) -> list[str]:

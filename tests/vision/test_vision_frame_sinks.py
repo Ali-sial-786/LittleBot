@@ -93,3 +93,46 @@ async def test_a_broken_sink_is_dropped_and_vision_carries_on(made) -> None:
     assert "broken" not in svc._sinks and "good" in svc._sinks  # noqa: SLF001
     assert len(good) > 50 and svc.status()["camera"] not in ("disconnected", "unavailable")
     await svc.stop()
+
+
+# ---------------------------------------------------------------- the camera lent to a video call (littlebot/calls)
+async def test_the_camera_is_lent_and_taken_back(made) -> None:
+    """A USB camera serves one program at a time: vision closes it for a call and reopens it after. The privacy
+    switch is not touched; a frame sink stays in place and simply gets no frames meanwhile."""
+    ctx = made()
+    svc, cam, clock = await _started(ctx)
+    got: list[float] = []
+    svc.add_frame_sink("capture_buffer", lambda frame, now: got.append(now), fps=30)
+    _run(svc, clock, 0.5)
+    n = len(got)
+    assert n > 5 and cam.is_open and svc.camera_lent is False
+    assert await svc.lend_camera("calls") is True  # returns once the device is closed
+    assert not cam.is_open and svc.camera_lent is True
+    st = svc.status()
+    assert st["camera"] == "lent" and st["lent_to"] == ["calls"] and "video call" in st["detail"]
+    assert ctx.privacy.camera_enabled is True  # the parent's switch is theirs
+    _run(svc, clock, 1.0)
+    assert len(got) == n and not cam.is_open  # not reopened while it is lent
+    assert svc.status()["recording"] == ["capture_buffer"]  # the sink stayed
+    with pytest.raises(PhotoUnavailable) as e:
+        await svc.capture_photo(timeout=0.1)
+    assert e.value.reason == "in_call"
+    with pytest.raises(PhotoUnavailable) as e:
+        await svc.live_view_frame("viewer-1")
+    assert e.value.reason == "in_call"
+    assert svc.return_camera("calls") is True and svc.return_camera("calls") is False
+    assert svc.camera_lent is False
+    _run(svc, clock, 0.5)
+    assert cam.is_open and svc.status()["camera"] == "ok" and len(got) > n  # back, and the frames come again
+
+
+async def test_lending_does_not_override_the_privacy_switch(made) -> None:
+    ctx = made()
+    svc, cam, clock = await _started(ctx)
+    await svc.lend_camera("calls")
+    ctx.privacy.set(camera_enabled=False)
+    _run(svc, clock, 0.2)
+    assert svc.status()["camera"] == "disabled"
+    svc.return_camera("calls")
+    _run(svc, clock, 0.5)
+    assert not cam.is_open  # giving it back never switches the camera on

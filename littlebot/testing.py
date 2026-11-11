@@ -465,6 +465,9 @@ def make_test_context(*, fakes: bool = True, **config_overrides: Any) -> RobotCo
     # ... nor the real doorbell hook's secret (littlebot/skills/doorbell.py)
     ctx.extras["doorbell_hook_token_file"] = Path(tempfile.gettempdir()) / f"littlebot-test-{uuid.uuid4().hex}" / \
         "doorbell_hook_token"
+    # ... nor the real WhatsApp sign-in (littlebot/calls: the saved Chromium profile "sign out" deletes)
+    ctx.extras["whatsapp_profile_dir"] = Path(tempfile.gettempdir()) / f"littlebot-test-{uuid.uuid4().hex}" / \
+        "whatsapp-profile"
     # ... nor the real Nanit bridge's folder (littlebot/nanit: the camera list, whether a sign-in exists)
     ctx.extras["nanit_dir"] = Path(tempfile.gettempdir()) / f"littlebot-test-{uuid.uuid4().hex}" / "nanit"
     # ... nor the real last sign of life (littlebot/power/last_seen.py)

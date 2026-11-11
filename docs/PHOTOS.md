@@ -79,6 +79,8 @@ video") and can be sent to a phone. It isn't put on the screen by itself (a new 
   saved clip whose pieces don't all have sound is saved without sound.
 * While you record a video ("record this"), the buffer **pauses**: there is only ever one encoder. It resumes
   when the recording ends. What it held before stays saveable for 3 minutes.
+* While WhatsApp is open for a video call (the camera is lent to it, [CALLS.md](CALLS.md)) it pauses too: what it
+  had stays saveable for the usual 3 minutes, and it starts again when WhatsApp is closed.
 * While a YouTube video plays (the camera is paused) and whenever the camera sends no pictures, it pauses, and
   resumes by itself.
 * **Asleep**, LittleBot keeps recording as long as the camera keeps sending pictures (it does: the camera stays

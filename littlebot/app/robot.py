@@ -44,6 +44,7 @@ SUBSYSTEMS: tuple[tuple[str, str], ...] = (
     ("mirror", "littlebot.mirror"),  # a phone's screen on LittleBot's screen when asked (AirPlay / scrcpy)
     ("nanit", "littlebot.nanit"),  # the Nanit baby camera on the screen when asked (an unofficial bridge + ffplay)
     ("android", "littlebot.android"),  # Android (Waydroid) when asked, shut down once it isn't on the screen
+    ("calls", "littlebot.calls"),  # video calls through WhatsApp Web, Chromium only while it is on the screen
     ("capture", "littlebot.capture"),  # photos and videos by voice, the gallery, sharing to a phone (uses vision)
     ("skills", "littlebot.skills"),  # tools for both voices (memory, reminders, lists, games ...): before them
     ("live", "littlebot.chatgpt"),

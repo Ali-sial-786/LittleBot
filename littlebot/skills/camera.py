@@ -67,6 +67,7 @@ REFUSED = {
     "disabled": "photos and videos are switched off on the dashboard (Photos page).",
     "camera_off": "the camera is switched off in Privacy.",
     "no_camera": "LittleBot's camera isn't working right now.",
+    "in_call": "the camera is being used for a video call right now.",
     "disk_full": "LittleBot's storage is nearly full: some photos or videos must be deleted first, on the dashboard.",
     "recording": "LittleBot is recording a video already.",
     "not_recording": "LittleBot isn't recording.",

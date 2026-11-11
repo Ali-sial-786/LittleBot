@@ -286,3 +286,110 @@ async def test_save_that_goes_to_the_camera_skill_with_how_much() -> None:
     assert cam.asked == [("save_clip", 60.0), ("save_clip", None), ("buffer_on", None), ("buffer_off", None)]
     assert box.pending == []  # saved at once: nothing waits for the words to end
     ctx.db.close()
+
+
+# ---------------------------------------------------------------- WhatsApp calls (littlebot/skills/calls.py)
+def _on_the_list(name: str) -> bool:
+    return name.lower().removeprefix("my ").strip(" .") in ("dad", "mum", "grandma rose")
+
+
+@pytest.mark.parametrize("text,name,kind", [
+    ("call Dad", "Dad", "video"), ("Call Dad.", "Dad", "video"), ("Hey LittleBot, call dad please", "dad", "video"),
+    ("video call Mum on WhatsApp", "Mum", "video"), ("WhatsApp Dad", "Dad", "video"),
+    ("voice call my dad", "my dad", "voice"), ("audio call mum", "mum", "voice"),
+    ("can you call Grandma Rose", "Grandma Rose", "video"), ("make a video call to Dad", "Dad", "video"),
+    ("call Sam on WhatsApp", "Sam", "video"),  # WhatsApp was named: a call (the skill says who can be called)
+])
+def test_call_phrases(text: str, name: str, kind: str) -> None:
+    hit = intents.match(text, call_names=_on_the_list)
+    assert hit is not None and hit.name == "call" and hit.args == {"name": name, "kind": kind} and not hit.end
+
+
+@pytest.mark.parametrize("text", [
+    "call me a taxi", "call the doctor", "call it a day", "call Sam", "what's a video call", "who called Dad",
+    "call dad and tell him the weather is nice and we are coming over at five", "should I call dad",
+])
+def test_not_a_whatsapp_call(text: str) -> None:
+    assert intents.match(text, call_names=_on_the_list) is None
+
+
+@pytest.mark.parametrize("text,answer", [
+    ("open WhatsApp", False), ("Hey LittleBot, open WhatsApp", False), ("show me WhatsApp", False),
+    ("answer on WhatsApp", True), ("answer the call on WhatsApp", True), ("pick up on WhatsApp", True),
+    ("answer WhatsApp", True),
+])
+def test_open_and_answer_whatsapp(text: str, answer: bool) -> None:
+    hit = intents.match(text, call_names=_on_the_list)
+    assert hit is not None and hit.name == "whatsapp" and hit.args == {"answer": answer}
+
+
+def test_whatsapp_phrases_only_where_there_are_calls() -> None:
+    """No calls on this robot (``call_names`` None): nothing of it matches; "hang up" stays a stop."""
+    for text in ("call Dad", "open WhatsApp", "answer on WhatsApp", "close WhatsApp", "WhatsApp Dad"):
+        assert intents.match(text) is None, text
+    assert intents.match("hang up").name == "stop"
+
+
+@pytest.mark.parametrize("text", ["hang up", "Hey LittleBot, hang up", "end the call", "stop the call", "hang up now",
+                                  "close WhatsApp", "end call"])
+def test_hang_up_while_whatsapp_is_on_the_screen(text: str) -> None:
+    hit = intents.match(text, calls_on=True, call_names=_on_the_list)
+    assert hit is not None and hit.name == "hang_up" and hit.end
+
+
+def test_hang_up_words_without_whatsapp_end_the_chat() -> None:
+    assert intents.match("hang up", calls_on=False, call_names=_on_the_list).name == "stop"
+    assert intents.match("close WhatsApp", calls_on=False, call_names=_on_the_list).name == "hang_up"
+    # a bare "stop" ends the chat, not the call (as for a video or Android)
+    assert intents.match("stop", calls_on=True, call_names=_on_the_list).name == "stop"
+    assert intents.match("never mind", calls_on=True, call_names=_on_the_list).name == "stop"
+    assert intents.match("answer", calls_on=True, call_names=_on_the_list).args == {"answer": True}
+    assert intents.match("answer", calls_on=False, call_names=_on_the_list) is None
+
+
+class _Calls(Skill):
+    name = "calls"
+
+    def __init__(self, ctx) -> None:
+        super().__init__(ctx)
+        self.asked: list[tuple] = []
+        self.active = False
+
+    def knows(self, said: str) -> bool:
+        return _on_the_list(said)
+
+    async def instant(self, what: str, *, name: str = "", kind: str = "video") -> str:
+        from littlebot.skills import takeover
+
+        self.asked.append((what, name, kind))
+        if what == "call":
+            async def start() -> bool:
+                return True
+
+            takeover.offer(self.ctx, f"whatsapp call {name}", start, takeover=False)
+            return f"Calling {name} on WhatsApp."
+        return ""
+
+
+async def test_a_call_phrase_goes_to_the_calls_skill() -> None:
+    from littlebot.skills.hub import SkillHub
+
+    ctx = make_test_context()
+    calls = _Calls(ctx)
+    ctx.skills = SkillHub(ctx, [calls])
+    flags = intents.calls_flags(ctx)
+    assert flags["calls_on"] is False and flags["call_names"]("Dad") and not flags["call_names"]("Sam")
+    box = RobotToolbox(ctx, mode="chat")
+    said = await intents.run(intents.match("video call Dad", **flags), box, ctx)
+    assert said == "Calling Dad on WhatsApp." and calls.asked == [("call", "Dad", "video")]
+    # the opening waits for the words, and doesn't end the chat for it
+    assert [p.label for p in box.pending] == ["whatsapp call Dad"] and box.pending[0].takeover is False
+    calls.active = True
+    flags = intents.calls_flags(ctx)
+    assert await intents.run(intents.match("hang up", **flags), box, ctx) == ""
+    assert calls.asked[-1] == ("hang_up", "", "video")
+    await intents.run(intents.match("answer on WhatsApp", **flags), box, ctx)
+    assert calls.asked[-1][0] == "answer"
+    ctx.skills = SkillHub(ctx, [])
+    assert intents.calls_flags(ctx) == {}
+    ctx.db.close()

@@ -191,6 +191,19 @@ android:
   apps:                    # "open <name>" opens that app in Android: the name -> the Android package
     aosu: com.glazero.android
 
+calls:
+  # Video and voice calls through WhatsApp Web on LittleBot's screen (docs/CALLS.md): Chromium on web.whatsapp.com,
+  # linked once to your own WhatsApp (a QR code), and only while it is on the screen: afterwards Chromium is shut
+  # down and its memory comes back. Your chats stay hidden behind LittleBot's cover (dashboard: Assistant page).
+  enabled: true
+  profile_dir: whatsapp-profile  # under data/: the WhatsApp sign-in (kept, so the QR link survives)
+  min_free_mb: 700         # it starts only with this much memory free
+  min_free_mb_running: 200 # ... and is shut down if free memory falls under this while it runs
+  idle_seconds: 120        # open with no call and nobody touching it this long: it is shut down
+  off_screen_seconds: 10   # another window in front of it this long: it is shut down
+  window_match: whatsapp   # its desktop window: the app id or title has this in it
+  contacts: {}             # who can be called: said name -> name in WhatsApp (the dashboard's list starts here)
+
 capture:
   # Photos and videos by voice ("take a picture", "record this", "stop recording"), a gallery on the screen and on
   # the dashboard's Photos page, and a link to send one to a phone (docs/PHOTOS.md). Kept in data/gallery only.

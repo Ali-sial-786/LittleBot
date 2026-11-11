@@ -77,6 +77,18 @@ camera sends (cheap, no decode; keeps the driver queue empty so frames are never
 that stops answering is detected after `camera.stall_seconds` (3 s). Only the newest frame
 is held, and only until it is handed over.
 
+## Lending the camera (a video call)
+
+`await lend_camera(owner, timeout=3.0) -> bool`, `return_camera(owner) -> bool`, `camera_lent`. Not part of
+`VisionAPI` (an optional extra; `littlebot/calls` checks for it).
+
+A USB camera serves one program at a time. While WhatsApp's Chromium is open for a call, vision closes the device
+and leaves it alone: the camera's status reads `lent` (`status()["lent_to"]` says to whom), photos and the live
+view answer `PhotoUnavailable("in_call")`, face tracking sees nobody, and a frame sink (always recording) stays in
+place and simply gets no frames, so it pauses and resumes by itself. `lend_camera` returns once the device is
+closed. `return_camera` reopens it on the next cycle. The camera privacy switch is never touched: off stays off,
+and giving the camera back never switches it on.
+
 ## Live view (the dashboard's Camera page)
 
 `await live_view_frame(viewer, after=0, label="", timeout=2.0) -> (jpeg, seq)`,
