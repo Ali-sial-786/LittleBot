@@ -389,7 +389,7 @@ as if you had pressed **Start live voice**.
 ```yaml
 wake:                                # config/local.yaml
   enabled: true                      # default of the dashboard switch
-  phrases: ["hey little bot", "hey littlebot", "hey lil bot", "lil bot", "little bot", "hey bot", "bot"]
+  phrases: ["hey little bot", "hey littlebot", "hey lil bot", "okay little bot", "okay lil bot", "lil bot", "little bot", "hey bot", "bot"]
                                      # "littlebot" is heard as "little bot", "lilbot" as "lil bot"; "lil bot":
                                      # the "hey" got lost; "hey bot" also wakes on "hey Bob" and "hey, but...";
                                      # "bot" alone only as the first word, sure of it, and not while Spotify plays
@@ -405,7 +405,7 @@ wake:                                # config/local.yaml
   distractors: true                  # common words the recogniser may pick instead: fewer false starts
   cooldown_seconds: 4
   during_videos: true                # listen while a video plays (with the stricter rules below)
-  video_phrases: ["hey little bot", "hey lil bot"]  # only these count during a video ([] = all phrases)
+  video_phrases: ["hey little bot", "hey lil bot", "okay little bot", "okay lil bot"]  # only these count during a video ([] = all phrases)
   video_min_confidence: 0.7
   video_duck: false                  # turn the video down for a moment after "hey ..." (off: videos say "hey" a lot)
   video_no_words_seconds: 15         # a call that paused a video and nobody talks: back to the video
@@ -758,7 +758,7 @@ behind it. The live voice stays GPT-Live. See [CLAUDE.md](CLAUDE.md).
 | Wake word: **The wake-word model is missing** / **isn't available** | The vosk library or its model is not installed | `.venv/bin/python -m pip install --prefer-binary -e '.[local-stt]'` and `.venv/bin/python scripts/download_models.py vosk-en`, then `systemctl --user restart littlebot` |
 | Wake word: "uh-oh" after the listening sound | Live voice couldn't start; the status line under the switch says why (often: not signed in, or cloud communication off) | Fix that reason, then say it again |
 | Wake word: nothing happens | Paused (the status line says why), too far away, or the microphone is too quiet | Speak within about a metre; raise **Audio & devices → Microphone level**; check **Audio & devices** → test the microphone |
-| Live voice starts by itself | A false start on "Hey Bot" or "Bot" ("hey, but...", "hey Bob", "but I...") | "Hey bot" already needs `wake.short_min_confidence` (0.7) or a face in front of the camera, and "bot" alone needs it always and must start the sentence; the log says "'hey bot' ignored" / "'bot' ignored" for the ones it skipped. Raise it (0.85), or drop the short ones: `wake.phrases: ["hey little bot", "hey littlebot", "hey lil bot", "lil bot", "little bot"]` |
+| Live voice starts by itself | A false start on "Hey Bot" or "Bot" ("hey, but...", "hey Bob", "but I...") | "Hey bot" already needs `wake.short_min_confidence` (0.7) or a face in front of the camera, and "bot" alone needs it always and must start the sentence; the log says "'hey bot' ignored" / "'bot' ignored" for the ones it skipped. Raise it (0.85), or drop the short ones: `wake.phrases: ["hey little bot", "hey littlebot", "hey lil bot", "okay little bot", "okay lil bot", "lil bot", "little bot"]` |
 | A video pauses by itself and the voice says hello | The wake word heard something like "hey little bot" in the video | Nobody answering, the video carries on after `wake.video_no_words_seconds` (15 s); say "keep watching" to carry on at once. If it happens often: raise `wake.video_min_confidence` (0.85), or `wake.during_videos: false` |
 | Wake word: nothing happens during a video | The video is louder than you at the microphone, or you said "Hey Bot" (only "Hey LittleBot" counts during a video) | Say "Hey LittleBot" louder or closer; lower the video volume; try `wake.video_duck: true`. The log shows what was heard and ignored ("ignored while a video plays") |
 | "Keep watching" doesn't carry on | The video stopped meanwhile (2 minutes after the chat: `media.chat_pause_minutes`, or the day's video time ran out) | Start it again from the Videos page |
@@ -1003,7 +1003,7 @@ choice on the dashboard (settings `info.location`, `info.units`) wins over `loca
 Wake word (`wake:` section, `WakeConfig`): `enabled` (`true`, the switch's default), `phrases`,
 `model_path` (`models/vosk-model-small-en-us-0.15`), `min_confidence` (`0.35`), `distractors`
 (`true`), `cooldown_seconds` (`4`), `sound` (`listen`); during a video: `during_videos` (`true`),
-`video_phrases` (`["hey little bot", "hey lil bot"]`), `video_min_confidence` (`0.7`), `video_duck` (`false`),
+`video_phrases` (`["hey little bot", "hey lil bot", "okay little bot", "okay lil bot"]`), `video_min_confidence` (`0.7`), `video_duck` (`false`),
 `video_duck_volume` (`0.3`), `video_duck_seconds` (`2`), `video_pause_wait_seconds` (`1`),
 `video_no_words_seconds` (`15`); and `media.chat_pause_minutes` (`2`). See [Wake word](#wake-word-hey-littlebot)
 and [YOUTUBE_ON_PI.md section 10](YOUTUBE_ON_PI.md#10-talking-to-littlebot-during-a-video).

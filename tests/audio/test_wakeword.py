@@ -998,8 +998,8 @@ async def test_wake_enabled_defaults_on():
     ctx = make_test_context()
     try:
         assert ctx.settings.get("wake.enabled") is True
-        assert ctx.config.wake.phrases == ["hey little bot", "hey littlebot", "hey lil bot", "lil bot", "little bot",
-                                           "hey bot", "bot"]
+        assert ctx.config.wake.phrases == ["hey little bot", "hey littlebot", "hey lil bot", "okay little bot",
+                                           "okay lil bot", "lil bot", "little bot", "hey bot", "bot"]
         assert ctx.config.wake.end_silence_seconds == 0.25 and ctx.config.wake.early is True
         assert ctx.config.wake.min_confidence == 0.35
     finally:
@@ -1275,3 +1275,17 @@ def test_the_stop_words_load_the_wake_words_model_folder(tmp_path) -> None:
     assert wakeword.wake_model_dir(cfg) == wakeword.tuned_model_dir(src, 0.15, tmp_path / "models") != src
     cfg.wake.end_silence_seconds = None
     assert wakeword.wake_model_dir(cfg) == src
+
+
+def test_ok_littlebot_is_a_wake_phrase():
+    """"OK LittleBot" wakes it like "Hey LittleBot" ("ok" is heard as "okay"), also while a video plays."""
+    from littlebot.core.config import WakeConfig
+
+    cfg = WakeConfig()
+    assert wakeword.normalise_phrase("OK, LittleBot!") == "okay little bot"
+    _, usable, dropped = wakeword.build_grammar(cfg.phrases)
+    assert not dropped
+    assert wakeword.match_wake_phrase({"text": "okay little bot what time is it"}, usable) == "okay little bot"
+    assert wakeword.match_wake_phrase({"text": "okay lil bot"}, usable) == "okay lil bot"
+    assert wakeword.match_wake_phrase({"text": "okay then"}, usable) is None
+    assert "okay little bot" in cfg.video_phrases

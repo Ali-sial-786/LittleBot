@@ -1,4 +1,4 @@
-"""Wake word: say "Hey LittleBot" (or "Hey Lil Bot", "Hey Bot") and LittleBot starts a live voice call, hands-free.
+"""Wake word: say "Hey LittleBot" (or "OK LittleBot", "Hey Lil Bot", "Hey Bot") and LittleBot starts a live voice call, hands-free.
 
 Keyword spotting runs on the robot with Vosk (offline Kaldi speech recognition) and its small
 English model (``vosk-model-small-en-us-0.15``: 40 MB download, ~130 MB RAM, shared with the
@@ -169,7 +169,7 @@ bought boot bud pot hot top tot pop dot bobby bob baby buddy mom dad look robot 
 
 _CAMEL = re.compile(r"(?<=[a-z])(?=[A-Z])")
 _NON_WORD = re.compile(r"[^a-z' ]+")
-_COMPOUNDS = {"littlebot": "little bot", "lilbot": "lil bot"}  # words the model doesn't know, as it hears them
+_COMPOUNDS = {"littlebot": "little bot", "lilbot": "lil bot", "ok": "okay"}  # words the model doesn't know, as it hears them
 
 PAUSE_TEXT: dict[str, str] = {
     "starting": "Starting…",
@@ -1119,7 +1119,7 @@ class WakeWordService(Service):
         (``wake.short_face_seconds``). None: nothing did. On its own the model woke LittleBot about 50 times in a
         day on a cricket game, the TV and the room's noise, nobody speaking after (the robot, 2026-11-03), and
         Vosk heard nothing of a wake phrase in those; it does hear part of one when someone says it."""
-        words = {w for _, ph in self._phrases for w in ph} - {"hey"}
+        words = {w for _, ph in self._phrases for w in ph} - {"hey", "okay"}  # the greeting alone is no part of a wake phrase
         heard: list[str] = []
         partial = getattr(rec, "partial", None)
         if partial is not None:

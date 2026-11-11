@@ -214,7 +214,9 @@ class WakeConfig(_Section):
     # short_min_confidence), and not while Spotify plays: "But I wanted..." was heard as "bot" at 0.41-0.69, and
     # "Bot, what time is it?" at 0.72-0.83 in American voices (British ones were heard as "bought"). Remove
     # either here if it wakes by mistake.
-    phrases: list[str] = Field(default_factory=lambda: ["hey little bot", "hey littlebot", "hey lil bot", "lil bot",
+    # "okay little bot" / "ok littlebot" (a parent asked, 2026-11-11): three words, like "hey little bot".
+    phrases: list[str] = Field(default_factory=lambda: ["hey little bot", "hey littlebot", "hey lil bot",
+                                                         "okay little bot", "okay lil bot", "lil bot",
                                                          "little bot", "hey bot", "bot"])
     model_path: str = "models/vosk-model-small-en-us-0.15"  # scripts/download_models.py vosk-en
     # Silence after a phrase before the recogniser decides it (null: the model's own 0.5-1.0 s). Measured on the
@@ -247,7 +249,8 @@ class WakeConfig(_Section):
     during_videos: bool = True  # False: not listening while a video plays
     # Only these count while a video plays ([] = all of ``phrases``): "hey bot" alone is what videos say
     # by mistake most ("hey, but...", "hey buddy"); measured: about 4x fewer false triggers.
-    video_phrases: list[str] = Field(default_factory=lambda: ["hey little bot", "hey lil bot"])
+    video_phrases: list[str] = Field(default_factory=lambda: ["hey little bot", "hey lil bot",
+                                                               "okay little bot", "okay lil bot"])
     video_min_confidence: float = Field(default=0.7, ge=0.0, le=1.0)  # stricter than min_confidence
     # Turn the video down after a "hey ..." so the rest of the phrase is heard over loud videos. Off by
     # default: videos say "hey" often, and every one dips the sound for video_duck_seconds.
