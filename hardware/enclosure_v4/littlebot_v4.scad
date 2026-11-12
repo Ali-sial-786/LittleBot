@@ -161,6 +161,37 @@ module sa_speaker_cuts() {
     for (s = [-1, 1]) for (zz = [spk3_c[2] - spk_h/2 + 8, spk3_c[2] + spk_h/2 - 8])
         translate([s * (spk_w/2 + 1.8), spk3_c[1] + spk_d + 0.5, zz]) cube([5, 3, 3.5], center = true);
 }
+// THE SPEAKER'S KEEPER: a frame behind the speaker, so it can't fall back out of its ribs. Its tabs sit in the ribs' 4
+// slots (the zip-tie slots): 2 on the right, 1 long one on the left, and a spring leaf on the left that pushes the frame
+// to the right. To fit it: push the long tab into the left rib's upper slot as far as it goes (the leaf gives), swing
+// the frame flat against the speaker's back and let go: the leaf slides it into the right rib's slots. The speaker's
+// cable comes out through its window. Robot coordinates; prints flat, front face (the speaker's side) down.
+spk_k_t = 3; spk_k_tab = [2.2, 1.6, 2.6];   // the frame's thickness; its tabs: how far into a rib, thickness (y), height (z)
+spk_k_gap = 2.9;                         // the frame's left edge stands this far off the left rib (it slides that far to go in)
+spk_k_leaf = [1.2, 24, 0.6];             // the leaf: thickness, length, how far it is pressed in when the frame is home
+spk_k_hz = 17.5; spk_k_bar = 5.5;        // the frame: half height, its bars' width
+function spk_slot_z() = [spk3_c[2] - spk_h/2 + 8, spk3_c[2] + spk_h/2 - 8];
+module sa_spk_keeper(dx = 0) {           // dx < 0: slid to the left, as it goes in
+    yb = spk3_c[1] + spk_d + 0.15; rib = spk_w/2 + 0.3; zc = spk3_c[2];
+    xr = rib - 0.1; xl = -rib + spk_k_gap;                                         // its right and left edges
+    translate([dx, 0, 0]) {
+        translate([0, yb, zc]) rotate([-90, 0, 0]) linear_extrude(spk_k_t) difference() {
+            translate([xl + 3.5, -spk_k_hz]) square([xr - xl - 3.5, 2 * spk_k_hz]);
+            translate([(xl + 3.5 + xr) / 2, 0]) rr(xr - xl - 3.5 - 2 * spk_k_bar, 2 * (spk_k_hz - spk_k_bar), 5);   // the cable's window
+        }
+        // the left edge: a block at the top (the long tab's root) and one at the bottom (the leaf's root)
+        translate([xl, yb, zc + spk_k_hz - 5.5]) cube([4, spk_k_t, 5.5]);
+        translate([xl, yb, zc - spk_k_hz]) cube([4, spk_k_t, 3.5]);
+        for (z = spk_slot_z()) translate([xr - 0.01, yb, z - spk_k_tab[2]/2]) cube([spk_k_tab[0] + 0.01, spk_k_tab[1], spk_k_tab[2]]);
+        translate([xl - spk_k_gap - spk_k_tab[0], yb, spk_slot_z()[1] - spk_k_tab[2]/2]) cube([spk_k_gap + spk_k_tab[0] + 0.01, spk_k_tab[1], spk_k_tab[2]]);
+        // the leaf: up from the bottom block, leaning out to the left rib's face (pressed flat against the frame's edge
+        // line as the frame goes in), its tip rounded
+        translate([0, yb, 0]) rotate([-90, 0, 0]) linear_extrude(spk_k_t) let (z0 = zc - spk_k_hz + 3.4, z1 = z0 + spk_k_leaf[1], xt = -rib - spk_k_leaf[2]) {
+            hull() { translate([xl, -z0 - 0.01]) square([spk_k_leaf[0], 0.01]); translate([xt, -z1]) square([spk_k_leaf[0], 0.01]); }
+            translate([xt + spk_k_leaf[0] / 2, -z1]) circle(d = spk_k_leaf[0], $fn = 16);
+        }
+    }
+}
 // the mic (Adafruit 3367) flat behind the left dot, its USB plug pointing +x to the extension socket
 module sa_mic_sleeve() intersection() {
     body_inner();
@@ -617,6 +648,7 @@ module print4(w) {
     if (w == "stack_keeper") translate([0, 0, keeper4_top]) mirror([0, 0, 1]) stack_keeper();                // top face down
     if (w == "mic_holder")  rsl_print();                                                                     // base down (tree supports under it)
     if (w == "mic_key")     translate([0, 0, -sl4_pocket[1][0] - 0.15]) sa_rsl_key();                     // its bottom face down
+    if (w == "spk_keeper")  translate([0, 0, -(spk3_c[1] + spk_d + 0.15)]) rotate([90, 0, 0]) sa_spk_keeper();   // front face down
 }
 if (part == "print4") print4(which);
 
@@ -639,6 +671,7 @@ module assy4(w) {
     if (w == "camera_cradle") place_head3(head_angle) sa_cam_cradle();
     if (w == "mic_holder")  sa_rsl_holder();
     if (w == "mic_key")     sa_rsl_key();
+    if (w == "spk_keeper")  sa_spk_keeper();
     if (w == "respeaker")   { place_rsl() rsl_board(); }
     if (w == "floor")       base_floor();
     if (w == "floor_clips") { stack_keeper(); pca_clamp(0); pca_clamp(1); }

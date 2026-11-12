@@ -31,7 +31,7 @@ PARTS = [  # (stl name, colour, label)
     ("camera_bracket", "v2", "camera bracket (v2)"), ("floor", "v2", "floor (v2)"), ("floor_clips", "v2", "stack keeper + PCA clamps (v2)"),
     ("coupler", "v2", "neck coupler (v2)"), ("gears", "v2", "neck gears (v2)"), ("servo_frame", "v2", "servo frame (v2)"),
     ("servos", "servo", "MG90S servos"), ("pi_ups", "board", "Pi 5 + UPS HAT (E)"), ("pca", "board", "PCA9685"),
-    ("speaker", "black", "USB speaker"), ("respeaker", "black", "ReSpeaker Lite (2 mics)"), ("mic_holder", "white", "ReSpeaker holder (in the chest)"), ("mic_key", "white", "ReSpeaker holder's key (in the old mic pocket)"), ("aa_box", "black", "4xAA box (in the head)"), ("charge_socket", "metal", "USB-C charging socket + cable"),
+    ("speaker", "black", "USB speaker"), ("respeaker", "black", "ReSpeaker Lite (2 mics)"), ("mic_holder", "white", "ReSpeaker holder (in the chest)"), ("mic_key", "white", "ReSpeaker holder's key (in the old mic pocket)"), ("spk_keeper", "white", "speaker keeper (behind the speaker)"), ("aa_box", "black", "4xAA box (in the head)"), ("charge_socket", "metal", "USB-C charging socket + cable"),
     ("screen", "black", "7in screen (EP-0177)"), ("screen_plugs", "metal", "HDMI ribbon plug, USB-C, HDMI coupler"),
     ("eyes", "eye", "eyes"), ("camera", "black", "camera"),
 ]

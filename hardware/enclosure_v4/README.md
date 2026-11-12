@@ -40,12 +40,12 @@ Everything else is new. That includes the base ring (v3's shape, with its 4 scre
 |---|---|
 | `littlebot_v4.scad` | the model (it includes `../enclosure_v3/littlebot_v3.scad`, which includes v2) |
 | `LittleBot_v4_A1.3mf` | **the Bambu Studio project: 5 plates, colours, supports and brims set** |
-| `LittleBot_v4_extras_A1.3mf` | one plate: the ReSpeaker Lite's holder and its key, the glue-in camera cradle (only for a head frame printed before 10 Nov 2026) and v4's stack keeper |
+| `LittleBot_v4_extras_A1.3mf` | one plate: the ReSpeaker Lite's holder and its key, the speaker's keeper, the glue-in camera cradle (only for a head frame printed before 10 Nov 2026) and v4's stack keeper |
 | `LittleBot_v4_assembled.3mf` | the whole robot assembled and coloured, to look at (not to print) |
 | `stl/*.stl` | each part on its own, in its print orientation (`head_inlay` is the head frame's dark arch; `camera_cradle` only for a head frame printed before 10 Nov 2026) |
 | `plates_v4.png` | top view of the 5 plates |
-| `plates_v4_extras.png` | top view of the extras plate (mic holder, camera cradle, stack keeper) |
-| `checks_v4.scad`, `run_checks_v4.sh` | 72 checks (`OPENSCAD=... ./run_checks_v4.sh`), all passing. They cover interference, the arms' sweep and finger pinch with the head turned, the glass never touched, room to push each plug in, the slider, the AA box in the head, the speaker and mic, the dark panel, the camera's pivot screws (a clear path in, and they reach the bracket), the glue-in camera cradle, the stack keeper (it fits, and its arms rest on the boards) and the ReSpeaker's holder (round the old mic pocket, its key slides in and clamps it, the board's screws reach its posts, the board clear of everything). |
+| `plates_v4_extras.png` | top view of the extras plate (mic holder and key, speaker keeper, camera cradle, stack keeper) |
+| `checks_v4.scad`, `run_checks_v4.sh` | 75 checks (`OPENSCAD=... ./run_checks_v4.sh`), all passing. They cover interference, the arms' sweep and finger pinch with the head turned, the glass never touched, room to push each plug in, the slider, the AA box in the head, the speaker and mic, the dark panel, the camera's pivot screws (a clear path in, and they reach the bracket), the glue-in camera cradle, the stack keeper (it fits, and its arms rest on the boards) and the ReSpeaker's holder (round the old mic pocket, its key slides in and clamps it, the board's screws reach its posts, the board clear of everything) and the speaker's keeper (it goes in, clears everything, and its tabs are in the ribs' slots). |
 | `LittleBot_v4_assembly.mp4` | **the assembly video** (4½ minutes): every part, screw, nut and cable going in, in the order below, each screw turned in by its tool with its size on a tag; the horns glued into their pockets, the ReSpeaker on its holder, the stack keeper, and at the end how it charges |
 | `assembly_video/` | re-makes the video (`OPENSCAD=... ./make_video.sh`). The screws, nuts, cable routes and part positions come from the model (`video4.scad`). |
 | `export_v4.sh`, `make_v4_project.py`, `make_v4_assembly.py` | re-make the STLs, the project and the assembled 3MF |
@@ -117,7 +117,7 @@ In total: 18 × M3 × 12, 5 × M3 × 10, 5 × M3 × 8, 8 M3 nuts, 2 × M2 × 8 a
 2. **Black neck:** screw the puck onto the coupler (3 × M3 × 12).
 3. **In the body:**
    - Arm servos: slide each in from outside through its shoulder slot and screw its tabs.
-   - Speaker: push it into its ribs behind the grille.
+   - Speaker: push it into its ribs behind the grille, then fit its keeper behind it (see *The speaker's keeper* below).
    - Mic: the ReSpeaker Lite on its holder (see *The mic* below).
 4. **Body onto the base ring:**
    - Drop 4 nuts into the ring's tabs and lower the body onto the ring's lip.
@@ -178,6 +178,20 @@ The mic is a Seeed ReSpeaker Lite (USB, 2 mics, 82 × 34 mm), not v2's Adafruit 
 4. Plug a USB-C data cable into the board (a 30–50 cm USB-C to USB-A cable, to a Pi USB port). Set the board on the 2 posts, its back towards the wall, and fit 2 × M2 × 8 through its holes into the posts.
 
 ![the ReSpeaker Lite's holder](mic_holder.png)
+
+### The speaker's keeper
+
+Nothing held the speaker in its ribs but friction. The keeper (`stl/spk_keeper.stl`, on the extras plate) is a flat frame that sits behind the speaker, with tabs in the 4 small slots near the ribs' ends. No glue, no screws, no reprint of the body.
+
+1. Print it flat, as it comes: white, no supports, about 3 g.
+2. Push the speaker fully into its ribs and bring its cable out through the frame's window.
+3. The frame has 1 long tab and a thin springy leaf on one side, and 2 short tabs on the other. Push the long tab into the upper slot of the rib on the robot's right (the leaf bends against that rib).
+4. Swing the frame flat against the speaker's back and let go: the leaf slides it sideways, and the 2 short tabs go into the other rib's slots.
+5. To take it out, push the frame towards the leaf and swing the other side out.
+
+If the speaker rattles, stick a strip of foam tape on the frame's front. If the frame won't go flat, the speaker is deeper than 32 mm: tell me its depth. A long zip tie threaded through the 4 slots and round the 2 ribs does the same job.
+
+![the speaker's keeper behind the speaker, seen from inside the body](spk_keeper.png)
 
 ## Measure before printing
 

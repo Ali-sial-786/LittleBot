@@ -88,6 +88,12 @@ if (check == "mic_key_fit")          intersection() { sa_rsl_key(false); union()
 if (check == "mic_key_clamps")       intersection() { translate([0, -0.2, 0]) sa_rsl_key(false); sa_rsl_holder(); }   // must NOT be empty: its head bears on the base
 if (check == "mic_key_slides_in")    intersection() { for (d = [2.5, 5, 7.5, 10]) translate([d, 0, 0]) sa_rsl_key(false); union() { sa_body(); sa_rsl_holder(); } }   // on its way in
 if (check == "mic_screws_bite")      intersection() { place_rsl() rsl_screws(); sa_rsl_holder(); }                     // must NOT be empty
+// the speaker's keeper: clear of the body, the speaker and the mic at home and on its way in (its leaf left out: it bends);
+// moved back 2 mm it must hit the ribs (its tabs are in their slots)
+module spk_keeper_rigid(dx = 0) difference() { sa_spk_keeper(dx); translate([dx - spk_w/2 - 0.3 + spk_k_gap - 6, 0, spk3_c[2] - spk_k_hz + 3.45]) cube([6 + spk_k_leaf[0] + 0.3, 60, spk_k_leaf[1] + 2]); }
+if (check == "spk_keeper_fit")       intersection() { spk_keeper_rigid(); union() { sa_body(); speaker_s(); mic_s(); sa_rsl_holder(); sa_rsl_key(false); } }
+if (check == "spk_keeper_goes_in")   intersection() { for (d = [0.5, 1.5, spk_k_gap - 0.05]) spk_keeper_rigid(-d); union() { sa_body(); speaker_s(); } }
+if (check == "spk_keeper_holds")     intersection() { translate([0, 2, 0]) spk_keeper_rigid(); sa_body(); }           // must NOT be empty
 if (check == "hood_vs_camera")       intersection() { union() { sa_head_frame_body(); sa_head_back(); } union() { camera_s(); place_cam4() camera_bracket(); } }
 if (check == "head_vs_body")         intersection() { union() { sa_body(); v3_neck_plate(); }; head_all(head_angle); }
 // arms
