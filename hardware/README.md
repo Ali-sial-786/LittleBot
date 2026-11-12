@@ -25,6 +25,10 @@ Side and back views, same scale: [side](comparison/littlebot_v1_to_v4_side.png),
 | Checks | 48 | 118 (incl. 12 mm finger-pinch clearance for the arms, every cable route and every screw) | 50 (incl. finger pinch, glass never touched, room to plug in) | 72 |
 | Assembly video | none | [`assembly_video/`](enclosure_v2/assembly_video) (renders it) | none | [`LittleBot_v4_assembly.mp4`](enclosure_v4/LittleBot_v4_assembly.mp4): every part, screw, nut and cable |
 
+**v5 "Rover"** ([`enclosure_v5/`](enclosure_v5/README.md)) is the wheel phase: v4's head and arms on a new body and a wheeled base (2 gear motors, 2 ball casters, a 6×AA drawer, the Pi + UPS, an RP2040 instead of the PCA9685). Every joint is bolted into a captured nut, and the neck turns on a much wider bearing. 84 checks, 4 A1 plates.
+
+![v5](enclosure_v5/LittleBot_v5_model.png)
+
 v1 is quicker to print and smaller. v2 is the more "toy-like" character and is ready for driving around later. v3 has the big touch screen and the fewest parts to print. v4 is the Soft Arc concept: the same insides as v3 in a softer shell.
 
 To regenerate either design after changing a dimension (needs OpenSCAD and Python 3 + numpy):
