@@ -20,3 +20,10 @@ if (pic == "neck") {
 }
 if (pic == "base") v5_base_parts(false);      // the deck off
 if (pic == "deck") v5_base_parts();
+// the top of the body, its front cut away (through the front pair of side screws), the collar in orange
+module keep_top() { translate([-300, 62, 150]) cube([600, 400, 200]); }
+module collar_shown() difference() { collar5(); collar_cuts(); for (k = [-1, 1]) place_sh(k) sh_cut(); back_vents5(); }
+if (pic == "collar") {
+    color(WHITE4) render() difference() { intersection() { v5_body(); keep_top(); } collar5(); }
+    color("#e8742c") render() intersection() { keep_top(); collar_shown(); }
+}

@@ -25,6 +25,8 @@ Same height as v4 (437 mm). The base is 230 × 204 mm (v4: 186 × 160), with 17 
 
 ![the top of the body, cut through the middle](neck_section.png)
 
+![v4's 4 stems beside v5's collar](collar_vs_stems.png)
+
 ## The base
 
 ![the base from above, the body off](base_top.png)

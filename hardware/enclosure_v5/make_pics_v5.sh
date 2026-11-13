@@ -13,6 +13,11 @@ shot neck 1500,900 "0,100,236,82,0,180,420" pics_v5.scad -D 'pic="neck"' &
 shot base 1100,1100 "0,78,45,0,0,0,640" pics_v5.scad -D 'pic="base"' --projection=o &
 shot deck 1100,880 "0,78,45,48,0,22,640" pics_v5.scad -D 'pic="deck"' &
 wait
+for v in "above 0,95,212,55,0,0,430" "below 0,95,205,118,0,0,430"; do set -- $v
+    shot stems_$1 1100,800 "$2" pic_stems_v4.scad -D detail=false &
+    shot collar_$1 1100,800 "$2" pics_v5.scad -D 'pic="collar"' -D detail=false &
+done
+wait
 python3 - "$tmp" <<'PY'
 import sys
 from PIL import Image, ImageDraw, ImageFont
@@ -48,5 +53,16 @@ out = Image.new("RGB", (b.width + dk.width, b.height), bg); out.paste(b, (0, 0))
 d = ImageDraw.Draw(out); d.text((b.width + 30, (b.height - dk.height) // 2 - 10), "with the deck on: motor driver (red), servo power board (brown),", fill=(60, 60, 60), font=font(22))
 d.text((b.width + 30, (b.height - dk.height) // 2 + 18), "RP2040 on its breadboard (green on white), 5 V converter (blue)", fill=(60, 60, 60), font=font(22))
 out.resize((out.width * 3 // 4, out.height * 3 // 4), Image.LANCZOS).save("base_top.png")
+# v4's stems beside v5's collar, from above and from below
+g = [[Image.open(f"{tmp}/{n}_{v}.png").convert("RGB") for n in ("stems", "collar")] for v in ("above", "below")]
+w, h = g[0][0].size; out = Image.new("RGB", (2 * w, 2 * h + 90), bg)
+for r, row in enumerate(g):
+    for c, im in enumerate(row): out.paste(im, (c * w, 90 + r * h))
+d = ImageDraw.Draw(out)
+d.text((40, 24), "v4: 4 stems carry the neck and head", fill=(25, 25, 25), font=font(40, True))
+d.text((w + 40, 24), "v5: a solid collar, part of the wall", fill=(25, 25, 25), font=font(40, True))
+d.text((40, 100), "from above, the front cut away", fill=(90, 90, 90), font=font(26)); d.text((40, 100 + h), "from below, looking up", fill=(90, 90, 90), font=font(26))
+d.line([(w, 90), (w, 2 * h + 90)], fill=(200, 200, 200), width=2)
+out.resize((out.width * 2 // 3, out.height * 2 // 3), Image.LANCZOS).save("collar_vs_stems.png")
 PY
 rm -rf "$tmp"
