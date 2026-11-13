@@ -18,6 +18,9 @@ for v in "above 0,95,212,55,0,0,430" "below 0,95,205,118,0,0,430"; do set -- $v
     shot collar_$1 1100,800 "$2" pics_v5.scad -D 'pic="collar"' -D detail=false &
 done
 wait
+shot capoff 1100,800 "0,80,232,38,0,0,360" pics_v5.scad -D 'pic="capoff"' -D detail=false &
+shot capon 1100,800 "0,80,232,38,0,0,360" pics_v5.scad -D 'pic="capon"' -D detail=false &
+wait
 python3 - "$tmp" <<'PY'
 import sys
 from PIL import Image, ImageDraw, ImageFont
@@ -64,5 +67,16 @@ d.text((w + 40, 24), "v5: a solid collar, part of the wall", fill=(25, 25, 25), 
 d.text((40, 100), "from above, the front cut away", fill=(90, 90, 90), font=font(26)); d.text((40, 100 + h), "from below, looking up", fill=(90, 90, 90), font=font(26))
 d.line([(w, 90), (w, 2 * h + 90)], fill=(200, 200, 200), width=2)
 out.resize((out.width * 2 // 3, out.height * 2 // 3), Image.LANCZOS).save("collar_vs_stems.png")
+# the cap's screws and nuts
+g = [Image.open(f"{tmp}/{n}.png").convert("RGB") for n in ("capoff", "capon")]
+w, h = g[0].size; out = Image.new("RGB", (2 * w, h + 100), bg)
+for c, im in enumerate(g): out.paste(im, (c * w, 100))
+d = ImageDraw.Draw(out)
+d.text((40, 20), "1. Cap off: push a nut into each of the 8 slots", fill=(25, 25, 25), font=font(38, True))
+d.text((40, 68), "from inside the opening, with a fingertip or the hex key (shown half-way in)", fill=(90, 90, 90), font=font(26))
+d.text((w + 40, 20), "2. Cap on: 8 screws straight down from the top", fill=(25, 25, 25), font=font(38, True))
+d.text((w + 40, 68), "M3 x 12, before the head goes on; their heads sink into the cap", fill=(90, 90, 90), font=font(26))
+d.line([(w, 100), (w, h + 100)], fill=(200, 200, 200), width=2)
+out.resize((out.width * 2 // 3, out.height * 2 // 3), Image.LANCZOS).save("cap_screws.png")
 PY
 rm -rf "$tmp"

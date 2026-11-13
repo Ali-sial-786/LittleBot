@@ -127,6 +127,9 @@ In total for the new parts: 22 × M3 × 12, 12 × M3 × 10, 12 × M3 × 8, 5 × 
    - Slide 3 nuts into the slots in the hub's side. Black neck over the hub (its rib in the hub's groove): 3 × M3 × 12.
    - Glue the trimmed horn into the pinion, as v4. Servo frame with the head servo and pinion onto the cap's 2 pillars; mesh the gears with the servo centred.
 8. **Cap onto the body:** push a nut into each of the collar's 8 slots, from inside the opening. Thread the cables up through the neck. Lower the cap in and fit 8 × M3 × 12.
+
+   ![the cap's nuts and screws](cap_screws.png)
+
 9. **Head:** onto the black neck, 3 × M3 × 20 down through its floor. The rest of the head as v4, without the AA box.
 10. **Arms:** as v4.
 

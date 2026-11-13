@@ -27,3 +27,17 @@ if (pic == "collar") {
     color(WHITE4) render() difference() { intersection() { v5_body(); keep_top(); } collar5(); }
     color("#e8742c") render() intersection() { keep_top(); collar_shown(); }
 }
+// the cap's 8 screws and nuts: the nuts half-way into their slots in the collar (cap off); the screws over their holes (cap on)
+module top_only() intersection() { children(); translate([-300, -300, 196]) cube([600, 700, 300]); }
+module cap_nut(p, d) translate([p[0] + (cap_side(p) == 0 ? -sign(p[0]) * d : 0), p[1] + (cap_side(p) == 1 ? d : cap_side(p) == 2 ? -d : 0), zc0 - 3.5 - 0.2 - nut_t / 2])
+    rotate(cap_side(p) == 0 ? 0 : 30) difference() { cylinder(d = nut_af / cos(30), h = nut_t, $fn = 6, center = true); cylinder(d = 2.6, h = 4, $fn = 12, center = true); }
+if (pic == "capoff") {
+    color(WHITE4) render() top_only() v5_body();
+    for (p = cap_scr) color("#d22") cap_nut(p, 6.5);
+}
+if (pic == "capon") {
+    color(WHITE4) render() top_only() v5_body();
+    color("#b9c0cc") render() v5_cap();
+    color("#7fb3d5") render() v5_hub(); color(DARK4) render() v5_neck();
+    for (p = cap_scr) color("#d22") translate([p[0], p[1], zc0 + 2.8 + 16]) { translate([0, 0, -12]) cylinder(d = 3, h = 12, $fn = 16); cylinder(d = 5.6, h = 1.7, $fn = 24); }
+}
