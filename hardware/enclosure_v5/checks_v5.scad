@@ -23,7 +23,7 @@ module wheels_s() for (k = [-1, 1]) translate([k * (wh_x[0] + s), yw, az]) rotat
 module casters_s() for (y = cas_y) { translate([0, y, cas_seat - 12]) cylinder(d1 = 16, d2 = 22.9 - 2*s, h = 12 - s);
     for (k = [-1, 1]) { translate([k * 7.75, y, cas_seat - 2]) cylinder(d = 2.2, h = 2 + 8.9, $fn = 12); translate([k * 7.75, y, cas_top + s]) cylinder(d = 5.4, h = 1.8, $fn = 6); } }   // its screws and nuts
 module aa_s() translate([-aa[0]/2 + s, aa_y0 + s, tray_z + 2 + s]) cube(aa - [2*s, 2*s, 2*s]);
-module switch_s() translate([sw_c[0] - sw_cut[0]/2 + s, tub_fy(sw_c[0], 0) + 1.7, sw_c[1] - sw_cut[1]/2 + s]) cube([sw_cut[0] - 2*s, 22, sw_cut[1] - 2*s]);
+module switch_s() switch_dummy(s);   // its body, its flange on the wall's flat seat
 module base_stuff() { stack_s(); motors_s(); wheels_s(); casters_s(); aa_s(); switch_s(); usbc_socket5(s); deck_dummies(s); }
 module pods() for (k = [-1, 1]) place_pod(k) v5_pod();
 module neck_static() place_torso() { translate([0, pinion_yt, gear_z0]) rotate(7.5) pinion(); translate([0, pinion_yt, hs_tab_top - sv_tab_t - frame_t]) servo_frame(); }
@@ -52,7 +52,7 @@ if (check == "pods_vs_stuff")       intersection() { pods(); union() { stack_s()
 if (check == "pods_vs_parts")       intersection() { pods(); union() { v5_tray(); v5_deck(); keeper5(); } }
 if (check == "tray_vs_stuff")       intersection() { v5_tray(); union() { stack_s(); motors_s(); wheels_s(); casters_s(); aa_s(); switch_s(); deck_dummies(s); } }
 if (check == "tray_vs_parts")       intersection() { v5_tray(); union() { v5_deck(); keeper5(); } }
-if (check == "tray_slides_out")     intersection() { for (d = [10, 30, 50]) translate([0, -d, 0]) { v5_tray(); aa_s(); switch_s(); } union() { v5_tub(); v5_deck(); casters_s(); pods(); } }
+if (check == "tray_slides_out")     intersection() { for (d = [10, 30, 50]) translate([0, -d, 0]) { v5_tray(); aa_s(); } union() { v5_tub(); v5_deck(); casters_s(); pods(); switch_s(); } }
 if (check == "deck_vs_stuff")       intersection() { v5_deck(); union() { stack_s(); motors_s(); wheels_s(); casters_s(); aa_s(); switch_s(); deck_dummies(s); } }
 if (check == "deck_vs_keeper")      intersection() { v5_deck(); keeper5(); }
 if (check == "keeper_fit")          intersection() { keeper5(); union() { v5_tub(); place_stack() { ups_stack(0); for (i = [0, 2, 4, 5]) ups_plug(i, 0); } v5_slider(); } }

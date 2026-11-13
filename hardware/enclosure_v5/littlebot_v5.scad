@@ -15,7 +15,7 @@
 //  New parts:
 //    v5_tub        the dark base (prints floor down, no supports)
 //    v5_pod        x2 (the left one mirrored): carries a motor by its face, covers its wheel
-//    v5_tray       the 6xAA drawer; its front is the battery door, with the drive switch in it
+//    v5_tray       the 6xAA drawer; its front is the battery door (the drive switch is in the tub's wall beside it)
 //    v5_deck       the electronics deck over the motors: RP2040 breadboard, motor driver, 5 V converter, servo power
 //    v5_body       the white bell (prints upright, tongue down, no supports)
 //    v5_cap        the body's top: carries the neck (prints top face down)
@@ -77,7 +77,8 @@ aa = [90, 57, 16];                       // MEASURE
 aa_y0 = 2 * 78 - (78 + (T5[1] - tw) * pow(1 - pow((aa[0] / 2 + 1) / (T5[0] - tw), n5(0)), 1 / n5(0))) + 0.6;   // its front face: just behind the door's corners
 tray_z = 31;                             // the drawer's underside: over the front caster's screws
 door_hw = 55;                            // the door: half width
-sw_cut = [19.2, 13]; sw_c = [28, 58.5];  // the rocker switch's cut-out (KCD1: 13 x 19.2), its centre on the door (x, z)
+sw_d = 20.2; sw_fl = 23.5; sw_len = 32;  // the drive switch, a round snap-in rocker (SparkFun COM-11155): its hole; MEASURE its flange and its depth with its tabs
+sw_at = [1, 83]; sw_z = 45;              // where: the front wall beside the door (as a joint screw: front, x), its height
 /* [the deck] */
 deck_z = 70; deck_t = 2.5;
 /* [the body's joint to the tub] */
@@ -156,7 +157,9 @@ module door_notch(g = 0) translate([-door_hw - g, -100, tray_z + (g < 0 ? 0 : -0
 // a joint screw's frame: its origin on the wall's outer face, z out along the wall's normal, y up
 function js_pt(j, s) = j[0] == 0 ? [s * tub_x(j[1], 0), j[1]] : [s * j[1], j[0] == 1 ? tub_fy(j[1], 0) : tub_by(j[1], 0)];
 function js_n(j, s) = let (p = js_pt(j, s), q = sec5(z_bt), g = [sign(p[0]) * pow(abs(p[0]) / q[0], q[2] - 1) / q[0], sign(p[1] - b_cy) * pow(abs(p[1] - b_cy) / q[1], q[2] - 1) / q[1]]) g / norm(g);
-module place_js(j, s) let (p = js_pt(j, s), n = js_n(j, s)) multmatrix([[-n[1], 0, n[0], p[0]], [n[0], 0, n[1], p[1]], [0, 1, 0, js_z], [0, 0, 0, 1]]) children();
+module place_wall(j, s, z) let (p = js_pt(j, s), n = js_n(j, s)) multmatrix([[-n[1], 0, n[0], p[0]], [n[0], 0, n[1], p[1]], [0, 1, 0, z], [0, 0, 0, 1]]) children();
+module place_js(j, s) place_wall(j, s, js_z) children();
+module place_sw() place_wall(sw_at, 1, sw_z) children();
 module caster_seat(y) translate([-15.5, y - 15.5, zf - eps]) cube([31, 31, cas_top - zf + eps]);
 module caster_cut(y) {
     translate([-12.3, y - 12.3, z_fl - 1]) cube([24.6, 24.6, cas_seat - z_fl + 1]);             // the caster's base in a square recess (its roof bridges)
@@ -226,6 +229,8 @@ module v5_tub() {
         // the body's 8 screws: through the rim, a flat seat for each head
         for (j = js, s = [-1, 1]) place_js(j, s) { translate([0, 0, -12]) cylinder(d = clear_m3, h = 14, $fn = fn_small); translate([0, 0, -1.2]) cylinder(d = 6.6, h = 4, $fn = 24); }
         chg_hole();
+        // the drive switch: a round hole, a flat seat for its flange (2 mm of wall left at the middle)
+        place_sw() { translate([0, 0, -tw - 3]) cylinder(d = sw_d, h = tw + 6, $fn = 64); translate([0, 0, -1]) cylinder(d = sw_fl + 2.5, h = 6, $fn = 64); }
         // vents under the Pi's fan (the Pi's SD-card end) and under the motor driver
         if (detail) for (vy = [stk_y0 + 40 : 6 : stk_y0 + 76]) translate([stk_x0 - 28, S5[1] + vy, z_fl - 1]) cube([22, 2.5, fl_t + 2]);
     }
@@ -263,7 +268,7 @@ module v5_pod() intersection() {
 module place_pod(s) { if (s > 0) children(); else mirror([1, 0, 0]) children(); }
 
 // -----------------------------------------------------------------------------
-// THE 6xAA DRAWER: a tray for the holder; its front is the tub's wall there (the battery door), the drive switch in it.
+// THE 6xAA DRAWER: a tray for the holder; its front is the tub's wall there (the battery door).
 // It slides in on the tub's rails; 2 x M3 x 10 through the door's lower corners. Prints tray down.
 // -----------------------------------------------------------------------------
 tray_y1 = aa_y0 + aa[1] + 0.6 + 2;
@@ -281,13 +286,11 @@ module v5_tray() {
                     translate([-hw - 2, -60, tray_z]) cube([2 * hw + 4, 60 + tray_y1, 2]);                                     // the tray
                     for (s = [-1, 1]) translate([s > 0 ? hw : -hw - 2, -60, tray_z]) cube([2, 60 + tray_y1, 9]);
                     translate([-hw - 2, tray_y1 - 2, tray_z]) cube([2 * hw + 4, 2, 9]);
-                    // the switch's wall, thin for a snap-in rocker; ribs from the door to the tray
+                    // ribs from the door to the tray
                     for (s = [-1, 1]) translate([s * (hw + 1) - 1, -60, tray_z]) cube([2, 60 + y0 + 14, 16]);
                 }
             }
         }
-        translate([sw_c[0] - sw_cut[0]/2, -100, sw_c[1] - sw_cut[1]/2]) cube([sw_cut[0], 120, sw_cut[1]]);
-        translate([sw_c[0] - sw_cut[0]/2 - 2.5, tub_fy(sw_c[0], 0) + 1.6, sw_c[1] - sw_cut[1]/2 - 2.5]) cube([sw_cut[0] + 5, 20, sw_cut[1] + 5]);
         // its 2 screws; slots over the front caster's screw ends; 2 pilot holes for the holder's own screws
         for (s = [-1, 1]) translate([s * (door_hw - 2.6), tub_fy(door_hw, 0) - 1, tray_z + 6]) rotate([-90, 0, 0]) { cylinder(d = clear_m3, h = 12, $fn = fn_small); cylinder(d = 6.6, h = 1 + 0.9, $fn = 24); }
         for (s = [-1, 1]) translate([s * 7.75 - 3.5, cas_y[0] - 3.5, tray_z - 1]) cube([7, 100, 4]);
@@ -295,7 +298,7 @@ module v5_tray() {
     }
 }
 module aa_dummy(s = 0) color("#151515") translate([-aa[0]/2 + s, aa_y0 + s, tray_z + 2 + s]) cube(aa - [2*s, 2*s, 2*s]);
-module switch_dummy(s = 0) color("#333") translate([sw_c[0] - sw_cut[0]/2 + s, tub_fy(sw_c[0], 0) - 2, sw_c[1] - sw_cut[1]/2 + s]) cube([sw_cut[0] - 2*s, 24, sw_cut[1] - 2*s]);
+module switch_dummy(s = 0) color("#333") place_sw() { translate([0, 0, -sw_len + s]) cylinder(d = sw_d - 0.4 - 2*s, h = sw_len - s, $fn = 48); translate([0, 0, -1]) cylinder(d = sw_fl, h = 2.2, $fn = 48); translate([0, 0, 1]) scale([1, 1, 0.35]) sphere(d = 17, $fn = 32); }
 
 // -----------------------------------------------------------------------------
 // THE DECK: a plate on the tub's 4 posts (4 x M3 x 8), over the motors and the pods. On it, wired at the bench: the
@@ -585,7 +588,7 @@ module assy5(w) {
     if (w == "wheels")      for (s = [-1, 1]) translate([s * (xf + 44.5 - wh_w / 2), yw, az]) rotate([0, 90, 0]) cylinder(d = wh_d, h = wh_w, center = true);
     if (w == "casters")     for (y = cas_y) { translate([0, y, cas_lift + 9.525]) sphere(d = 19.05, $fn = 32); translate([0, y, cas_seat - 12]) cylinder(d1 = 16, d2 = 22.9, h = 12); }
     if (w == "aa_holder")   translate([-aa[0]/2, tub_fy(0) + 0.5, tray_z + 2]) cube(aa);
-    if (w == "switch")      translate([sw_c[0] - sw_cut[0]/2, tub_fy(sw_c[0], 0) - 2, sw_c[1] - sw_cut[1]/2]) cube([sw_cut[0], 24, sw_cut[1]]);
+    if (w == "switch")      switch_dummy();
     if (w == "boards")      deck_dummies();
     if (w == "charge_socket") usbc_socket5();
 }

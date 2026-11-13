@@ -34,7 +34,8 @@ Same height as v4 (437 mm). The base is 230 × 204 mm (v4: 186 × 160), with 17 
 | Middle, both sides | **Wheel pods.** Each motor (JGA25-370 with encoder) screws by its face to a pod's plate; the pod covers the wheel and screws down onto 2 ridges in the tub | Motor, coupler and wheel go on at the bench. The wheels show only under the floor. |
 | Front and rear, on the centre line | **Ball casters** (Pololu 3/4" metal), in square recesses under the floor | They stand 0.8 mm off a flat floor, so the wheels always carry the robot and it can't hang up on the casters. Add the caster's own thin spacer if it rocks too much. |
 | Behind the motors | **Pi 5 + UPS**, on v2's V-groove mount and v4's keeper | The same mount as before, 19 mm higher (over the rear caster's screws). |
-| In front of the motors | **6×AA drawer.** Its front is the battery door, with the drive switch in it | 2 screws, then it slides out on its leads. |
+| In front of the motors | **6×AA drawer.** Its front is the battery door | 2 screws, then it slides out on its leads. |
+| Front, beside the door | **Drive switch** (a 20 mm round rocker), in the tub's wall | It switches the 6×AA pack: wheels and servos. The Pi has its own switch at the back. |
 | Over the motors | **Deck**, on 4 posts: RP2040 on its breadboard, motor driver, servo power board, 5 V converter | Wired at the bench, then 4 screws. |
 | Back, left corner | **USB-C charging socket** for the UPS (the extension cable, as v4) | Square to the wall. |
 | Back of the body, low | **UPS switch slider** | As v4's, shorter. |
@@ -77,7 +78,7 @@ The motors' tails rest in 2 saddles with zip-tie slots. The Pi's fan blows down 
 
 The list from before stands (2 × JGA25-370 6 V / 170 RPM kits with 65 mm wheels, 6×AA holder, RP2040 core board, Cytron MDD3A, DFRobot DFR0753 5 V converter, breadboard, 2 × Pololu 3/4" ball casters, perfboard, pin headers, 5 A fuse and holder, wire, 22 kΩ and 10 kΩ resistors). Three things to add or pin down:
 
-- **the switch:** a **KCD1 rocker, 13 × 19 mm cut-out, 6 A** (the common small rocker). The door has that cut-out. If you buy another kind, tell me its cut-out before printing the drawer.
+- **the switch:** SparkFun's round rocker with a blue LED (COM-11155; RobotShop RB-Spa-2450): on/off, 16 A at 12 V, snaps into a 20.2 mm hole. The tub has that hole. Its LED lights from 5 V; leave its third tab unconnected if you don't want the light.
 - **M3 nuts:** 19 (8 body, 8 cap, 3 head). v4 used 8.
 - **3 × M3 × 20** for the head (the stack keeper already uses 2).
 
@@ -116,7 +117,7 @@ In total for the new parts: 22 × M3 × 12, 12 × M3 × 10, 12 × M3 × 8, 5 × 
    - Pi + UPS: stand its plate in the groove and fit the keeper (2 × M3 × 20).
    - Charging cable: plug in the UPS's USB-C marked POWER; socket zip-tied into the holder at the back's left corner.
 3. **Deck, at the bench:** breadboard with the RP2040 (it sticks down), motor driver on its 4 posts (4 × M3 × 8), servo power board and 5 V converter (zip ties). Wire them. Then onto the tub's 4 posts (4 × M3 × 8), and connect the motors and encoders.
-4. **Drawer:** snap the switch into the door, screw or stick the AA holder into the tray, wire holder → fuse → switch. Slide it in and fit 2 × M3 × 10.
+4. **Drawer and switch:** snap the switch into its hole in the tub's front wall, from outside. Screw or stick the AA holder into the tray. Wire holder → fuse → switch, with enough slack for the drawer to slide out. Slide the drawer in and fit 2 × M3 × 10.
 5. **Body, upside down on the bench:** drop a nut into each of the 8 slots in the tongue's edge (a dab of tape keeps them in). Arm servos, speaker and its keeper, mic holder with its key and the ReSpeaker: as v4.
 6. **Body onto the tub:** push the slider in through the back first, fork inwards. Lower the body: its tongue goes inside the rim, the slider's fork over the UPS switch's knob. Fit 8 × M3 × 10 through the rim.
 7. **Neck, at the bench:**
@@ -139,7 +140,7 @@ The motors, wheels, casters, AA holder, switch and boards aren't here yet. Their
 | `wh_x` | to 45 mm from the gearbox face | where the wheel's outer face ends up once it is on the coupler (the pods and the floor's slots take anything up to 45 mm) |
 | `cas_h` | 20.9 mm | the caster: mounting face to the ball's lowest point |
 | `aa` | 90 × 57 × 16 mm | the AA holder |
-| `sw_cut` | 19.2 × 13 mm | the switch's cut-out |
+| `sw_d`, `sw_fl`, `sw_len` | 20.2, 23.5, 32 mm | the switch: its hole, its flange, how far it reaches behind the wall with its tabs (only the hole is from the listing) |
 | `bb`, `drv`, `perf`, `buck` | 83 × 55; 41.7 × 48.3; 50 × 70; 23 × 18 mm | the breadboard, motor driver, perfboard and converter |
 
 The body, cap, hub, black neck and slider don't depend on any of them.

@@ -38,7 +38,7 @@ def px(x, y): return (b.width / 2 + x * k, b.height / 2 - (y - 78) * k)
 for y in (0, 144.6):
     cx, cy = px(0, y); d.ellipse([cx - 9.5 * k, cy - 9.5 * k, cx + 9.5 * k, cy + 9.5 * k], outline=(230, 60, 60), width=3)
 for text, x, y in [("wheel pod", -87, 70), ("wheel pod", 87, 70), ("2 gear motors", 0, 70), ("Pi 5 + UPS", 0, 118), ("6xAA drawer", 0, 22), ("battery door", -30, -30),
-                   ("drive switch", 36, -30), ("caster (under the floor)", 0, 0), ("caster (under the floor)", 0, 144.6), ("USB-C charging", -76, 172), ("deck post", -55.5, 47),
+                   ("drive switch", 96, -24), ("caster (under the floor)", 0, 0), ("caster (under the floor)", 0, 144.6), ("USB-C charging", -76, 172), ("deck post", -55.5, 47),
                    ("deck post", 55.5, 47), ("deck post", -55.5, 88), ("deck post", 55.5, 88), ("fan vents", -62, 140), ("FRONT", 0, -44), ("BACK", 0, 190)]:
     cx, cy = px(x, y); w = d.textlength(text, font=f)
     d.rectangle([cx - w / 2 - 5, cy - 14, cx + w / 2 + 5, cy + 14], fill=(255, 255, 255), outline=(120, 120, 120))
