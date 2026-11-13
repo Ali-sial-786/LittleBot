@@ -7,7 +7,7 @@
 //    - the body is a bell: v4's egg above the shoulders, widening in a straight line down to the tub
 //    - every joint is bolted through thick plastic into a nut that the part itself holds:
 //        body -> tub      8 x M3 x 10 through the tub's rim into nuts in the body's tongue (it plugs into the tub)
-//        cap -> body      8 x M3 x 12 down into nuts in a solid collar that is part of the body's wall (v4's plate
+//        cap -> body      8 x M3 x 12 straight down into holes in a solid collar that is part of the body's wall (v4's plate
 //                         stood on 4 thin bosses, and its nuts sat above them: nothing held it down)
 //        head -> neck     the head's 3 screws (M3 x 20) go through the black neck into nuts in the hub
 //    - the neck turns on a 62 mm flange under the cap and a 72 mm foot on top of it (v4: a 50 mm flange on a
@@ -371,15 +371,8 @@ module collar5() difference() {
     intersection() { body_inner(); slab(zc0 - 110, zc0); }
     hull() { translate([0, 0, zc0 - col_t]) linear_extrude(col_t + 12) open2d(); translate([0, 0, zc0 - col_t - 110]) linear_extrude(0.01) open2d(110); }
 }
-function cap_side(p) = abs(p[0]) > 45 ? 0 : p[1] < b_cy ? 1 : 2;   // which edge of the opening a cap screw's nut goes in from
-module collar_cuts() for (p = cap_scr) {
-    translate([p[0], p[1], zc0 - 14]) cylinder(d = clear_m3, h = 15, $fn = fn_small);
-    translate([0, 0, zc0 - 3.5 - nut_t - 0.4]) linear_extrude(nut_t + 0.4) {
-        if (cap_side(p) == 0) translate([p[0] > 0 ? open5[0][1] - 1 : p[0] - nut_af / 2 - 0.5, p[1] - nut_af / 2 - 0.1]) square([abs(p[0]) - open5[0][1] + 1 + nut_af / 2 + 0.5, nut_af + 0.2]);
-        if (cap_side(p) == 1) translate([p[0] - nut_af / 2 - 0.1, p[1] - nut_af / 2 - 0.5]) square([nut_af + 0.2, 16]);
-        if (cap_side(p) == 2) translate([p[0] - nut_af / 2 - 0.1, p[1] + nut_af / 2 + 0.5 - 16]) square([nut_af + 0.2, 16]);
-    }
-}
+// the cap's 8 screws cut their own thread: 9 mm of it in each hole (no nuts)
+module collar_cuts() for (p = cap_scr) translate([p[0], p[1], zc0 - 13]) cylinder(d = pilot_m3, h = 14, $fn = fn_small);
 // the UPS's switch slider through the back, just above the thick band
 sl5_z0 = K5[2] + ups_knob[1] - 2.5;
 sl5_wall_y = back_y(K5[0], sl5_z0 + sl_h / 2);

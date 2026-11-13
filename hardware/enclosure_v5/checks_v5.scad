@@ -40,7 +40,6 @@ module nut_s() cylinder(d = (nut_af - 2*s) / cos(30), h = nut_t - 2*s, $fn = 6, 
 module joint_screws() for (j = js, k = [-1, 1]) place_js(j, k) translate([0, 0, -1.2]) shank(10);
 module joint_nuts(d = 0) for (j = js, k = [-1, 1]) place_js(j, k) translate([0, 0, -(tw + tg[0] + 3 + 0.2 + nut_t / 2) + d]) rotate(30) nut_s();
 module cap_screws() for (p = cap_scr) translate([p[0], p[1], zc0 + 2.8]) shank(12);
-module cap_nuts(d = 0) for (p = cap_scr) translate([p[0], p[1], zc0 - 3.5 - 0.2 - nut_t / 2 + d]) rotate(cap_side(p) == 0 ? 0 : 30) nut_s();
 // (shanks only: the rear one's head sits 1.2 mm higher, on the head's old AA seat; it still passes its nut by 1 mm)
 module head_screws() translate([0, neck_y, 0]) for (a = head4_scr) rotate(a) translate([head_screw_r, 0, hd_z0 + 4 - 20]) cylinder(d = 2.9, h = 20, $fn = 12);
 module head_nuts(d = 0) translate([0, neck_y, 0]) for (a = head4_scr) rotate(a) translate([head_screw_r, 0, hub_nut_z + 0.2 + nut_t / 2 + d]) nut_s();
@@ -78,8 +77,8 @@ if (check == "hub_vs_gears")        intersection() { place_head3(head_angle) { v
 if (check == "head_vs_neck")        intersection() { union() { sa_head_frame_body(); sa_head_back(); } union() { v5_neck(); v5_hub(); } }   // contact only
 if (check == "head_screws_clear")   intersection() { union() { v5_hub(); v5_neck(); sa_head_frame_body(); } union() { head_screws(); head_nuts(); } }
 if (check == "head_nuts_held")      intersection() { v5_hub(); head_nuts(1.2); }                                                // must NOT be empty
-if (check == "cap_screws_clear")    intersection() { union() { v5_body(); v5_cap(); neck_moving(0); neck_static(); head_servo_s(); arm_servo_s(-1); arm_servo_s(1); } union() { cap_screws(); cap_nuts(); } }
-if (check == "cap_nuts_held")       intersection() { v5_body(); cap_nuts(1.2); }                                                // must NOT be empty
+if (check == "cap_screws_clear")    intersection() { union() { v5_cap(); neck_moving(0); neck_static(); head_servo_s(); arm_servo_s(-1); arm_servo_s(1); mic_s(); speaker_s(); } cap_screws(); }
+if (check == "cap_screws_bite")     intersection() { v5_body(); for (p = cap_scr) translate([p[0], p[1], zc0 - 9]) cylinder(d = 3, h = 9, $fn = 12); }   // must NOT be empty: thread in the collar
 if (check == "head_vs_body")        intersection() { union() { v5_body(); v5_cap(); }; head_all(head_angle); }
 if (check == "slider_vs_parts")     difference() { intersection() { slider_positions(); union() { v5_body(); v5_tub(); keeper5(); place_stack() { ups_stack(s); for (i = [0, 1, 2, 4, 5]) ups_plug(i, s); } v5_deck(); } }
     translate([K5[0] - 4, K5[1] - 1.8, K5[2] - 0.5]) cube([8, 3.6, ups_knob[1] + 1]); }

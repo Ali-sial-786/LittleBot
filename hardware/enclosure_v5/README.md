@@ -12,7 +12,7 @@ Same height as v4 (437 mm). The base is 230 × 204 mm (v4: 186 × 160), with 17 
 
 | Where | v4 | v5 | Why |
 |---|---|---|---|
-| Top of the body | a 3 mm plate inside the opening, on 4 thin bosses; its 4 nuts sat *above* the bosses, so nothing held the plate down | a 6 mm cap over the whole top, 8 screws down into nuts inside a solid collar that is part of the body's wall | the head's weight and any pull on it go into the wall all round, not into 4 prongs |
+| Top of the body | a 3 mm plate inside the opening, on 4 thin bosses; its 4 nuts sat *above* the bosses, so nothing held the plate down | a 6 mm cap over the whole top, 8 screws straight down into a solid collar that is part of the body's wall | the head's weight and any pull on it go into the wall all round, not into 4 prongs |
 | Neck bearing | a 50 mm flange on the 3 mm plate | a 62 mm flange under the cap and a 72 mm foot on top of it | the head rocks less; lifting the robot by its head pulls the flange against the cap, not on screws |
 | Head to neck | 3 screws into holes in the black neck | 3 screws (M3 × 20) through the black neck into nuts in the hub | a real clamp, and it can be undone many times |
 | Body to base | 4 screws at the back, a lip at the front | 8 screws all round into nuts in a tongue that plugs 10 mm into the base | the body can't rock on the base |
@@ -53,7 +53,7 @@ The motors' tails rest in 2 saddles with zip-tie slots. The Pi's fan blows down 
 | `LittleBot_v5_assembled.3mf` | the whole robot assembled and coloured, to look at (not to print) |
 | `stl/*.stl` | each new part on its own, in its print orientation |
 | `plates_v5.png` | top view of the 4 plates |
-| `checks_v5.scad`, `run_checks_v5.sh` | 84 checks (`OPENSCAD=... ./run_checks_v5.sh`), all passing: nothing overlaps; the drawer slides out; the body goes on over everything in the base; the neck goes in from the top; every screw's path is clear and every nut has plastic in front of it; the arms' sweep and finger pinch with the head turned; the slider; the mic holder and the speaker keeper |
+| `checks_v5.scad`, `run_checks_v5.sh` | 84 checks (`OPENSCAD=... ./run_checks_v5.sh`), all passing: nothing overlaps; the drawer slides out; the body goes on over everything in the base; the neck goes in from the top; every screw's path is clear, every nut has plastic in front of it and the cap's screws have thread to bite; the arms' sweep and finger pinch with the head turned; the slider; the mic holder and the speaker keeper |
 | `export_v5.sh`, `make_v5_project.py`, `make_v5_assembly.py` | re-make the STLs, the project and the assembled 3MF |
 | `pics_v5.scad`, `make_pics_v5.sh` | re-make this page's pictures |
 
@@ -81,7 +81,7 @@ The motors' tails rest in 2 saddles with zip-tie slots. The Pi's fan blows down 
 The list from before stands (2 × JGA25-370 6 V / 170 RPM kits with 65 mm wheels, 6×AA holder, RP2040 core board, Cytron MDD3A, DFRobot DFR0753 5 V converter, breadboard, 2 × Pololu 3/4" ball casters, perfboard, pin headers, 5 A fuse and holder, wire, 22 kΩ and 10 kΩ resistors). Three things to add or pin down:
 
 - **the switch:** SparkFun's round rocker with a blue LED (COM-11155; RobotShop RB-Spa-2450): on/off, 16 A at 12 V, snaps into a 20.2 mm hole. The tub has that hole. Its LED lights from 5 V; leave its third tab unconnected if you don't want the light.
-- **M3 nuts:** 19 (8 body, 8 cap, 3 head). v4 used 8.
+- **M3 nuts:** 11 (8 body, 3 head). v4 used 8.
 - **3 × M3 × 20** for the head (the stack keeper already uses 2).
 
 Not needed any more: the PCA9685 and both 4×AA holders.
@@ -98,14 +98,14 @@ Not needed any more: the PCA9685 and both 4×AA holders.
 | Motor driver → deck | 4 × M3 × 8 | the deck's 4 short posts |
 | Battery door | 2 × M3 × 10, through its lower corners | the 2 posts behind it |
 | Body → tub | 8 × M3 × 10, through the tub's rim | 8 nuts in the body's tongue |
-| Cap → body | 8 × M3 × 12, from the top, heads sunk | 8 nuts in the collar |
+| Cap → body | 8 × M3 × 12, from the top, heads sunk | holes in the collar: they cut their own thread, 9 mm deep. No nuts. |
 | Ring gear → hub | 3 × M3 × 12, from below, as before | holes in the hub |
 | Servo frame collars | 2 × M3 × 10, as before | |
 | Black neck → hub | 3 × M3 × 12, heads sunk | holes in the hub's top |
 | Head → neck | 3 × M3 × 20, down through the head's floor and the black neck | 3 nuts in the hub's side slots |
 | Screen, head back, camera, ReSpeaker, servos, horns, arms | as v4 | |
 
-In total for the new parts: 22 × M3 × 12, 12 × M3 × 10, 12 × M3 × 8, 5 × M3 × 20, 19 M3 nuts.
+In total for the new parts: 22 × M3 × 12, 12 × M3 × 10, 12 × M3 × 8, 5 × M3 × 20, 11 M3 nuts.
 
 ## Assembly order
 
@@ -126,9 +126,9 @@ In total for the new parts: 22 × M3 × 12, 12 × M3 × 10, 12 × M3 × 8, 5 × 
    - Hub up through the cap from below; ring gear onto the hub's flange (3 × M3 × 12 from below).
    - Slide 3 nuts into the slots in the hub's side. Black neck over the hub (its rib in the hub's groove): 3 × M3 × 12.
    - Glue the trimmed horn into the pinion, as v4. Servo frame with the head servo and pinion onto the cap's 2 pillars; mesh the gears with the servo centred.
-8. **Cap onto the body:** push a nut into each of the collar's 8 slots, from inside the opening. Thread the cables up through the neck. Lower the cap in and fit 8 × M3 × 12.
+8. **Cap onto the body:** thread the cables up through the neck. Lower the cap in and fit 8 × M3 × 12 straight down into the collar's holes. Stop when each is snug: they thread into plastic, and overtightening strips it.
 
-   ![the cap's nuts and screws](cap_screws.png)
+   ![the cap's screws](cap_screws.png)
 
 9. **Head:** onto the black neck, 3 × M3 × 20 down through its floor. The rest of the head as v4, without the AA box.
 10. **Arms:** as v4.

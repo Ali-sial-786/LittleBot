@@ -67,15 +67,15 @@ d.text((w + 40, 24), "v5: a solid collar, part of the wall", fill=(25, 25, 25), 
 d.text((40, 100), "from above, the front cut away", fill=(90, 90, 90), font=font(26)); d.text((40, 100 + h), "from below, looking up", fill=(90, 90, 90), font=font(26))
 d.line([(w, 90), (w, 2 * h + 90)], fill=(200, 200, 200), width=2)
 out.resize((out.width * 2 // 3, out.height * 2 // 3), Image.LANCZOS).save("collar_vs_stems.png")
-# the cap's screws and nuts
+# the cap's screws
 g = [Image.open(f"{tmp}/{n}.png").convert("RGB") for n in ("capoff", "capon")]
 w, h = g[0].size; out = Image.new("RGB", (2 * w, h + 100), bg)
 for c, im in enumerate(g): out.paste(im, (c * w, 100))
 d = ImageDraw.Draw(out)
-d.text((40, 20), "1. Cap off: push a nut into each of the 8 slots", fill=(25, 25, 25), font=font(38, True))
-d.text((40, 68), "from inside the opening, with a fingertip or the hex key (shown half-way in)", fill=(90, 90, 90), font=font(26))
-d.text((w + 40, 20), "2. Cap on: 8 screws straight down from the top", fill=(25, 25, 25), font=font(38, True))
-d.text((w + 40, 68), "M3 x 12, before the head goes on; their heads sink into the cap", fill=(90, 90, 90), font=font(26))
+d.text((40, 20), "The collar: 8 holes, ringed in red", fill=(25, 25, 25), font=font(38, True))
+d.text((40, 68), "part of the body; nothing to put in them", fill=(90, 90, 90), font=font(26))
+d.text((w + 40, 20), "Cap on: 8 screws straight down from the top", fill=(25, 25, 25), font=font(38, True))
+d.text((w + 40, 68), "M3 x 12, they cut their own thread; before the head goes on", fill=(90, 90, 90), font=font(26))
 d.line([(w, 100), (w, h + 100)], fill=(200, 200, 200), width=2)
 out.resize((out.width * 2 // 3, out.height * 2 // 3), Image.LANCZOS).save("cap_screws.png")
 PY
