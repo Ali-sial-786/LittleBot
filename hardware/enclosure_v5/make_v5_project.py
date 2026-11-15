@@ -7,8 +7,9 @@
 Plates (v4's packer and project writer, with v5's parts):
   1  dark:  the tub (floor down)
   2  white: the body (upright, tongue down, 5 mm brim), with the cap inside its footprint
-  3  dark:  both wheel pods, the battery drawer, the deck, the hub, the black neck
+  3  dark:  the hub, the black neck
   4  white: the mic holder + key, the speaker keeper, the slider
+  5  dark:  both wheel pods, the battery drawer, the deck (print these once the bought parts are measured)
 Filament slots: 1 white, 2 dark grey.
 """
 from __future__ import annotations
@@ -28,8 +29,9 @@ m4.NO_NEST = {"tub"}
 m4.BRIM = {"body": 5.0, "tray": 3.0}
 PLATES = [("tub", "dark", ["tub"]),
           ("body", "white", ["body", "cap"]),
-          ("drive", "dark", ["deck", "tray", "pod_left", "pod_right", "neck", "hub"]),
-          ("small", "white", ["mic_holder", "spk_keeper", "slider", "mic_key"])]
+          ("neck", "dark", ["neck", "hub"]),
+          ("small", "white", ["mic_holder", "spk_keeper", "slider", "mic_key"]),
+          ("drive", "dark", ["deck", "tray", "pod_left", "pod_right"])]          # last: print once the motors, casters and AA holder are measured
 
 if __name__ == "__main__":
     plates = [(pname, colour, m4.pack(names)) for pname, colour, names in PLATES]

@@ -37,7 +37,7 @@ out = Image.new("RGB", (W, H + 110), bg); x = 0
 for i in ims: out.paste(i, (x, 110)); x += i.width
 d = ImageDraw.Draw(out)
 d.text((40, 28), "LITTLEBOT v5 — ROVER", fill=(25, 25, 25), font=font(54, True))
-d.text((40, H + 60), "v4's head and arms on a new body and a wheeled base  •  84 interference checks pass  •  4 plates on a Bambu A1", fill=(90, 90, 90), font=font(26))
+d.text((40, H + 60), "v4's head and arms on a new body and a wheeled base  •  84 interference checks pass  •  5 plates on a Bambu A1", fill=(90, 90, 90), font=font(26))
 out.resize((W * 2 // 3, (H + 110) * 2 // 3), Image.LANCZOS).save("LittleBot_v5_model.png")
 Image.open(f"{tmp}/neck.png").convert("RGB").save("neck_section.png")
 # the base from above (orthographic: 640 * 2 * tan(11.25 deg) mm across the picture's height), labelled; beside it, the deck on

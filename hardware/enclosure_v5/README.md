@@ -49,10 +49,10 @@ The motors' tails rest in 2 saddles with zip-tie slots. The Pi's fan blows down 
 | File | What |
 |---|---|
 | `littlebot_v5.scad` | the model (it includes `../enclosure_v4/littlebot_v4.scad`, and through it v3 and v2) |
-| `LittleBot_v5_A1.3mf` | **the Bambu Studio project: 4 plates, colours, brims and the one support set** |
+| `LittleBot_v5_A1.3mf` | **the Bambu Studio project: 5 plates, colours, brims and the one support set** |
 | `LittleBot_v5_assembled.3mf` | the whole robot assembled and coloured, to look at (not to print) |
 | `stl/*.stl` | each new part on its own, in its print orientation |
-| `plates_v5.png` | top view of the 4 plates |
+| `plates_v5.png` | top view of the 5 plates |
 | `checks_v5.scad`, `run_checks_v5.sh` | 84 checks (`OPENSCAD=... ./run_checks_v5.sh`), all passing: nothing overlaps; the drawer slides out; the body goes on over everything in the base; the neck goes in from the top; every screw's path is clear, every nut has plastic in front of it and the cap's screws have thread to bite; the arms' sweep and finger pinch with the head turned; the slider; the mic holder and the speaker keeper |
 | `export_v5.sh`, `make_v5_project.py`, `make_v5_assembly.py` | re-make the STLs, the project and the assembled 3MF |
 | `pics_v5.scad`, `make_pics_v5.sh` | re-make this page's pictures |
@@ -71,10 +71,11 @@ The motors' tails rest in 2 saddles with zip-tie slots. The Pi's fan blows down 
 |---|---|---|---|
 | 1 | dark | **tub** (floor down) | 230 × 204 mm: centre it. No supports: the casters' recesses bridge. |
 | 2 | white | **body** (upright, tongue down), and inside its footprint the **cap** (top face down) | 5 mm brim on the body. No supports: the collar under the cap is 45° underneath, and the speaker's ribs start on the plate. |
-| 3 | dark | **deck** (flat), **drawer** (tray down, door standing), **both wheel pods** (plate down), **black neck** (top down), **hub** (flange down) | 3 mm brim on the drawer. The deck and the hub can be any colour: they don't show. |
+| 3 | dark | **black neck** (top down), **hub** (flange down) | The hub can be any colour: it doesn't show. |
 | 4 | white | **mic holder** and **key**, **speaker keeper**, **slider** | Tree supports from the build plate under the mic holder only, as v4. |
+| 5 | dark | **deck** (flat), **drawer** (tray down, door standing), **both wheel pods** (plate down) | 3 mm brim on the drawer. Print this plate after measuring the motors, wheels, casters and AA holder. |
 
-![the 4 plates](plates_v5.png)
+![the 5 plates](plates_v5.png)
 
 ## What to buy
 
