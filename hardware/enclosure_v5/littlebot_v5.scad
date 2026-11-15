@@ -308,7 +308,7 @@ module switch_dummy(s = 0) color("#333") place_sw() { translate([0, 0, -sw_len +
 bb = [83, 55, 8.5]; bb_c = [53.9, 56];             // the breadboard and its centre
 drv = [41.66, 48.26]; drv_c = [-74, 68]; drv_holes = [36.58, 43.18];   // the MDD3A, its terminals towards the back
 perf = [50, 70]; perf_c = [-15, 45];             // the servo power board (5 x 7 cm perfboard)
-buck = [23, 18]; buck_c = [61.5, 13];              // DFR0753
+buck = [38, 11.4, 10.2]; buck_c = [-67.5, 18];       // Fingertech 5V 4A (RobotShop RB-Ftr-343): its size from the listing; MEASURE
 module deck2d() difference() {
     intersection() { sec2d(z_bt, tw + tg[0] + js_boss + 1.5); translate([-200, -7]) square([400, 100]); }
     translate([keeper_x[0] - 6.5, S5[1] + wall_y1 - mount_t - 1.5]) square([keeper_x[1] - keeper_x[0] + 13.5, 100]);       // round the Pi + UPS's mount (the motors' leads come up here)
@@ -323,7 +323,7 @@ module v5_deck() difference() {
         translate([0, 0, deck_z]) linear_extrude(deck_t + 2.5) intersection() { deck2d(); union() {
             difference() { translate(bb_c) rr(bb[0] + 4, bb[1] + 4, 2); translate(bb_c) rr(bb[0] + 0.8, bb[1] + 0.8, 1); translate(bb_c) square([bb[0] - 20, 80], center = true); translate(bb_c) square([120, bb[1] - 20], center = true); }
             difference() { translate(perf_c) rr(perf[0] + 4, perf[1] + 4, 2); translate(perf_c) rr(perf[0] + 0.8, perf[1] + 0.8, 1); translate(perf_c) square([perf[0] - 16, 80], center = true); translate(perf_c) square([120, perf[1] - 16], center = true); }
-            difference() { translate(buck_c) rr(buck[0] + 4, buck[1] + 4, 2); translate(buck_c) rr(buck[0] + 0.6, buck[1] + 0.6, 1); translate(buck_c) square([buck[0] - 8, 60], center = true); }
+            difference() { translate(buck_c) rr(buck[0] + 4, buck[1] + 4, 2); translate(buck_c) rr(buck[0] + 0.6, buck[1] + 0.6, 1); translate(buck_c) square([buck[0] - 8, 60], center = true); translate(buck_c) square([60, buck[1] - 4], center = true); }   // 4 corners: its leads can leave any side
         } }
     }
     for (p = deck_posts) translate([p[0], p[1], deck_z - 1]) { cylinder(d = clear_m3, h = 10, $fn = fn_small); }
@@ -336,7 +336,7 @@ module deck_dummies(s = 0) {
     color("#1a5") translate([bb_c[0] - 26.7, bb_c[1] - 11.4, deck_z + deck_t + bb[2]]) cube([53.34, 22.86, 12]);                 // the RP2040 on its pins
     color("#a22") translate([drv_c[0] - drv[0]/2 + s, drv_c[1] - drv[1]/2 + s, deck_z + deck_t + 4]) cube([drv[0] - 2*s, drv[1] - 2*s, 13.6]);
     color("#b84") translate([perf_c[0] - perf[0]/2 + s, perf_c[1] - perf[1]/2 + s, deck_z + deck_t + 0.2]) cube([perf[0] - 2*s, perf[1] - 2*s, 12]);
-    color("#124") translate([buck_c[0] - buck[0]/2 + s, buck_c[1] - buck[1]/2 + s, deck_z + deck_t + 0.2]) cube([buck[0] - 2*s, buck[1] - 2*s, 7]);
+    color("#124") translate([buck_c[0] - buck[0]/2 + s, buck_c[1] - buck[1]/2 + s, deck_z + deck_t + 0.2]) cube([buck[0] - 2*s, buck[1] - 2*s, buck[2]]);
 }
 
 // -----------------------------------------------------------------------------

@@ -78,7 +78,7 @@ The motors' tails rest in 2 saddles with zip-tie slots. The Pi's fan blows down 
 
 ## What to buy
 
-The list from before stands (2 × JGA25-370 6 V / 170 RPM kits with 65 mm wheels, 6×AA holder, RP2040 core board, Cytron MDD3A, DFRobot DFR0753 5 V converter, breadboard, 2 × Pololu 3/4" ball casters, perfboard, pin headers, 5 A fuse and holder, wire, 22 kΩ and 10 kΩ resistors). Three things to add or pin down:
+The list from before stands (2 × JGA25-370 6 V / 170 RPM kits with 65 mm wheels, 6×AA holder, RP2040 core board, Cytron MDD3A, Fingertech 5V 4A converter (RobotShop RB-Ftr-343; the DFRobot one is out of stock), breadboard, 2 × Pololu 3/4" ball casters, perfboard, pin headers, 5 A fuse and holder, wire, 22 kΩ and 10 kΩ resistors). Three things to add or pin down:
 
 - **the switch:** SparkFun's round rocker with a blue LED (COM-11155; RobotShop RB-Spa-2450): on/off, 16 A at 12 V, snaps into a 20.2 mm hole. The tub has that hole. Its LED lights from 5 V; leave its third tab unconnected if you don't want the light.
 - **M3 nuts:** 11 (8 body, 3 head). v4 used 8.
@@ -146,7 +146,7 @@ The motors, wheels, casters, AA holder, switch and boards aren't here yet. Their
 | `cas_h` | 20.9 mm | the caster: mounting face to the ball's lowest point |
 | `aa` | 90 × 57 × 16 mm | the AA holder |
 | `sw_d`, `sw_fl`, `sw_len` | 20.2, 23.5, 32 mm | the switch: its hole, its flange, how far it reaches behind the wall with its tabs (only the hole is from the listing) |
-| `bb`, `drv`, `perf`, `buck` | 83 × 55; 41.7 × 48.3; 50 × 70; 23 × 18 mm | the breadboard, motor driver, perfboard and converter |
+| `bb`, `drv`, `perf`, `buck` | 83 × 55; 41.7 × 48.3; 50 × 70; 38 × 11.4 mm | the breadboard, motor driver, perfboard and 5 V converter |
 
 The body, cap, hub, black neck and slider don't depend on any of them.
 
