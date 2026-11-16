@@ -27,6 +27,9 @@ m4.SOURCE = {}
 m4.SUPPORT = {"mic_holder"}             # tree supports from the build plate under its curved base; nothing else needs any
 m4.NO_NEST = {"tub"}
 m4.BRIM = {"body": 5.0, "tray": 3.0}
+# solid walls: v5's walls are 3 mm, and the default 2 loops a side (1.74 mm) left a 1.3 mm core of 15 % infill between two
+# thin skins. The first body printed that way split along a layer. 4 loops a side fill a 3 mm wall solid.
+m4.EXTRA = {n: {"wall_loops": 4} for n in ("body", "tub", "cap", "hub", "neck", "pod_left", "pod_right", "tray", "deck")}
 PLATES = [("tub", "dark", ["tub"]),
           ("body", "white", ["body", "cap"]),
           ("neck", "dark", ["neck", "hub"]),

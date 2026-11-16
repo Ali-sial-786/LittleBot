@@ -67,6 +67,8 @@ The motors' tails rest in 2 saddles with zip-tie slots. The Pi's fan blows down 
 
 **Print (Bambu Lab A1, PLA, 0.20 mm Standard, Textured PEI plate; slots: 1 white, 2 dark grey):**
 
+**Solid walls.** The project sets **4 wall loops** on the tub, body, cap, hub, neck, pods, drawer and deck (Bambu's default is 2). v5's walls are 3 mm; with 2 loops a side the slicer prints two thin skins with sparse infill between them, and the first body printed that way split along a layer. If you slice from the STLs instead of the project, set wall loops to 4 yourself, and check in the preview that the walls are solid all the way through.
+
 | Plate | Colour | Parts (orientation) | Notes |
 |---|---|---|---|
 | 1 | dark | **tub** (floor down) | 230 × 204 mm: centre it. No supports: the casters' recesses bridge. |

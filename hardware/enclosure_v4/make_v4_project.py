@@ -44,6 +44,7 @@ SOURCE = {}                             # parts that aren't in stl/
 SUPPORT = {"head_frame", "head_back", "mic_holder"}   # tree supports from the build plate only (the mic holder: under its curved base)
 NO_NEST = {"head_frame", "head_back"}   # nothing inside their footprint (their supports go there)
 BRIM = {"body": 5.0, "port_panel": 3.0, "stack_keeper": 3.0}
+EXTRA = {}                              # per-object print settings beyond brims and supports, e.g. {"body": {"wall_loops": 4}}
 
 
 def load(name):
@@ -151,6 +152,7 @@ def project(plates, out, title="LittleBot v4 Soft Arc"):
             items.append(f'<item objectid="{top}" transform="{tf}" printable="1"/>')
             meta = [("name", name), ("extruder", SLOTS.index(colour) + 1)]
             meta += [("brim_type", "outer_only"), ("brim_width", BRIM[name])] if name in BRIM else [("brim_type", "no_brim")]
+            meta += list(EXTRA.get(name, {}).items())
             if name in SUPPORT:
                 meta += [("enable_support", 1), ("support_type", "tree(auto)"), ("support_on_build_plate_only", 1)]
             md = "".join(f'    <metadata key="{a}" value="{b}"/>\n' for a, b in meta)
