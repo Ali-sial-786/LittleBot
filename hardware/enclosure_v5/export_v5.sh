@@ -5,7 +5,7 @@ set -euo pipefail
 cd "$(dirname "$0")"
 OPENSCAD=${OPENSCAD:-openscad}
 mkdir -p stl stl/assembled
-PRINT=(tub pod_left pod_right tray deck body cap hub neck slider mic_holder mic_key spk_keeper)
+PRINT=(tub pod_left pod_right tray deck body cap hub neck slider mic_holder mic_key spk_keeper test_body_base test_tub_corner)
 ASSY=(tub pods tray deck body cap slider hub neck gears servo_frame servos arm_left arm_right head_frame head_inlay head_back camera_bracket
       screen screen_plugs eyes mic_holder mic_key spk_keeper respeaker speaker pi_ups stack_keeper motors wheels casters aa_holder switch boards charge_socket)
 one() { "$OPENSCAD" -q -o "$3/$2.stl" -D "part=\"$1\"" -D "which=\"$2\"" littlebot_v5.scad 2>&1 | grep -v -i warning || true; }

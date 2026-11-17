@@ -49,7 +49,8 @@ The motors' tails rest in 2 saddles with zip-tie slots. The Pi's fan blows down 
 | File | What |
 |---|---|
 | `littlebot_v5.scad` | the model (it includes `../enclosure_v4/littlebot_v4.scad`, and through it v3 and v2) |
-| `LittleBot_v5_A1.3mf` | **the Bambu Studio project: 5 plates, colours, brims and the one support set** |
+| `LittleBot_v5_A1.3mf`, `LittleBot_v5_P2S.3mf` | **the Bambu Studio project, one for each printer: 5 plates, colours, wall loops, brims and the one support set** |
+| `LittleBot_v5_test_A1.3mf`, `LittleBot_v5_test_P2S.3mf` | two short test pieces, a plate each: the body's first 22 mm (white) and a corner of the tub (dark). Print them before the long prints. |
 | `LittleBot_v5_assembled.3mf` | the whole robot assembled and coloured, to look at (not to print) |
 | `stl/*.stl` | each new part on its own, in its print orientation |
 | `plates_v5.png` | top view of the 5 plates |
@@ -65,14 +66,16 @@ The motors' tails rest in 2 saddles with zip-tie slots. The Pi's fan blows down 
 
 **No longer used:** v4's body, base ring, neck plate, black neck, port panel and slider; v2's floor, coupler and PCA9685 clamps; v4's mic holder, key and speaker keeper (the new body needs its own: the mic sits lower).
 
-**Print (Bambu Lab A1, PLA, 0.20 mm Standard, Textured PEI plate; slots: 1 white, 2 dark grey):**
+**Print (Bambu Lab A1 or P2S: open that printer's project; PLA, 0.20 mm Standard, Textured PEI plate; slots: 1 white, 2 dark grey):**
+
+**First, the test pieces.** The body is a long print and the tub a big flat one. Print `LittleBot_v5_test_<printer>.3mf` first: the body's first 22 mm (its tongue, the flare onto the tub's rim and the thick band, with the real brim), and a corner of the tub (floor, wall, the door's post), each in its real colour. If either fails, the printer, the plate or the spool is the problem, and you've lost an hour, not a day.
 
 **Solid walls.** The project sets **4 wall loops** on the tub, body, cap, hub, neck, pods, drawer and deck (Bambu's default is 2). v5's walls are 3 mm; with 2 loops a side the slicer prints two thin skins with sparse infill between them, and the first body printed that way split along a layer. If you slice from the STLs instead of the project, set wall loops to 4 yourself, and check in the preview that the walls are solid all the way through.
 
 | Plate | Colour | Parts (orientation) | Notes |
 |---|---|---|---|
-| 1 | dark | **tub** (floor down) | 230 × 204 mm: centre it. No supports: the casters' recesses bridge. |
-| 2 | white | **body** (upright, tongue down), and inside its footprint the **cap** (top face down) | 5 mm brim on the body. No supports: the collar under the cap is 45° underneath, and the speaker's ribs start on the plate. |
+| 1 | dark | **tub** (floor down) | 230 × 204 mm: centre it. 5 mm brim. No supports: the casters' recesses bridge. |
+| 2 | white | **body** (upright, tongue down), and inside its footprint the **cap** (top face down) | 8 mm brim inside and outside the body: it stands on its 4 mm tongue. No supports: the collar under the cap is 45° underneath, and the speaker's ribs start on the plate. |
 | 3 | dark | **black neck** (top down), **hub** (flange down) | The hub can be any colour: it doesn't show. |
 | 4 | white | **mic holder** and **key**, **speaker keeper**, **slider** | Tree supports from the build plate under the mic holder only, as v4. |
 | 5 | dark | **deck** (flat), **drawer** (tray down, door standing), **both wheel pods** (plate down) | 3 mm brim on the drawer. Print this plate after measuring the motors, wheels, casters and AA holder. |

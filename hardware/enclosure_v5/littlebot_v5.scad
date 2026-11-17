@@ -542,6 +542,10 @@ module print5(w) {
     if (w == "mic_holder") let (Mi = [[1, 0, 0, 0], [0, rsl_t[1], rsl_t[2], 0], [0, rsl_n[1], rsl_n[2], 0], [0, 0, 0, 1]], o = rsl_pt([0, 0, 0])) multmatrix(Mi) translate(-o) v5_rsl_holder();
     if (w == "mic_key")    translate([0, 0, -sl4_pocket[1][0] - 0.15]) sa_rsl_key();
     if (w == "spk_keeper") translate([0, 0, -(spk3_c[1] + spk_d + 0.15)]) rotate([90, 0, 0]) sa_spk_keeper();
+    // test pieces: the first 22 mm of the body (its tongue, the flare onto the tub's rim, the thick band) and a corner of the tub
+    // (floor, wall, the door's post): an hour's print each, to try a printer and a spool before the long prints
+    if (w == "test_body_base")  intersection() { print5("body"); translate([-300, -300, 0]) cube([600, 600, 22]); }
+    if (w == "test_tub_corner") intersection() { print5("tub"); translate([25, -30, 0]) cube([100, 75, 12]); }
 }
 if (part == "print5") print5(which);
 

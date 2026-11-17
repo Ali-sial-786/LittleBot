@@ -122,7 +122,7 @@ def mesh_xml(oid, name, tris, centre):
     return f'<object id="{oid}" name="{name}" type="model"><mesh><vertices>{v}</vertices><triangles>{t}</triangles></mesh></object>'
 
 
-def project(plates, out, title="LittleBot v4 Soft Arc"):
+def project(plates, out, title="LittleBot v4 Soft Arc", printer="A1"):
     objects, items, obj_cfg, plate_cfg, assemble = [], [], [], [], []
     k = 0; nparts = 0
     cols = int(round(len(plates) ** 0.5)) + (1 if len(plates) ** 0.5 > round(len(plates) ** 0.5) else 0)   # as Bambu Studio lays plates out
@@ -151,7 +151,8 @@ def project(plates, out, title="LittleBot v4 Soft Arc"):
             tf = f"1 0 0 0 1 0 0 0 1 {p3[0]:.4f} {p3[1]:.4f} {p3[2]:.4f}"
             items.append(f'<item objectid="{top}" transform="{tf}" printable="1"/>')
             meta = [("name", name), ("extruder", SLOTS.index(colour) + 1)]
-            meta += [("brim_type", "outer_only"), ("brim_width", BRIM[name])] if name in BRIM else [("brim_type", "no_brim")]
+            b = BRIM.get(name); b = (b, "outer_only") if isinstance(b, (int, float)) else b          # width, or (width, type)
+            meta += [("brim_type", b[1]), ("brim_width", b[0])] if b else [("brim_type", "no_brim")]
             meta += list(EXTRA.get(name, {}).items())
             if name in SUPPORT:
                 meta += [("enable_support", 1), ("support_type", "tree(auto)"), ("support_on_build_plate_only", 1)]
@@ -167,7 +168,7 @@ def project(plates, out, title="LittleBot v4 Soft Arc"):
              f' <metadata name="Application">{bp.APP}</metadata>\n <metadata name="BambuStudio:3mfVersion">1</metadata>\n'
              f' <metadata name="Title">{title}</metadata>\n <resources>{"".join(objects)}</resources>\n <build>{"".join(items)}</build>\n</model>\n')
     config = '<?xml version="1.0" encoding="UTF-8"?>\n<config>\n' + "".join(obj_cfg) + "".join(plate_cfg) + "  <assemble>\n" + "".join(assemble) + "  </assemble>\n</config>\n"
-    settings = bp.project_settings(["main", "black"], "A1")
+    settings = bp.project_settings(["main", "black"], printer)
     settings["filament_colour"] = [COLOURS[s] for s in SLOTS]
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
         z.writestr("[Content_Types].xml", '<?xml version="1.0" encoding="UTF-8"?>\n<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
