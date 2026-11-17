@@ -123,6 +123,7 @@ def mesh_xml(oid, name, tris, centre):
 
 
 def project(plates, out, title="LittleBot v4 Soft Arc", printer="A1"):
+    """printer None: no project settings at all; Bambu Studio keeps the printer, process and filaments already selected in it."""
     objects, items, obj_cfg, plate_cfg, assemble = [], [], [], [], []
     k = 0; nparts = 0
     cols = int(round(len(plates) ** 0.5)) + (1 if len(plates) ** 0.5 > round(len(plates) ** 0.5) else 0)   # as Bambu Studio lays plates out
@@ -168,8 +169,8 @@ def project(plates, out, title="LittleBot v4 Soft Arc", printer="A1"):
              f' <metadata name="Application">{bp.APP}</metadata>\n <metadata name="BambuStudio:3mfVersion">1</metadata>\n'
              f' <metadata name="Title">{title}</metadata>\n <resources>{"".join(objects)}</resources>\n <build>{"".join(items)}</build>\n</model>\n')
     config = '<?xml version="1.0" encoding="UTF-8"?>\n<config>\n' + "".join(obj_cfg) + "".join(plate_cfg) + "  <assemble>\n" + "".join(assemble) + "  </assemble>\n</config>\n"
-    settings = bp.project_settings(["main", "black"], printer)
-    settings["filament_colour"] = [COLOURS[s] for s in SLOTS]
+    settings = bp.project_settings(["main", "black"], printer) if printer else None
+    if settings: settings["filament_colour"] = [COLOURS[s] for s in SLOTS]
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
         z.writestr("[Content_Types].xml", '<?xml version="1.0" encoding="UTF-8"?>\n<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
                    '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
@@ -179,7 +180,7 @@ def project(plates, out, title="LittleBot v4 Soft Arc", printer="A1"):
                    '<Relationship Target="/3D/3dmodel.model" Id="rel-1" Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"/></Relationships>')
         z.writestr("3D/3dmodel.model", model)
         z.writestr("Metadata/model_settings.config", config)
-        z.writestr("Metadata/project_settings.config", json.dumps(settings, indent=4))
+        if settings: z.writestr("Metadata/project_settings.config", json.dumps(settings, indent=4))
     print(f"{out.name}: {len(plates)} plates, {sum(len(o) for _, _, o in plates)} objects, {nparts} parts")
 
 

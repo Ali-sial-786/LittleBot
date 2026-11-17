@@ -51,6 +51,7 @@ The motors' tails rest in 2 saddles with zip-tie slots. The Pi's fan blows down 
 | `littlebot_v5.scad` | the model (it includes `../enclosure_v4/littlebot_v4.scad`, and through it v3 and v2) |
 | `LittleBot_v5_A1.3mf`, `LittleBot_v5_P2S.3mf` | **the Bambu Studio project, one for each printer: 5 plates, colours, wall loops, brims and the one support set** |
 | `LittleBot_v5_test_A1.3mf`, `LittleBot_v5_test_P2S.3mf` | two short test pieces, a plate each: the body's first 22 mm (white) and a corner of the tub (dark). Print them before the long prints. |
+| `LittleBot_v5_plain.3mf`, `LittleBot_v5_test_plain.3mf` | the same plates with none of our printer, process or filament settings inside: Bambu Studio keeps whatever is selected in it. Only the per-part settings come with them (wall loops, brims, the mic holder's supports). Use these if a printer-specific file won't send. |
 | `LittleBot_v5_assembled.3mf` | the whole robot assembled and coloured, to look at (not to print) |
 | `stl/*.stl` | each new part on its own, in its print orientation |
 | `plates_v5.png` | top view of the 5 plates |
