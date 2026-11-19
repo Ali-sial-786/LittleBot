@@ -183,6 +183,24 @@ module chg_cradle() place_chg() {
 module chg_hole() place_chg() rotate([-90, 0, 0]) translate([0, 0, -3]) linear_extrude(12) hull() for (s = [-1, 1]) translate([s * 3.3, 0]) circle(d = 8.6, $fn = 24);
 module usbc_socket5(s = 0) place_chg() translate([-usbc_sock[0]/2 + s, -usbc_sock[2] - 1 + s, -usbc_sock[1]/2 + s]) cube([usbc_sock[0], usbc_sock[2], usbc_sock[1]] - [2*s, 2*s, 2*s]);
 deck_posts = [[-55.5, 47], [55.5, 47], [-55.5, 88], [55.5, 88]];
+// A LATTICE UNDER THE BIG FLAT PARTS (the tub's floor, the deck): square pockets in the underside, so the first layer is
+// narrow ribs and small pads, as every part of v4 was (its biggest first layer: 8 500 mm2, nothing wider than 47 mm).
+// As one flat sheet the tub's first layer was 33 000 mm2 across the whole plate, and it would not lie down on either
+// printer. The pockets' roofs bridge 12 mm.
+lat = [12, 2.4, 1.0];                    // pocket, rib between pockets, depth
+module lattice2d() for (x = [-129.6 + lat[1] / 2 : lat[0] + lat[1] : 130], y = [-43.2 + lat[1] / 2 : lat[0] + lat[1] : 200]) translate([x, y]) square(lat[0]);
+module rect2(x0, x1, y0, y1) translate([x0, y0]) square([x1 - x0, y1 - y0]);
+module tub_lattice() translate([0, 0, z_fl - 0.01]) linear_extrude(lat[2] + 0.01) difference() {
+    intersection() { sec2d(z_bt, tuck + 5); lattice2d(); }                                       // a 5 mm rim stays whole
+    for (s = [-1, 1]) {
+        rect2(s > 0 ? wh_x[0] - 5 : -200, s > 0 ? 200 : -wh_x[0] + 5, yw - wh_d / 2 - 6, yw + wh_d / 2 + 6);          // round the wheels' slots
+        for (q = pod_scr) translate([s * q[0], yw + q[1] * (pod_fl[0] + pod_fl[1] / 2)]) circle(r = 5);                 // under the pods' 4 screws
+        for (k = [-1, 1]) rect2(s * 12 - 6, s * 12 + 6, yw + k * 14.5 - 4, yw + k * 14.5 + 4);       // round the zip-tie slots
+    }
+    rect2(-xf - 1, xf + 1, yw - 7.5, yw + 7.5);                                                  // under the motors' trough
+    for (y = cas_y) rect2(-16.8, 16.8, y - 16.8, y + 16.8);                                      // round the casters' recesses
+    rect2(stk_x0 - 31, stk_x0 - 3, S5[1] + stk_y0 + 37, S5[1] + stk_y0 + 81.5);                  // the vents
+}
 pod_scr = [[76, -1], [98, -1], [76, 1], [98, 1]];           // the pod's 4 screws: |x|, front / rear flange
 pod_fl = [pod_y + 0.5, 10, 26.5];                           // the flanges: from here (|y - yw|), width; their underside (the tub's ridges' top)
 module v5_tub() {
@@ -229,6 +247,7 @@ module v5_tub() {
         // the body's 8 screws: through the rim, a flat seat for each head
         for (j = js, s = [-1, 1]) place_js(j, s) { translate([0, 0, -12]) cylinder(d = clear_m3, h = 14, $fn = fn_small); translate([0, 0, -1.2]) cylinder(d = 6.6, h = 4, $fn = 24); }
         chg_hole();
+        tub_lattice();
         // the drive switch: a round hole, a flat seat for its flange (2 mm of wall left at the middle)
         place_sw() { translate([0, 0, -tw - 3]) cylinder(d = sw_d, h = tw + 6, $fn = 64); translate([0, 0, -1]) cylinder(d = sw_fl + 2.5, h = 6, $fn = 64); }
         // vents under the Pi's fan (the Pi's SD-card end) and under the motor driver
@@ -328,6 +347,13 @@ module v5_deck() difference() {
     }
     for (p = deck_posts) translate([p[0], p[1], deck_z - 1]) { cylinder(d = clear_m3, h = 10, $fn = fn_small); }
     for (sx = [-1, 1], sy = [-1, 1]) translate([drv_c[0] + sx * drv_holes[0] / 2, drv_c[1] + sy * drv_holes[1] / 2, deck_z - 1]) cylinder(d = pilot_m3, h = 12, $fn = fn_small);
+    // the lattice underneath (0.8 deep: 1.7 mm of deck over it), whole round every screw and zip-tie slot
+    translate([0, 0, deck_z - 0.01]) linear_extrude(0.8 + 0.01) difference() {
+        intersection() { offset(delta = -3) deck2d(); lattice2d(); }
+        for (p = deck_posts) translate(p) circle(r = 6.5);
+        for (sx = [-1, 1], sy = [-1, 1]) translate([drv_c[0] + sx * drv_holes[0] / 2, drv_c[1] + sy * drv_holes[1] / 2]) circle(r = 5);
+        for (c = [[perf_c, perf], [buck_c, buck], [bb_c, bb]]) for (s = [-1, 1]) rect2(c[0][0] - 5.5, c[0][0] + 5.5, c[0][1] + s * (c[1][1] / 2 + 3.6) - 4.2, c[0][1] + s * (c[1][1] / 2 + 3.6) + 4.2);
+    }
     // zip-tie slots: across the perfboard, the converter and the breadboard
     for (c = [[perf_c, perf], [buck_c, buck], [bb_c, bb]]) for (s = [-1, 1]) translate([c[0][0] - 2.5, c[0][1] + s * (c[1][1] / 2 + 3.6) - 1.2, deck_z - 1]) cube([5, 2.4, deck_t + 5]);
 }
