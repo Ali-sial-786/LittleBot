@@ -73,6 +73,8 @@ The motors' tails rest in 2 saddles with zip-tie slots. The Pi's fan blows down 
 
 **Narrow first layers.** The tub's floor and the deck have a lattice of 12 mm pockets, 1 mm deep, in their undersides, so their first layer is narrow ribs and small pads and not one big sheet. As a flat sheet the tub's first layer was 33 000 mm² across almost the whole plate, with solid patches 75 mm wide; it would not lie down on either printer. The biggest first layer in v4, which printed fine, was 8 500 mm². With the lattice the tub's is 16 600 mm² with nothing wider than 16 mm, and the deck's is 7 100 mm². The pockets' roofs bridge.
 
+![the first layer: v4's biggest, the tub before, the tub now](first_layer_before_after.png)
+
 **Solid walls.** The project sets **4 wall loops** on the tub, body, cap, hub, neck, pods, drawer and deck (Bambu's default is 2). v5's walls are 3 mm; with 2 loops a side the slicer prints two thin skins with sparse infill between them, and the first body printed that way split along a layer. If you slice from the STLs instead of the project, set wall loops to 4 yourself, and check in the preview that the walls are solid all the way through.
 
 | Plate | Colour | Parts (orientation) | Notes |
