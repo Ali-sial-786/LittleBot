@@ -185,8 +185,8 @@ module usbc_socket5(s = 0) place_chg() translate([-usbc_sock[0]/2 + s, -usbc_soc
 deck_posts = [[-55.5, 47], [55.5, 47], [-55.5, 88], [55.5, 88]];
 // A LATTICE UNDER THE BIG FLAT PARTS (the tub's floor, the deck): square pockets in the underside, so the first layer is
 // narrow ribs and small pads, as every part of v4 was (its biggest first layer: 8 500 mm2, nothing wider than 47 mm).
-// As one flat sheet the tub's first layer was 33 000 mm2 across the whole plate, and it would not lie down on either
-// printer. The pockets' roofs bridge 12 mm.
+// As one flat sheet the tub's first layer was 33 000 mm2 across the whole plate: a big sheet warps at its corners. (The
+// first-layer failures in Nov 2026 were the printers': a plain cube failed the same way.) The pockets' roofs bridge 12 mm.
 lat = [12, 2.4, 1.0];                    // pocket, rib between pockets, depth
 module lattice2d() for (x = [-129.6 + lat[1] / 2 : lat[0] + lat[1] : 130], y = [-43.2 + lat[1] / 2 : lat[0] + lat[1] : 200]) translate([x, y]) square(lat[0]);
 module rect2(x0, x1, y0, y1) translate([x0, y0]) square([x1 - x0, y1 - y0]);
