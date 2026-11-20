@@ -53,6 +53,8 @@ The motors' tails rest in 2 saddles with zip-tie slots. The Pi's fan blows down 
 | `LittleBot_v5_test_A1.3mf`, `LittleBot_v5_test_P2S.3mf` | two short test pieces, a plate each: the body's first 22 mm (white) and a corner of the tub (dark). Print them before the long prints. |
 | `LittleBot_v5_plain.3mf`, `LittleBot_v5_test_plain.3mf` | the same plates with none of our printer, process or filament settings inside: Bambu Studio keeps whatever is selected in it. Only the per-part settings come with them (wall loops, brims, the mic holder's supports). Use these if a printer-specific file won't send. |
 | `LittleBot_v5_assembled.3mf` | the whole robot assembled and coloured, to look at (not to print) |
+| `LittleBot_v5_assembly.mp4` | **the assembly video** (5½ minutes): every part, screw, nut and cable going in, in the order below, each screw turned in by its tool with its size on a tag |
+| `assembly_video/` | re-makes the video (`OPENSCAD=... ./make_video.sh`). The screws, nuts, cable routes and part positions come from the model (`video5.scad`). |
 | `stl/*.stl` | each new part on its own, in its print orientation |
 | `plates_v5.png` | top view of the 5 plates |
 | `checks_v5.scad`, `run_checks_v5.sh` | 84 checks (`OPENSCAD=... ./run_checks_v5.sh`), all passing: nothing overlaps; the drawer slides out; the body goes on over everything in the base; the neck goes in from the top; every screw's path is clear, every nut has plastic in front of it and the cap's screws have thread to bite; the arms' sweep and finger pinch with the head turned; the slider; the mic holder and the speaker keeper |
@@ -118,6 +120,8 @@ In total for the new parts: 22 × M3 × 12, 12 × M3 × 10, 12 × M3 × 8, 5 × 
 
 ## Assembly order
 
+`LittleBot_v5_assembly.mp4` shows every step below.
+
 1. **Wheel pods, at the bench (×2):**
    - Push the motor's boss through the pod's plate from the inside, its 2 threaded holes level.
    - Fit 2 × M3 × 8 from the wheel's side.
@@ -130,12 +134,12 @@ In total for the new parts: 22 × M3 × 12, 12 × M3 × 10, 12 × M3 × 8, 5 × 
 3. **Deck, at the bench:** breadboard with the RP2040 (it sticks down), motor driver on its 4 posts (4 × M3 × 8), servo power board and 5 V converter (zip ties). Wire them. Then onto the tub's 4 posts (4 × M3 × 8), and connect the motors and encoders.
 4. **Drawer and switch:** snap the switch into its hole in the tub's front wall, from outside. Screw or stick the AA holder into the tray. Wire holder → fuse → switch, with enough slack for the drawer to slide out. Slide the drawer in and fit 2 × M3 × 10.
 5. **Body, upside down on the bench:** drop a nut into each of the 8 slots in the tongue's edge (a dab of tape keeps them in). Arm servos, speaker and its keeper, mic holder with its key and the ReSpeaker: as v4.
-6. **Body onto the tub:** push the slider in through the back first, fork inwards. Lower the body: its tongue goes inside the rim, the slider's fork over the UPS switch's knob. Fit 8 × M3 × 10 through the rim.
+6. **Body onto the tub:** push the slider in through the back first, fork inwards. Lower the body: its tongue goes inside the rim, the slider's fork over the UPS switch's knob. Fit 8 × M3 × 10 through the rim. Then plug the speaker and the ReSpeaker into the Pi's USB ports, and the arm servos onto the servo power board.
 7. **Neck, at the bench:**
    - Hub up through the cap from below; ring gear onto the hub's flange (3 × M3 × 12 from below).
    - Slide 3 nuts into the slots in the hub's side. Black neck over the hub (its rib in the hub's groove): 3 × M3 × 12.
    - Glue the trimmed horn into the pinion, as v4. Servo frame with the head servo and pinion onto the cap's 2 pillars; mesh the gears with the servo centred.
-8. **Cap onto the body:** thread the cables up through the neck. Lower the cap in and fit 8 × M3 × 12 straight down into the collar's holes. Stop when each is snug: they thread into plastic, and overtightening strips it.
+8. **Cap onto the body:** the HDMI, the screen's USB-C and the camera's USB up out of the body's top, then through the neck. Lower the cap in and fit 8 × M3 × 12 straight down into the collar's holes. Stop when each is snug: they thread into plastic, and overtightening strips it. The head servo onto the servo power board.
 
    ![the cap's screws](cap_screws.png)
 
@@ -165,4 +169,3 @@ The body, cap, hub, black neck and slider don't depend on any of them.
 - No bumper and no drop sensors: it can't see stairs or obstacles.
 - The casters are 19 mm balls: they roll on hard floors and low carpet, not over door sills or play mats.
 - The firmware for the RP2040 and the Pi's side of it are still to be written.
-- The assembly video is still v4's.

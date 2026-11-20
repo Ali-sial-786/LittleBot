@@ -1,0 +1,491 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>LittleBot v5 assembly</title>
+<style>
+  html, body { margin: 0; width: 1280px; height: 720px; overflow: hidden; background: #e9edf2; font-family: "DejaVu Sans", Arial, sans-serif; }
+  #bg { position: absolute; inset: 0; background: radial-gradient(ellipse at 50% 40%, #fbfcfd 0%, #e4e9ef 70%, #d7dde5 100%); }
+  canvas { position: absolute; inset: 0; }
+  #brand { position: absolute; left: 28px; top: 22px; color: #3b4452; font-size: 17px; letter-spacing: .3px; }
+  #brand b { color: #1d2430; }
+  #cap { position: absolute; left: 28px; bottom: 26px; width: 520px; background: rgba(255,255,255,.9); border-radius: 14px;
+         padding: 14px 20px 15px; box-shadow: 0 4px 18px rgba(30,40,60,.12); }
+  #num { color: #c0632b; font-size: 14px; font-weight: bold; letter-spacing: .6px; text-transform: uppercase; }
+  #title { color: #1d2430; font-size: 25px; font-weight: bold; margin-top: 3px; }
+  #detail { color: #3b4452; font-size: 16px; line-height: 1.4; margin-top: 6px; }
+  #bar { position: absolute; left: 0; bottom: 0; height: 5px; background: #c0632b; }
+  #labels, #lines { position: absolute; inset: 0; }
+  .lab { position: absolute; transform: translate(-50%, -100%); background: rgba(255,255,255,.95); border: 2.5px solid; border-radius: 10px;
+         padding: 4px 11px 5px; font-size: 16px; font-weight: bold; white-space: nowrap; box-shadow: 0 3px 12px rgba(30,40,60,.16); }
+</style></head>
+<body>
+<div id="bg"></div>
+<canvas id="c" width="1280" height="720"></canvas>
+<div id="brand"><b>LittleBot v5 “Rover”</b> &middot; how it goes together</div>
+<div id="labels"><svg id="lines" width="1280" height="720"></svg><div id="labs"></div></div>
+<div id="cap"><div id="num"></div><div id="title"></div><div id="detail"></div></div>
+<div id="bar"></div>
+<script>
+// The v5 assembly, step by step (README order). Every part, screw, nut and cable comes from manifest.json (place_parts.py,
+// from the model). Each step is a list of phases, run one after another: parts arrive, screws are driven in one at a
+// time by a tool that turns them, nuts drop into their pockets, cables grow along their routes, assemblies move.
+// ---------- tiny maths ----------
+const V = { sub:(a,b)=>[a[0]-b[0],a[1]-b[1],a[2]-b[2]], add:(a,b)=>[a[0]+b[0],a[1]+b[1],a[2]+b[2]], mul:(a,s)=>[a[0]*s,a[1]*s,a[2]*s],
+  dot:(a,b)=>a[0]*b[0]+a[1]*b[1]+a[2]*b[2], cross:(a,b)=>[a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]],
+  norm:a=>{const l=Math.hypot(a[0],a[1],a[2])||1;return [a[0]/l,a[1]/l,a[2]/l];}, lerp:(a,b,t)=>[a[0]+(b[0]-a[0])*t,a[1]+(b[1]-a[1])*t,a[2]+(b[2]-a[2])*t] };
+function perspective(fovy, aspect, n, f) { const t = 1/Math.tan(fovy/2); return [t/aspect,0,0,0, 0,t,0,0, 0,0,(f+n)/(n-f),-1, 0,0,2*f*n/(n-f),0]; }
+function lookAt(e, c, up) { const z = V.norm(V.sub(e,c)), x = V.norm(V.cross(up,z)), y = V.cross(z,x);
+  return [x[0],y[0],z[0],0, x[1],y[1],z[1],0, x[2],y[2],z[2],0, -V.dot(x,e),-V.dot(y,e),-V.dot(z,e),1]; }
+function mmul(a, b) { const r = new Array(16).fill(0); for (let i=0;i<4;i++) for (let j=0;j<4;j++) for (let k=0;k<4;k++) r[j*4+i] += a[k*4+i]*b[j*4+k]; return r; }
+const clamp = (x,a=0,b=1)=>Math.min(b,Math.max(a,x)), ease = t=>{t=clamp(t);return t<.5?4*t*t*t:1-Math.pow(-2*t+2,3)/2;};
+const hex = h => [parseInt(h.slice(1,3),16)/255, parseInt(h.slice(3,5),16)/255, parseInt(h.slice(5,7),16)/255];
+// 3 x 3 rotations, row-major
+const R3 = {
+  I: [1,0,0, 0,1,0, 0,0,1],
+  mul: (a, b) => { const r = []; for (let i=0;i<3;i++) for (let j=0;j<3;j++) r.push(a[i*3]*b[j] + a[i*3+1]*b[3+j] + a[i*3+2]*b[6+j]); return r; },
+  app: (m, v) => [m[0]*v[0]+m[1]*v[1]+m[2]*v[2], m[3]*v[0]+m[4]*v[1]+m[5]*v[2], m[6]*v[0]+m[7]*v[1]+m[8]*v[2]],
+  axis: (k, deg) => { k = V.norm(k); const a = deg*Math.PI/180, c = Math.cos(a), s = Math.sin(a), t = 1-c, [x,y,z] = k;
+    return [c+t*x*x, t*x*y-s*z, t*x*z+s*y,  t*x*y+s*z, c+t*y*y, t*y*z-s*x,  t*x*z-s*y, t*y*z+s*x, c+t*z*z]; },
+  toZ: v => { v = V.norm(v); const c = v[2]; if (c > 0.9999) return R3.I.slice(); if (c < -0.9999) return [1,0,0, 0,-1,0, 0,0,-1];
+    return R3.axis(V.cross([0,0,1], v), Math.acos(c)*180/Math.PI); },
+  col: m => [m[0],m[3],m[6], m[1],m[4],m[7], m[2],m[5],m[8]],
+};
+
+// ---------- GL ----------
+const gl = document.getElementById('c').getContext('webgl2', { antialias: true, preserveDrawingBuffer: true, premultipliedAlpha: false, alpha: true });
+function sh(type, src) { const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s); if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw gl.getShaderInfoLog(s); return s; }
+const prog = gl.createProgram();
+gl.attachShader(prog, sh(gl.VERTEX_SHADER, `#version 300 es
+in vec3 aPos; in vec3 aNor; in float aS;
+uniform mat4 uVP; uniform mat3 uR; uniform vec3 uPiv; uniform vec3 uOff; uniform mat3 uW; uniform vec3 uWP;
+out vec3 vN; out vec3 vW; out float vS;
+void main() { vec3 p = uR * (aPos - uPiv) + uPiv + uOff; vec3 w = uW * (p - uWP) + uWP;
+  vW = w; vN = uW * (uR * aNor); vS = aS; gl_Position = uVP * vec4(w, 1.0); }`));
+gl.attachShader(prog, sh(gl.FRAGMENT_SHADER, `#version 300 es
+precision highp float; in vec3 vN; in vec3 vW; in float vS;
+uniform vec3 uCol; uniform float uAlpha; uniform float uHi; uniform float uEmit; uniform float uGrow; uniform vec3 uEye; out vec4 o;
+void main() {
+  if (vS > uGrow + 0.0001) discard;                       // cables grow along their route
+  vec3 n = normalize(vN); vec3 v = normalize(uEye - vW); if (dot(n, v) < 0.0) n = -n;
+  vec3 key = normalize(vec3(-0.45, -0.7, 0.75)), fill = normalize(vec3(0.7, -0.2, 0.3)), rim = normalize(vec3(0.2, 0.9, 0.4));
+  float d = 0.36 + 0.55 * max(dot(n, key), 0.0) + 0.22 * max(dot(n, fill), 0.0) + 0.18 * max(dot(n, rim), 0.0) + 0.06 * n.z;
+  float spec = pow(max(dot(n, normalize(key + v)), 0.0), 40.0) * 0.18;
+  vec3 col = vS < -0.5 ? uCol * 0.3 : uCol;               // dark details: a socket, a nut's hole, a tool's grip
+  vec3 c = col * d + spec;
+  c += uHi * vec3(0.16, 0.09, 0.02);
+  c = mix(c, col, uEmit);
+  o = vec4(pow(clamp(c, 0.0, 1.0), vec3(0.95)), uAlpha);
+}`));
+gl.linkProgram(prog); gl.useProgram(prog);
+const U = n => gl.getUniformLocation(prog, n);
+const uVP = U('uVP'), uR = U('uR'), uPiv = U('uPiv'), uOff = U('uOff'), uW = U('uW'), uWP = U('uWP'), uCol = U('uCol'), uAlpha = U('uAlpha'),
+      uHi = U('uHi'), uEye = U('uEye'), uEmit = U('uEmit'), uGrow = U('uGrow');
+const aPos = gl.getAttribLocation(prog, 'aPos'), aNor = gl.getAttribLocation(prog, 'aNor'), aS = gl.getAttribLocation(prog, 'aS');
+
+const P = {};          // name -> {vao, count, col, centre, m (its manifest entry)}
+let SCENE = null;
+async function loadAll() {
+  const man = await (await fetch('manifest.json')).json();
+  SCENE = await (await fetch('scene.json')).json();
+  for (const m of man) {
+    const buf = await (await fetch(m.file)).arrayBuffer();
+    const vao = gl.createVertexArray(); gl.bindVertexArray(vao);
+    const vb = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, vb); gl.bufferData(gl.ARRAY_BUFFER, buf, gl.STATIC_DRAW);
+    gl.enableVertexAttribArray(aPos); gl.vertexAttribPointer(aPos, 3, gl.FLOAT, false, 28, 0);
+    gl.enableVertexAttribArray(aNor); gl.vertexAttribPointer(aNor, 3, gl.FLOAT, false, 28, 12);
+    gl.enableVertexAttribArray(aS); gl.vertexAttribPointer(aS, 1, gl.FLOAT, false, 28, 24);
+    m.kind = m.kind || 'part';
+    P[m.name] = { vao, count: buf.byteLength / 28, col: hex(m.colour), centre: V.mul(V.add(m.lo, m.hi), 0.5), m };
+  }
+  build();
+}
+
+// ---------- the story ----------
+const ROBOT = { t: [0, 78, 215], az: -40, el: 14, d: 1320 };
+const out = (s, k) => V.mul(SCENE.sh[s < 0 ? 0 : 1][1], k);          // along a shoulder's axis, outwards
+// where an assembly waits before its step moves it (mm): the Pi + UPS above its mount, the drawer pulled out in front,
+// the head servo below the cap, the arms out beside their shoulders
+let G0 = {};
+const PARENT = { hservo: 'neck' };
+const SEE_BODY = { body: 0.16 };
+let STEPS = [];
+function defineSteps() {
+  G0 = { stack: [0, 0, 90], tray: [0, -130, 0], hservo: [0, 0, -85], arm_a: out(-1, 150), arm_b: out(1, 150) };
+  const hinge = [0, SCENE.tab_hinge[0], SCENE.tab_hinge[1]];
+  const BASE = ['tub', 'podL', 'podR', 'stack', 'deck', 'tray', 'wires'];
+  STEPS = [
+  { title: 'The finished robot', detail: 'Here is what we are building: every part, screw, nut and cable, in the order they go in.', fixed: 6.0, intro: true,
+    view: { ...ROBOT }, view2: { ...ROBOT, az: 35 } },
+  // ---- the base
+  { id: 'pod_bench', title: 'Wheel pods, at the bench', detail: 'Both the same. Push the motor’s boss through the pod’s plate from inside, its 2 threaded holes level: 2 × M3 × 8 from the wheel’s side. The coupler onto the shaft, its grub screw on the flat. The wheel on, with its own screw.',
+    phases: [{ parts: [['pod_l', null, { label: 'wheel pod' }], ['pod_r', null]], gap: 0 }, { parts: [['motor_l', [-45, 0, 0], { label: 'gear motor + coupler' }], ['motor_r', [45, 0, 0]]], gap: 0 },
+             { screws: 'M3 × 8' }, { parts: [['wheel_l', [70, 0, 0], { label: '65 mm wheel' }], ['wheel_r', [-70, 0, 0]]], gap: 0 }, { screws: 'wheel’s own screw' }],
+    view: { t: [70, 70, 40], az: 72, el: 14, d: 420 } },
+  { id: 'casters', title: 'Ball casters', detail: 'Turn the tub over. Each caster into its square recess, front and back: its own 2 screws (#2-56) up through its base. Turn the tub back and put their nuts on, inside.',
+    hide: ['podL', 'podR'], pivot: [0, 78, 48], tagSpan: 60,
+    phases: [{ parts: [['tub', null, { label: 'tub' }]] }, { flip: 180 }, { parts: [['caster_f', [0, 0, -45], { label: 'ball caster' }], ['caster_r', [0, 0, -45]]], gap: 0.3 },
+             { screws: true, dt: 0.9 }, { flip: 0 }, { nuts: true }],
+    view: { t: [0, 72, 48], az: -30, el: 36, d: 640 } },
+  { id: 'pods_in', title: 'Wheel pods into the tub', detail: 'Lower each pod in, its wheel down through the slot in the floor: 4 × M3 × 12 through its flanges into the tub’s ridges. Zip-tie each motor’s tail to its saddle.',
+    phases: [{ move: ['podL', [0, 0, 110], 0.001], at: 0 }, { move: ['podR', [0, 0, 110], 0.001], at: 0 }, { move: ['podL', [0, 0, 0], 2.0], at: 0.5 }, { move: ['podR', [0, 0, 0], 2.0], with: true },
+             { screws: true, dt: 0.8 }],
+    view: { t: [0, 70, 50], az: -28, el: 44, d: 660 } },
+  { id: 'stack', title: 'Pi 5 + UPS', detail: 'The Pi + UPS from v4, as built. Stand its clear plate in the mount’s groove, ports up. v4’s keeper over it: 2 × M3 × 20.',
+    phases: [{ parts: [['pi_ups', null, { label: 'Pi 5 + UPS (from v4)' }]] }, { move: ['stack', [0, 0, 0], 1.8] }, { parts: [['stack_keeper', [0, 0, 50], { label: 'stack keeper (v4)' }]] }, { screws: true }],
+    view: { t: [0, 122, 70], az: 150, el: 30, d: 520 } },
+  { id: 'charge', title: 'Charging cable', detail: 'A USB-C extension. Its plug into the UPS’s USB-C (marked POWER, on the blue UPS board), never the Pi’s own. The cable runs to the back’s left corner: zip-tie its socket into the holder there, opening backwards.',
+    marks: [['ups_usbc', 'UPS USB-C (POWER): plug in here', '#2d6cb5', 0.4], ['pi_usbc', 'Pi’s own USB-C: leave it empty', '#c0392b', 1.0]],
+    phases: [{ wait: 1.8 }, { cables: ['charging'] }, { parts: [['usbc_socket', [0, 0, 40], { label: 'its socket end' }]] }, { parts: [['zip_tie', [0, 0, 30], { label: 'zip tie' }]] }],
+    view: { t: [-35, 140, 70], az: 152, el: 40, d: 430 } },
+  { id: 'deck_bench', title: 'Deck, at the bench', detail: 'The breadboard with the RP2040 on it, the motor driver on its 4 posts (4 × M3 × 8), the servo power board and the 5 V converter (zip ties through the slots). Wire them up here, where you can reach everything.',
+    hide: BASE.filter(g => g !== 'deck'), phases: [{ parts: [['deck', null, { label: 'deck' }]] }, { parts: [['breadboard', [0, 0, 40], { label: 'breadboard' }], ['rp2040', [0, 0, 70], { label: 'RP2040' }]], gap: 0.5 },
+             { parts: [['driver', [0, 0, 40], { label: 'motor driver (MDD3A)' }], ['driver_terms', [0, 0, 40]]], gap: 0 }, { screws: true, dt: 1.0 },
+             { parts: [['perfboard', [0, 0, 40], { label: 'servo power board' }]] }, { parts: [['converter', [0, 0, 40], { label: '5 V converter' }]] }],
+    view: { t: [0, 45, 75], az: -18, el: 52, d: 500 } },
+  { id: 'deck_in', title: 'Deck onto the tub', detail: 'Onto the tub’s 4 posts: 4 × M3 × 8. Then the motors’ leads to the driver and their encoders’ to the RP2040: they come up beside the Pi’s mount.',
+    phases: [{ move: ['deck', [0, 0, 120], 0.001], at: 0 }, { move: ['deck', [0, 0, 0], 2.0], at: 0.5 }, { screws: true, dt: 1.0 }, { cables: ['motor_l', 'motor_r', 'enc_l', 'enc_r'] }],
+    view: { t: [0, 62, 62], az: -32, el: 44, d: 640 } },
+  { id: 'drawer', title: 'Drawer and drive switch', detail: 'Snap the switch into its hole in the front wall, from outside. The 6×AA holder into the drawer, the drawer in: 2 × M3 × 10 through the door’s corners. Leads: holder → 5 A fuse → switch → deck, with slack for the drawer to slide out.',
+    see: { deck: 0.25, breadboard: 0.25, rp2040: 0.25, driver: 0.25, driver_terms: 0.25, perfboard: 0.25, converter: 0.25 },
+    phases: [{ parts: [['switch', [17, -36, 0], { label: 'drive switch' }]] }, { parts: [['tray', null, { label: 'drawer' }], ['aa_holder', [0, 0, 40], { label: '6×AA holder' }], ['aa_cells', [0, 0, 50]]], gap: 0.5 },
+             { move: ['tray', [0, 0, 0], 2.0] }, { screws: true }, { cables: ['battery', 'switched'] }],
+    view: { t: [20, -4, 48], az: -24, el: 34, d: 560 } },
+  // ---- the body, on the bench
+  { id: 'body_nuts', title: 'Body: 8 nuts', detail: 'Turn the body upside down and drop an M3 nut into each of the 8 slots in its tongue’s edge (a dab of tape keeps them in).',
+    hide: BASE, pivot: [0, 78, 150], tagSpan: 400,
+    phases: [{ parts: [['body', null, { label: 'body' }]] }, { flip: 180 }, { nuts: true }, { flip: 0 }],
+    view: { t: [0, 78, 150], az: -30, el: 34, d: 900 } },
+  { id: 'arm_servos', title: 'Arm servos', detail: 'Slide each servo in from outside through its shoulder slot, spline outwards, and screw its tabs: 2 servo screws each.',
+    hide: BASE, phases: [{ parts: [['servo_r', out(-1, 70)], ['servo_l', out(1, 70)]] }, { screws: true }],
+    view: { t: [0, 82, 190], az: -22, el: 12, d: 660 } },
+  { id: 'speaker', title: 'Speaker and its keeper', detail: 'Down through the open top, into its ribs behind the chest grille, facing forwards. Its keeper behind it: tabs into the ribs’ slots, its spring holds the speaker in.',
+    hide: BASE, see: SEE_BODY, phases: [{ parts: [['speaker', [0, 0, 170], { label: 'USB speaker' }]] }, { parts: [['spk_keeper', [0, 0, 150], { label: 'speaker keeper' }]] }],
+    view: { t: [0, 28, 122], az: -28, el: 18, d: 560 } },
+  { id: 'mic', title: 'Microphone: ReSpeaker Lite', detail: 'Holder against the chest’s inside, behind the 2 dots. Push its key into the pocket from the robot’s left until its head sits flat (a firm push). The board onto the 2 posts, mics to the wall, its USB-C cable plugged in: 2 × M2 × 8.',
+    hide: BASE, see: SEE_BODY, phases: [{ parts: [['mic_holder', [0, 45, 110], { label: 'mic holder' }]] }, { parts: [['mic_key', [45, 0, 0], { label: 'key' }]] },
+             { parts: [['respeaker', [0, 60, 0], { label: 'ReSpeaker Lite' }]] }, { parts: [['mic_plug', [35, 0, 0], { label: 'USB-C cable' }]] }, { screws: true }],
+    view: { t: [0, 20, 166], az: 150, el: 22, d: 430 } },
+  // ---- the body onto the tub
+  { id: 'body_on', title: 'Body onto the tub', detail: 'Push the UPS switch slider in through the back, fork first. Lower the body: its tongue goes inside the tub’s rim, the slider’s fork over the UPS switch’s knob. Then 8 × M3 × 10 through the rim into the tongue’s nuts.',
+    tagSpan: 400,
+    phases: [{ move: ['body', [0, 0, 240], 0.001], at: 0 }, { parts: [['slider', [0, 70, 0], { label: 'UPS switch slider' }]], at: 0.6 }, { move: ['body', [0, 0, 0], 2.4] },
+             { screws: true, dt: 0.8 }, { wiggle: ['slider', [1, 0, 0], SCENE.slider_travel] }],
+    view: { t: [0, 78, 125], az: 145, el: 18, d: 1050 } },
+  { id: 'cables_body', title: 'Body cables', detail: 'The speaker’s and the ReSpeaker’s cables into the Pi’s USB ports. The arm servos onto the servo power board’s headers: the robot’s left arm in the middle, its right arm beside it.',
+    see: SEE_BODY, phases: [{ cables: ['speaker', 'mic', 'servo_left', 'servo_right'] }], view: { t: [0, 80, 125], az: -36, el: 16, d: 920 } },
+  // ---- the neck, on the bench
+  { id: 'ring_gear', title: 'Neck, at the bench: hub and ring gear', detail: 'The hub up through the cap from below, its flange under the cap. The ring gear (v2’s) onto the flange, from below: 3 × M3 × 12.',
+    hide: [...BASE, 'body'], phases: [{ parts: [['cap', null, { label: 'cap' }]] }, { parts: [['hub', [0, 0, -60], { label: 'hub' }]] }, { parts: [['ring_gear', [0, 0, -50], { label: 'ring gear (v2)' }]] }, { screws: true }],
+    view: { t: [0, 82, 232], az: -30, el: -36, d: 400 } },
+  { id: 'black_neck', title: 'Black neck', detail: 'Slide an M3 nut into each of the 3 slots in the hub’s side. The black neck over the hub, its rib in the hub’s groove: 3 × M3 × 12, heads sunk.',
+    hide: [...BASE, 'body'], phases: [{ nuts: true }, { parts: [['neck', [0, 0, 60], { label: 'black neck' }]] }, { screws: true }],
+    view: { t: [0, 89, 250], az: -30, el: 30, d: 380 } },
+  { id: 'pinion_glue', title: 'Glue the horn into the pinion', detail: 'Sand the horn’s plate. A thin bead of 2-part epoxy along the pinion’s pocket, into its small holes but not the centre hole. Press the horn in and let it cure. (Or 2 × M1.4 × 5 self-tapping screws.)',
+    hide: [...BASE, 'body'], phases: [{ parts: [['pinion', [0, 0, -40]]] }, { glue: true }, { parts: [['horn_head', [0, 0, -45], { label: 'servo horn' }]] }],
+    view: { t: V.add(SCENE.pinion_horn, G0.hservo), az: -12, el: -34, d: 230 } },
+  { id: 'head_servo', title: 'Head servo', detail: 'Servo onto its frame: 2 servo screws. Servo at 90°, the pinion’s horn onto its spline. Push it all up under the cap (the pinion meshes with the ring gear, the collars go over the cap’s 2 pillars) and pinch the collars: 2 × M3 × 10.',
+    hide: [...BASE, 'body'], phases: [{ parts: [['servo_frame', [0, 0, -45]], ['servo_head', [0, 0, -60], { label: 'head servo' }]] }, { screws: 'servo screws' },
+             { move: ['hservo', [0, 0, 0], 1.8] }, { screws: 'M3 × 10' }],
+    view: { t: [0, 62, 210], az: -40, el: 6, d: 480 } },
+  // ---- the cap onto the body
+  { id: 'cables_up', title: 'Cables up through the top', detail: 'Up out of the body’s top: the HDMI (its micro end in the Pi), the screen’s USB-C and the camera’s USB (both in the Pi’s USB ports).',
+    hide: ['neck'], see: SEE_BODY, phases: [{ cables: ['hdmi', 'usbc', 'camera'] }], view: { t: [0, 100, 160], az: 148, el: 12, d: 920 } },
+  { id: 'cap_on', title: 'Cap onto the body', detail: 'Thread the cables up through the neck and lower the cap in: 8 × M3 × 12 straight down into the collar. Stop when each is snug: they cut their own thread. The head servo onto the servo power board.',
+    see: { body: 0.3 }, phases: [{ move: ['neck', [0, 0, 200], 0.001], at: 0 }, { move: ['neck', [0, 0, 0], 2.4], at: 0.5 }, { screws: true, dt: 0.8 }, { cables: ['servo_head'] }],
+    view: { t: [0, 80, 240], az: -32, el: 32, d: 620 } },
+  // ---- the head (v4's)
+  { id: 'head_on', title: 'Head onto the neck', detail: 'Cables up through the head’s floor, head onto the black neck: 3 × M3 × 20 down through its floor and the neck’s top, into the hub’s nuts.',
+    phases: [{ parts: [['head_frame', [0, 0, 150], { label: 'head frame (v4)' }], ['head_inlay', [0, 0, 150]]], gap: 0 }, { screws: true }],
+    see: { head_frame: 0.4, head_inlay: 0.4 }, view: { t: [0, 92, 300], az: 150, el: 34, d: 600 } },
+  { id: 'screen', title: 'Screen', detail: 'In through the face (nothing touches the glass), then 4 × M2.5 × 6 (or M3 × 6) from behind, down the 4 wells into its corner standoffs.',
+    phases: [{ parts: [['screen', [0, -120, 0], { label: '7" touch screen' }]] }, { mark: true }, { screws: true }],
+    view: { t: [0, 40, 340], az: -22, el: 8, d: 720 }, view2: { t: [0, 70, 340], az: 160, el: 14, d: 560 } },
+  { id: 'plugs', title: 'Plugs, from behind', detail: 'The HDMI coupler into its 2 clips and the HDMI cable’s plug into it. Ribbon HDMI from the coupler to the screen. The right-angle USB-C into the screen.',
+    see: { head_frame: 0.3, head_inlay: 0.3 },
+    phases: [{ parts: [['coupler4', [0, 40, 0], { label: 'HDMI coupler' }]] }, { parts: [['hdmi_plug', [50, 0, 0]]] }, { cables: ['hdmi_head'] },
+             { parts: [['fpc', [-12, 30, 0]]] }, { cables: ['ribbon'] }, { parts: [['usbc_plug', [-10, 30, 0]]] }, { cables: ['usbc_head'] }],
+    view: { t: [-50, 66, 315], az: 140, el: 18, d: 470 } },
+  { id: 'camera', title: 'Camera', detail: 'Board into v2’s bracket (it clicks), bracket up between the 2 cheeks under the hood, lens forwards. 2 × M3 × 12 from inside the head (2 mm L-key) through the cheeks into its pivots: set the tilt, snug. 5-pin plug into the board’s back.',
+    phases: [{ parts: [['cam_board', [0, 0, -65], { label: 'camera' }], ['camera_bracket', [0, 0, -65]]], gap: 0 }, { screws: true }, { cables: ['camera_head'] }],
+    view: { t: [0, 70, 404], az: 200, el: -16, d: 320 } },
+  { id: 'back', title: 'Head back', detail: 'Hook its 2 slots over the frame’s 2 tabs, swing it down, then 2 × M3 × 12 from under the head. (No AA box in the head any more: the servos run from the drawer.)',
+    phases: [{ parts: [['head_back', [0, 50, 40], { rot: { axis: [1, 0, 0], angle: 55, pivot: hinge } }]] }, { screws: true }],
+    view: { t: [0, 120, 300], az: 128, el: 4, d: 680 } },
+  // ---- the arms (v4's)
+  { id: 'arm_glue', title: 'Glue the horns into the arms', detail: 'Both arms the same, on the bench: sand the horn’s plate, a thin bead of epoxy along the arm’s pocket and into its small holes (not the centre hole), press the horn in and let it cure. (Or 2 × M1.4 × 5 self-tapping screws each.)',
+    hide: [...BASE, 'body', 'neck', 'head'], phases: [{ parts: [['arm_a', null, { label: 'arm' }], ['arm_b', null]], gap: 0 }, { glue: true },
+             { parts: [['horn_r', out(-1, -30), { label: 'servo horn' }], ['horn_l', out(1, -30)]] }],
+    view: { t: V.add(SCENE.arm_pocket[0], out(-1, 150)), az: 75, el: 16, d: 280 } },
+  { id: 'arms', title: 'Arms', detail: 'Glue cured, servos at their neutral angle: push each arm (its horn) onto its spline, then the spline screw through the hole in the arm.',
+    phases: [{ move: ['arm_a', [0, 0, 0], 2.0] }, { move: ['arm_b', [0, 0, 0], 2.0], with: true }, { screws: 'spline screw' }],
+    view: { t: [0, 82, 200], az: -22, el: 10, d: 1000 } },
+  { id: 'charging', title: 'Charging', detail: 'A USB-C PD charger into the socket at the back’s left corner (the UPS takes up to 40 W). The white tab on the back is the UPS switch: it turns the Pi on and off. The round rocker at the front switches the wheels and servos. Charge on a hard surface, with a grown-up nearby.',
+    marks: [['socket', 'charging socket', '#2d6cb5', 0.3], ['slider', 'UPS switch', '#39404a', 0.5]],
+    phases: [{ parts: [['chg_plug', [-39, 70, 0], { label: 'charger’s USB-C plug' }]] }, { cables: ['charger'] }, { parts: [['charger', [0, 0, 40], { label: 'USB-C PD charger' }]] }],
+    view: { t: [-50, 225, 40], az: 150, el: 18, d: 600 } },
+  { title: 'Done!', detail: 'Keep motion switched off until the servos are calibrated (docs/MOTION_SAFETY.md). The wheels need the RP2040’s firmware, which is still to be written.', fixed: 8.0, outro: true, view: { ...ROBOT, az: -20 } },
+  ];
+}
+
+// ---------- the schedule: when each thing happens ----------
+const PGAP = 0.35, PFADE = 0.3, PMOVE = 1.4, PROT = 1.3;     // parts: gap between, fade in, move in, swing
+const SDT = 1.3, SAPP = 0.3, SDRV = 0.9, SRET = 0.35, TURNS = 4;   // screws: one after another, approach, drive (4 turns), tool away
+const NDT = 0.45, NDUR = 0.75;                                 // nuts
+const CDT = 0.6, CGROW = 1.9;                                  // cables
+const GDT = 0.3, GAPP = 0.5, GGROW = 2.6, GRET = 0.5;              // glue: approach, trace the bead, syringe away
+const FLIP = 1.9, WIG = 2.0, HOLD = 1.2;
+const EV = {}, GK = {}, WK = [], WIGS = [];
+let TOTAL = 0;
+function build() {
+  defineSteps();
+  let T = 0;
+  STEPS.forEach((s, i) => {
+    s.t0 = T;
+    if (s.fixed) { s.dur = s.fixed; T += s.dur; return; }
+    let t = 0.25, prevStart = 0.25;
+    for (const ph of s.phases || []) {
+      const start = ph.at !== undefined ? ph.at : ph.with ? prevStart : t;
+      prevStart = start; let end = start;
+      if (ph.parts) ph.parts.forEach(([name, from, o], k) => {
+        if (!P[name]) throw 'no part ' + name;
+        const ts = start + k * (ph.gap ?? PGAP); o = o || {};
+        EV[name] = { step: i, t0: ts, from, o };
+        end = Math.max(end, ts + PFADE + (from ? PMOVE : 0.3) + (o.rot ? PROT : 0));
+      });
+      const own = kind => Object.keys(P).filter(n => P[n].m.kind === kind && P[n].m.step === s.id && !EV[n]);
+      if (ph.screws) { const dt = ph.dt ?? SDT; own('screw').filter(n => ph.screws === true || P[n].m.screw === ph.screws).forEach((n, k) => {
+        EV[n] = { step: i, t0: start + k * dt }; end = Math.max(end, start + k * dt + SAPP + SDRV + SRET); }); }
+      if (ph.glue) own('glue').forEach((n, k) => { EV[n] = { step: i, t0: start + k * GDT }; end = Math.max(end, start + k * GDT + GAPP + GGROW + GRET); });
+      if (ph.nuts) own('nut').forEach((n, k) => { EV[n] = { step: i, t0: start + k * NDT }; end = Math.max(end, start + k * NDT + NDUR); });
+      if (ph.cables) ph.cables.map(c => 'c_' + c).forEach((n, k) => {
+        if (!P[n]) throw 'no cable ' + n; EV[n] = { step: i, t0: start + k * CDT }; end = Math.max(end, start + k * CDT + CGROW); });
+      if (ph.move) { const [g, to, d] = ph.move; (GK[g] = GK[g] || []).push({ g0: T + start, g1: T + start + d, to }); end = Math.max(end, start + d); }
+      if (ph.flip !== undefined) { WK.push({ g0: T + start, g1: T + start + FLIP, to: ph.flip, piv: ph.pivot || s.pivot || WPIV0 }); end = start + FLIP; }
+      if (ph.wiggle) { const [name, axis, amp] = ph.wiggle; WIGS.push({ name, g0: T + start, axis, amp }); end = start + WIG; }
+      if (ph.wait) end = start + ph.wait;
+      if (ph.mark) s.view2At = start;
+      t = Math.max(t, end);
+    }
+    s.dur = Math.max(4.0, t + HOLD, (s.detail || '').length / 18);          // time to read the caption too
+    T += s.dur;
+  });
+  TOTAL = T;
+  // every key starts from where the one before it left the assembly
+  for (const g in GK) { let v = G0[g] || [0, 0, 0]; for (const k of GK[g]) { k.from = v; v = k.to; } }
+  { let a = 0; for (const k of WK) { k.from = a; a = k.to; } }
+  // every part, screw, nut and cable must go in somewhere
+  const missing = Object.keys(P).filter(n => !EV[n] && P[n].m.kind !== 'tool' && P[n].m.group !== 'eyes');
+  if (missing.length) throw 'not in any step: ' + missing.join(' ');
+}
+const stepOf = T => { let i = STEPS.findIndex(s => T < s.t0 + s.dur); return i < 0 ? STEPS.length - 1 : i; };
+function keyed(keys, T, v0, lerp) {
+  let v = v0;
+  for (const k of keys || []) { if (T < k.g0) break; v = lerp(k.from, k.to, k.g1 > k.g0 ? ease((T - k.g0) / (k.g1 - k.g0)) : 1); }
+  return v;
+}
+function groupOff(g, T) {
+  let v = keyed(GK[g], T, G0[g] || [0, 0, 0], V.lerp);
+  return PARENT[g] ? V.add(v, groupOff(PARENT[g], T)) : v;
+}
+const topGroup = g => PARENT[g] ? topGroup(PARENT[g]) : g;
+function groupVis(g, i, u) {
+  const hid = k => k >= 0 && (STEPS[k].hide || []).includes(topGroup(g));
+  const now = hid(i) ? 0 : 1, prev = i > 0 && hid(i - 1) ? 0 : 1;
+  return prev + (now - prev) * ease(u / 0.6);
+}
+function seeThrough(name, i, u) {
+  const want = k => { const g = (STEPS[k] || {}).see || {}; return g[name] != null ? g[name] : 1; };
+  return want(i - 1) + (want(i) - want(i - 1)) * ease(u / 0.7);
+}
+const WPIV0 = [0, 78, 120];
+let WPIV = WPIV0;                                                        // the pivot of the flip in force
+function worldAt(T) {
+  let piv = WPIV0; for (const k of WK) { if (T < k.g0) break; piv = k.piv; } WPIV = piv;
+  const a = keyed(WK, T, 0, (x, y, k) => x + (y - x) * k); return a === 0 ? R3.I : R3.axis([0, 1, 0], a); }
+const toWorld = (W, p) => V.add(R3.app(W, V.sub(p, WPIV)), WPIV);
+function viewAt(i, u) {
+  const s = STEPS[i], prev = STEPS[Math.max(0, i - 1)];
+  if (s.intro) { const k = ease(u / s.dur); return { t: s.view.t, az: s.view.az + (s.view2.az - s.view.az) * k, el: s.view.el, d: s.view.d }; }
+  if (s.outro) { const v = s.view; return { t: v.t, az: v.az + 360 * clamp((u - 1.0) / (s.dur - 1.0)), el: v.el, d: v.d }; }
+  const pv = prev.view2 || prev.view;                                  // where the step before left the camera
+  const blend = (a, b, k) => ({ t: V.lerp(a.t, b.t, k), az: a.az + (b.az - a.az) * k, el: a.el + (b.el - a.el) * k, d: a.d + (b.d - a.d) * k });
+  let v = blend(pv, s.view, ease(u / 1.2));
+  if (s.view2 && s.view2At !== undefined) v = blend(v, s.view2, ease((u - s.view2At) / 1.4));
+  return v;
+}
+
+// ---------- this step's labels: its parts', a tag per set of screws (or nuts) going in, its cables' ----------
+function stepLabels(i) {
+  const s = STEPS[i], outL = [], sets = {};
+  for (const name in P) {
+    const e = EV[name], m = P[name].m; if (!e || e.step !== i) continue;
+    if (m.kind === 'part' && e.o.label) outL.push({ at: P[name].centre, group: m.group, text: e.o.label, col: '#2d6cb5', t: e.t0 + 0.5 });
+    if (m.kind === 'glue' && m.label) outL.push({ at: m.label_at, group: m.group, text: m.label, col: '#a86a12', t: e.t0 + GAPP + 0.5 });
+    if (m.kind === 'cable' && m.label) outL.push({ at: m.label_at, group: m.group, text: m.label, col: m.colour === '#1d1d1d' ? '#333' : P[name].col.reduce((a, c) => a + c) > 2.4 ? '#5b6470' : m.colour, t: e.t0 + 0.9 });
+    if (m.kind === 'screw' || m.kind === 'nut') { const key = (m.screw || m.nut) + '|' + m.group; (sets[key] = sets[key] || []).push(name); }
+  }
+  for (const [k, text, col, t] of s.marks || []) {
+    const sc = SCENE.marks[k]; if (!sc && !P[k]) throw 'no mark ' + k;
+    outL.push({ at: sc || P[k].centre, group: sc ? 'tub' : P[k].m.group, text, col, t: t ?? 0.8 });
+  }
+  for (const key in sets) {
+    const list = sets[key].sort((a, b) => EV[a].t0 - EV[b].t0), m0 = P[list[0]].m;
+    // split far-apart screws of the same kind (left / right) into their own tags
+    const groups = [];
+    for (const n of list) { const g = groups.find(g => Math.hypot(...V.sub(P[g[0]].m.pos, P[n].m.pos)) < (s.tagSpan || 130)); g ? g.push(n) : groups.push([n]); }
+    for (const g of groups) {
+      const c = V.mul(g.reduce((a, n) => V.add(a, P[n].m.pos), [0, 0, 0]), 1 / g.length);
+      const near = g.reduce((a, n) => Math.hypot(...V.sub(P[n].m.pos, c)) < Math.hypot(...V.sub(P[a].m.pos, c)) - 0.01 ? n : a);
+      const what = m0.kind === 'nut' ? m0.nut + (g.length > 1 ? 's' : '') : m0.screw;
+      outL.push({ at: P[near].m.pos, group: m0.group, text: `${g.length} × ${what}`, col: '#39404a', t: Math.min(...g.map(n => EV[n].t0)) + 0.3 });
+    }
+  }
+  return outL;
+}
+const LABELS = [];
+
+// ---------- one frame ----------
+const Z3 = [0, 0, 0];
+function render(T) {
+  T = clamp(T, 0, TOTAL - 1e-6);
+  const i = stepOf(T), s = STEPS[i], u = T - s.t0;
+  const nsteps = STEPS.length - 2;
+  document.getElementById('num').textContent = s.intro ? 'LittleBot v5 “Rover”' : s.outro ? 'Finished' : `Step ${i} of ${nsteps}`;
+  document.getElementById('title').textContent = s.title;
+  document.getElementById('detail').textContent = s.detail;
+  document.getElementById('cap').style.opacity = s.outro ? 1 : clamp(Math.min(u / 0.35, (s.dur - u) / 0.25));
+  document.getElementById('bar').style.width = (100 * T / TOTAL).toFixed(2) + '%';
+  const v = viewAt(i, u), az = v.az * Math.PI / 180, el = v.el * Math.PI / 180;
+  const eye = V.add(v.t, V.mul([Math.sin(az) * Math.cos(el), -Math.cos(az) * Math.cos(el), Math.sin(el)], v.d));
+  const SHIFT = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0.30,0.06,0,1];   // the subject beside the caption, not behind it
+  const VP = mmul(SHIFT, mmul(perspective(32 * Math.PI / 180, 1280 / 720, 20, 8000), lookAt(eye, v.t, [0, 0, 1])));
+  gl.viewport(0, 0, 1280, 720); gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+  gl.enable(gl.DEPTH_TEST); gl.disable(gl.CULL_FACE);
+  gl.uniformMatrix4fv(uVP, false, VP); gl.uniform3fv(uEye, eye);
+  const show = s.intro || s.outro, W = show ? (WPIV = WPIV0, R3.I) : worldAt(T);
+  gl.uniformMatrix3fv(uW, false, R3.col(W)); gl.uniform3fv(uWP, WPIV);
+  drawLabels(show ? [] : (LABELS[i] = LABELS[i] || stepLabels(i)), s, u, VP, T, W);
+  const draws = [];
+  const push = (p, o) => draws.push({ p, R: o.R || R3.I, piv: o.piv || Z3, off: o.off || Z3, alpha: o.alpha ?? 1, hi: o.hi || 0, grow: o.grow ?? 1,
+                                       dist: Math.hypot(...V.sub(toWorld(W, V.add(p.centre, o.off || Z3)), eye)) });
+  for (const name in P) {
+    const p = P[name], m = p.m;
+    if (m.kind === 'tool') continue;
+    if (show) {
+      if (m.group === 'charger' || m.kind === 'glue') continue;
+      if (m.group === 'eyes' && s.intro && u > s.dur - 0.8) continue;
+      p.emit = m.group === 'eyes' ? 1 : 0;
+      push(p, { alpha: s.intro ? clamp((s.dur - u) / 0.6) : 1 });
+      continue;
+    }
+    p.emit = 0;
+    const e = EV[name]; if (!e || e.step > i || m.group === 'eyes') continue;
+    let off = groupOff(m.group, T), alpha = groupVis(m.group, i, u), hi = 0, grow = 1, R = R3.I, piv = Z3;
+    if (alpha <= 0.003) continue;
+    const w = e.step === i ? u - e.t0 : 1e9;
+    if (w < 0) continue;
+    if (m.kind === 'part') {
+      if (e.step === i) {
+        alpha *= clamp(w / PFADE);
+        if (e.from) off = V.add(off, V.mul(e.from, 1 - ease((w - PFADE) / PMOVE)));
+        if (e.o.rot) { const k = 1 - ease((w - PFADE - (e.from ? PMOVE : 0.3)) / PROT); R = R3.axis(e.o.rot.axis, e.o.rot.angle * k); piv = e.o.rot.pivot; }
+        hi = clamp(Math.min(w / 0.3, (PFADE + PMOVE + (e.o.rot ? PROT : 0) + 0.8 - w) / 0.6));
+      }
+      for (const wg of WIGS) if (wg.name === name && T > wg.g0 && T < wg.g0 + WIG) {
+        off = V.add(off, V.mul(wg.axis, wg.amp * Math.sin(2 * Math.PI * 2 * (T - wg.g0) / WIG))); hi = 1; }
+      const st = seeThrough(name, i, u); alpha *= st;
+    } else if (m.kind === 'screw') {
+      const L = m.l + 3, d = m.dir;
+      const k = clamp((w - SAPP) / SDRV), travel = L * (1 - k), spin = TURNS * 360 * k;
+      if (e.step === i) { alpha *= clamp(w / 0.2); hi = clamp(Math.min(w / 0.2, (SAPP + SDRV + 0.6 - w) / 0.4)); }
+      off = V.add(off, V.mul(d, -travel)); R = R3.axis(d, spin); piv = m.pos;
+      if (e.step === i && w < SAPP + SDRV + SRET) drawTool(draws, m, w, travel, spin, groupOff(m.group, T), alpha, W, eye);
+    } else if (m.kind === 'nut') {
+      if (e.step === i) { alpha *= clamp(w / 0.25); off = V.add(off, V.mul(m.dir, -35 * (1 - ease(w / NDUR)))); hi = clamp(Math.min(w / 0.2, (NDUR + 0.6 - w) / 0.4)); }
+    } else if (m.kind === 'glue') {
+      if (e.step === i) {
+        const k = clamp((w - GAPP) / GGROW); grow = k; hi = clamp(Math.min(w / 0.3, (GAPP + GGROW + 0.8 - w) / 0.6));
+        if (w < GAPP + GGROW + GRET) drawGlue(draws, m, w, k, groupOff(m.group, T), alpha, W, eye);
+        if (grow <= 0) continue;
+      }
+    } else if (m.kind === 'cable') {
+      if (e.step === i) { grow = ease(w / CGROW); hi = clamp(Math.min(w / 0.3, (CGROW + 0.8 - w) / 0.6)); if (grow <= 0) continue; }
+    }
+    if (alpha <= 0.003) continue;
+    push(p, { R, piv, off, alpha, hi, grow });
+  }
+  const opaque = draws.filter(d => d.alpha > 0.995), clear = draws.filter(d => d.alpha <= 0.995).sort((a, b) => b.dist - a.dist);
+  gl.disable(gl.BLEND); gl.depthMask(true);
+  for (const d of opaque) drawOne(d);
+  gl.enable(gl.BLEND); gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE_MINUS_SRC_ALPHA); gl.depthMask(false);
+  for (const d of clear) drawOne(d);
+  gl.depthMask(true);
+  gl.finish();
+  return { step: i, total: TOTAL };
+}
+// the tool on a screw's head, turning it: a hex driver (button heads), a Phillips driver (servo, horn screws), or an
+// L-key where a driver can't reach (its long leg towards the screw's "lever" side)
+function drawTool(draws, m, w, travel, spin, goff, alpha, W, eye) {
+  const p = P['tool_' + m.tool]; if (!p) return;
+  const d = m.dir, A = R3.toZ(d);
+  let base = 0;
+  if (m.lever) { const ex = R3.app(A, [1, 0, 0]), ey = R3.app(A, [0, 1, 0]); base = Math.atan2(V.dot(ey, m.lever), V.dot(ex, m.lever)) * 180 / Math.PI; }
+  const back = clamp((w - SAPP - SDRV) / SRET), a = alpha * clamp(w / 0.2) * (1 - back);
+  if (a <= 0.003) return;
+  // an L-key can't go round where it's used (under the roof, under the head): it swings back and forth
+  const turn = m.tool === 'lkey' ? 20 * Math.sin(2 * Math.PI * 3 * clamp((w - SAPP) / SDRV)) : spin;
+  const R = R3.mul(A, R3.axis([0, 0, 1], base + turn));
+  const off = V.add(V.add(m.pos, goff), V.mul(d, -(travel + m.head_h + 0.2 + 30 * ease(back))));
+  draws.push({ p, R, piv: Z3, off, alpha: a, hi: 0, grow: 1, dist: Math.hypot(...V.sub(toWorld(W, off), eye)) });
+}
+// the epoxy syringe: its nozzle on the bead's tip as the bead grows, tilted a little; in along the pocket's axis, back out
+function drawGlue(draws, m, w, k, goff, alpha, W, eye) {
+  const p = P.tool_glue; if (!p) return;
+  const f = m.frac, r = m.route; let j = 1; while (j < f.length - 1 && f[j] < k) j++;
+  const tip = V.lerp(r[j - 1], r[j], f[j] > f[j - 1] ? clamp((k - f[j - 1]) / (f[j] - f[j - 1])) : 1);
+  const back = clamp((w - GAPP - GGROW) / GRET), come = 1 - clamp(w / GAPP), a = alpha * clamp(w / 0.25) * (1 - back);
+  if (a <= 0.003) return;
+  // held from above where it can be (the barrel leans up, off the pocket), else leaning sideways in the picture
+  const d = m.dir, up = V.sub([0, 0, 1], V.mul(d, d[2])), tw = toWorld(W, V.add(tip, goff));
+  const ax = Math.hypot(...up) > 0.3 ? V.norm(V.sub(d, V.mul(V.norm(up), 1.5))) : V.norm(V.add(d, V.mul(V.norm(V.cross(d, V.sub(eye, tw))), 0.6)));
+  const off = V.add(V.add(tip, goff), V.mul(ax, -(1.0 + 35 * ease(Math.max(come, back)))));
+  draws.push({ p, R: R3.toZ(ax), piv: Z3, off, alpha: a, hi: 0, grow: 1, dist: Math.hypot(...V.sub(toWorld(W, off), eye)) });
+}
+// labels: a leader from the point to a tag beside it. Tags without their own offset go out sideways and are spread
+// so they don't overlap; they keep clear of the caption.
+function drawLabels(list, s, u, VP, T, W) {
+  const items = [];
+  for (const L of list) {
+    const a = clamp(Math.min((u - L.t) / 0.4, (s.dur - 0.25 - u) / 0.25)); if (a <= 0) continue;
+    const w = toWorld(W, V.add(L.at, groupOff(L.group, T))), c = [0, 1, 2, 3].map(r => VP[r] * w[0] + VP[4 + r] * w[1] + VP[8 + r] * w[2] + VP[12 + r]);
+    if (c[3] <= 0) continue;
+    const x = (c[0] / c[3] + 1) * 640, y = (1 - c[1] / c[3]) * 360, half = (L.text.length * 9.6 + 28) / 2;
+    const it = { L, a, x, y, half, side: x < 830 ? -1 : 1 };
+    it.lx = x + it.side * (half + 70); it.ly = y - 40;
+    items.push(it);
+  }
+  for (const side of [-1, 1]) {
+    const col = items.filter(it => it.side === side).sort((p, q) => p.ly - q.ly);
+    for (let k = 1; k < col.length; k++) col[k].ly = Math.max(col[k].ly, col[k - 1].ly + 36);
+    const lim = side < 0 ? 520 : 690;
+    for (let k = col.length - 1; k >= 0; k--) { col[k].ly = Math.min(col[k].ly, k === col.length - 1 ? lim : col[k + 1].ly - 36); col[k].ly = Math.max(col[k].ly, 70); }
+  }
+  let lines = '', labs = '';
+  for (const it of items) {
+    it.lx = clamp(it.lx, it.half + 8, 1272 - it.half);
+    if (it.ly > 520 && it.lx - it.half < 565) it.lx = 565 + it.half;      // not over the caption
+    const col = it.L.col;
+    lines += `<g opacity="${it.a}"><line x1="${it.x}" y1="${it.y}" x2="${it.lx}" y2="${it.ly - 2}" stroke="${col}" stroke-width="2.5"/><circle cx="${it.x}" cy="${it.y}" r="6" fill="none" stroke="${col}" stroke-width="3"/></g>`;
+    labs += `<div class="lab" style="left:${it.lx}px;top:${it.ly}px;border-color:${col};color:${col};opacity:${it.a}">${it.L.text}</div>`;
+  }
+  document.getElementById('lines').innerHTML = lines; document.getElementById('labs').innerHTML = labs;
+}
+function drawOne(d) {
+  gl.bindVertexArray(d.p.vao);
+  gl.uniformMatrix3fv(uR, false, R3.col(d.R)); gl.uniform3fv(uPiv, d.piv); gl.uniform3fv(uOff, d.off);
+  gl.uniform3fv(uCol, d.p.col); gl.uniform1f(uGrow, d.grow); gl.uniform1f(uAlpha, d.alpha); gl.uniform1f(uHi, d.hi); gl.uniform1f(uEmit, d.p.emit || 0);
+  gl.drawArrays(gl.TRIANGLES, 0, d.p.count);
+}
+window.ready = loadAll().then(() => ({ total: TOTAL, steps: STEPS.length }));
+window.render = render;
+window.timeline = () => STEPS.map((s, i) => ({ i, id: s.id || (s.intro ? 'intro' : 'outro'), t0: +s.t0.toFixed(2), dur: +s.dur.toFixed(2) }));
+</script>
+</body></html>
