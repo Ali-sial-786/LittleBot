@@ -104,6 +104,17 @@ bb_pin = [bb_c[0] - 30, bb_c[1] + 14, deck_top + bb[2]];
 aa_lead = [aa[0] / 2 - 4, aa_y0 + aa[1] - 6, tray_z + 2 + aa[2]];
 sw_back = let (p = js_pt(sw_at, 1), n = js_n(sw_at, 1)) [p[0] - (sw_len + 2) * n[0], p[1] - (sw_len + 2) * n[1], sw_z];
 lead_gap = [-52, 88];                                                    // where leads come up past the deck, beside the Pi's mount
+// The body's cables are plugged in with the body held over the tub (H_body up), and the head servo onto its extension
+// with the cap held over the body (H_cap up): there's no reaching the Pi or the deck through the top once the body is on.
+// Each such cable has a "_h" version, its first n points (the body's or the cap's end) raised; the video shows it while
+// the part hovers, then the cable in place once the part is down.
+H_body = 150; H_cap = 60;
+function hov(r, n, h) = [for (i = [0:len(r) - 1]) i < n ? r[i] + [0, 0, h] : r[i]];
+spk_route = [[spk_w/2 + 1.6, spk3_c[1] + spk_d/2, spk3_c[2] + spk_h/2 - 4], [62, 30, 128], [84, 90, 108], [84, 128, 86], [76, 150, 50], usb_end5(47, 4) + [4, 0, 0], usb_end5(47, 4)];
+mic_route = [rsl_plug_end, rsl_plug_end + [2, 8, -6], [70, 52, 140], [90, 100, 112], [88, 134, 84], [80, 156, 58], usb_end5(47, 12) + [4, 0, 0], usb_end5(47, 12)];
+function arm_route(s, k) = [as_exit(s), [s * 56, 104, 184], [s * 30, 104, 130], [perf_ch(k)[0] + s * 2, 90, 104], perf_ch(k) + [0, 0, 26], perf_ch(k) + [0, 0, 14]];
+ext_top = [16, 66, 266];                                                  // the head servo's extension: its end, up out of the body's top
+hs_route = [hs_exit, [28, 62, 196], [perf_ch(0)[0] + 4, 92, 130], [perf_ch(0)[0] + 2, 90, 104], perf_ch(0) + [0, 0, 26], perf_ch(0) + [0, 0, 14]];
 function hw5_cables() = let (hdmi0 = stk5(25.8, -0.5, stk_pi_w1 + 1.7), pv = perf_c + [-perf[0] / 2 + 6, -perf[1] / 2 + 8]) [
     // the base
     ["charging", "charge", "wires", "#2b2b2b", 4, "UPS USB-C (POWER) → charging socket",
@@ -117,19 +128,20 @@ function hw5_cables() = let (hdmi0 = stk5(25.8, -0.5, stk_pi_w1 + 1.7), pv = per
         [mot_tail(1) + [0, 4, 0], [10, 82, 52], [-lead_gap[0], 82, 54], [-lead_gap[0], lead_gap[1], 60], [-lead_gap[0], lead_gap[1], deck_top + 24], bb_pin + [4, 4, 14], bb_pin + [4, 0, 0]], []],
     ["enc_r", "deck_in", "wires", "#5dade2", 2.6, "",
         [mot_tail(-1) + [0, 4, 0], [-4, 84, 50], [-lead_gap[0] - 3, 84, 52], [-lead_gap[0] - 3, lead_gap[1] - 2, 60], [-lead_gap[0] - 3, lead_gap[1] - 2, deck_top + 22], bb_pin + [-4, 4, 12], bb_pin + [-4, 0, 0]], []],
-    ["battery", "drawer", "wires", "#c0392b", 3, "6×AA → fuse → drive switch",
-        [aa_lead, aa_lead + [0, 0, 6], [aa[0] / 2 + 8, 30, tray_z + 26], [sw_back[0] - 4, sw_back[1] + 14, sw_z + 8], sw_back + [0, 0, 4], sw_back], []],
-    ["switched", "drawer", "wires", "#1d1d1d", 3, "switch → deck (driver, servo power)",
+    ["battery", "switch", "wires", "#c0392b", 3, "lead with a 5 A fuse → the drawer's bay",
+        [sw_back, sw_back + [0, 0, 4], [sw_back[0] - 4, sw_back[1] + 14, sw_z + 8], [aa[0] / 2 + 8, 30, tray_z + 26], aa_lead + [0, 0, 12], aa_lead + [0, 0, 6]],
+        [[aa_lead + [-3, -2.5, 0], aa_lead + [3, 2.5, 6]]]],
+    ["switched", "deck_in", "wires", "#1d1d1d", 3, "switch → deck (driver, servo power)",
         [sw_back + [0, 0, -4], sw_back + [-6, 6, -6], [40, 6, 52], [6, -7, 58], [6, -7, deck_top + 12], [pv[0], pv[1] - 4, deck_top + 14], [pv[0], pv[1], deck_top + 3.2]], []],
     // the body's: speaker and ReSpeaker into the Pi's USB ports, the arm servos onto the servo power board
-    ["speaker", "cables_body", "wires", "#16a085", 3.5, "speaker → Pi USB",
-        [[spk_w/2 + 1.6, spk3_c[1] + spk_d/2, spk3_c[2] + spk_h/2 - 4], [62, 30, 128], [84, 90, 108], [84, 128, 86], [76, 150, 50], usb_end5(47, 4) + [4, 0, 0], usb_end5(47, 4)], [usb_box5(47, 4)]],
-    ["mic", "cables_body", "wires", "#e67e22", 3.5, "ReSpeaker USB-C → Pi USB",
-        [rsl_plug_end, rsl_plug_end + [2, 8, -6], [70, 52, 140], [90, 100, 112], [88, 134, 84], [80, 156, 58], usb_end5(47, 12) + [4, 0, 0], usb_end5(47, 12)], [usb_box5(47, 12)]],
-    ["servo_left", "cables_body", "wires", "#8d6e63", 2.4, "left arm servo → servo power board",
-        [as_exit(1), [56, 104, 184], [30, 104, 130], [perf_ch(1)[0] + 2, 90, 104], perf_ch(1) + [0, 0, 26], perf_ch(1) + [0, 0, 14]], [servo_plug5(1)]],
-    ["servo_right", "cables_body", "wires", "#8d6e63", 2.4, "right arm servo → servo power board",
-        [as_exit(-1), [-56, 104, 184], [-30, 104, 130], [perf_ch(2)[0] - 2, 90, 104], perf_ch(2) + [0, 0, 26], perf_ch(2) + [0, 0, 14]], [servo_plug5(2)]],
+    ["speaker_h", "body_on", "wires", "#16a085", 3.5, "speaker → Pi USB", hov(spk_route, 3, H_body), [usb_box5(47, 4)]],
+    ["mic_h", "body_on", "wires", "#e67e22", 3.5, "ReSpeaker USB-C → Pi USB", hov(mic_route, 4, H_body), [usb_box5(47, 12)]],
+    ["servo_left_h", "body_on", "wires", "#8d6e63", 2.4, "left arm servo → servo power board", hov(arm_route(1, 1), 3, H_body), [servo_plug5(1)]],
+    ["servo_right_h", "body_on", "wires", "#8d6e63", 2.4, "right arm servo → servo power board", hov(arm_route(-1, 2), 3, H_body), [servo_plug5(2)]],
+    ["speaker", "body_on", "wires", "#16a085", 3.5, "", spk_route, [usb_box5(47, 4)]],
+    ["mic", "body_on", "wires", "#e67e22", 3.5, "", mic_route, [usb_box5(47, 12)]],
+    ["servo_left", "body_on", "wires", "#8d6e63", 2.4, "", arm_route(1, 1), [servo_plug5(1)]],
+    ["servo_right", "body_on", "wires", "#8d6e63", 2.4, "", arm_route(-1, 2), [servo_plug5(2)]],
     // up the neck (they wait in the neck's bore for the head)
     ["hdmi", "cables_up", "wires", "#1d1d1d", 5, "HDMI: Pi → head",
         [hdmi0 + [0, 0, 20], hdmi0 + [0, 0, 40], [-12, 118, 160], nk(nko("hdmi"), 225), nk(nko("hdmi"), join_z)], [[hdmi0 - [5.5, 3.5, 0], hdmi0 + [5.5, 3.5, 20]]]],
@@ -137,9 +149,14 @@ function hw5_cables() = let (hdmi0 = stk5(25.8, -0.5, stk_pi_w1 + 1.7), pv = per
         [usb_end5(29.1, 4), usb_end5(29.1, 4) + [12, 0, 0], [80, 150, 96], [36, 110, 170], nk(nko("usbc"), 225), nk(nko("usbc"), join_z)], [usb_box5(29.1, 4)]],
     ["camera", "cables_up", "wires", "#7d3c98", 3.5, "camera: Pi USB → head",
         [usb_end5(29.1, 12), usb_end5(29.1, 12) + [14, 0, 0], [84, 156, 98], [40, 112, 172], nk(nko("camera"), 225), nk(nko("camera"), join_z)], [usb_box5(29.1, 12)]],
-    // the head servo's lead: down to the servo power board as the cap goes in
-    ["servo_head", "cap_on", "wires", "#8d6e63", 2.4, "head servo → servo power board",
-        [hs_exit, [28, 62, 196], [perf_ch(0)[0] + 4, 92, 130], [perf_ch(0)[0] + 2, 90, 104], perf_ch(0) + [0, 0, 26], perf_ch(0) + [0, 0, 14]], [servo_plug5(0)]],
+    // the head servo: an extension from the servo power board, its end up out of the body's top (it goes up with the
+    // cables above); the servo's own lead onto it with the cap held over the body
+    ["servo_ext", "cables_up", "wires", "#a1887f", 2.4, "head servo's extension (3 jumpers)",
+        [perf_ch(0) + [0, 0, 14], perf_ch(0) + [0, 0, 26], [perf_ch(0)[0] + 4, 90, 104], [10, 84, 170], [14, 70, 236], ext_top],
+        [servo_plug5(0), [ext_top - [1.3, 4, 14], ext_top]]],
+    ["servo_head_h", "cap_on", "wires", "#8d6e63", 2.4, "head servo → its extension",
+        [hs_exit + [0, 0, H_cap], hs_exit + [-2, 8, H_cap + 4], ext_top + [0, 0, 14], ext_top + [0, 0, 1]], []],
+    ["servo_head", "cap_on", "wires", "#8d6e63", 2.4, "", hs_route, [servo_plug5(0)]],
     // in the head (v4's)
     ["hdmi_head", "plugs", "head", "#1d1d1d", 5, "HDMI cable's plug → coupler",
         [nk(nko("hdmi"), join_z), nk(nko("hdmi"), join_z + 8), [16, 76, cpl_c[2]], [cpl_c[0] + hdmi_cpl[0]/2 + hdmi_plug[0] + 4, cpl_c[1], cpl_c[2]],

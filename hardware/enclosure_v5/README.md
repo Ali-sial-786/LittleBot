@@ -53,7 +53,7 @@ The motors' tails rest in 2 saddles with zip-tie slots. The Pi's fan blows down 
 | `LittleBot_v5_test_A1.3mf`, `LittleBot_v5_test_P2S.3mf` | two short test pieces, a plate each: the body's first 22 mm (white) and a corner of the tub (dark). Print them before the long prints. |
 | `LittleBot_v5_plain.3mf`, `LittleBot_v5_test_plain.3mf` | the same plates with none of our printer, process or filament settings inside: Bambu Studio keeps whatever is selected in it. Only the per-part settings come with them (wall loops, brims, the mic holder's supports). Use these if a printer-specific file won't send. |
 | `LittleBot_v5_assembled.3mf` | the whole robot assembled and coloured, to look at (not to print) |
-| `LittleBot_v5_assembly.mp4` | **the assembly video** (5½ minutes): every part, screw, nut and cable going in, in the order below, each screw turned in by its tool with its size on a tag |
+| `LittleBot_v5_assembly.mp4` | **the assembly video** (6 minutes): every part, screw, nut and cable going in, in the order below (the order there is room for each thing), each screw turned in by its tool with its size on a tag |
 | `assembly_video/` | re-makes the video (`OPENSCAD=... ./make_video.sh`). The screws, nuts, cable routes and part positions come from the model (`video5.scad`). |
 | `stl/*.stl` | each new part on its own, in its print orientation |
 | `plates_v5.png` | top view of the 5 plates |
@@ -120,31 +120,34 @@ In total for the new parts: 22 × M3 × 12, 12 × M3 × 10, 12 × M3 × 8, 5 × 
 
 ## Assembly order
 
-`LittleBot_v5_assembly.mp4` shows every step below.
+`LittleBot_v5_assembly.mp4` shows every step below. The order is the order there's room for each thing: once the body is on, the only way in is the 84 mm hole in its top, and the Pi and the deck are 160 mm below it. So every cable from the Pi and the deck is plugged in before the body goes on, and the switch is wired before the deck covers it.
 
-1. **Wheel pods, at the bench (×2):**
+1. **Glue first** (it cures while you build): the trimmed horn into the pinion, and a horn into each arm, as v4.
+2. **Wheel pods, at the bench (×2):**
    - Push the motor's boss through the pod's plate from the inside, its 2 threaded holes level.
    - Fit 2 × M3 × 8 from the wheel's side.
    - Push the coupler onto the shaft and tighten its grub screw on the shaft's flat. Fit the wheel and its centre screw.
-2. **Tub:**
-   - Casters: from below, into their recesses; nuts on top.
-   - Pods: lower each in, wheel through the floor, and fit 4 × M3 × 12. Zip-tie each motor's tail to its saddle.
+3. **Tub:**
+   - Casters: turn the tub over; each caster into its recess with its 2 screws. Turn it back and fit their nuts while the floor is bare (the rear ones end up under the Pi).
+   - Pods: lower each in, wheel through the floor, and fit 4 × M3 × 12. Zip-tie each motor's tail to its saddle now: the deck covers them.
    - Pi + UPS: stand its plate in the groove and fit the keeper (2 × M3 × 20).
    - Charging cable: plug in the UPS's USB-C marked POWER; socket zip-tied into the holder at the back's left corner.
-3. **Deck, at the bench:** breadboard with the RP2040 (it sticks down), motor driver on its 4 posts (4 × M3 × 8), servo power board and 5 V converter (zip ties). Wire them. Then onto the tub's 4 posts (4 × M3 × 8), and connect the motors and encoders.
-4. **Drawer and switch:** snap the switch into its hole in the tub's front wall, from outside. Screw or stick the AA holder into the tray. Wire holder → fuse → switch, with enough slack for the drawer to slide out. Slide the drawer in and fit 2 × M3 × 10.
-5. **Body, upside down on the bench:** drop a nut into each of the 8 slots in the tongue's edge (a dab of tape keeps them in). Arm servos, speaker and its keeper, mic holder with its key and the ReSpeaker: as v4.
-6. **Body onto the tub:** push the slider in through the back first, fork inwards. Lower the body: its tongue goes inside the rim, the slider's fork over the UPS switch's knob. Fit 8 × M3 × 10 through the rim. Then plug the speaker and the ReSpeaker into the Pi's USB ports, and the arm servos onto the servo power board.
-7. **Neck, at the bench:**
+4. **Drive switch, wired now:** snap it into its hole in the front wall, from outside. One tab: a lead with the 5 A fuse, to the drawer's bay (the battery plugs onto it last). The other: a lead long enough to reach the deck. The deck covers the tabs.
+5. **Deck, at the bench:** breadboard with the RP2040 (it sticks down), motor driver on its 4 posts (4 × M3 × 8), servo power board and 5 V converter (zip ties). Wire them. Then onto the tub's 4 posts (4 × M3 × 8), and connect the motors, the encoders and the switch's lead.
+6. **The head's cables, now, while you can reach the Pi:** the HDMI (micro end in the Pi), the screen's USB-C and the camera's USB (Pi's USB ports), and a 3-wire jumper extension onto the servo power board for the head servo. Leave them standing up.
+7. **Body, upside down on the bench:** its whole bottom is open, so everything inside goes in from there. Drop a nut into each of the 8 slots in the tongue's edge (a dab of tape keeps them in). The speaker slides forwards between its ribs onto their ledges; its keeper behind it. The mic holder with its key and the ReSpeaker (2 × M2 × 8), its USB-C cable plugged in. Turn it back up; arm servos in from outside (2 servo screws each), a jumper extension on each lead.
+8. **Body onto the tub:** push the slider in through the back, fork first. Hold the body over the tub (or prop it on something) and plug in its cables: the speaker and the ReSpeaker into the Pi's USB ports, the arm servos onto the servo power board. Lower it, the cables from step 6 up through its top: its tongue goes inside the rim, the slider's fork over the UPS switch's knob. Fit 8 × M3 × 10 through the rim.
+9. **Neck, at the bench:**
    - Hub up through the cap from below; ring gear onto the hub's flange (3 × M3 × 12 from below).
    - Slide 3 nuts into the slots in the hub's side. Black neck over the hub (its rib in the hub's groove): 3 × M3 × 12.
-   - Glue the trimmed horn into the pinion, as v4. Servo frame with the head servo and pinion onto the cap's 2 pillars; mesh the gears with the servo centred.
-8. **Cap onto the body:** the HDMI, the screen's USB-C and the camera's USB up out of the body's top, then through the neck. Lower the cap in and fit 8 × M3 × 12 straight down into the collar's holes. Stop when each is snug: they thread into plastic, and overtightening strips it. The head servo onto the servo power board.
+   - Servo frame with the head servo and the pinion (glue cured) onto the cap's 2 pillars; mesh the gears with the servo centred.
+10. **Cap onto the body:** hold the cap just over the body's top, the head servo's lead onto its extension, the HDMI, USB-C and camera cables up through the neck. Lower the cap in and fit 8 × M3 × 12 straight down into the collar's holes. Stop when each is snug: they thread into plastic, and overtightening strips it.
 
    ![the cap's screws](cap_screws.png)
 
-9. **Head:** onto the black neck, 3 × M3 × 20 down through its floor. The rest of the head as v4, without the AA box.
-10. **Arms:** as v4.
+11. **Head:** onto the black neck, 3 × M3 × 20 down through its floor. The rest of the head as v4, without the AA box.
+12. **Arms:** as v4.
+13. **Batteries, last:** 6 AA NiMH cells into the holder, the holder into the drawer (screws or tape), its lead onto the fused lead in the bay. Slide the drawer in and fit 2 × M3 × 10.
 
 ## Measure before printing
 

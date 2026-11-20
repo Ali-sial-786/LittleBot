@@ -105,118 +105,130 @@ const out = (s, k) => V.mul(SCENE.sh[s < 0 ? 0 : 1][1], k);          // along a 
 // the head servo below the cap, the arms out beside their shoulders
 let G0 = {};
 const PARENT = { hservo: 'neck' };
-const SEE_BODY = { body: 0.16 };
 let STEPS = [];
+// The order is the order there's room for each thing: the horns' glue first (it cures meanwhile); in the tub, the switch
+// is wired before the deck covers its tabs, and every cable from the Pi and the deck is plugged in before the body goes
+// on (the body's own cables with the body held over the tub; the head servo onto an extension with the cap held over
+// the body); the speaker and the mic go in through the body's open bottom; the batteries go in last.
 function defineSteps() {
   G0 = { stack: [0, 0, 90], tray: [0, -130, 0], hservo: [0, 0, -85], arm_a: out(-1, 150), arm_b: out(1, 150) };
   const hinge = [0, SCENE.tab_hinge[0], SCENE.tab_hinge[1]];
   const BASE = ['tub', 'podL', 'podR', 'stack', 'deck', 'tray', 'wires'];
+  const LATER = ['neck', 'arm_a', 'arm_b'];                    // glued at the start, they wait off-screen until their steps
+  const UPSIDE = { t: [0, 30, 180], az: 170, el: 52, d: 620 };   // into the body's open bottom, the body upside down (world coordinates)
+  const BODY_CABLES = ['speaker', 'mic', 'servo_left', 'servo_right'];
   STEPS = [
   { title: 'The finished robot', detail: 'Here is what we are building: every part, screw, nut and cable, in the order they go in.', fixed: 6.0, intro: true,
     view: { ...ROBOT }, view2: { ...ROBOT, az: 35 } },
+  // ---- glue first: it cures while you build
+  { id: 'pinion_glue', title: 'First: glue the horn into the pinion', detail: 'Glue first, so it cures while you build. Sand the horn’s plate. A thin bead of 2-part epoxy along the pinion’s pocket, into its small holes but not the centre hole. Press the horn in. (Or 2 × M1.4 × 5 self-tapping screws.)',
+    phases: [{ parts: [['pinion', [0, 0, -40]]] }, { glue: true }, { parts: [['horn_head', [0, 0, -45], { label: 'servo horn' }]] }],
+    view: { t: V.add(SCENE.pinion_horn, G0.hservo), az: -12, el: -34, d: 230 } },
+  { id: 'arm_glue', title: 'And the horns into the arms', detail: 'Both arms the same: sand the horn’s plate, a thin bead of epoxy along the arm’s pocket and into its small holes (not the centre hole), press the horn in. Leave all three to cure. (Or 2 × M1.4 × 5 self-tapping screws each.)',
+    hide: ['neck'], phases: [{ parts: [['arm_a', null, { label: 'arm' }], ['arm_b', null]], gap: 0 }, { glue: true },
+             { parts: [['horn_r', out(-1, -30), { label: 'servo horn' }], ['horn_l', out(1, -30)]] }],
+    view: { t: V.add(SCENE.arm_pocket[0], out(-1, 150)), az: 75, el: 16, d: 280 } },
   // ---- the base
   { id: 'pod_bench', title: 'Wheel pods, at the bench', detail: 'Both the same. Push the motor’s boss through the pod’s plate from inside, its 2 threaded holes level: 2 × M3 × 8 from the wheel’s side. The coupler onto the shaft, its grub screw on the flat. The wheel on, with its own screw.',
-    phases: [{ parts: [['pod_l', null, { label: 'wheel pod' }], ['pod_r', null]], gap: 0 }, { parts: [['motor_l', [-45, 0, 0], { label: 'gear motor + coupler' }], ['motor_r', [45, 0, 0]]], gap: 0 },
+    hide: LATER, phases: [{ parts: [['pod_l', null, { label: 'wheel pod' }], ['pod_r', null]], gap: 0 }, { parts: [['motor_l', [-45, 0, 0], { label: 'gear motor + coupler' }], ['motor_r', [45, 0, 0]]], gap: 0 },
              { screws: 'M3 × 8' }, { parts: [['wheel_l', [70, 0, 0], { label: '65 mm wheel' }], ['wheel_r', [-70, 0, 0]]], gap: 0 }, { screws: 'wheel’s own screw' }],
     view: { t: [70, 70, 40], az: 72, el: 14, d: 420 } },
-  { id: 'casters', title: 'Ball casters', detail: 'Turn the tub over. Each caster into its square recess, front and back: its own 2 screws (#2-56) up through its base. Turn the tub back and put their nuts on, inside.',
-    hide: ['podL', 'podR'], pivot: [0, 78, 48], tagSpan: 60,
+  { id: 'casters', title: 'Ball casters', detail: 'Turn the tub over. Each caster into its square recess, front and back: its own 2 screws (#2-56) up through its base. Turn the tub back and put their nuts on, inside, while the floor is still bare.',
+    hide: [...LATER, 'podL', 'podR'], pivot: [0, 78, 48], tagSpan: 60,
     phases: [{ parts: [['tub', null, { label: 'tub' }]] }, { flip: 180 }, { parts: [['caster_f', [0, 0, -45], { label: 'ball caster' }], ['caster_r', [0, 0, -45]]], gap: 0.3 },
              { screws: true, dt: 0.9 }, { flip: 0 }, { nuts: true }],
     view: { t: [0, 72, 48], az: -30, el: 36, d: 640 } },
-  { id: 'pods_in', title: 'Wheel pods into the tub', detail: 'Lower each pod in, its wheel down through the slot in the floor: 4 × M3 × 12 through its flanges into the tub’s ridges. Zip-tie each motor’s tail to its saddle.',
-    phases: [{ move: ['podL', [0, 0, 110], 0.001], at: 0 }, { move: ['podR', [0, 0, 110], 0.001], at: 0 }, { move: ['podL', [0, 0, 0], 2.0], at: 0.5 }, { move: ['podR', [0, 0, 0], 2.0], with: true },
+  { id: 'pods_in', title: 'Wheel pods into the tub', detail: 'Lower each pod in, its wheel down through the slot in the floor: 4 × M3 × 12 through its flanges into the tub’s ridges. Zip-tie each motor’s tail to its saddle now: the deck will cover them.',
+    hide: LATER, phases: [{ move: ['podL', [0, 0, 110], 0.001], at: 0 }, { move: ['podR', [0, 0, 110], 0.001], at: 0 }, { move: ['podL', [0, 0, 0], 2.0], at: 0.5 }, { move: ['podR', [0, 0, 0], 2.0], with: true },
              { screws: true, dt: 0.8 }],
     view: { t: [0, 70, 50], az: -28, el: 44, d: 660 } },
-  { id: 'stack', title: 'Pi 5 + UPS', detail: 'The Pi + UPS from v4, as built. Stand its clear plate in the mount’s groove, ports up. v4’s keeper over it: 2 × M3 × 20.',
-    phases: [{ parts: [['pi_ups', null, { label: 'Pi 5 + UPS (from v4)' }]] }, { move: ['stack', [0, 0, 0], 1.8] }, { parts: [['stack_keeper', [0, 0, 50], { label: 'stack keeper (v4)' }]] }, { screws: true }],
+  { id: 'stack', title: 'Pi 5 + UPS', detail: 'The Pi + UPS from v4, as built. Stand its clear plate in the mount’s groove, ports up (over the rear caster’s nuts). v4’s keeper over it: 2 × M3 × 20.',
+    hide: LATER, phases: [{ parts: [['pi_ups', null, { label: 'Pi 5 + UPS (from v4)' }]] }, { move: ['stack', [0, 0, 0], 1.8] }, { parts: [['stack_keeper', [0, 0, 50], { label: 'stack keeper (v4)' }]] }, { screws: true }],
     view: { t: [0, 122, 70], az: 150, el: 30, d: 520 } },
   { id: 'charge', title: 'Charging cable', detail: 'A USB-C extension. Its plug into the UPS’s USB-C (marked POWER, on the blue UPS board), never the Pi’s own. The cable runs to the back’s left corner: zip-tie its socket into the holder there, opening backwards.',
-    marks: [['ups_usbc', 'UPS USB-C (POWER): plug in here', '#2d6cb5', 0.4], ['pi_usbc', 'Pi’s own USB-C: leave it empty', '#c0392b', 1.0]],
+    hide: LATER, marks: [['ups_usbc', 'UPS USB-C (POWER): plug in here', '#2d6cb5', 0.4], ['pi_usbc', 'Pi’s own USB-C: leave it empty', '#c0392b', 1.0]],
     phases: [{ wait: 1.8 }, { cables: ['charging'] }, { parts: [['usbc_socket', [0, 0, 40], { label: 'its socket end' }]] }, { parts: [['zip_tie', [0, 0, 30], { label: 'zip tie' }]] }],
     view: { t: [-35, 140, 70], az: 152, el: 40, d: 430 } },
+  { id: 'switch', title: 'Drive switch, wired now', detail: 'Snap the switch into its hole in the front wall, from outside. Wire it now: the deck will cover its tabs. One tab: a lead with the 5 A fuse, to the drawer’s bay (the battery plugs onto it last). The other: a lead long enough to reach the deck.',
+    hide: LATER, phases: [{ parts: [['switch', [17, -36, 0], { label: 'drive switch' }]] }, { cables: ['battery'] }],
+    view: { t: [45, 0, 45], az: -36, el: 42, d: 460 } },
   { id: 'deck_bench', title: 'Deck, at the bench', detail: 'The breadboard with the RP2040 on it, the motor driver on its 4 posts (4 × M3 × 8), the servo power board and the 5 V converter (zip ties through the slots). Wire them up here, where you can reach everything.',
-    hide: BASE.filter(g => g !== 'deck'), phases: [{ parts: [['deck', null, { label: 'deck' }]] }, { parts: [['breadboard', [0, 0, 40], { label: 'breadboard' }], ['rp2040', [0, 0, 70], { label: 'RP2040' }]], gap: 0.5 },
+    hide: [...LATER, ...BASE.filter(g => g !== 'deck')], phases: [{ parts: [['deck', null, { label: 'deck' }]] }, { parts: [['breadboard', [0, 0, 40], { label: 'breadboard' }], ['rp2040', [0, 0, 70], { label: 'RP2040' }]], gap: 0.5 },
              { parts: [['driver', [0, 0, 40], { label: 'motor driver (MDD3A)' }], ['driver_terms', [0, 0, 40]]], gap: 0 }, { screws: true, dt: 1.0 },
              { parts: [['perfboard', [0, 0, 40], { label: 'servo power board' }]] }, { parts: [['converter', [0, 0, 40], { label: '5 V converter' }]] }],
     view: { t: [0, 45, 75], az: -18, el: 52, d: 500 } },
-  { id: 'deck_in', title: 'Deck onto the tub', detail: 'Onto the tub’s 4 posts: 4 × M3 × 8. Then the motors’ leads to the driver and their encoders’ to the RP2040: they come up beside the Pi’s mount.',
-    phases: [{ move: ['deck', [0, 0, 120], 0.001], at: 0 }, { move: ['deck', [0, 0, 0], 2.0], at: 0.5 }, { screws: true, dt: 1.0 }, { cables: ['motor_l', 'motor_r', 'enc_l', 'enc_r'] }],
+  { id: 'deck_in', title: 'Deck onto the tub', detail: 'Onto the tub’s 4 posts: 4 × M3 × 8. Then the motors’ leads to the driver and their encoders’ to the RP2040 (they come up beside the Pi’s mount), and the switch’s lead to the deck.',
+    hide: LATER, phases: [{ move: ['deck', [0, 0, 120], 0.001], at: 0 }, { move: ['deck', [0, 0, 0], 2.0], at: 0.5 }, { screws: true, dt: 1.0 }, { cables: ['motor_l', 'motor_r', 'enc_l', 'enc_r', 'switched'] }],
     view: { t: [0, 62, 62], az: -32, el: 44, d: 640 } },
-  { id: 'drawer', title: 'Drawer and drive switch', detail: 'Snap the switch into its hole in the front wall, from outside. The 6×AA holder into the drawer, the drawer in: 2 × M3 × 10 through the door’s corners. Leads: holder → 5 A fuse → switch → deck, with slack for the drawer to slide out.',
-    see: { deck: 0.25, breadboard: 0.25, rp2040: 0.25, driver: 0.25, driver_terms: 0.25, perfboard: 0.25, converter: 0.25 },
-    phases: [{ parts: [['switch', [17, -36, 0], { label: 'drive switch' }]] }, { parts: [['tray', null, { label: 'drawer' }], ['aa_holder', [0, 0, 40], { label: '6×AA holder' }], ['aa_cells', [0, 0, 50]]], gap: 0.5 },
-             { move: ['tray', [0, 0, 0], 2.0] }, { screws: true }, { cables: ['battery', 'switched'] }],
-    view: { t: [20, -4, 48], az: -24, el: 34, d: 560 } },
-  // ---- the body, on the bench
-  { id: 'body_nuts', title: 'Body: 8 nuts', detail: 'Turn the body upside down and drop an M3 nut into each of the 8 slots in its tongue’s edge (a dab of tape keeps them in).',
-    hide: BASE, pivot: [0, 78, 150], tagSpan: 400,
-    phases: [{ parts: [['body', null, { label: 'body' }]] }, { flip: 180 }, { nuts: true }, { flip: 0 }],
+  { id: 'cables_up', title: 'Plug in the head’s cables now', detail: 'While you can reach the Pi: the HDMI (its micro end in the Pi), the screen’s USB-C and the camera’s USB (both in the Pi’s USB ports), and a 3-wire jumper extension onto the servo power board for the head servo. Leave them standing up: they go up through the body and the neck.',
+    hide: LATER, phases: [{ cables: ['hdmi', 'usbc', 'camera', 'servo_ext'] }], view: { t: [0, 100, 140], az: 148, el: 16, d: 820 } },
+  // ---- the body, on the bench: upside down, everything goes in through its open bottom
+  { id: 'body_nuts', title: 'Body, upside down: 8 nuts', detail: 'Turn the body upside down: its whole bottom is open, so everything inside goes in from here. Drop an M3 nut into each of the 8 slots in its tongue’s edge (a dab of tape keeps them in).',
+    hide: [...LATER, ...BASE], pivot: [0, 78, 150], tagSpan: 400,
+    phases: [{ parts: [['body', null, { label: 'body' }]] }, { flip: 180 }, { nuts: true }],
     view: { t: [0, 78, 150], az: -30, el: 34, d: 900 } },
-  { id: 'arm_servos', title: 'Arm servos', detail: 'Slide each servo in from outside through its shoulder slot, spline outwards, and screw its tabs: 2 servo screws each.',
-    hide: BASE, phases: [{ parts: [['servo_r', out(-1, 70)], ['servo_l', out(1, 70)]] }, { screws: true }],
-    view: { t: [0, 82, 190], az: -22, el: 12, d: 660 } },
-  { id: 'speaker', title: 'Speaker and its keeper', detail: 'Down through the open top, into its ribs behind the chest grille, facing forwards. Its keeper behind it: tabs into the ribs’ slots, its spring holds the speaker in.',
-    hide: BASE, see: SEE_BODY, phases: [{ parts: [['speaker', [0, 0, 170], { label: 'USB speaker' }]] }, { parts: [['spk_keeper', [0, 0, 150], { label: 'speaker keeper' }]] }],
-    view: { t: [0, 28, 122], az: -28, el: 18, d: 560 } },
-  { id: 'mic', title: 'Microphone: ReSpeaker Lite', detail: 'Holder against the chest’s inside, behind the 2 dots. Push its key into the pocket from the robot’s left until its head sits flat (a firm push). The board onto the 2 posts, mics to the wall, its USB-C cable plugged in: 2 × M2 × 8.',
-    hide: BASE, see: SEE_BODY, phases: [{ parts: [['mic_holder', [0, 45, 110], { label: 'mic holder' }]] }, { parts: [['mic_key', [45, 0, 0], { label: 'key' }]] },
+  { id: 'speaker', title: 'Speaker and its keeper', detail: 'In through the open bottom: the speaker slides forwards between its 2 ribs onto their ledges, facing the chest grille. Its keeper behind it: the long tab into the left rib’s upper slot, swing it flat and let its spring click it into the right rib.',
+    hide: [...LATER, ...BASE], see: { body: 0.5 },
+    phases: [{ parts: [['speaker', [0, 80, 0], { label: 'USB speaker' }]] }, { parts: [['spk_keeper', [0, 60, 0], { label: 'speaker keeper' }]] }],
+    view: UPSIDE },
+  { id: 'mic', title: 'Microphone: ReSpeaker Lite', detail: 'Still upside down. The holder against the chest, behind the 2 dots. Push its key into the pocket from the robot’s left until its head sits flat (a firm push). The board onto the 2 posts, mics to the wall, its USB-C cable plugged in: 2 × M2 × 8.',
+    hide: [...LATER, ...BASE], see: { body: 0.5 },
+    phases: [{ parts: [['mic_holder', [0, 70, 0], { label: 'mic holder' }]] }, { parts: [['mic_key', [45, 0, 0], { label: 'key' }]] },
              { parts: [['respeaker', [0, 60, 0], { label: 'ReSpeaker Lite' }]] }, { parts: [['mic_plug', [35, 0, 0], { label: 'USB-C cable' }]] }, { screws: true }],
-    view: { t: [0, 20, 166], az: 150, el: 22, d: 430 } },
-  // ---- the body onto the tub
-  { id: 'body_on', title: 'Body onto the tub', detail: 'Push the UPS switch slider in through the back, fork first. Lower the body: its tongue goes inside the tub’s rim, the slider’s fork over the UPS switch’s knob. Then 8 × M3 × 10 through the rim into the tongue’s nuts.',
-    tagSpan: 400,
-    phases: [{ move: ['body', [0, 0, 240], 0.001], at: 0 }, { parts: [['slider', [0, 70, 0], { label: 'UPS switch slider' }]], at: 0.6 }, { move: ['body', [0, 0, 0], 2.4] },
-             { screws: true, dt: 0.8 }, { wiggle: ['slider', [1, 0, 0], SCENE.slider_travel] }],
-    view: { t: [0, 78, 125], az: 145, el: 18, d: 1050 } },
-  { id: 'cables_body', title: 'Body cables', detail: 'The speaker’s and the ReSpeaker’s cables into the Pi’s USB ports. The arm servos onto the servo power board’s headers: the robot’s left arm in the middle, its right arm beside it.',
-    see: SEE_BODY, phases: [{ cables: ['speaker', 'mic', 'servo_left', 'servo_right'] }], view: { t: [0, 80, 125], az: -36, el: 16, d: 920 } },
+    view: { t: [0, 15, 135], az: 172, el: 58, d: 480 } },
+  { id: 'arm_servos', title: 'Arm servos', detail: 'Turn the body back up. Slide each servo in from outside through its shoulder slot, spline outwards, and screw its tabs: 2 servo screws each. Add a jumper extension to each lead.',
+    hide: [...LATER, ...BASE], pivot: [0, 78, 150], phases: [{ flip: 0 }, { parts: [['servo_r', out(-1, 70)], ['servo_l', out(1, 70)]] }, { screws: true }],
+    view: { t: [0, 82, 190], az: -22, el: 12, d: 660 } },
+  // ---- the body onto the tub: its cables plugged in first, with the body held over the tub
+  { id: 'body_on', title: 'Body onto the tub', detail: 'Push the UPS switch slider in through the back, fork first. Hold the body over the tub (or prop it on something) and plug in its cables: the speaker and the ReSpeaker into the Pi’s USB ports, the arm servos onto the servo power board. Lower it, the cables from the Pi up through its top: its tongue goes inside the rim, the slider’s fork over the UPS switch’s knob. Then 8 × M3 × 10 through the rim into the tongue’s nuts.',
+    hide: LATER, tagSpan: 400,
+    phases: [{ move: ['body', [0, 0, 240], 0.001], at: 0 }, { parts: [['slider', [0, 70, 0], { label: 'UPS switch slider' }]], at: 0.6 }, { move: ['body', [0, 0, 150], 1.6] },
+             { cables: BODY_CABLES.map(c => c + '_h') }, { drop: BODY_CABLES.map(c => c + '_h') }, { move: ['body', [0, 0, 0], 2.4], with: true },
+             { show: BODY_CABLES }, { screws: true, dt: 0.8 }, { wiggle: ['slider', [1, 0, 0], SCENE.slider_travel] }],
+    view: { t: [0, 88, 165], az: 118, el: 14, d: 1150 }, view2: { t: [0, 78, 125], az: 145, el: 18, d: 1050 }, view2After: 'show' },
   // ---- the neck, on the bench
   { id: 'ring_gear', title: 'Neck, at the bench: hub and ring gear', detail: 'The hub up through the cap from below, its flange under the cap. The ring gear (v2’s) onto the flange, from below: 3 × M3 × 12.',
-    hide: [...BASE, 'body'], phases: [{ parts: [['cap', null, { label: 'cap' }]] }, { parts: [['hub', [0, 0, -60], { label: 'hub' }]] }, { parts: [['ring_gear', [0, 0, -50], { label: 'ring gear (v2)' }]] }, { screws: true }],
+    hide: [...BASE, 'body', 'arm_a', 'arm_b'], phases: [{ parts: [['cap', null, { label: 'cap' }]] }, { parts: [['hub', [0, 0, -60], { label: 'hub' }]] }, { parts: [['ring_gear', [0, 0, -50], { label: 'ring gear (v2)' }]] }, { screws: true }],
     view: { t: [0, 82, 232], az: -30, el: -36, d: 400 } },
   { id: 'black_neck', title: 'Black neck', detail: 'Slide an M3 nut into each of the 3 slots in the hub’s side. The black neck over the hub, its rib in the hub’s groove: 3 × M3 × 12, heads sunk.',
-    hide: [...BASE, 'body'], phases: [{ nuts: true }, { parts: [['neck', [0, 0, 60], { label: 'black neck' }]] }, { screws: true }],
+    hide: [...BASE, 'body', 'arm_a', 'arm_b'], phases: [{ nuts: true }, { parts: [['neck', [0, 0, 60], { label: 'black neck' }]] }, { screws: true }],
     view: { t: [0, 89, 250], az: -30, el: 30, d: 380 } },
-  { id: 'pinion_glue', title: 'Glue the horn into the pinion', detail: 'Sand the horn’s plate. A thin bead of 2-part epoxy along the pinion’s pocket, into its small holes but not the centre hole. Press the horn in and let it cure. (Or 2 × M1.4 × 5 self-tapping screws.)',
-    hide: [...BASE, 'body'], phases: [{ parts: [['pinion', [0, 0, -40]]] }, { glue: true }, { parts: [['horn_head', [0, 0, -45], { label: 'servo horn' }]] }],
-    view: { t: V.add(SCENE.pinion_horn, G0.hservo), az: -12, el: -34, d: 230 } },
-  { id: 'head_servo', title: 'Head servo', detail: 'Servo onto its frame: 2 servo screws. Servo at 90°, the pinion’s horn onto its spline. Push it all up under the cap (the pinion meshes with the ring gear, the collars go over the cap’s 2 pillars) and pinch the collars: 2 × M3 × 10.',
-    hide: [...BASE, 'body'], phases: [{ parts: [['servo_frame', [0, 0, -45]], ['servo_head', [0, 0, -60], { label: 'head servo' }]] }, { screws: 'servo screws' },
+  { id: 'head_servo', title: 'Head servo', detail: 'Glue cured: servo onto its frame, 2 servo screws. Servo at 90°, the pinion’s horn onto its spline. Push it all up under the cap (the pinion meshes with the ring gear, the collars go over the cap’s 2 pillars) and pinch the collars: 2 × M3 × 10.',
+    hide: [...BASE, 'body', 'arm_a', 'arm_b'], phases: [{ parts: [['servo_frame', [0, 0, -45]], ['servo_head', [0, 0, -60], { label: 'head servo' }]] }, { screws: 'servo screws' },
              { move: ['hservo', [0, 0, 0], 1.8] }, { screws: 'M3 × 10' }],
     view: { t: [0, 62, 210], az: -40, el: 6, d: 480 } },
   // ---- the cap onto the body
-  { id: 'cables_up', title: 'Cables up through the top', detail: 'Up out of the body’s top: the HDMI (its micro end in the Pi), the screen’s USB-C and the camera’s USB (both in the Pi’s USB ports).',
-    hide: ['neck'], see: SEE_BODY, phases: [{ cables: ['hdmi', 'usbc', 'camera'] }], view: { t: [0, 100, 160], az: 148, el: 12, d: 920 } },
-  { id: 'cap_on', title: 'Cap onto the body', detail: 'Thread the cables up through the neck and lower the cap in: 8 × M3 × 12 straight down into the collar. Stop when each is snug: they cut their own thread. The head servo onto the servo power board.',
-    see: { body: 0.3 }, phases: [{ move: ['neck', [0, 0, 200], 0.001], at: 0 }, { move: ['neck', [0, 0, 0], 2.4], at: 0.5 }, { screws: true, dt: 0.8 }, { cables: ['servo_head'] }],
-    view: { t: [0, 80, 240], az: -32, el: 32, d: 620 } },
+  { id: 'cap_on', title: 'Cap onto the body', detail: 'Hold the cap just over the body’s top: the head servo’s lead onto its extension, the HDMI, USB-C and camera cables up through the neck. Lower the cap in: 8 × M3 × 12 straight down into the collar. Stop when each is snug: they cut their own thread.',
+    hide: ['arm_a', 'arm_b'], see: { body: 0.3 },
+    phases: [{ move: ['neck', [0, 0, 200], 0.001], at: 0 }, { move: ['neck', [0, 0, 60], 1.8], at: 0.5 }, { cables: ['servo_head_h'] },
+             { drop: ['servo_head_h', 'servo_ext'] }, { move: ['neck', [0, 0, 0], 2.0], with: true }, { show: ['servo_head'] }, { screws: true, dt: 0.8 }],
+    view: { t: [0, 75, 268], az: -32, el: 22, d: 720 } },
   // ---- the head (v4's)
   { id: 'head_on', title: 'Head onto the neck', detail: 'Cables up through the head’s floor, head onto the black neck: 3 × M3 × 20 down through its floor and the neck’s top, into the hub’s nuts.',
-    phases: [{ parts: [['head_frame', [0, 0, 150], { label: 'head frame (v4)' }], ['head_inlay', [0, 0, 150]]], gap: 0 }, { screws: true }],
+    hide: ['arm_a', 'arm_b'], phases: [{ parts: [['head_frame', [0, 0, 150], { label: 'head frame (v4)' }], ['head_inlay', [0, 0, 150]]], gap: 0 }, { screws: true }],
     see: { head_frame: 0.4, head_inlay: 0.4 }, view: { t: [0, 92, 300], az: 150, el: 34, d: 600 } },
   { id: 'screen', title: 'Screen', detail: 'In through the face (nothing touches the glass), then 4 × M2.5 × 6 (or M3 × 6) from behind, down the 4 wells into its corner standoffs.',
-    phases: [{ parts: [['screen', [0, -120, 0], { label: '7" touch screen' }]] }, { mark: true }, { screws: true }],
+    hide: ['arm_a', 'arm_b'], phases: [{ parts: [['screen', [0, -120, 0], { label: '7" touch screen' }]] }, { mark: true }, { screws: true }],
     view: { t: [0, 40, 340], az: -22, el: 8, d: 720 }, view2: { t: [0, 70, 340], az: 160, el: 14, d: 560 } },
   { id: 'plugs', title: 'Plugs, from behind', detail: 'The HDMI coupler into its 2 clips and the HDMI cable’s plug into it. Ribbon HDMI from the coupler to the screen. The right-angle USB-C into the screen.',
-    see: { head_frame: 0.3, head_inlay: 0.3 },
+    hide: ['arm_a', 'arm_b'], see: { head_frame: 0.3, head_inlay: 0.3 },
     phases: [{ parts: [['coupler4', [0, 40, 0], { label: 'HDMI coupler' }]] }, { parts: [['hdmi_plug', [50, 0, 0]]] }, { cables: ['hdmi_head'] },
              { parts: [['fpc', [-12, 30, 0]]] }, { cables: ['ribbon'] }, { parts: [['usbc_plug', [-10, 30, 0]]] }, { cables: ['usbc_head'] }],
     view: { t: [-50, 66, 315], az: 140, el: 18, d: 470 } },
   { id: 'camera', title: 'Camera', detail: 'Board into v2’s bracket (it clicks), bracket up between the 2 cheeks under the hood, lens forwards. 2 × M3 × 12 from inside the head (2 mm L-key) through the cheeks into its pivots: set the tilt, snug. 5-pin plug into the board’s back.',
-    phases: [{ parts: [['cam_board', [0, 0, -65], { label: 'camera' }], ['camera_bracket', [0, 0, -65]]], gap: 0 }, { screws: true }, { cables: ['camera_head'] }],
+    hide: ['arm_a', 'arm_b'], phases: [{ parts: [['cam_board', [0, 0, -65], { label: 'camera' }], ['camera_bracket', [0, 0, -65]]], gap: 0 }, { screws: true }, { cables: ['camera_head'] }],
     view: { t: [0, 70, 404], az: 200, el: -16, d: 320 } },
   { id: 'back', title: 'Head back', detail: 'Hook its 2 slots over the frame’s 2 tabs, swing it down, then 2 × M3 × 12 from under the head. (No AA box in the head any more: the servos run from the drawer.)',
-    phases: [{ parts: [['head_back', [0, 50, 40], { rot: { axis: [1, 0, 0], angle: 55, pivot: hinge } }]] }, { screws: true }],
+    hide: ['arm_a', 'arm_b'], phases: [{ parts: [['head_back', [0, 50, 40], { rot: { axis: [1, 0, 0], angle: 55, pivot: hinge } }]] }, { screws: true }],
     view: { t: [0, 120, 300], az: 128, el: 4, d: 680 } },
-  // ---- the arms (v4's)
-  { id: 'arm_glue', title: 'Glue the horns into the arms', detail: 'Both arms the same, on the bench: sand the horn’s plate, a thin bead of epoxy along the arm’s pocket and into its small holes (not the centre hole), press the horn in and let it cure. (Or 2 × M1.4 × 5 self-tapping screws each.)',
-    hide: [...BASE, 'body', 'neck', 'head'], phases: [{ parts: [['arm_a', null, { label: 'arm' }], ['arm_b', null]], gap: 0 }, { glue: true },
-             { parts: [['horn_r', out(-1, -30), { label: 'servo horn' }], ['horn_l', out(1, -30)]] }],
-    view: { t: V.add(SCENE.arm_pocket[0], out(-1, 150)), az: 75, el: 16, d: 280 } },
+  // ---- the arms, then the batteries, last
   { id: 'arms', title: 'Arms', detail: 'Glue cured, servos at their neutral angle: push each arm (its horn) onto its spline, then the spline screw through the hole in the arm.',
     phases: [{ move: ['arm_a', [0, 0, 0], 2.0] }, { move: ['arm_b', [0, 0, 0], 2.0], with: true }, { screws: 'spline screw' }],
     view: { t: [0, 82, 200], az: -22, el: 10, d: 1000 } },
+  { id: 'drawer', title: 'Batteries, last', detail: '6 AA NiMH cells into the holder, the holder into the drawer (2 screws or tape). Its lead onto the fused lead waiting in the bay, then slide the drawer in through the front: 2 × M3 × 10 through the door’s corners.',
+    phases: [{ parts: [['tray', null, { label: 'drawer' }], ['aa_holder', [0, 0, 40], { label: '6×AA holder' }], ['aa_cells', [0, 0, 50]]], gap: 0.5 },
+             { move: ['tray', [0, 0, 0], 2.0] }, { screws: true }],
+    view: { t: [10, -50, 70], az: -26, el: 18, d: 780 } },
   { id: 'charging', title: 'Charging', detail: 'A USB-C PD charger into the socket at the back’s left corner (the UPS takes up to 40 W). The white tab on the back is the UPS switch: it turns the Pi on and off. The round rocker at the front switches the wheels and servos. Charge on a hard surface, with a grown-up nearby.',
     marks: [['socket', 'charging socket', '#2d6cb5', 0.3], ['slider', 'UPS switch', '#39404a', 0.5]],
     phases: [{ parts: [['chg_plug', [-39, 70, 0], { label: 'charger’s USB-C plug' }]] }, { cables: ['charger'] }, { parts: [['charger', [0, 0, 40], { label: 'USB-C PD charger' }]] }],
@@ -257,11 +269,13 @@ function build() {
       if (ph.nuts) own('nut').forEach((n, k) => { EV[n] = { step: i, t0: start + k * NDT }; end = Math.max(end, start + k * NDT + NDUR); });
       if (ph.cables) ph.cables.map(c => 'c_' + c).forEach((n, k) => {
         if (!P[n]) throw 'no cable ' + n; EV[n] = { step: i, t0: start + k * CDT }; end = Math.max(end, start + k * CDT + CGROW); });
+      if (ph.drop) ph.drop.map(c => 'c_' + c).forEach(n => { if (!EV[n]) throw 'drop before in: ' + n; EV[n].end = start; EV[n].endStep = i; });
+      if (ph.show) ph.show.map(c => 'c_' + c).forEach(n => { if (!P[n]) throw 'no cable ' + n; EV[n] = { step: i, t0: start, instant: true, nolabel: true }; });
       if (ph.move) { const [g, to, d] = ph.move; (GK[g] = GK[g] || []).push({ g0: T + start, g1: T + start + d, to }); end = Math.max(end, start + d); }
       if (ph.flip !== undefined) { WK.push({ g0: T + start, g1: T + start + FLIP, to: ph.flip, piv: ph.pivot || s.pivot || WPIV0 }); end = start + FLIP; }
       if (ph.wiggle) { const [name, axis, amp] = ph.wiggle; WIGS.push({ name, g0: T + start, axis, amp }); end = start + WIG; }
       if (ph.wait) end = start + ph.wait;
-      if (ph.mark) s.view2At = start;
+      if (ph.mark || (s.view2After && ph[s.view2After])) s.view2At = start;
       t = Math.max(t, end);
     }
     s.dur = Math.max(4.0, t + HOLD, (s.detail || '').length / 18);          // time to read the caption too
@@ -319,7 +333,7 @@ function stepLabels(i) {
     const e = EV[name], m = P[name].m; if (!e || e.step !== i) continue;
     if (m.kind === 'part' && e.o.label) outL.push({ at: P[name].centre, group: m.group, text: e.o.label, col: '#2d6cb5', t: e.t0 + 0.5 });
     if (m.kind === 'glue' && m.label) outL.push({ at: m.label_at, group: m.group, text: m.label, col: '#a86a12', t: e.t0 + GAPP + 0.5 });
-    if (m.kind === 'cable' && m.label) outL.push({ at: m.label_at, group: m.group, text: m.label, col: m.colour === '#1d1d1d' ? '#333' : P[name].col.reduce((a, c) => a + c) > 2.4 ? '#5b6470' : m.colour, t: e.t0 + 0.9 });
+    if (m.kind === 'cable' && m.label && !e.nolabel) outL.push({ until: e.endStep === i ? e.end : undefined, at: m.label_at, group: m.group, text: m.label, col: m.colour === '#1d1d1d' ? '#333' : P[name].col.reduce((a, c) => a + c) > 2.4 ? '#5b6470' : m.colour, t: e.t0 + 0.9 });
     if (m.kind === 'screw' || m.kind === 'nut') { const key = (m.screw || m.nut) + '|' + m.group; (sets[key] = sets[key] || []).push(name); }
   }
   for (const [k, text, col, t] of s.marks || []) {
@@ -378,6 +392,7 @@ function render(T) {
     }
     p.emit = 0;
     const e = EV[name]; if (!e || e.step > i || m.group === 'eyes') continue;
+    if (e.end !== undefined && (i > e.endStep || (i === e.endStep && u >= e.end))) continue;     // gone (a hovering cable)
     let off = groupOff(m.group, T), alpha = groupVis(m.group, i, u), hi = 0, grow = 1, R = R3.I, piv = Z3;
     if (alpha <= 0.003) continue;
     const w = e.step === i ? u - e.t0 : 1e9;
@@ -407,7 +422,8 @@ function render(T) {
         if (grow <= 0) continue;
       }
     } else if (m.kind === 'cable') {
-      if (e.step === i) { grow = ease(w / CGROW); hi = clamp(Math.min(w / 0.3, (CGROW + 0.8 - w) / 0.6)); if (grow <= 0) continue; }
+      if (e.instant) { grow = 1; hi = e.step === i ? clamp((0.9 - w) / 0.6) : 0; }
+      else if (e.step === i) { grow = ease(w / CGROW); hi = clamp(Math.min(w / 0.3, (CGROW + 0.8 - w) / 0.6)); if (grow <= 0) continue; }
     }
     if (alpha <= 0.003) continue;
     push(p, { R, piv, off, alpha, hi, grow });
@@ -454,7 +470,7 @@ function drawGlue(draws, m, w, k, goff, alpha, W, eye) {
 function drawLabels(list, s, u, VP, T, W) {
   const items = [];
   for (const L of list) {
-    const a = clamp(Math.min((u - L.t) / 0.4, (s.dur - 0.25 - u) / 0.25)); if (a <= 0) continue;
+    const a = clamp(Math.min((u - L.t) / 0.4, (s.dur - 0.25 - u) / 0.25, L.until !== undefined ? (L.until - u) / 0.3 : 1)); if (a <= 0) continue;
     const w = toWorld(W, V.add(L.at, groupOff(L.group, T))), c = [0, 1, 2, 3].map(r => VP[r] * w[0] + VP[4 + r] * w[1] + VP[8 + r] * w[2] + VP[12 + r]);
     if (c[3] <= 0) continue;
     const x = (c[0] / c[3] + 1) * 640, y = (1 - c[1] / c[3]) * 360, half = (L.text.length * 9.6 + 28) / 2;

@@ -240,7 +240,7 @@ add("tool_glue", cat(dark(prism(1.1, 3.6, 0, -16, 12)), cyl(5, -16, -20, 12), cy
 add("tool_lkey", cat(prism(2.3, 2.3, 0, -20, 6), ball([0, 0, -20], 1.25, 8, 6), xf(prism(2.3, 2.3, 0, 42, 6), to_z([1, 0, 0]), [0, 0, -20])), "#3c4250", "tool", kind="tool")
 
 # ---------------------------------------------------------------- cables (they grow along their routes)
-LABEL_AT_END = {"motor_l", "enc_l", "switched", "servo_head", "servo_left", "servo_right", "hdmi_head", "ribbon", "usbc_head", "camera_head"}
+LABEL_AT_END = {"motor_l", "enc_l", "switched", "battery", "servo_left_h", "servo_right_h", "servo_ext", "servo_head_h", "hdmi_head", "ribbon", "usbc_head", "camera_head"}
 for name, step, group, colour, d, label, route, plugs in cables:
     t = tube(route, d / 2)
     for lo, hi in plugs:
