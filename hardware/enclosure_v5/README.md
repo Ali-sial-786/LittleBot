@@ -124,9 +124,9 @@ In total for the new parts: 22 × M3 × 12, 12 × M3 × 10, 12 × M3 × 8, 5 × 
 
 1. **Glue first** (it cures while you build): the trimmed horn into the pinion, and a horn into each arm, as v4.
 2. **Wheel pods, at the bench (×2):**
-   - The motor goes in from inside the pod **without its coupler**: its boss (the collar round the shaft) into the plate's middle hole, its 2 threaded holes over the 2 small ones. The 2 shallow dips clear the gearbox's own screw heads.
-   - Fit 2 × M3 × 8 from the wheel's side (the plate is 4 mm: the kit's shorter screws for its metal bracket won't bite; nothing longer than 8, the gearbox's holes are 4.5 mm deep).
-   - Then push the coupler onto the shaft from the wheel's side (it doesn't go through the plate), about 1 mm off the plate, and tighten its grub screw on the shaft's flat. The wheel onto the coupler's hex, with its screw.
+   - The pod is a plate with a cover (the box) on one side. **The wheel goes inside the cover; the motor stays outside it**, on the plate's bare face (the one with the 2 shallow dips: they clear the gearbox's own screw heads). Put the motor on **without its coupler**: its boss (the collar round the shaft) into the middle hole, its shaft pointing into the cover, its 2 threaded holes over the 2 small ones.
+   - Fit 2 × M3 × 8 from inside the cover (the plate is 4 mm: the kit's shorter screws for its metal bracket won't bite; nothing longer than 8, the gearbox's holes are 4.5 mm deep).
+   - Then, inside the cover, push the coupler onto the shaft (it doesn't go through the plate), about 1 mm off the plate, and tighten its grub screw on the shaft's flat. The wheel onto the coupler's hex, with its screw: the cover goes over the wheel, its bottom pokes out below.
    - Not used from the motor kits: the black L-bracket (the pod replaces it) and the DRV8871 boards (the deck has one MDD3A for both motors).
 3. **Tub:**
    - Casters: turn the tub over; each caster into its recess with its 2 screws. Turn it back and fit their nuts while the floor is bare (the rear ones end up under the Pi).
