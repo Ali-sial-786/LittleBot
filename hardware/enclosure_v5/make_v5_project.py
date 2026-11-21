@@ -3,7 +3,8 @@
 for each printer (Bambu Lab A1 and P2S: 0.4 nozzle, 0.20 mm Standard, Bambu PLA Basic, Textured PEI plate).
 
     ./export_v5.sh && python3 make_v5_project.py      # reads stl/*.stl, writes LittleBot_v5_<A1|P2S|plain>.3mf, plates_v5.png and
-                                                      # LittleBot_v5_test_<A1|P2S|plain>.3mf (two short test pieces, a plate each)
+                                                      # LittleBot_v5_test_<A1|P2S|plain>.3mf (two short test pieces, a plate each) and
+                                                      # LittleBot_v5_pods_<A1|P2S|plain>.3mf (the 2 wheel pods alone)
 
 Plates (v4's packer and project writer, with v5's parts):
   1  dark:  the tub (floor down)
@@ -40,12 +41,16 @@ PLATES = [("tub", "dark", ["tub"]),
 
 # the test pieces, each in its real part's colour: the body's first 22 mm, a corner of the tub (floor, wall, the door's post)
 TESTS = [("test body", "white", ["test_body_base"]), ("test tub", "dark", ["test_tub_corner"])]
+# the wheel pods on their own (reprinted with room for the kits' 67 mm wheels: no roof, walls further out)
+PODS = [("wheel pods", "dark", ["pod_left", "pod_right"])]
 
 if __name__ == "__main__":
     plates = [(pname, colour, m4.pack(names)) for pname, colour, names in PLATES]
     tests = [(pname, colour, m4.pack(names)) for pname, colour, names in TESTS]
+    pods = [(pname, colour, m4.pack(names)) for pname, colour, names in PODS]
     for printer in ("A1", "P2S", None):          # None: "plain", no printer or filament settings of ours (Bambu Studio keeps its own)
         tag = printer or "plain"
         m4.project(plates, HERE / f"LittleBot_v5_{tag}.3mf", "LittleBot v5 Rover", printer)
         m4.project(tests, HERE / f"LittleBot_v5_test_{tag}.3mf", "LittleBot v5 test pieces", printer)
+        m4.project(pods, HERE / f"LittleBot_v5_pods_{tag}.3mf", "LittleBot v5 wheel pods", printer)
     m4.preview(plates, HERE / "plates_v5.png")

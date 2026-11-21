@@ -58,13 +58,15 @@ function bell_sec(t) = sec5(24 + (BT - 24) * t);   // overrides v4's: its body m
 
 /* [the wheels: JGA25-370 gear motors with encoders, 65 mm wheels on 12 mm hex couplers] */
 yw = 70;                                 // the wheels' axis (y): 8 mm ahead of the body's centre, the Pi + UPS fit behind the motors
-wh_d = 65; wh_w = 27;                    // MEASURE the wheels
+wh_d = 67; wh_w = 27;                    // MEASURE the wheels: sold as 65 mm, the kits' tyres measure about 67 across
 mot = [25, 60.7, 12.1];                  // the motor: diameter, length without its shaft, shaft beyond the gearbox face
 mot_boss = [7, 2.5]; mot_holes = 17;     // the boss round the shaft; its 2 x M3 holes (4.5 deep), this far apart
 xf = 61.5;                               // the gearbox faces (|x|): the motors' tails 1.6 mm apart at the middle
 pod_t = 4;                               // the pod's plate: M3 x 8 reach 4 mm into the gearbox
 wh_x = [xf + pod_t + 1.5, xf + 44.5 + 0.5];   // where the wheel can be (|x|): on the coupler's hex, or wholly beyond it (its screw's head 3.5 more)
-az = wh_d / 2;                           // the axis' height
+az = 32.5;                               // the axis' height (fixed: the tub's motor trough and saddles are printed for it; a
+                                         // bigger wheel lifts the robot by half the difference)
+slot_l = 69;                             // the floor's wheel slots, front to back (printed so: a 70 mm wheel still clears them)
 pod_y = 37; pod_top = 69;                // the pod: half length, top
 /* [casters: Pololu 3/4" metal ball (20.9 high, base 22.9, 2 holes 15.5 apart)] */
 cas_y = [0, 144.6]; cas_h = 20.9; cas_lift = 0.8;   // front, rear; the balls stand this far off a flat floor (the wheels carry it)
@@ -217,7 +219,7 @@ module v5_tub() {
             }
         }
         // the wheels come through the floor
-        for (s = [-1, 1]) translate([s > 0 ? wh_x[0] - 1 : -wh_x[1] - 1, yw - wh_d/2 - 2, z_fl - 1]) cube([wh_x[1] - wh_x[0] + 2, wh_d + 4, fl_t + 2]);
+        for (s = [-1, 1]) translate([s > 0 ? wh_x[0] - 1 : -wh_x[1] - 1, yw - slot_l/2, z_fl - 1]) cube([wh_x[1] - wh_x[0] + 2, slot_l, fl_t + 2]);
         for (y = cas_y) caster_cut(y);
         // the motors: a shallow trough in the floor and the saddles
         for (s = [-1, 1]) translate([s > 0 ? 0.3 : -xf - 0.5, yw, az]) rotate([0, 90, 0]) cylinder(d = mot[0] + 1.4, h = xf + 0.2);
@@ -245,16 +247,24 @@ module caster_dummy(y) { color("#ccc") translate([0, y, cas_lift + 9.525]) spher
 
 // -----------------------------------------------------------------------------
 // WHEEL POD (the +x one; the other is its mirror image): a plate the motor screws to by its face (2 x M3 x 8 from the
-// wheel's side), a hood over the wheel, 2 flanges that screw down onto the tub's ridges (4 x M3 x 12). The motor,
-// coupler and wheel go on at the bench. Prints plate down.
+// wheel's side), a wall each side of the wheel, 2 flanges that screw down onto the tub's ridges (4 x M3 x 12). The
+// motor goes on the plate's bare face, the coupler and wheel between the walls, at the bench. Prints plate down.
+// No roof: the "65 mm" wheels measure about 67 and rubbed under the first one; the deck is over the wheel instead.
+// The walls stand 35.5 from the axis up to the flanges' top, 37.5 above it (on the flanges, clear of their screws):
+// 2 mm round a 67 mm wheel, 1.5 round a 68.
 // -----------------------------------------------------------------------------
+pw_lo = 35.5; pw_hi = 37.5; pw_t = 1.7;    // the walls: low part's inner face, high part's inner face (from the axis), high part's thickness
+pw_top = z_bt - tg[2] - 0.5;              // the high walls' top: under the body's tongue and its nut bosses (they reach over the front walls' ends)
 module v5_pod() intersection() {
     tub_cavity(tw + tg[0] + tg[1] + 0.6);                    // inside the body's tongue
     difference() {
         union() {
             translate([xf, yw - pod_y, zf + 0.2]) cube([pod_t, 2 * pod_y, pod_top - zf - 0.2]);                                // the plate
-            translate([xf, yw - pod_y, pod_top - 2]) cube([200, 2 * pod_y, 2]);                                                // the hood: roof,
-            for (k = [-1, 1]) translate([xf, yw + (k > 0 ? pod_y - 2 : -pod_y), zf + 0.2]) cube([200, 2, pod_top - zf - 0.2]); // front and rear walls
+            for (k = [-1, 1]) {                                                                                                // the walls:
+                translate([xf, yw + (k > 0 ? pw_lo : -pod_y), zf + 0.2]) cube([200, pod_y - pw_lo, pod_fl[2] + 3.1 - zf - 0.2]);    // low, inside the ridges
+                translate([xf, yw + (k > 0 ? pw_hi : -pw_hi - pw_t), pod_fl[2] + 3.1 - eps]) cube([200, pw_t, pw_top - pod_fl[2] - 3.1 + eps]);  // high, on the flanges
+            }
+            translate([xf, yw - pw_hi - pw_t, pod_fl[2] + 3.1 - eps]) cube([pod_t, 2 * (pw_hi + pw_t), pw_top - pod_fl[2] - 3.1 + eps]);   // the plate out to the high walls
             for (k = [-1, 1]) translate([xf, yw + (k > 0 ? pod_y - eps : -pod_y - pod_fl[1] + 0.5), pod_fl[2] + 0.1]) cube([200, pod_fl[1] - 0.5 + eps, 3]);   // flanges
         }
         translate([xf - 1, yw, az]) rotate([0, 90, 0]) {

@@ -6,7 +6,7 @@ v4's head and arms on a new body and a wheeled base. Two things drove it:
 
 ![v5 model](LittleBot_v5_model.png)
 
-Same height as v4 (437 mm). The base is 230 × 204 mm (v4: 186 × 160), with 17 mm of ground clearance.
+Same height as v4 (437 mm). The base is 230 × 204 mm (v4: 186 × 160), with 18 mm of ground clearance (the kits' "65 mm" wheels measure about 67).
 
 ## What changed, and why
 
@@ -33,8 +33,8 @@ Same height as v4 (437 mm). The base is 230 × 204 mm (v4: 186 × 160), with 17 
 
 | Where | What | Notes |
 |---|---|---|
-| Middle, both sides | **Wheel pods.** Each motor (JGA25-370 with encoder) screws by its face to a pod's plate; the pod covers the wheel and screws down onto 2 ridges in the tub | Motor, coupler and wheel go on at the bench. The wheels show only under the floor. |
-| Front and rear, on the centre line | **Ball casters** (Pololu 3/4" metal), in square recesses under the floor | They stand 0.8 mm off a flat floor, so the wheels always carry the robot and it can't hang up on the casters. Add the caster's own thin spacer if it rocks too much. |
+| Middle, both sides | **Wheel pods.** Each motor (JGA25-370 with encoder) screws by its face to a pod's plate, outside the pod; the wheel turns between the pod's 2 walls, open above (the deck is over it). The pod screws down onto 2 ridges in the tub | Motor, coupler and wheel go on at the bench. The wheels show only under the floor. The first pods had a roof that rubbed on the 67 mm wheels: reprint them from `LittleBot_v5_pods_<printer>.3mf`. |
+| Front and rear, on the centre line | **Ball casters** (Pololu 3/4" metal), in square recesses under the floor | They stand about 1.8 mm off a flat floor with 67 mm wheels (0.8 with 65), so the wheels always carry the robot and it can't hang up on the casters. Leave the casters' spacers out: one would let a caster lift a wheel. |
 | Behind the motors | **Pi 5 + UPS**, on v2's V-groove mount and v4's keeper | The same mount as before, 19 mm higher (over the rear caster's screws). |
 | In front of the motors | **6×AA drawer.** Its front is the battery door | 2 screws, then it slides out on its leads. |
 | Front, beside the door | **Drive switch** (a 20 mm round rocker), in the tub's wall | It switches the 6×AA pack: wheels and servos. The Pi has its own switch at the back. |
@@ -52,6 +52,7 @@ The motors' tails rest in 2 saddles with zip-tie slots. The Pi's fan blows down 
 | `LittleBot_v5_A1.3mf`, `LittleBot_v5_P2S.3mf` | **the Bambu Studio project, one for each printer: 5 plates, colours, wall loops, brims and the one support set** |
 | `LittleBot_v5_test_A1.3mf`, `LittleBot_v5_test_P2S.3mf` | two short test pieces, a plate each: the body's first 22 mm (white) and a corner of the tub (dark). Print them before the long prints. |
 | `LittleBot_v5_plain.3mf`, `LittleBot_v5_test_plain.3mf` | the same plates with none of our printer, process or filament settings inside: Bambu Studio keeps whatever is selected in it. Only the per-part settings come with them (wall loops, brims, the mic holder's supports). Use these if a printer-specific file won't send. |
+| `LittleBot_v5_pods_A1.3mf`, `LittleBot_v5_pods_P2S.3mf`, `LittleBot_v5_pods_plain.3mf` | the 2 wheel pods on their own plate, to reprint them (the second version: no roof, room for 67 mm wheels) |
 | `LittleBot_v5_assembled.3mf` | the whole robot assembled and coloured, to look at (not to print) |
 | `LittleBot_v5_assembly.mp4` | **the assembly video** (6 minutes): every part, screw, nut and cable going in, in the order below (the order there is room for each thing), each screw turned in by its tool with its size on a tag |
 | `assembly_video/` | re-makes the video (`OPENSCAD=... ./make_video.sh`). The screws, nuts, cable routes and part positions come from the model (`video5.scad`). |
@@ -124,9 +125,9 @@ In total for the new parts: 22 × M3 × 12, 12 × M3 × 10, 12 × M3 × 8, 5 × 
 
 1. **Glue first** (it cures while you build): the trimmed horn into the pinion, and a horn into each arm, as v4.
 2. **Wheel pods, at the bench (×2):**
-   - The pod is a plate with a cover (the box) on one side. **The wheel goes inside the cover; the motor stays outside it**, on the plate's bare face (the one with the 2 shallow dips: they clear the gearbox's own screw heads). Put the motor on **without its coupler**: its boss (the collar round the shaft) into the middle hole, its shaft pointing into the cover, its 2 threaded holes over the 2 small ones.
-   - Fit 2 × M3 × 8 from inside the cover (the plate is 4 mm: the kit's shorter screws for its metal bracket won't bite; nothing longer than 8, the gearbox's holes are 4.5 mm deep).
-   - Then, inside the cover, push the coupler onto the shaft (it doesn't go through the plate), about 1 mm off the plate, and tighten its grub screw on the shaft's flat. The wheel onto the coupler's hex, with its screw: the cover goes over the wheel, its bottom pokes out below.
+   - The pod is a plate with 2 walls on one side. **The wheel goes between the walls; the motor stays outside them**, on the plate's bare face (the one with the 2 shallow dips: they clear the gearbox's own screw heads). Put the motor on **without its coupler**: its boss (the collar round the shaft) into the middle hole, its shaft pointing between the walls, its 2 threaded holes over the 2 small ones.
+   - Fit 2 × M3 × 8 from the walls' side (the plate is 4 mm: the kit's shorter screws for its metal bracket won't bite; nothing longer than 8, the gearbox's holes are 4.5 mm deep).
+   - Then, between the walls, push the coupler onto the shaft (it doesn't go through the plate), about 1 mm off the plate, and tighten its grub screw on the shaft's flat. The wheel onto the coupler's hex, with its screw: about a quarter of it pokes out below the pod (through the floor's slot, once in the tub).
    - Not used from the motor kits: the black L-bracket (the pod replaces it) and the DRV8871 boards (the deck has one MDD3A for both motors).
 3. **Tub:**
    - Casters: turn the tub over; each caster into its recess with its 2 screws. Turn it back and fit their nuts while the floor is bare (the rear ones end up under the Pi).
@@ -158,7 +159,7 @@ The motors, wheels, casters, AA holder, switch and boards aren't here yet. Their
 |---|---|---|
 | `mot` | 25 × 60.7, shaft 12.1 | the motor: diameter, length without the shaft, shaft beyond the gearbox face |
 | `mot_holes` | 17 mm | between the 2 threaded holes on the gearbox face |
-| `wh_d`, `wh_w` | 65, 27 mm | the wheel |
+| `wh_d`, `wh_w` | 67, 27 mm | the wheel: across the tyre, and its width (the pods leave 1.5 mm round a 70 mm wheel; the axle's height stays) |
 | `wh_x` | to 45 mm from the gearbox face | where the wheel's outer face ends up once it is on the coupler (the pods and the floor's slots take anything up to 45 mm) |
 | `cas_h` | 20.9 mm | the caster: mounting face to the ball's lowest point |
 | `aa` | 90 × 57 × 16 mm | the AA holder |

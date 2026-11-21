@@ -19,7 +19,7 @@ one() {
 export -f one; export tmp OPENSCAD
 {
     if (($#)); then printf '%s\n' "$@"; else
-    for c in tub_vs_stuff tub_vs_parts pods_vs_stuff pods_vs_parts tray_vs_stuff tray_vs_parts tray_slides_out deck_vs_stuff deck_vs_keeper keeper_fit keeper_rests stuff_vs_stuff motor_screws_clear \
+    for c in tub_vs_stuff tub_vs_parts pods_vs_stuff pods_vs_parts tray_vs_stuff tray_vs_parts tray_slides_out deck_vs_stuff deck_vs_keeper keeper_fit keeper_rests stuff_vs_stuff motor_screws_clear wheel_room pod_screws_reach \
              body_vs_tub body_vs_base body_goes_on joint_screws_clear joint_nuts_held joint_nuts_go_in body_vs_electronics body_vs_cap neck_goes_in frame_on_pillars hub_vs_neck head_vs_neck head_screws_clear head_nuts_held cap_screws_clear cap_screws_bite \
              slider_vs_parts slider_grips_knob slider_moves_knob mic_holder_vs_body mic_fit mic_key_fit mic_key_clamps mic_key_slides_in mic_screws_bite \
              spk_keeper_fit spk_keeper_goes_in spk_keeper_holds chest_vs_base selftest_must_fail; do echo "$c"; done

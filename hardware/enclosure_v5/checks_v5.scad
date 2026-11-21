@@ -57,6 +57,12 @@ if (check == "deck_vs_keeper")      intersection() { v5_deck(); keeper5(); }
 if (check == "keeper_fit")          intersection() { keeper5(); union() { v5_tub(); place_stack() { ups_stack(0); for (i = [0, 2, 4, 5]) ups_plug(i, 0); } v5_slider(); } }
 if (check == "keeper_rests")        intersection() { place_stack() { translate([0, 0, -0.2]) keeper4_arms(); ups_stack(0); } }      // must NOT be empty
 if (check == "stuff_vs_stuff")      intersection() { stack_s(); union() { motors_s(); wheels_s(); casters_s(); aa_s(); switch_s(); deck_dummies(s); usbc_socket5(s); } }
+// the wheels with 1.5 mm all round (a 67 mm wheel at 70), wherever they can be on their couplers: the pods' walls, the
+// tub's floor slots and the deck keep clear of them
+module wheels_room() for (k = [-1, 1]) translate([k * (wh_x[0] + s), yw, az]) rotate([0, k * 90, 0]) cylinder(d = wh_d + 3, h = wh_x[1] - wh_x[0] - 2*s, $fn = 96);
+if (check == "wheel_room")          intersection() { wheels_room(); union() { pods(); v5_tub(); v5_deck(); } }
+// the pods' 8 screws: their heads on the flanges and a driver straight down onto each, clear of the pods' walls
+if (check == "pod_screws_reach")    intersection() { pods(); for (k = [-1, 1], p = pod_scr) translate([k * p[0], yw + p[1] * (pod_fl[0] + pod_fl[1] / 2), pod_fl[2] + 3.1 + s]) cylinder(d = 5.7, h = 40, $fn = 24); }
 if (check == "motor_screws_clear")  intersection() { pods(); for (k = [-1, 1], q = [-1, 1]) translate([k * (xf + pod_t), yw + q * mot_holes / 2, az]) rotate([0, k * 90, 0]) shank(8); }
 // --- the body on the tub ---
 if (check == "body_vs_tub")         intersection() { v5_body(); v5_tub(); }                                                     // contact only (the rim's land)
