@@ -225,13 +225,26 @@ module vid5(w) {
     // the base's: each wheel pod, motor (with its coupler), wheel and caster on its own
     if (w == "pod_l")      place_pod(1) v5_pod();                        // x > 0: the robot's left
     if (w == "pod_r")      place_pod(-1) v5_pod();
-    if (w == "motor_l")    motor_dummy(1);
-    if (w == "motor_r")    motor_dummy(-1);
+    if (w == "motor_l")    motor5(1);
+    if (w == "motor_r")    motor5(-1);
+    if (w == "coupler_l")  coupler5(1);
+    if (w == "coupler_r")  coupler5(-1);
     if (w == "wheel_l")    translate([xf + 44.5 - wh_w / 2, yw, az]) rotate([0, 90, 0]) wheel5();
     if (w == "wheel_r")    translate([-(xf + 44.5 - wh_w / 2), yw, az]) rotate([0, -90, 0]) wheel5();
     if (w == "pi_ups")     place_stack() ups_stack();                    // without the plugs: the cables bring their own
     if (w == "caster_f")   caster5(cas_y[0]);
     if (w == "caster_r")   caster5(cas_y[1]);
+}
+// the motor without its coupler (it goes in from inside the pod, its shaft through the plate's hole), and the coupler
+// (it goes onto the shaft from the wheel's side): a round end with the grub screw, a 12 mm hex for the wheel
+module motor5(s) translate([0, yw, az]) rotate([0, s * 90, 0]) {
+    translate([0, 0, xf - mot[1]]) cylinder(d = mot[0], h = mot[1], $fn = 48);
+    translate([0, 0, xf]) cylinder(d = mot_boss[0], h = mot_boss[1], $fn = 32);
+    translate([0, 0, xf]) cylinder(d = 4, h = mot[2], $fn = 16);
+}
+module coupler5(s) translate([0, yw, az]) rotate([0, s * 90, 0]) translate([0, 0, xf + pod_t + 0.8]) difference() {
+    union() { cylinder(d = 10, h = 9, $fn = 32); translate([0, 0, 9]) cylinder(d = 12 / cos(30), h = 9, $fn = 6); }
+    translate([0, 0, 4.5]) rotate([90, 0, 0]) cylinder(d = 2.5, h = 6, $fn = 12);                  // the grub screw's hole
 }
 // a wheel: tyre, rim, a hub with its screw's recess (axis z, centred; +z = outwards)
 module wheel5() difference() {

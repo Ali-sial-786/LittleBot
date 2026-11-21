@@ -124,9 +124,10 @@ In total for the new parts: 22 × M3 × 12, 12 × M3 × 10, 12 × M3 × 8, 5 × 
 
 1. **Glue first** (it cures while you build): the trimmed horn into the pinion, and a horn into each arm, as v4.
 2. **Wheel pods, at the bench (×2):**
-   - Push the motor's boss through the pod's plate from the inside, its 2 threaded holes level.
-   - Fit 2 × M3 × 8 from the wheel's side.
-   - Push the coupler onto the shaft and tighten its grub screw on the shaft's flat. Fit the wheel and its centre screw.
+   - The motor goes in from inside the pod **without its coupler**: its boss (the collar round the shaft) into the plate's middle hole, its 2 threaded holes over the 2 small ones. The 2 shallow dips clear the gearbox's own screw heads.
+   - Fit 2 × M3 × 8 from the wheel's side (the plate is 4 mm: the kit's shorter screws for its metal bracket won't bite; nothing longer than 8, the gearbox's holes are 4.5 mm deep).
+   - Then push the coupler onto the shaft from the wheel's side (it doesn't go through the plate), about 1 mm off the plate, and tighten its grub screw on the shaft's flat. The wheel onto the coupler's hex, with its screw.
+   - Not used from the motor kits: the black L-bracket (the pod replaces it) and the DRV8871 boards (the deck has one MDD3A for both motors).
 3. **Tub:**
    - Casters: turn the tub over; each caster into its recess with its 2 screws. Turn it back and fit their nuts while the floor is bare (the rear ones end up under the Pi).
    - Pods: lower each in, wheel through the floor, and fit 4 × M3 × 12. Zip-tie each motor's tail to its saddle now: the deck covers them.

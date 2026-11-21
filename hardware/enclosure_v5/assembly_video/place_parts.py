@@ -132,6 +132,7 @@ for name, colour, group in [("ring_gear", "#e6b35a", "neck"), ("pinion", "#e6b35
                             ("fpc", "#c9a74a", "head"), ("usbc_plug", "#3a3d44", "head"), ("coupler4", "#16181c", "head"), ("hdmi_plug", "#2a2d33", "head"),
                             ("mic_plug", "#3a3d44", "body"), ("eyes", "#4fe3e0", "eyes"),
                             ("pod_l", "#3a3d44", "podL"), ("pod_r", "#3a3d44", "podR"), ("motor_l", "#a9aeb6", "podL"), ("motor_r", "#a9aeb6", "podR"),
+                            ("coupler_l", "#d4a848", "podL"), ("coupler_r", "#d4a848", "podR"),
                             ("wheel_l", "#1c1d20", "podL"), ("wheel_r", "#1c1d20", "podR"), ("caster_f", "#b9bec6", "tub"), ("caster_r", "#b9bec6", "tub"),
                             ("pi_ups", "#1a9a55", "stack")]:
     add(name, load(SMALL / f"{name}.stl"), colour, group)

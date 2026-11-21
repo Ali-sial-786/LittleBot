@@ -13,7 +13,7 @@ python3 -c 'import json, re, sys
 d = json.loads(re.search(r"ECHO: hw5 = (.*)", open(sys.argv[1]).read()).group(1))
 json.dump(d, open(sys.argv[2], "w"), separators=(",", ":"), ensure_ascii=False)' build/hw5.echo hardware5.json
 SMALL=(ring_gear pinion servo_head servo_l servo_r horn_head horn_l horn_r fpc usbc_plug coupler4 hdmi_plug mic_plug eyes
-       pod_l pod_r motor_l motor_r wheel_l wheel_r caster_f caster_r pi_ups)
+       pod_l pod_r motor_l motor_r coupler_l coupler_r wheel_l wheel_r caster_f caster_r pi_ups)
 one() { "$OPENSCAD" -q -o "build/stl/$1.stl" -D 'part="vid5"' -D "which=\"$1\"" video5.scad 2>&1 | grep -v -i warning || true; }
 export -f one; export OPENSCAD
 if [ -z "${SKIP_STL:-}" ]; then printf '%s\n' "${SMALL[@]}" | xargs -P "${JOBS:-4}" -I{} bash -c 'one {}'; fi
