@@ -58,7 +58,7 @@ The motors' tails rest in 2 saddles with zip-tie slots. The Pi's fan blows down 
 | `assembly_video/` | re-makes the video (`OPENSCAD=... ./make_video.sh`). The screws, nuts, cable routes and part positions come from the model (`video5.scad`). |
 | `stl/*.stl` | each new part on its own, in its print orientation |
 | `plates_v5.png` | top view of the 5 plates |
-| `checks_v5.scad`, `run_checks_v5.sh` | 84 checks (`OPENSCAD=... ./run_checks_v5.sh`), all passing: nothing overlaps; the drawer slides out; the body goes on over everything in the base; the neck goes in from the top; every screw's path is clear, every nut has plastic in front of it and the cap's screws have thread to bite; the arms' sweep and finger pinch with the head turned; the slider; the mic holder and the speaker keeper |
+| `checks_v5.scad`, `run_checks_v5.sh` | 86 checks (`OPENSCAD=... ./run_checks_v5.sh`), all passing: nothing overlaps; the wheels have 1.5 mm all round; the drawer slides out; the body goes on over everything in the base; the neck goes in from the top; every screw's path is clear, every nut has plastic in front of it and the cap's screws have thread to bite; the arms' sweep and finger pinch with the head turned; the slider; the mic holder and the speaker keeper |
 | `export_v5.sh`, `make_v5_project.py`, `make_v5_assembly.py` | re-make the STLs, the project and the assembled 3MF |
 | `pics_v5.scad`, `make_pics_v5.sh` | re-make this page's pictures |
 
