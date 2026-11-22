@@ -16,7 +16,7 @@ module head_servo_s() place_torso() translate([0, pinion_yt, hs_spline_z]) servo
 module mic_s() place_rsl() { rsl_board(s); rsl_plug(s); }
 module speaker_s() translate([-spk_w/2 + s, spk3_c[1] + s, spk3_c[2] - spk_h/2 + s]) cube([spk_w - 2*s, spk_d - 2*s, spk_h - 2*s]);
 module stack_s() place_stack() { ups_stack(s); ups_plugs(s); }
-module keeper5() place_stack() stack_keeper();
+module keeper5() place_stack() stack_keeper5();
 module motors_s() for (k = [-1, 1]) motor_dummy(k, s);
 // the wheel wherever it can be on its coupler, its screw's head beyond it
 module wheels_s() for (k = [-1, 1]) translate([k * (wh_x[0] + s), yw, az]) rotate([0, k * 90, 0]) { cylinder(d = wh_d - 2*s, h = wh_x[1] - wh_x[0] - 2*s); cylinder(d = 9, h = wh_x[1] - wh_x[0] + 3.5 - 2*s); }
@@ -54,8 +54,10 @@ if (check == "tray_vs_parts")       intersection() { v5_tray(); union() { v5_dec
 if (check == "tray_slides_out")     intersection() { for (d = [10, 30, 50]) translate([0, -d, 0]) { v5_tray(); aa_s(); } union() { v5_tub(); v5_deck(); casters_s(); pods(); switch_s(); } }
 if (check == "deck_vs_stuff")       intersection() { v5_deck(); union() { stack_s(); motors_s(); wheels_s(); casters_s(); aa_s(); switch_s(); deck_dummies(s); } }
 if (check == "deck_vs_keeper")      intersection() { v5_deck(); keeper5(); }
-if (check == "keeper_fit")          intersection() { keeper5(); union() { v5_tub(); place_stack() { ups_stack(0); for (i = [0, 2, 4, 5]) ups_plug(i, 0); } v5_slider(); } }
-if (check == "keeper_rests")        intersection() { place_stack() { translate([0, 0, -0.2]) keeper4_arms(); ups_stack(0); } }      // must NOT be empty
+if (check == "keeper_fit")          intersection() { keeper5(); union() { v5_tub(); place_stack() { ups_stack(0); for (i = [0, 2, 4, 5]) ups_plug(i, 0); } v5_slider(); deck_dummies(0); motors_s(); pods(); } }
+if (check == "keeper_rests")        intersection() { place_stack() { translate([0, 0, -0.2]) stack_keeper5(); ups_stack(0); } }     // must NOT be empty (it rests on the boards)
+// the keeper's ends stand on the posts once the screws pull them down 0.3 mm
+if (check == "keeper_on_posts")     intersection() { translate([0, 0, -0.35]) keeper5(); v5_tub(); }   // must NOT be empty
 if (check == "stuff_vs_stuff")      intersection() { stack_s(); union() { motors_s(); wheels_s(); casters_s(); aa_s(); switch_s(); deck_dummies(s); usbc_socket5(s); } }
 // the wheels with 1.5 mm all round (a 67 mm wheel at 70), wherever they can be on their couplers: the pods' walls, the
 // tub's floor slots and the deck keep clear of them

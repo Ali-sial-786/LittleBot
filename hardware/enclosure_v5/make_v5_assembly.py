@@ -30,7 +30,7 @@ PARTS = [  # (stl name, colour, label)
     ("arm_left", "white", "left arm (v4)"), ("arm_right", "white", "right arm (v4)"),
     ("head_frame", "white", "head frame (v4)"), ("head_inlay", "dark", "camera arch (v4)"), ("head_back", "white", "head back (v4)"),
     ("camera_bracket", "v2", "camera bracket (v2)"), ("servos", "servo", "MG90S servos"),
-    ("pi_ups", "board", "Pi 5 + UPS HAT (E)"), ("stack_keeper", "v2", "stack keeper (v4)"),
+    ("pi_ups", "board", "Pi 5 + UPS HAT (E)"), ("stack_keeper", "v2", "stack keeper"),
     ("motors", "metal", "JGA25-370 gear motors"), ("wheels", "black", "65 mm wheels"), ("casters", "metal", "ball casters"),
     ("aa_holder", "black", "6xAA holder"), ("switch", "black", "drive switch"), ("boards", "board", "RP2040, motor driver, 5 V converter, servo power"),
     ("charge_socket", "metal", "USB-C charging socket"),

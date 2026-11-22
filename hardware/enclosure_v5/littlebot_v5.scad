@@ -148,6 +148,46 @@ module stack_mount() {                   // on the tub's floor
     }
 }
 
+// THE STACK KEEPER, v5's (v4's broke at a screw): v4's ends hung 1.85 mm above the mount's posts, so tightening the
+// screws bent it, and under each screw head there was 2.8 mm of plastic. v5's: a 12 x 12 mm bar over the plate's top
+// edge (the same V), its ends standing on the posts (0.3 mm off before the screws pull them down), 7.5 mm of solid under
+// each screw head (the head sunk 9 mm, the same M3 x 20 with 12 mm in the post). Arms 12 x 12 back over the boards'
+// ends; from them, a cage down the stack's 2 ends: legs 18 mm down outside the boards' ends (the SD card is lower),
+// the left one hooking behind the Pi's corner. Stack coordinates (as v2's; place_stack() moves it). Prints top face down.
+k5_h = 12; k5_w = 12;                    // the bar: height over its V's mouth, width
+k5_arm = 12; k5_leg = [4, 18];           // the arms' width; the legs: thickness, how far down from the boards' top edges
+k5_floor = 7.5;                          // solid under each screw head
+k5_ends = [keeper_x[0] - 5.9, keeper_x[1] + 7];   // the bar's ends (x): the left one clear of the motor driver on the deck
+module stack_keeper5() {
+    zm = keeper_mouth(ups_plate_t, ups_plate[1]); top = zm + k5_h;
+    px0 = stk_x0 + ups_l/2 - plate_l_max/2 - 0.2; px1 = stk_x0 + ups_l/2 + plate_l_max/2 + 0.2;   // where a plate can be
+    wz1 = keeper_mouth_lo - 1;                                                       // the mount's wall: its top
+    foot = keeper_boss_top + 0.3;                                                    // the ends' underside, over the posts
+    seat = foot + k5_floor;                                                          // the screw heads' seat
+    ups_y = stk_y0 + stk_ups_w0; pi_y1 = stk_y0 + stk_pi_w1;
+    difference() {
+        union() {
+            translate([k5_ends[0], stk_yc - k5_w/2, zm]) cube([k5_ends[1] - k5_ends[0], k5_w, k5_h]);              // the bar
+            for (e = [[k5_ends[0], px0], [px1, k5_ends[1]]]) {
+                translate([e[0], stk_yc - 7, wz1 + 0.4]) cube([e[1] - e[0], 15, top - wz1 - 0.4]);                 // the ends, over the wall (clear of the breadboard in front)
+                translate([e[0], wall_y1 + 0.2, foot]) cube([e[1] - e[0], stk_yc + k5_w/2 - wall_y1 - 0.2, wz1 + 0.4 - foot + eps]);   // down onto the posts
+            }
+            for (xb = [stk_x0, stk_x0 + ups_l]) translate([xb - k5_arm/2, stk_yc + k5_w/2 - eps, stk_ztop]) cube([k5_arm, pi_y1 + 2.3 - stk_yc - k5_w/2 + eps, top - stk_ztop]);   // the arms
+            // the legs: outside the boards' ends; the left one (the SD end) to behind the Pi, with a lip behind its corner
+            translate([stk_x0 - 0.4 - k5_leg[0], ups_y - 1.5, stk_ztop - k5_leg[1]]) cube([k5_leg[0], pi_y1 + 2.3 - ups_y + 1.5, k5_leg[1] + eps]);
+            translate([stk_x0 - 0.4 - eps, pi_y1 + 0.3, stk_ztop - k5_leg[1]]) cube([1.2 + eps, 2, k5_leg[1] + eps]);
+            // the right one (the USB end) stops short of the Pi's jacks and their plugs
+            translate([stk_x0 + ups_l + 0.4, ups_y - 1.5, stk_ztop - k5_leg[1]]) cube([k5_leg[0], stk_y0 + stk_pi_w0 - 0.5 - ups_y + 1.5, k5_leg[1] + eps]);
+        }
+        vee_cut(px0, px1, zm, false);
+        for (u = [3.5, 84.5]) translate([stk_x0 + u - 4.2, stk_yc + 0.6, zm - 1]) cube([8.4, 5, 1 + 1.1]);   // the upper standoffs
+        for (x = keeper_x) translate([x, stk_yc, foot - 1]) {
+            cylinder(d = clear_m3, h = 40, $fn = fn_small);
+            translate([0, 0, seat - foot + 1]) cylinder(d = 6.4, h = 30, $fn = 24);                        // the head, sunk
+        }
+    }
+}
+
 // -----------------------------------------------------------------------------
 // THE TUB
 // -----------------------------------------------------------------------------
@@ -510,7 +550,7 @@ module v5_base_parts(deck = true) {
     color(DARK4) render() v5_tub();
     for (s = [-1, 1]) { color("#3a3d44") place_pod(s) render() v5_pod(); wheel_dummy(s); color("#999") motor_dummy(s); }
     for (y = cas_y) caster_dummy(y);
-    place_stack() { ups_stack(); color("#c8c2b4") stack_keeper(); }
+    place_stack() { ups_stack(); color("#c8c2b4") stack_keeper5(); }
     color(DARK4) render() v5_tray(); aa_dummy(); switch_dummy();
     if (deck) { color("#d9d4c8") render() v5_deck(); deck_dummies(); }
     color("#333") usbc_socket5(); knob5_dummy();
@@ -552,6 +592,7 @@ module print5(w) {
     if (w == "mic_holder") let (Mi = [[1, 0, 0, 0], [0, rsl_t[1], rsl_t[2], 0], [0, rsl_n[1], rsl_n[2], 0], [0, 0, 0, 1]], o = rsl_pt([0, 0, 0])) multmatrix(Mi) translate(-o) v5_rsl_holder();
     if (w == "mic_key")    translate([0, 0, -sl4_pocket[1][0] - 0.15]) sa_rsl_key();
     if (w == "spk_keeper") translate([0, 0, -(spk3_c[1] + spk_d + 0.15)]) rotate([90, 0, 0]) sa_spk_keeper();
+    if (w == "stack_keeper") translate([0, 0, keeper_mouth(ups_plate_t, ups_plate[1]) + k5_h]) mirror([0, 0, 1]) stack_keeper5();   // top face down
     // test pieces: the first 22 mm of the body (its tongue, the flare onto the tub's rim, the thick band) and a corner of the tub
     // (floor, wall, the door's post): an hour's print each, to try a printer and a spool before the long prints
     if (w == "test_body_base")  intersection() { print5("body"); translate([-300, -300, 0]) cube([600, 600, 22]); }
@@ -590,7 +631,7 @@ module assy5(w) {
     if (w == "respeaker")   place_rsl() rsl_board();
     if (w == "speaker")     speaker3_dummy();
     if (w == "pi_ups")      place_stack() { ups_stack(); ups_plugs(); }
-    if (w == "stack_keeper") place_stack() stack_keeper();
+    if (w == "stack_keeper") place_stack() stack_keeper5();
     if (w == "motors")      for (s = [-1, 1]) motor_dummy(s);
     if (w == "wheels")      for (s = [-1, 1]) translate([s * (xf + 44.5 - wh_w / 2), yw, az]) rotate([0, 90, 0]) cylinder(d = wh_d, h = wh_w, center = true);
     if (w == "casters")     for (y = cas_y) { translate([0, y, cas_lift + 9.525]) sphere(d = 19.05, $fn = 32); translate([0, y, cas_seat - 12]) cylinder(d1 = 16, d2 = 22.9, h = 12); }

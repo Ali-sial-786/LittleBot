@@ -35,7 +35,7 @@ Same height as v4 (437 mm). The base is 230 × 204 mm (v4: 186 × 160), with 18 
 |---|---|---|
 | Middle, both sides | **Wheel pods.** Each motor (JGA25-370 with encoder) screws by its face to a pod's plate, outside the pod; the wheel turns between the pod's 2 walls, open above (the deck is over it). The pod screws down onto 2 ridges in the tub | Motor, coupler and wheel go on at the bench. The wheels show only under the floor. The first pods had a roof that rubbed on the 67 mm wheels: reprint them from `LittleBot_v5_pods_<printer>.3mf`. |
 | Front and rear, on the centre line | **Ball casters** (Pololu 3/4" metal), in square recesses under the floor | They stand about 1.8 mm off a flat floor with 67 mm wheels (0.8 with 65), so the wheels always carry the robot and it can't hang up on the casters. Leave the casters' spacers out: one would let a caster lift a wheel. |
-| Behind the motors | **Pi 5 + UPS**, on v2's V-groove mount and v4's keeper | The same mount as before, 19 mm higher (over the rear caster's screws). |
+| Behind the motors | **Pi 5 + UPS**, on v2's V-groove mount, under v5's keeper | The same mount as before, 19 mm higher (over the rear caster's screws). The keeper is new: v4's broke at a screw (its ends hung 1.85 mm above the posts, so the screws bent it, and it had 2.8 mm under each screw head). v5's is a 12 × 12 mm frame whose ends stand on the posts, 7.5 mm of plastic under each screw head, and legs 18 mm down both ends of the stack like a cage (the left one hooks behind the Pi's corner). Reprint it from `LittleBot_v5_keeper_<printer>.3mf` (5 wall loops, 40 % infill). |
 | In front of the motors | **6×AA drawer.** Its front is the battery door | 2 screws, then it slides out on its leads. |
 | Front, beside the door | **Drive switch** (a 20 mm round rocker), in the tub's wall | It switches the 6×AA pack: wheels and servos. The Pi has its own switch at the back. |
 | Over the motors | **Deck**, on 4 posts: RP2040 on its breadboard, motor driver, servo power board, 5 V converter | Wired at the bench, then 4 screws. |
@@ -52,6 +52,7 @@ The motors' tails rest in 2 saddles with zip-tie slots. The Pi's fan blows down 
 | `LittleBot_v5_A1.3mf`, `LittleBot_v5_P2S.3mf` | **the Bambu Studio project, one for each printer: 5 plates, colours, wall loops, brims and the one support set** |
 | `LittleBot_v5_test_A1.3mf`, `LittleBot_v5_test_P2S.3mf` | two short test pieces, a plate each: the body's first 22 mm (white) and a corner of the tub (dark). Print them before the long prints. |
 | `LittleBot_v5_plain.3mf`, `LittleBot_v5_test_plain.3mf` | the same plates with none of our printer, process or filament settings inside: Bambu Studio keeps whatever is selected in it. Only the per-part settings come with them (wall loops, brims, the mic holder's supports). Use these if a printer-specific file won't send. |
+| `LittleBot_v5_keeper_A1.3mf`, `LittleBot_v5_keeper_P2S.3mf`, `LittleBot_v5_keeper_plain.3mf` | the stack keeper on its own plate (v5's: stronger, with legs down the stack's ends) |
 | `LittleBot_v5_pods_A1.3mf`, `LittleBot_v5_pods_P2S.3mf`, `LittleBot_v5_pods_plain.3mf` | the 2 wheel pods on their own plate, to reprint them (the second version: no roof, room for 67 mm wheels) |
 | `LittleBot_v5_assembled.3mf` | the whole robot assembled and coloured, to look at (not to print) |
 | `LittleBot_v5_assembly.mp4` | **the assembly video** (6 minutes): every part, screw, nut and cable going in, in the order below (the order there is room for each thing), each screw turned in by its tool with its size on a tag |
@@ -65,10 +66,10 @@ The motors' tails rest in 2 saddles with zip-tie slots. The Pi's fan blows down 
 ## What you keep, what you print
 
 **Keep, as printed:**
-- from v4: the head (frame and back), both arms, the stack keeper;
+- from v4: the head (frame and back), both arms;
 - from v2: the ring gear, the pinion, the servo frame, the camera bracket.
 
-**No longer used:** v4's body, base ring, neck plate, black neck, port panel and slider; v2's floor, coupler and PCA9685 clamps; v4's mic holder, key and speaker keeper (the new body needs its own: the mic sits lower).
+**No longer used:** v4's body, base ring, neck plate, black neck, port panel, slider and stack keeper; v2's floor, coupler and PCA9685 clamps; v4's mic holder, key and speaker keeper (the new body needs its own: the mic sits lower).
 
 **Print (Bambu Lab A1 or P2S: open that printer's project; PLA, 0.20 mm Standard, Textured PEI plate; slots: 1 white, 2 dark grey):**
 
@@ -83,7 +84,7 @@ The motors' tails rest in 2 saddles with zip-tie slots. The Pi's fan blows down 
 | 1 | dark | **tub** (floor down) | 230 × 204 mm: centre it. 5 mm brim. No supports: the casters' recesses bridge. |
 | 2 | white | **body** (upright, tongue down), and inside its footprint the **cap** (top face down) | 8 mm brim inside and outside the body: it stands on its 4 mm tongue. No supports: the collar under the cap is 45° underneath, and the speaker's ribs start on the plate. |
 | 3 | dark | **black neck** (top down), **hub** (flange down) | The hub can be any colour: it doesn't show. |
-| 4 | white | **mic holder** and **key**, **speaker keeper**, **slider** | Tree supports from the build plate under the mic holder only, as v4. |
+| 4 | white | **mic holder** and **key**, **speaker keeper**, **slider**, **stack keeper** (top face down) | Tree supports from the build plate under the mic holder only, as v4. The stack keeper: 5 wall loops, 40 % infill. |
 | 5 | dark | **deck** (flat), **drawer** (tray down, door standing), **both wheel pods** (plate down) | 3 mm brim on the drawer. Print this plate after measuring the motors, wheels, casters and AA holder. |
 
 ![the 5 plates](plates_v5.png)
@@ -105,7 +106,7 @@ Not needed any more: the PCA9685 and both 4×AA holders.
 | Motors → wheel pods | 4 × M3 × 8 (2 each), from the wheel's side | the gearbox's own threaded holes (4.5 mm deep: nothing longer than 8) |
 | Wheel pods → tub | 8 × M3 × 12 (4 each), down through the pods' flanges | holes in the tub's ridges |
 | Casters → tub | the casters' own 4 × #2-56 screws, from below | their nuts, on top of the seats inside the tub |
-| Stack keeper | 2 × M3 × 20, as v4 | the mount's 2 bosses |
+| Stack keeper | 2 × M3 × 20, snug: its ends sit on the posts | the mount's 2 bosses |
 | Deck → tub | 4 × M3 × 8 | the 4 posts |
 | Motor driver → deck | 4 × M3 × 8 | the deck's 4 short posts |
 | Battery door | 2 × M3 × 10, through its lower corners | the 2 posts behind it |
@@ -132,7 +133,7 @@ In total for the new parts: 22 × M3 × 12, 12 × M3 × 10, 12 × M3 × 8, 5 × 
 3. **Tub:**
    - Casters: turn the tub over; each caster into its recess with its 2 screws. Turn it back and fit their nuts while the floor is bare (the rear ones end up under the Pi).
    - Pods: lower each in, wheel through the floor, and fit 4 × M3 × 12. Zip-tie each motor's tail to its saddle now: the deck covers them.
-   - Pi + UPS: stand its plate in the groove and fit the keeper (2 × M3 × 20).
+   - Pi + UPS: stand its plate in the groove, ports up. The keeper over it, its legs down the stack's 2 ends (the left one behind the Pi's corner): 2 × M3 × 20, snug, not tight.
    - Charging cable: plug in the UPS's USB-C marked POWER; socket zip-tied into the holder at the back's left corner.
 4. **Drive switch, wired now:** snap it into its hole in the front wall, from outside. One tab: a lead with the 5 A fuse, to the drawer's bay (the battery plugs onto it last). The other: a lead long enough to reach the deck. The deck covers the tabs.
 5. **Deck, at the bench:** breadboard with the RP2040 (it sticks down), motor driver on its 4 posts (4 × M3 × 8), servo power board and 5 V converter (zip ties). Wire them. Then onto the tub's 4 posts (4 × M3 × 8), and connect the motors, the encoders and the switch's lead.
