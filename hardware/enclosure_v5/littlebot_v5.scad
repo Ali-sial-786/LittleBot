@@ -576,7 +576,9 @@ if (part == "layout5") translate([0, b_cy, 0]) rotate(spin) translate([0, -b_cy,
 }
 
 // -----------------------------------------------------------------------------
-// PRINT (part = "print5", which = name): each part in its print orientation, on z = 0
+// PRINT (part = "print5", which = name): each part in its print orientation, on z = 0. A part goes face down by
+// rotate([180, 0, 0]), never mirror([0, 0, 1]): a mirror prints the part's mirror image (the first black neck's holes came out
+// 20 degrees off the hub's). The check print_not_mirrored turns each one back and compares it with the model.
 // -----------------------------------------------------------------------------
 module print5(w) {
     if (w == "tub")        translate([0, 0, -z_fl]) v5_tub();                                                   // floor down
@@ -585,14 +587,14 @@ module print5(w) {
     if (w == "tray")       translate([0, 0, -tray_z]) v5_tray();                                               // tray down, the door standing
     if (w == "deck")       translate([0, 0, -deck_z]) v5_deck();                                               // flat
     if (w == "body")       translate([0, 0, -(z_bt - tg[2])]) v5_body();                                      // upright, tongue down (5 mm brim)
-    if (w == "cap")        translate([0, 0, BT]) mirror([0, 0, 1]) v5_cap();                                   // top face down
+    if (w == "cap")        translate([0, 0, BT]) rotate([180, 0, 0]) v5_cap();                                         // top face down
     if (w == "hub")        translate([0, -neck_y, -(zc0 - hub_play - hub_fl[1])]) v5_hub();                    // flange down
-    if (w == "neck")       translate([0, neck_y, hd_z0]) mirror([0, 0, 1]) v5_neck();                          // top down
-    if (w == "slider")     translate([0, 0, sl5_z0 + sl_h]) mirror([0, 0, 1]) v5_slider();                     // top down
+    if (w == "neck")       translate([0, -neck_y, hd_z0]) rotate([180, 0, 0]) v5_neck();                          // top down
+    if (w == "slider")     translate([0, 0, sl5_z0 + sl_h]) rotate([180, 0, 0]) v5_slider();                     // top down
     if (w == "mic_holder") let (Mi = [[1, 0, 0, 0], [0, rsl_t[1], rsl_t[2], 0], [0, rsl_n[1], rsl_n[2], 0], [0, 0, 0, 1]], o = rsl_pt([0, 0, 0])) multmatrix(Mi) translate(-o) v5_rsl_holder();
     if (w == "mic_key")    translate([0, 0, -sl4_pocket[1][0] - 0.15]) sa_rsl_key();
     if (w == "spk_keeper") translate([0, 0, -(spk3_c[1] + spk_d + 0.15)]) rotate([90, 0, 0]) sa_spk_keeper();
-    if (w == "stack_keeper") translate([0, 0, keeper_mouth(ups_plate_t, ups_plate[1]) + k5_h]) mirror([0, 0, 1]) stack_keeper5();   // top face down
+    if (w == "stack_keeper") translate([0, 0, keeper_mouth(ups_plate_t, ups_plate[1]) + k5_h]) rotate([180, 0, 0]) stack_keeper5();   // top face down
     // test pieces: the first 22 mm of the body (its tongue, the flare onto the tub's rim, the thick band) and a corner of the tub
     // (floor, wall, the door's post): an hour's print each, to try a printer and a spool before the long prints
     if (w == "test_body_base")  intersection() { print5("body"); translate([-300, -300, 0]) cube([600, 600, 22]); }

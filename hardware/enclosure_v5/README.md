@@ -53,6 +53,7 @@ The motors' tails rest in 2 saddles with zip-tie slots. The Pi's fan blows down 
 | `LittleBot_v5_test_A1.3mf`, `LittleBot_v5_test_P2S.3mf` | two short test pieces, a plate each: the body's first 22 mm (white) and a corner of the tub (dark). Print them before the long prints. |
 | `LittleBot_v5_plain.3mf`, `LittleBot_v5_test_plain.3mf` | the same plates with none of our printer, process or filament settings inside: Bambu Studio keeps whatever is selected in it. Only the per-part settings come with them (wall loops, brims, the mic holder's supports). Use these if a printer-specific file won't send. |
 | `LittleBot_v5_keeper_A1.3mf`, `LittleBot_v5_keeper_P2S.3mf`, `LittleBot_v5_keeper_plain.3mf` | the stack keeper on its own plate (v5's: stronger, with legs down the stack's ends) |
+| `LittleBot_v5_neck_A1.3mf`, `LittleBot_v5_neck_P2S.3mf`, `LittleBot_v5_neck_plain.3mf` | the black neck on its own plate, to reprint it (see **Mirror-image parts** below) |
 | `LittleBot_v5_pods_A1.3mf`, `LittleBot_v5_pods_P2S.3mf`, `LittleBot_v5_pods_plain.3mf` | the 2 wheel pods on their own plate, to reprint them (the second version: no roof, room for 67 mm wheels) |
 | `LittleBot_v5_assembled.3mf` | the whole robot assembled and coloured, to look at (not to print) |
 | `WIRING.md`, `wiring/` | **the base's wiring**: power (fuse, switch, 4 Wagos), the RP2040's pins (the Pi's UART, encoders, motor driver, servos, battery sense), the motors' 6 wires |
@@ -60,7 +61,7 @@ The motors' tails rest in 2 saddles with zip-tie slots. The Pi's fan blows down 
 | `assembly_video/` | re-makes the video (`OPENSCAD=... ./make_video.sh`). The screws, nuts, cable routes and part positions come from the model (`video5.scad`). |
 | `stl/*.stl` | each new part on its own, in its print orientation |
 | `plates_v5.png` | top view of the 5 plates |
-| `checks_v5.scad`, `run_checks_v5.sh` | 87 checks (`OPENSCAD=... ./run_checks_v5.sh`), all passing: nothing overlaps; the wheels have 1.5 mm all round; the drawer slides out; the body goes on over everything in the base; the neck goes in from the top; every screw's path is clear, every nut has plastic in front of it and the cap's screws have thread to bite; the arms' sweep and finger pinch with the head turned; the slider; the mic holder and the speaker keeper |
+| `checks_v5.scad`, `run_checks_v5.sh` | 88 checks (`OPENSCAD=... ./run_checks_v5.sh`), all passing: no printed part is a mirror image of the model; nothing overlaps; the wheels have 1.5 mm all round; the drawer slides out; the body goes on over everything in the base; the neck goes in from the top; every screw's path is clear, every nut has plastic in front of it and the cap's screws have thread to bite; the arms' sweep and finger pinch with the head turned; the slider; the mic holder and the speaker keeper |
 | `export_v5.sh`, `make_v5_project.py`, `make_v5_assembly.py` | re-make the STLs, the project and the assembled 3MF |
 | `pics_v5.scad`, `make_pics_v5.sh` | re-make this page's pictures |
 
@@ -77,6 +78,17 @@ The motors' tails rest in 2 saddles with zip-tie slots. The Pi's fan blows down 
 **First, the test pieces.** The body is a long print and the tub a big flat one. Print `LittleBot_v5_test_<printer>.3mf` first: the body's first 22 mm (its tongue, the flare onto the tub's rim and the thick band, with the real brim), and a corner of the tub (floor, wall, the door's post), each in its real colour. If either fails, the printer, the plate or the spool is the problem, and you've lost an hour, not a day.
 
 **Clean plate.** Wash the plate at the sink with dish soap and hot water, rinse it well and hold it by the edges. Hand soap or a wipe with alcohol leaves a film (moisturisers, finger oil) that PLA won't stick to: the first lines curl up and the print turns to spaghetti, whatever the model.
+
+**Mirror-image parts (files before this fix).** The parts that print face down (the cap, the black neck, the slider, the stack keeper) were exported as their mirror images: the export flipped them with a mirror instead of turning them over. Turned back over, each was the model's mirror image. What that means for parts already printed:
+
+| Part | |
+|---|---|
+| **black neck** | reprint it (`LittleBot_v5_neck_<printer>.3mf`). In the mirrored one, the 3 recessed holes sit 20° (7 mm) away from the hub's screw holes, and one of the 3 plain holes misses its nut. |
+| **stack keeper** | reprint it (`LittleBot_v5_keeper_<printer>.3mf`) if it came from the earlier file: the mirrored one has its legs and lip on the wrong ends. |
+| **cap** | keep it. It's the same as the model but for its 2 servo-frame pillars, which are 1 mm off centre to the other side. Fit the servo frame turned round 180° (with the servo in it): its collars then fit the pillars, the pinion stays where it should, and the checks pass that way. |
+| **slider** | keep it: it's the same both ways. |
+
+The export now turns them over, and the check `print_not_mirrored` turns each printed part back and compares it with the model.
 
 **Solid walls.** The project sets **4 wall loops** on the tub, body, cap, hub, neck, pods, drawer and deck (Bambu's default is 2). v5's walls are 3 mm; with 2 loops a side the slicer prints two thin skins with sparse infill between them, and the first body printed that way split along a layer. If you slice from the STLs instead of the project, set wall loops to 4 yourself, and check in the preview that the walls are solid all the way through. With a 0.6 mm nozzle (0.30 mm Standard), 3 loops are enough.
 
@@ -144,7 +156,7 @@ In total for the new parts: 22 × M3 × 12, 12 × M3 × 10, 12 × M3 × 8, 5 × 
 9. **Neck, at the bench:**
    - Hub up through the cap from below; ring gear onto the hub's flange (3 × M3 × 12 from below).
    - Slide 3 nuts into the slots in the hub's side. Black neck over the hub (its rib in the hub's groove): 3 × M3 × 12.
-   - Servo frame with the head servo and the pinion (glue cured) onto the cap's 2 pillars; mesh the gears with the servo centred.
+   - Servo frame with the head servo and the pinion (glue cured) onto the cap's 2 pillars; mesh the gears with the servo centred (A cap printed from the earlier files: the frame goes on turned round 180°, see **Mirror-image parts**.)
 10. **Cap onto the body:** hold the cap just over the body's top, the head servo's lead onto its extension, the HDMI, USB-C and camera cables up through the neck. Lower the cap in and fit 8 × M3 × 12 straight down into the collar's holes. Stop when each is snug: they thread into plastic, and overtightening strips it.
 
    ![the cap's screws](cap_screws.png)

@@ -107,4 +107,14 @@ if (check == "chest_vs_base")       intersection() { union() { speaker_s(); mic_
 if (check == "arms_vs_body")        intersection() { union() { v5_body(); v5_tub(); v5_cap(); }; arms_at(arm_angle); }
 if (check == "arms_vs_neck")        intersection() { neck_moving(head_angle); arms_at(arm_angle); }
 if (check == "pinch_arm_head")      intersection() { head_all(head_angle); arms_grown_at(arm_angle); }
+// the printed parts that go face down, turned back over: each must be the model itself, not its mirror image
+pnm = ["cap", "neck", "slider", "stack_keeper"];
+module unprint5(w) {
+    if (w == "cap")          rotate([180, 0, 0]) translate([0, 0, -BT]) print5(w);
+    if (w == "neck")         rotate([180, 0, 0]) translate([0, neck_y, -hd_z0]) print5(w);
+    if (w == "slider")       rotate([180, 0, 0]) translate([0, 0, -(sl5_z0 + sl_h)]) print5(w);
+    if (w == "stack_keeper") rotate([180, 0, 0]) translate([0, 0, -(keeper_mouth(ups_plate_t, ups_plate[1]) + k5_h)]) print5(w);
+}
+module model5(w) { if (w == "cap") v5_cap(); if (w == "neck") v5_neck(); if (w == "slider") v5_slider(); if (w == "stack_keeper") stack_keeper5(); }
+if (check == "print_not_mirrored")  for (w = pnm) { difference() { unprint5(w); model5(w); } difference() { model5(w); unprint5(w); } }
 if (check == "selftest_must_fail")  intersection() { v5_body(); translate([96, 70, 100]) cube(10); }

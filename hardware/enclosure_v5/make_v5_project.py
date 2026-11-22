@@ -4,7 +4,8 @@ for each printer (Bambu Lab A1 and P2S: 0.4 nozzle, 0.20 mm Standard, Bambu PLA 
 
     ./export_v5.sh && python3 make_v5_project.py      # reads stl/*.stl, writes LittleBot_v5_<A1|P2S|plain>.3mf, plates_v5.png and
                                                       # LittleBot_v5_test_<A1|P2S|plain>.3mf (two short test pieces, a plate each) and
-                                                      # LittleBot_v5_pods_<A1|P2S|plain>.3mf (the 2 wheel pods alone)
+                                                      # LittleBot_v5_pods_<A1|P2S|plain>.3mf (the 2 wheel pods alone),
+                                                      # LittleBot_v5_keeper_<...>.3mf, LittleBot_v5_neck_<...>.3mf (one part each)
 
 Plates (v4's packer and project writer, with v5's parts):
   1  dark:  the tub (floor down)
@@ -47,16 +48,20 @@ TESTS = [("test body", "white", ["test_body_base"]), ("test tub", "dark", ["test
 PODS = [("wheel pods", "dark", ["pod_left", "pod_right"])]
 # the stack keeper on its own (v5's: stronger, with legs down the stack's ends)
 KEEPER = [("stack keeper", "white", ["stack_keeper"])]
+# the black neck on its own (the first one was exported as its mirror image: its holes came out 20 degrees off the hub's)
+NECK = [("black neck", "dark", ["neck"])]
 
 if __name__ == "__main__":
     plates = [(pname, colour, m4.pack(names)) for pname, colour, names in PLATES]
     tests = [(pname, colour, m4.pack(names)) for pname, colour, names in TESTS]
     pods = [(pname, colour, m4.pack(names)) for pname, colour, names in PODS]
     keeper = [(pname, colour, m4.pack(names)) for pname, colour, names in KEEPER]
+    neck = [(pname, colour, m4.pack(names)) for pname, colour, names in NECK]
     for printer in ("A1", "P2S", None):          # None: "plain", no printer or filament settings of ours (Bambu Studio keeps its own)
         tag = printer or "plain"
         m4.project(plates, HERE / f"LittleBot_v5_{tag}.3mf", "LittleBot v5 Rover", printer)
         m4.project(tests, HERE / f"LittleBot_v5_test_{tag}.3mf", "LittleBot v5 test pieces", printer)
         m4.project(pods, HERE / f"LittleBot_v5_pods_{tag}.3mf", "LittleBot v5 wheel pods", printer)
         m4.project(keeper, HERE / f"LittleBot_v5_keeper_{tag}.3mf", "LittleBot v5 stack keeper", printer)
+        m4.project(neck, HERE / f"LittleBot_v5_neck_{tag}.3mf", "LittleBot v5 black neck", printer)
     m4.preview(plates, HERE / "plates_v5.png")
