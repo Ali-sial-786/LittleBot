@@ -55,6 +55,7 @@ The motors' tails rest in 2 saddles with zip-tie slots. The Pi's fan blows down 
 | `LittleBot_v5_keeper_A1.3mf`, `LittleBot_v5_keeper_P2S.3mf`, `LittleBot_v5_keeper_plain.3mf` | the stack keeper on its own plate (v5's: stronger, with legs down the stack's ends) |
 | `LittleBot_v5_pods_A1.3mf`, `LittleBot_v5_pods_P2S.3mf`, `LittleBot_v5_pods_plain.3mf` | the 2 wheel pods on their own plate, to reprint them (the second version: no roof, room for 67 mm wheels) |
 | `LittleBot_v5_assembled.3mf` | the whole robot assembled and coloured, to look at (not to print) |
+| `WIRING.md`, `wiring/` | **the base's wiring**: power (fuse, switch, 4 Wagos), the RP2040's pins (the Pi's UART, encoders, motor driver, servos, battery sense), the motors' 6 wires |
 | `LittleBot_v5_assembly.mp4` | **the assembly video** (6 minutes): every part, screw, nut and cable going in, in the order below (the order there is room for each thing), each screw turned in by its tool with its size on a tag |
 | `assembly_video/` | re-makes the video (`OPENSCAD=... ./make_video.sh`). The screws, nuts, cable routes and part positions come from the model (`video5.scad`). |
 | `stl/*.stl` | each new part on its own, in its print orientation |
@@ -91,7 +92,7 @@ The motors' tails rest in 2 saddles with zip-tie slots. The Pi's fan blows down 
 
 ## What to buy
 
-The list from before stands (2 × JGA25-370 6 V / 170 RPM kits with 65 mm wheels, 6×AA holder, RP2040 core board, Cytron MDD3A, Fingertech 5V 4A converter (RobotShop RB-Ftr-343; the DFRobot one is out of stock), breadboard, 2 × Pololu 3/4" ball casters, perfboard, pin headers, 5 A fuse and holder, wire, 22 kΩ and 10 kΩ resistors). Three things to add or pin down:
+The list from before stands (2 × JGA25-370 6 V / 170 RPM kits with 65 mm wheels, 6×AA holder, RP2040 core board, Cytron MDD3A, Fingertech 5V 4A converter (RobotShop RB-Ftr-343; the DFRobot one is out of stock), breadboard, 2 × Pololu 3/4" ball casters, 4 Wago 221-415 lever connectors (instead of the perfboard: [WIRING.md](WIRING.md)), 5 A fuse and holder, wire, 22 kΩ and 10 kΩ resistors). Three things to add or pin down:
 
 - **the switch:** SparkFun's round rocker with a blue LED (COM-11155; RobotShop RB-Spa-2450): on/off, 16 A at 12 V, snaps into a 20.2 mm hole. The tub has that hole. Its LED lights from 5 V; leave its third tab unconnected if you don't want the light.
 - **M3 nuts:** 11 (8 body, 3 head). v4 used 8.
@@ -136,7 +137,7 @@ In total for the new parts: 22 × M3 × 12, 12 × M3 × 10, 12 × M3 × 8, 5 × 
    - Pi + UPS: stand its plate in the groove, ports up. The keeper over it, its legs down the stack's 2 ends (the left one behind the Pi's corner): 2 × M3 × 20, snug, not tight.
    - Charging cable: plug in the UPS's USB-C marked POWER; socket zip-tied into the holder at the back's left corner.
 4. **Drive switch, wired now:** snap it into its hole in the front wall, from outside. One tab: a lead with the 5 A fuse, to the drawer's bay (the battery plugs onto it last). The other: a lead long enough to reach the deck. The deck covers the tabs.
-5. **Deck, at the bench:** breadboard with the RP2040 (it sticks down), motor driver on its 4 posts (4 × M3 × 8), servo power board and 5 V converter (zip ties). Wire them. Then onto the tub's 4 posts (4 × M3 × 8), and connect the motors, the encoders and the switch's lead.
+5. **Deck, at the bench:** breadboard with the RP2040 (it sticks down), motor driver on its 4 posts (4 × M3 × 8), servo power (Wagos C and D in the perfboard's fence: [WIRING.md](WIRING.md)) and 5 V converter (zip ties). Wire them as [WIRING.md](WIRING.md). Then onto the tub's 4 posts (4 × M3 × 8), and connect the motors, the encoders and the switch's lead.
 6. **The head's cables, now, while you can reach the Pi:** the HDMI (micro end in the Pi), the screen's USB-C and the camera's USB (Pi's USB ports), and a 3-wire jumper extension onto the servo power board for the head servo. Leave them standing up.
 7. **Body, upside down on the bench:** its whole bottom is open, so everything inside goes in from there. Drop a nut into each of the 8 slots in the tongue's edge (a dab of tape keeps them in). The speaker slides forwards between its ribs onto their ledges; its keeper behind it. The mic holder with its key and the ReSpeaker (2 × M2 × 8), its USB-C cable plugged in. Turn it back up; arm servos in from outside (2 servo screws each), a jumper extension on each lead.
 8. **Body onto the tub:** push the slider in through the back, fork first. Hold the body over the tub (or prop it on something) and plug in its cables: the speaker and the ReSpeaker into the Pi's USB ports, the arm servos onto the servo power board. Lower it, the cables from step 6 up through its top: its tongue goes inside the rim, the slider's fork over the UPS switch's knob. Fit 8 × M3 × 10 through the rim.
