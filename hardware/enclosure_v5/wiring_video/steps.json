@@ -1,0 +1,766 @@
+[
+ {
+  "scene": "title",
+  "part": "",
+  "title": "Wiring the base",
+  "say": "LittleBot, version five. Wiring the base, step by step. This covers the batteries, the motor driver, the motors' encoders, the three servos, and the small R P twenty forty board that runs them."
+ },
+ {
+  "scene": "tools",
+  "part": "Before you start",
+  "title": "Batteries out, switch off",
+  "cap": [
+   "No batteries in the drawer, drive switch OFF, until the end",
+   "Jumper wires: male-male and male-female",
+   "Small screwdriver, wire stripper, multimeter"
+  ],
+  "say": "Keep the batteries out of the drawer, and the drive switch off, until near the end. You'll need jumper wires, both male to male, and male to female. A small screwdriver, a wire stripper, and a multimeter."
+ },
+ {
+  "scene": "pc",
+  "pc": "intro",
+  "part": "Part 1 · The program",
+  "title": "Load the program first, on your computer",
+  "cap": [
+   "Do it now, while the board is easy to reach",
+   "No Wi-Fi: the Pi talks to it through 3 wires"
+  ],
+  "say": "Part one. Load the R P twenty forty's program on your computer now, while the board is easy to reach. It has no Wi-Fi, and doesn't need any. The Pi talks to it through three wires."
+ },
+ {
+  "scene": "pc",
+  "pc": "boot",
+  "part": "Part 1 · The program",
+  "title": "Plug it in holding BOOT",
+  "cap": [
+   "Install Thonny (thonny.org)",
+   "Hold BOOT, plug in the USB-C cable, let go",
+   "A drive called RPI-RP2 appears"
+  ],
+  "say": "Install Thonny, from thonny dot org. Hold the board's boot button, plug it into the computer with a USB C cable, then let go. A drive called R P I, dash, R P 2 appears. A brand new board may show it without the button."
+ },
+ {
+  "scene": "pc",
+  "pc": "install",
+  "part": "Part 1 · The program",
+  "title": "Install MicroPython",
+  "cap": [
+   "Thonny: click the bottom-right corner → Install MicroPython…",
+   "Variant: Raspberry Pi · Pico / Pico H → Install",
+   "The drive goes away when it's done: that's normal"
+  ],
+  "say": "In Thonny, click the bottom right corner of the window, and choose Install MicroPython. Pick the Raspberry Pi Pico variant, and click Install. When it's done, the drive goes away. That's normal."
+ },
+ {
+  "scene": "pc",
+  "pc": "save",
+  "part": "Part 1 · The program",
+  "title": "Save main.py on the board",
+  "cap": [
+   "Open main.py (the file I sent)",
+   "File → Save as… → Raspberry Pi Pico",
+   "Name: main.py"
+  ],
+  "say": "Open main dot pie, the file I sent you. Choose File, Save as, then Raspberry Pi Pico, and save it on the board with the name main dot pie."
+ },
+ {
+  "scene": "pc",
+  "pc": "shell",
+  "part": "Part 1 · The program",
+  "title": "Test it",
+  "cap": [
+   "Click Stop, then type PING → PONG littlebot-base 1",
+   "Type B → B null (nothing connected yet: right)",
+   "Unplug the board"
+  ],
+  "say": "Click Stop. Then type the word ping in Thonny's shell, and press Enter. The board answers: pong, littlebot base. Type B, and it says B null, because nothing is connected yet. That's right. Unplug the board."
+ },
+ {
+  "scene": "bench",
+  "view": "bb",
+  "part": "Part 2 · The breadboard",
+  "title": "The board onto the breadboard",
+  "cap": [
+   "USB-C end at row 1, across the middle gap",
+   "Each pin has its own row, with 2 free holes beside it",
+   "Every wire goes into one of those free holes"
+  ],
+  "hl": [
+   "bb:a1",
+   "bb:b1",
+   "bb:i1",
+   "bb:j1"
+  ],
+  "say": "Part two, the breadboard. Press the R P twenty forty in, with its USB C end at row one, across the middle gap. Each pin gets its own row, with two free holes beside it. Every wire in this video goes into one of those free holes."
+ },
+ {
+  "scene": "bench",
+  "view": "bbTop",
+  "part": "Part 2 · The breadboard",
+  "title": "Check the labels on your board",
+  "cap": [
+   "GP0: top-left pin, beside the USB-C",
+   "VSYS: 2nd pin on the right",
+   "Different? Stop and send me a photo"
+  ],
+  "hl": [
+   "rp:1",
+   "rp:39"
+  ],
+  "tags": [
+   [
+    "rp:1",
+    "GP0",
+    "l"
+   ],
+   [
+    "rp:39",
+    "VSYS",
+    "r"
+   ]
+  ],
+  "say": "Check the labels printed on your board. G P zero must be the top left pin, beside the USB connector, and V sys the second pin on the right. If yours are different, stop, and send me a photo."
+ },
+ {
+  "scene": "map",
+  "part": "Part 2 · The breadboard",
+  "title": "Where everything sits",
+  "cap": [
+   "On the deck: breadboard (robot's left), 4 Wagos (middle)",
+   "Motor driver (back right), 5 V converter (front right)",
+   "Pi + UPS behind the deck, batteries in the front drawer"
+  ],
+  "say": "Here's where everything sits on the deck. The breadboard on the robot's left, the four Wago connectors in the middle, the motor driver at the back right, and the five volt converter in front of it. The Pi stands behind the deck, and the batteries slide into the drawer at the front."
+ },
+ {
+  "scene": "bench",
+  "view": "all",
+  "part": "Part 2 · The breadboard",
+  "title": "Everything we'll connect, laid flat",
+  "cap": [
+   "Pi's pins · motors · motor driver · breadboard",
+   "4 Wagos · batteries, fuse, switch · converter · 3 servos"
+  ],
+  "done": [
+   "mL_red",
+   "mL_wht",
+   "mR_red",
+   "mR_wht"
+  ],
+  "labels": true,
+  "say": "And here's everything we'll connect, laid out flat. The Pi's pins at the top left. The motors on the left, already joined to the motor driver below them. The breadboard in the middle. Then the four Wagos, the batteries, fuse and switch, the converter, and the three servos."
+ },
+ {
+  "scene": "wago",
+  "part": "Part 3 · Power",
+  "title": "How a Wago works",
+  "cap": [
+   "Strip 11 mm",
+   "Lift the lever, push the wire in all the way, close it",
+   "Tug it: it must not come out"
+  ],
+  "say": "Part three, power. First, how a Wago works. Strip eleven millimetres of insulation. Lift the orange lever, push the wire in all the way, and close the lever. Then tug the wire. It must not come out."
+ },
+ {
+  "scene": "xt30",
+  "part": "Part 3 · Power",
+  "title": "The batteries connect with a plug",
+  "cap": [
+   "An XT30 plug pair (with wires): it only fits one way",
+   "Holder's red + black → the female half: solder, heat-shrink",
+   "The male half stays in the robot, in the drawer's bay"
+  ],
+  "say": "The batteries aren't wired in for good. They connect through a two pin plug, so the drawer can go in last, and come all the way out. Get an X T thirty plug pair, with wires. Solder the female half to the battery holder's two wires: red to red, black to black, and cover each joint with heat shrink. The male half stays in the robot, in the drawer's bay."
+ },
+ {
+  "scene": "bench",
+  "view": "battery",
+  "part": "Part 3 · Power",
+  "title": "The robot's half: + through the fuse and switch",
+  "cap": [
+   "Male half's red → 5 A fuse → a switch tab",
+   "The switch's other tab → Wago A slot 1",
+   "Solder + heat-shrink, or crimp spade connectors on the tabs"
+  ],
+  "done": [
+   "mL_red",
+   "mL_wht",
+   "mR_red",
+   "mR_wht"
+  ],
+  "wires": [
+   "bat_fuse",
+   "fuse_sw",
+   "sw_A1"
+  ],
+  "hl": [
+   "wA1"
+  ],
+  "say": "The male half's red wire goes through the five amp fuse, to one tab of the drive switch. The switch's other tab goes to Wago A, slot one. Solder these joints, and cover them with heat shrink, or crimp spade connectors onto the switch's tabs."
+ },
+ {
+  "scene": "switch",
+  "part": "Part 3 · Power",
+  "title": "Which two tabs?",
+  "cap": [
+   "Meter on beep (continuity)",
+   "Find the 2 tabs that beep with the switch ON, not OFF",
+   "The 3rd tab only lights the switch: leave it empty"
+  ],
+  "say": "Which tabs? The switch has three. Set your meter to beep, and find the two tabs that beep when the switch is on, and stay silent when it's off. Use those two. The third tab only lights the switch. Leave it empty."
+ },
+ {
+  "scene": "bench",
+  "view": "battery",
+  "part": "Part 3 · Power",
+  "title": "The robot's half: − to Wago B",
+  "cap": [
+   "Male half's black → Wago B slot 1",
+   "Both its wires go down through the hole at the deck's front:",
+   "the plug hangs in the drawer's bay, waiting for the batteries"
+  ],
+  "wires": [
+   "bat_B1"
+  ],
+  "hl": [
+   "wB1"
+  ],
+  "say": "The male half's black wire goes to Wago B, slot one. Both of its wires run down through the hole at the front of the deck, so the plug hangs in the drawer's bay, waiting for the batteries."
+ },
+ {
+  "scene": "bench",
+  "view": "mddPower",
+  "part": "Part 3 · Power",
+  "title": "The motor driver's green block",
+  "cap": [
+   "Loosen its 2 screws",
+   "Wago A slot 2 → +      Wago B slot 2 → −",
+   "Push the bare ends in, tighten"
+  ],
+  "wires": [
+   "A2_mdp",
+   "B2_mdn"
+  ],
+  "hl": [
+   "md:vp",
+   "md:vn"
+  ],
+  "say": "Now the motor driver's green power block. Loosen its two screws. Wago A, slot two, goes to the plus side, and Wago B, slot two, to the minus side. Push each bare end in, and tighten."
+ },
+ {
+  "scene": "bench",
+  "view": "conv",
+  "part": "Part 3 · Power",
+  "title": "The 5 V converter: input",
+  "cap": [
+   "Check the IN and OUT labels on yours",
+   "IN + → Wago A slot 3      IN − → Wago B slot 3"
+  ],
+  "wires": [
+   "A3_cvi",
+   "B3_cvi"
+  ],
+  "hl": [
+   "cv:ip",
+   "cv:in"
+  ],
+  "say": "The converter turns the batteries into five volts, for the servos and the R P twenty forty. Check the labels on yours. Its input: plus to Wago A, slot three. Minus to Wago B, slot three."
+ },
+ {
+  "scene": "bench",
+  "view": "conv",
+  "part": "Part 3 · Power",
+  "title": "The 5 V converter: output",
+  "cap": [
+   "OUT + → Wago C slot 1      OUT − → Wago D slot 1",
+   "If the output ends in a plug: cut it off, strip the 2 wires"
+  ],
+  "wires": [
+   "cvo_C1",
+   "cvo_D1"
+  ],
+  "hl": [
+   "wC1",
+   "wD1"
+  ],
+  "say": "Its output: plus to Wago C, slot one. Minus to Wago D, slot one. If its output ends in a plug, cut the plug off, and strip the two wires."
+ },
+ {
+  "scene": "bench",
+  "view": "wagos",
+  "part": "Part 3 · Power",
+  "title": "Link the two grounds",
+  "cap": [
+   "A short wire: Wago B slot 5 → Wago D slot 5"
+  ],
+  "wires": [
+   "B5_D5"
+  ],
+  "hl": [
+   "wB5",
+   "wD5"
+  ],
+  "say": "Then link the two ground Wagos, with a short wire from Wago B, slot five, to Wago D, slot five."
+ },
+ {
+  "scene": "bench",
+  "view": "wagos",
+  "part": "Part 3 · Power",
+  "title": "Check for shorts (no batteries)",
+  "cap": [
+   "Switch OFF, meter on beep",
+   "A to B: no beep.  C to D: no beep",
+   "A chirp that stops at once is the capacitors: fine"
+  ],
+  "meter": {
+   "a": "wA5",
+   "b": "wB4",
+   "a2": "wC5",
+   "b2": "wD4",
+   "read": "OL",
+   "read2": "OL",
+   "mode": "beep"
+  },
+  "say": "Now check for shorts, before any batteries. Switch off, and set the meter to beep. Touch Wago A and Wago B: it must not beep. Then Wago C and Wago D: no beep. A short chirp that stops at once is just the capacitors charging. That's fine."
+ },
+ {
+  "scene": "bench",
+  "view": "wagos",
+  "part": "Part 3 · Power",
+  "title": "A quick live test",
+  "cap": [
+   "Cells in the holder, plug it in, switch ON",
+   "A to B: 7 to 9.5 V      C to D: 5 V",
+   "Then switch OFF and unplug the batteries again"
+  ],
+  "meter": {
+   "a": "wA5",
+   "b": "wB4",
+   "a2": "wC5",
+   "b2": "wD4",
+   "read": "8.4 V",
+   "read2": "5.0 V",
+   "mode": "volts"
+  },
+  "say": "A quick live test. Put the cells in the holder, plug it in, and switch on. Red probe on Wago A, black on Wago B: seven to nine and a half volts. Red on Wago C, black on Wago D: five volts. If either is wrong, switch off and check. Then switch off, and unplug the batteries again.",
+  "plugged": true
+ },
+ {
+  "scene": "bench",
+  "view": "bbPower",
+  "part": "Part 4 · The RP2040",
+  "title": "Its power",
+  "cap": [
+   "VSYS (row 2, right) → Wago C slot 5",
+   "GND (row 3, right) → Wago B slot 4",
+   "For a Wago end: cut a jumper, strip the cut end 11 mm"
+  ],
+  "wires": [
+   "vsys_C5",
+   "gnd_B4"
+  ],
+  "hl": [
+   "bb:i2",
+   "bb:i3",
+   "wC5",
+   "wB4"
+  ],
+  "say": "Part four, the R P twenty forty's wires. First its power. From V sys, row two on the right, to Wago C, slot five. From the ground pin, row three on the right, to Wago B, slot four. For each Wago end, cut a jumper wire, and strip the cut end."
+ },
+ {
+  "scene": "bench",
+  "view": "bbMdd",
+  "part": "Part 4 · The RP2040",
+  "title": "The motor driver's control pins",
+  "cap": [
+   "GP10 → M1A   GP11 → M1B   GP12 → M2A   GP13 → M2B",
+   "GND (row 18, left) → the driver's GND",
+   "Leave the driver's 5V pin empty · follow the labels on it"
+  ],
+  "wires": [
+   "c_m1a",
+   "c_m1b",
+   "c_m2a",
+   "c_m2b",
+   "c_gnd"
+  ],
+  "hl": [
+   "md:h5v"
+  ],
+  "tags": [
+   [
+    "md:h5v",
+    "leave empty",
+    "u"
+   ]
+  ],
+  "say": "The motor driver's control pins. G P ten, to M one A. G P eleven, to M one B. G P twelve, to M two A. G P thirteen, to M two B. And the ground pin in row eighteen, to the driver's G N D. Leave the driver's five volt pin empty."
+ },
+ {
+  "scene": "bench",
+  "view": "encL",
+  "part": "Part 4 · The RP2040",
+  "title": "Left motor's encoder",
+  "cap": [
+   "4 thin wires besides the red and white",
+   "yellow → GP6    green → GP7",
+   "black → GND (row 8, left)"
+  ],
+  "wires": [
+   "eL_y",
+   "eL_g",
+   "eL_k"
+  ],
+  "say": "The motors' encoders. Each motor has four thin wires, besides its red and white. Left motor: yellow, to G P six. Green, to G P seven. Black, to the ground pin in row eight."
+ },
+ {
+  "scene": "bench",
+  "view": "encR",
+  "part": "Part 4 · The RP2040",
+  "title": "Right motor's encoder",
+  "cap": [
+   "yellow → GP8    green → GP9",
+   "black → GND (row 13, left)"
+  ],
+  "wires": [
+   "eR_y",
+   "eR_g",
+   "eR_k"
+  ],
+  "say": "Right motor: yellow, to G P eight. Green, to G P nine. Black, to the ground pin in row thirteen."
+ },
+ {
+  "scene": "bench",
+  "view": "encB",
+  "part": "Part 4 · The RP2040",
+  "title": "Both blue wires: 3.3 V",
+  "cap": [
+   "Both blues → 3V3 OUT (row 5, right)",
+   "Never 5 V: the RP2040's pins take 3.3 V only"
+  ],
+  "wires": [
+   "eL_b",
+   "eR_b"
+  ],
+  "hl": [
+   "bb:i5",
+   "bb:j5"
+  ],
+  "say": "Both blue wires go to three point three volts, row five on the right. Never five volts. The R P twenty forty's pins only take three point three."
+ },
+ {
+  "scene": "bench",
+  "view": "servos",
+  "part": "Part 5 · The servos",
+  "title": "Three wires each",
+  "cap": [
+   "brown = ground   red = 5 V   orange = signal",
+   "Their plugs don't fit a Wago:",
+   "make a 'tail' of 3 jumpers for each servo"
+  ],
+  "hl": [
+   "svH:n",
+   "svH:r",
+   "svH:o"
+  ],
+  "say": "Part five, the servos. Each servo has three wires. Brown is ground, red is power, and orange is the signal. The servos' plugs don't fit the Wagos, so for each servo, make a tail of three jumpers."
+ },
+ {
+  "scene": "bench",
+  "view": "servosH",
+  "part": "Part 5 · The servos",
+  "title": "Head servo's tail",
+  "cap": [
+   "orange → GP14 (row 19, left)",
+   "red → Wago C slot 2    brown → Wago D slot 2",
+   "Label it: HEAD"
+  ],
+  "wires": [
+   "sH_o",
+   "sH_r",
+   "sH_n"
+  ],
+  "tags": [
+   [
+    "svH:plug",
+    "HEAD",
+    "d"
+   ]
+  ],
+  "say": "Head servo. Orange, to G P fourteen. Red, to Wago C, slot two. Brown, to Wago D, slot two. Put a tape label on the tail: head."
+ },
+ {
+  "scene": "bench",
+  "view": "servosH",
+  "part": "Part 5 · The servos",
+  "title": "Left arm servo's tail",
+  "cap": [
+   "orange → GP15 (row 20, left)",
+   "red → Wago C slot 3    brown → Wago D slot 3"
+  ],
+  "wires": [
+   "sL_o",
+   "sL_r",
+   "sL_n"
+  ],
+  "tags": [
+   [
+    "svL:plug",
+    "LEFT ARM",
+    "d"
+   ]
+  ],
+  "say": "Left arm servo. Orange, to G P fifteen. Red, to Wago C, slot three. Brown, to Wago D, slot three."
+ },
+ {
+  "scene": "bench",
+  "view": "servosH",
+  "part": "Part 5 · The servos",
+  "title": "Right arm servo's tail",
+  "cap": [
+   "orange → GP16 (row 20, right)",
+   "red → Wago C slot 4    brown → Wago D slot 4"
+  ],
+  "wires": [
+   "sR_o",
+   "sR_r",
+   "sR_n"
+  ],
+  "tags": [
+   [
+    "svR:plug",
+    "RIGHT ARM",
+    "d"
+   ]
+  ],
+  "say": "Right arm servo. Orange, to G P sixteen, row twenty on the right. Red, to Wago C, slot four. Brown, to Wago D, slot four."
+ },
+ {
+  "scene": "plug",
+  "part": "Part 5 · The servos",
+  "title": "Plugging a servo onto its tail",
+  "cap": [
+   "When the body and head go on:",
+   "each jumper's pin into the matching hole of the servo's plug",
+   "brown to brown · red to red · orange to orange"
+  ],
+  "say": "Later, when the body and the head go on, push each jumper's pin into the matching hole of that servo's plug. Brown to brown, red to red, and orange to orange. A servo plugged in backwards won't move."
+ },
+ {
+  "scene": "pc",
+  "pc": "center",
+  "part": "Part 5 · The servos",
+  "title": "Tip: centre a servo at the bench",
+  "cap": [
+   "Board on USB, servo: brown → GND, red → VBUS, orange → GP14",
+   "Thonny: type CENTER",
+   "One servo at a time, nothing on its horn"
+  ],
+  "say": "A tip. To centre a servo at the bench, before you fit the pinion or an arm, use the computer. With the board on USB, connect the servo's brown to a ground pin, red to V bus, the top right pin, and orange to G P fourteen. In Thonny, type the word center. One servo at a time, with nothing on its horn."
+ },
+ {
+  "scene": "bench",
+  "view": "sense",
+  "part": "Part 6 · Battery sense",
+  "title": "Two resistors",
+  "cap": [
+   "22 kΩ: GP26 (row 10, right) → row 22",
+   "10 kΩ: row 10 → AGND (row 8, right)"
+  ],
+  "wires": [
+   "r22",
+   "r10"
+  ],
+  "hl": [
+   "bb:i10",
+   "bb:i22",
+   "bb:j8"
+  ],
+  "say": "Part six, the battery sense. Two resistors let the R P twenty forty measure the batteries. A twenty two k resistor, from G P twenty six, row ten on the right, down to row twenty two. And a ten k resistor, from row ten, to the analog ground pin in row eight."
+ },
+ {
+  "scene": "bench",
+  "view": "senseWire",
+  "part": "Part 6 · Battery sense",
+  "title": "Battery + to row 22",
+  "cap": [
+   "Wago A slot 4 → row 22 (right)",
+   "8.5 V becomes 2.7 V on GP26: safe for the pin"
+  ],
+  "wires": [
+   "A4_sense"
+  ],
+  "hl": [
+   "wA4",
+   "bb:j22"
+  ],
+  "say": "Then a wire from Wago A, slot four, to row twenty two. The resistors turn the batteries' eight and a half volts into under three volts, which the pin can safely read."
+ },
+ {
+  "scene": "bench",
+  "view": "pi",
+  "part": "Part 7 · The Pi",
+  "title": "The Pi's pins",
+  "cap": [
+   "The 40-pin header, along the Pi's bottom edge",
+   "Outer row, from the end away from the USB ports:",
+   "pins 2, 4 = 5 V (never!)   6 = GND   8 = TX   10 = RX"
+  ],
+  "hl": [
+   "pi:2",
+   "pi:4",
+   "pi:6",
+   "pi:8",
+   "pi:10"
+  ],
+  "tags": [
+   [
+    "pi:2",
+    "5V",
+    "d",
+    40
+   ],
+   [
+    "pi:4",
+    "5V",
+    "d",
+    88
+   ],
+   [
+    "pi:6",
+    "GND",
+    "d",
+    40
+   ],
+   [
+    "pi:8",
+    "TX",
+    "d",
+    88
+   ],
+   [
+    "pi:10",
+    "RX",
+    "d",
+    40
+   ]
+  ],
+  "say": "Part seven, the link to the Pi. Its forty pin header runs along its bottom edge. On the outer row, counting from the end away from the USB ports: pins two and four are five volts. Never touch them. Pin six is ground, pin eight is T X, and pin ten is R X."
+ },
+ {
+  "scene": "bench",
+  "view": "pi",
+  "part": "Part 7 · The Pi",
+  "title": "Three wires to the Pi",
+  "cap": [
+   "Male-female jumpers",
+   "GP0 → pin 10    GP1 → pin 8 (they cross: TX to RX)",
+   "GND (row 3, left) → pin 6"
+  ],
+  "wires": [
+   "u_tx",
+   "u_rx",
+   "u_gnd"
+  ],
+  "say": "Use male to female jumpers. G P zero goes to pin ten. G P one goes to pin eight. They cross over: what one board sends, the other receives. And the ground in row three goes to pin six."
+ },
+ {
+  "scene": "term",
+  "part": "Part 7 · The Pi",
+  "title": "Turn on the Pi's serial port",
+  "term": [
+   "$ sudo nano /boot/firmware/config.txt",
+   "  (add this line at the end:)",
+   "  dtparam=uart0=on",
+   "$ sudo reboot",
+   "$ cd ~/LittleBot && git pull"
+  ],
+  "say": "On the Pi, turn the port on. Add the line, D T param equals uart zero equals on, at the end of the file, slash boot, slash firmware, slash config dot T X T. Then reboot. And get LittleBot's latest code onto the Pi."
+ },
+ {
+  "scene": "drawer",
+  "part": "Part 8 · First power-up",
+  "title": "Batteries in, the drawer last",
+  "cap": [
+   "Cells into the holder, the holder into the drawer",
+   "Plug it into the plug hanging in the bay",
+   "Slide the drawer in: the plug folds in above the holder · 2 screws"
+  ],
+  "say": "Part eight, the first power up. Put the six cells in the holder, and the holder in the drawer. Plug it into the plug hanging in the bay. Then slide the drawer in. The plug and its wires fold into the space above the holder. Fit the door's two screws. To change the batteries later: switch off, take out the two screws, slide the drawer out, and unplug it."
+ },
+ {
+  "scene": "bench",
+  "view": "all",
+  "part": "Part 8 · First power-up",
+  "title": "Switch on",
+  "cap": [
+   "Robot on a box: wheels off the table",
+   "Switch ON",
+   "The switch, the driver and the RP2040 light up"
+  ],
+  "lit": true,
+  "plugged": true,
+  "say": "Stand the robot on a box, with its wheels off the table, and switch on. The switch lights up, and so do the power lights on the motor driver and the R P twenty forty."
+ },
+ {
+  "scene": "term",
+  "part": "Part 8 · First power-up",
+  "title": "Is it talking?",
+  "term": [
+   "$ python3 scripts/base_test.py ping",
+   "PONG littlebot-base 1",
+   "$ python3 scripts/base_test.py battery",
+   "the pack: 8.40 V"
+  ],
+  "say": "On the Pi, in the LittleBot folder, run: python three, scripts, slash, base test dot pie, ping. It answers pong. Then run it with battery. It shows the batteries' voltage."
+ },
+ {
+  "scene": "term",
+  "part": "Part 8 · First power-up",
+  "title": "Centre the servos",
+  "term": [
+   "$ python3 scripts/base_test.py center",
+   "OK - the 3 servos are at 90 degrees and stay there"
+  ],
+  "say": "Run it with center. All three servos go to ninety degrees, and stay there. That's the position to fit the pinion and the arms in."
+ },
+ {
+  "scene": "term",
+  "part": "Part 8 · First power-up",
+  "title": "Set the wheels' directions",
+  "term": [
+   "$ python3 scripts/base_test.py wheels",
+   "Spinning the left wheel slowly for 2 seconds...",
+   "Did the left wheel turn the way it turns when the",
+   "robot drives FORWARDS? [y/n] y",
+   "  the left encoder counts up going forwards: good",
+   "  ...",
+   "OK saved"
+  ],
+  "say": "Run it with wheels. Each wheel spins slowly for two seconds, and it asks you which way it turned. It sets the directions for you, and saves them on the board."
+ },
+ {
+  "scene": "term",
+  "part": "Part 8 · First power-up",
+  "title": "Calibrate the encoders",
+  "term": [
+   "$ python3 scripts/base_test.py calibrate",
+   "Mark the left wheel (a bit of tape), then press Enter",
+   "Turn the left wheel FORWARDS exactly 5 whole turns...",
+   "  left: 1870 counts = 374.0 per turn",
+   "  ...",
+   "OK saved"
+  ],
+  "say": "Last, run it with calibrate. Mark each wheel with tape, turn it forwards exactly five times by hand, and press Enter. It works out the encoder's counts per turn, and saves them."
+ },
+ {
+  "scene": "end",
+  "part": "",
+  "title": "The base is wired",
+  "cap": [
+   "Something doesn't answer? Check that wire's two ends",
+   "Unsure? Send me a photo"
+  ],
+  "say": "That's it. The base is wired. If something doesn't answer, check that wire's two ends against this video. And if you're unsure about anything, send me a photo."
+ }
+]
