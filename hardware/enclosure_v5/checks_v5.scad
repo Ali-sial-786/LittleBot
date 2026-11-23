@@ -101,6 +101,13 @@ if (check == "mic_key_slides_in")   intersection() { for (d = [2.5, 5, 7.5, 10])
 if (check == "mic_screws_bite")     intersection() { place_rsl() rsl_screws(); v5_rsl_holder(); }                               // must NOT be empty
 if (check == "spk_keeper_fit")      intersection() { spk_keeper_rigid(); union() { v5_body(); speaker_s(); mic_s(); v5_rsl_holder(); sa_rsl_key(false); } }
 if (check == "spk_keeper_goes_in")  intersection() { for (d = [0.5, 1.5, spk_k_gap - 0.05]) spk_keeper_rigid(-d); union() { v5_body(); speaker_s(); } }
+// the speaker as it is (a pill)
+module speaker_pill_s() translate([0, spk3_c[1] + s, spk3_c[2]]) rotate([-90, 0, 0]) linear_extrude(spk_d - 2*s) mirror([0, 1, 0]) spk_stadium(-s);
+if (check == "spk_cradle_fit")      intersection() { spk_cradle5(); union() { v5_body(); spk_keeper_rigid(); speaker_pill_s(); mic_s(); v5_rsl_holder(); sa_rsl_key(false); } }
+if (check == "spk_cradle_rests")    intersection() { translate([0, 0, -0.2]) spk_cradle5(); v5_body(); }               // must NOT be empty: on the ledges
+if (check == "spk_cradle_holds")    intersection() { translate([0, 0.5, 0]) spk_cradle5(); spk_keeper_rigid(); }      // must NOT be empty: the keeper stops it
+if (check == "spk_cradle_goes_in")  intersection() { for (d = [3, 10, 20, 35]) translate([0, d, 0]) spk_cradle5(); v5_body(); }   // slid in from behind
+if (check == "spk_on_cradle")       intersection() { speaker_pill_s(); union() { v5_body(); spk_keeper_rigid(); mic_s(); v5_rsl_holder(); sa_rsl_key(false); } }
 if (check == "spk_keeper_holds")    intersection() { translate([0, 2, 0]) spk_keeper_rigid(); v5_body(); }                    // must NOT be empty
 if (check == "chest_vs_base")       intersection() { union() { speaker_s(); mic_s(); sa_spk_keeper(); v5_rsl_holder(); } union() { base_stuff(); v5_deck(); keeper5(); } }
 // --- arms ---
