@@ -28,8 +28,11 @@ Wiring: [`hardware/enclosure_v5/WIRING.md`](../../hardware/enclosure_v5/WIRING.m
 
 Or with `mpremote` (`python3 -m pip install mpremote`): after step 3, `mpremote cp main.py :main.py` and `mpremote reset`.
 
-**Centring a servo at the bench** (before fitting the pinion or an arm): with the board on USB, the servo's brown to a GND pin,
-red to VBUS (pin 40, top right; labelled Vout on the YD-RP2040), orange to GP14; type `CENTER` in Thonny's shell. One servo at a time, nothing on its horn.
+**Centring a servo at the bench** (before fitting the pinion or an arm): the board on the computer's USB for the
+commands, but the servo's power from its own 5 V: a 4 × AA box, a phone charger's cut USB cable, or the robot's 5 V
+converter (Wago C and D). Servo red to that +, servo brown to that − **and** to a GND pin on the board (a shared ground),
+servo orange to GP14; then type `CENTER` in Thonny's shell. Not from the board's VBUS / Vout pin: on the YD-RP2040 it
+comes through a diode and collapses (4.7 V to 1.25 V) under a servo, which then only buzzes.
 
 ## Commands (one line each; the same over the UART and in Thonny's shell)
 
