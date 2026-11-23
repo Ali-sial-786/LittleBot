@@ -84,7 +84,11 @@ def servo_us(deg, us_min, us_max):
 
 
 def pack_volts(raw_u16):
-    """The pack's voltage from a read_u16() of the sense pin, or None when nothing is connected."""
+    """The pack's voltage from a read_u16() of the sense pin, or None when it can't be one: under 3 V (nothing
+    there), or pinned at the top of the range (10.3 V and up: more than 6 x AA can give). An RP2040 board whose ADC
+    reference is unconnected reads 65535 on every pin: the YD-RP2040 ships with its VREF jumper open."""
+    if raw_u16 >= 64000:
+        return None
     v = raw_u16 * VREF / 65535 * VBAT_RATIO
     return v if v >= 3.0 else None
 

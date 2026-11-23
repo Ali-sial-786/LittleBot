@@ -203,7 +203,7 @@ def main(argv: list[str] | None = None) -> int:
         print(need(link.ask("PING", "PONG"), "PING"))
     elif a.cmd == "battery":
         reply = need(link.ask("B", "B "), "B")
-        print("the pack: " + ("nothing on the sense pin (check the 22k and 10k resistors)" if reply.endswith("null")
+        print("the pack: " + ("no reading: check the 22k and 10k resistors and the wire from Wago A (on a YD-RP2040, its VREF jumper must be bridged)" if reply.endswith("null")
                               else reply[2:] + " V"))
     elif a.cmd == "center":
         print(need(link.ask("CENTER", "OK"), "CENTER"), "- the 3 servos are at 90 degrees and stay there")

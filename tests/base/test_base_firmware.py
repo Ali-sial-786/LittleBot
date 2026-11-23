@@ -160,6 +160,7 @@ def test_servo_limits(fw):
 
 def test_battery_and_encoders(fw):
     assert fw.pack_volts(0) is None                        # nothing on the pin
+    assert fw.pack_volts(65535) is None                    # pinned at the top: no ADC reference (YD-RP2040's VREF jumper open)
     assert fw.pack_volts(int(2.656 / 3.3 * 65535)) == pytest.approx(8.5, abs=0.01)
     hw = FakeBoard(vbat=7.9)
     b = fw.Base(hw, {"einv_l": 1})

@@ -14,6 +14,8 @@ Wiring: [`hardware/enclosure_v5/WIRING.md`](../../hardware/enclosure_v5/WIRING.m
 | GP14, GP15, GP16 | the head, left arm and right arm servos' orange wires (50 Hz) |
 | GP26 (ADC0) | the pack: Wago A → 22 kΩ → GP26 → 10 kΩ → AGND |
 
+**YD-RP2040: bridge its VREF jumper** (two tiny pads marked VREF, near pin 26) with a blob of solder, or its ADC has no reference and reads 65535 on every pin (`B` then says `null`). Only the battery reading needs it.
+
 ## Loading it (once, from a computer, before the board goes in the robot)
 
 1. Install Thonny (thonny.org).
