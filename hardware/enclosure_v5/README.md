@@ -109,7 +109,7 @@ The list from before stands (2 × JGA25-370 6 V / 170 RPM kits with 65 mm wheels
 
 - **the switch:** SparkFun's round rocker with a blue LED (COM-11155; RobotShop RB-Spa-2450): on/off, 16 A at 12 V, snaps into a 20.2 mm hole. The tub has that hole. Its LED lights from 5 V; leave its third tab unconnected if you don't want the light.
 - **M3 nuts:** 11 (8 body, 3 head). v4 used 8.
-- **an XT30 plug pair with leads** (16 AWG, 10-15 cm) and heat-shrink: the battery plugs in through it ([WIRING.md](WIRING.md)).
+- **optional: an XT30 plug pair with leads** and heat-shrink, if you want the drawer to come all the way out ([WIRING.md](WIRING.md)).
 - **3 × M3 × 20** for the head (the stack keeper already uses 2).
 
 Not needed any more: the PCA9685 and both 4×AA holders.
@@ -150,7 +150,7 @@ In total for the new parts: 22 × M3 × 12, 12 × M3 × 10, 12 × M3 × 8, 5 × 
    - Pods: lower each in, wheel through the floor, and fit 4 × M3 × 12. Zip-tie each motor's tail to its saddle now: the deck covers them.
    - Pi + UPS: stand its plate in the groove, ports up. The keeper over it, its legs down the stack's 2 ends (the left one behind the Pi's corner): 2 × M3 × 20, snug, not tight.
    - Charging cable: plug in the UPS's USB-C marked POWER; socket zip-tied into the holder at the back's left corner.
-4. **Drive switch, wired now:** snap it into its hole in the front wall, from outside. Use the 2 tabs that beep when it's on (meter on beep); the third only lights it. One tab: a lead through the 5 A fuse to the red of an XT30 plug's male half; that half's black goes to Wago B. The plug hangs in the drawer's bay (its wires down through the deck's front hole): the battery plugs into it last. The other tab: a lead long enough to reach Wago A on the deck. The deck covers the tabs. See [WIRING.md](WIRING.md), "The battery plug".
+4. **Drive switch, wired now:** snap it into its hole in the front wall, from outside. Use the 2 tabs that beep when it's on (meter on beep); the third only lights it. One tab: a lead through the 5 A fuse to the battery holder's red; the holder's black goes to Wago B. Both run up through the deck's front hole, with about 10 cm of slack so the drawer can slide out to change cells (the holder sits in the drawer, wired in for good). The other tab: a lead long enough to reach Wago A on the deck. The deck covers the tabs. See [WIRING.md](WIRING.md), "The battery wires".
 5. **Deck, at the bench:** breadboard with the RP2040 (it sticks down), motor driver on its 4 posts (4 × M3 × 8), servo power (Wagos C and D in the perfboard's fence: [WIRING.md](WIRING.md)) and 5 V converter (zip ties). Wire them as [WIRING.md](WIRING.md). Then onto the tub's 4 posts (4 × M3 × 8), and connect the motors, the encoders and the switch's lead.
 6. **The head's cables, now, while you can reach the Pi:** the HDMI (micro end in the Pi), the screen's USB-C and the camera's USB (Pi's USB ports), and a 3-wire jumper extension onto the servo power board for the head servo. Leave them standing up.
 7. **Body, upside down on the bench:** its whole bottom is open, so everything inside goes in from there. Drop a nut into each of the 8 slots in the tongue's edge (a dab of tape keeps them in). The speaker slides forwards between its ribs onto their ledges; its keeper behind it. The mic holder with its key and the ReSpeaker (2 × M2 × 8), its USB-C cable plugged in. Turn it back up; arm servos in from outside (2 servo screws each), a jumper extension on each lead.
@@ -165,7 +165,7 @@ In total for the new parts: 22 × M3 × 12, 12 × M3 × 10, 12 × M3 × 8, 5 × 
 
 11. **Head:** onto the black neck, 3 × M3 × 20 down through its floor. The rest of the head as v4, without the AA box.
 12. **Arms:** as v4.
-13. **Batteries, last:** 6 AA NiMH cells into the holder, the holder into the drawer (screws or tape), the holder's XT30 (female, soldered onto its leads) into the plug hanging in the bay. Slide the drawer in: the plug and its wires fold into the 21 mm above the holder. Fit 2 × M3 × 10. To change the cells: switch off, 2 screws out, slide the drawer out, unplug.
+13. **Batteries, last:** slide the drawer out on its wires, 6 AA NiMH cells into the holder, slide it back in (the slack folds into the 21 mm above the holder) and fit 2 × M3 × 10. To change the cells: switch off, 2 screws out, slide it out, swap, slide it in.
 
 ## Measure before printing
 

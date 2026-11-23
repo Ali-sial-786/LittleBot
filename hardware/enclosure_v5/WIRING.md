@@ -2,6 +2,7 @@
 
 **Video, with narration:** [`LittleBot_v5_wiring.mp4`](LittleBot_v5_wiring.mp4) (about 11 minutes): loading the RP2040's program, the
 breadboard, power, the motor driver, the encoders, the servos, the battery sense, the Pi, the battery drawer and the first power-up.
+(The video shows an XT30 plug on the battery; without it, the holder's wires join the fuse and Wago B directly, as below.)
 
 Three drawings, in the order you wire them. The RP2040's pins here are the ones its firmware
 ([`firmware/base_controller`](../../firmware/base_controller/README.md)) uses: wire exactly these.
@@ -16,24 +17,26 @@ Three drawings, in the order you wire them. The RP2040's pins here are the ones 
 
 ## 1. Power
 
-6 × AA (in the drawer) → **XT30 plug** → 5 A fuse → drive switch → Wago A. The switch has 3 tabs: with the meter on beep, use the
-2 that beep when it's ON and stay silent when it's OFF. The third tab only lights it: leave it empty.
+6 × AA (in the drawer) → 5 A fuse → drive switch → Wago A. The switch has 3 tabs: with the meter on beep, use the 2 that
+beep when it's ON and stay silent when it's OFF. The third tab only lights it: leave it empty.
 
-**The battery plug.** The holder (DFRobot FIT0266: bare red and black leads, 150 mm) connects through an XT30 plug pair, so the
-drawer goes in last and can come all the way out:
+**The battery wires: wired in for good.** The holder (DFRobot FIT0266: bare red and black leads, 150 mm) stays connected,
+and the drawer slides out on its wires to change the cells:
 
-- the **female half** on the holder's leads: red to +, black to −; solder, heat-shrink over each joint;
-- the **male half** stays in the robot: its red goes through the fuse to the switch, its black to Wago B slot 1. Both its wires run
-  down through the hole at the deck's front, so the plug hangs in the drawer's bay;
-- **last:** cells in the holder, the holder in the drawer, plug it in, slide the drawer in (the plug and its wires fold into the
-  21 mm above the holder), 2 × M3 × 10 in the door. To change the cells: switch off, 2 screws out, slide it out, unplug.
+- solder about 15 cm of extra wire onto each of the holder's leads (heat-shrink or tape over each joint): the drawer has to
+  slide out about 7 cm to free all 6 cells, so the wires need about 10 cm of slack;
+- the red goes to the fuse's lead (solder, insulate), the black straight to Wago B slot 1. Both run up through the hole at
+  the deck's front; wire them while the deck is still out;
+- the drawer goes in empty; **last:** slide it out on its wires, cells in, slide it back (the slack folds into the 21 mm
+  above the holder), 2 × M3 × 10 in the door. To change the cells: switch off, 2 screws out, slide it out, swap, slide it in.
 
-The XT30 only fits one way round. Buy a pair with leads already on (16 AWG, 10-15 cm) and some heat-shrink.
+Make the joints solid and leave no bare metal: these wires bend each time. (An XT30 plug pair between the holder and these
+wires would let the drawer come all the way out; it's optional.)
 
 | Wago | Slot 1 | Slot 2 | Slot 3 | Slot 4 | Slot 5 |
 |---|---|---|---|---|---|
 | **A: battery +** (after the switch) | from the switch | MDD3A green + | converter IN + | 22 kΩ to the battery sense (drawing 2) | spare |
-| **B: ground** | battery −: the plug's black | MDD3A green − | converter IN − | RP2040 GND | link to Wago D |
+| **B: ground** | the batteries' black | MDD3A green − | converter IN − | RP2040 GND | link to Wago D |
 | **C: 5 V** | converter OUT + | head servo red | left arm servo red | right arm servo red | RP2040 VSYS (or its 5V pin) |
 | **D: ground** | converter OUT − | head servo brown | left arm servo brown | right arm servo brown | link to Wago B |
 
@@ -42,7 +45,7 @@ The XT30 only fits one way round. Buy a pair with leads already on (16 AWG, 10-1
 - 20-22 AWG for the battery and the motors; jumper wire for the 5 V to the servos and the RP2040.
 - Nothing from this battery or this 5 V goes to the Pi or the UPS. The two systems share only ground, through the UART's GND (drawing 2).
 
-**Before the cells go in:** switch off; on continuity, Wago A to B and Wago C to D must not beep (a short chirp that stops is the capacitors). Then cells in, plug in, switch on: A to B reads 7-9.5 V, C to D reads 5 V. Switch off and unplug; only then wire the RP2040 and the servos.
+**Before the cells go in:** switch off; on continuity, Wago A to B and Wago C to D must not beep (a short chirp that stops is the capacitors). Then cells in, switch on: A to B reads 7-9.5 V, C to D reads 5 V. Switch off and take the cells out; only then wire the RP2040 and the servos.
 
 ![signals](wiring/2_signals.png)
 
