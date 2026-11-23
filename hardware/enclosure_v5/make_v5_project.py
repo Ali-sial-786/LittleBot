@@ -39,7 +39,7 @@ m4.EXTRA["stack_keeper"] = {"wall_loops": 5, "sparse_infill_density": "40%"}
 PLATES = [("tub", "dark", ["tub"]),
           ("body", "white", ["body", "cap"]),
           ("neck", "dark", ["neck", "hub"]),
-          ("small", "white", ["mic_holder", "spk_keeper", "slider", "mic_key", "stack_keeper", "spk_cradle"]),
+          ("small", "white", ["mic_holder", "spk_cage", "slider", "mic_key", "stack_keeper"]),
           ("drive", "dark", ["deck", "tray", "pod_left", "pod_right"])]          # last: print once the motors, casters and AA holder are measured
 
 # the test pieces, each in its real part's colour: the body's first 22 mm, a corner of the tub (floor, wall, the door's post)
@@ -50,8 +50,8 @@ PODS = [("wheel pods", "dark", ["pod_left", "pod_right"])]
 KEEPER = [("stack keeper", "white", ["stack_keeper"])]
 # the black neck on its own (the first one was exported as its mirror image: its holes came out 20 degrees off the hub's)
 NECK = [("black neck", "dark", ["neck"])]
-# the speaker's cradle on its own (the speaker is a pill: its round ends slip past the ribs' ledges)
-CRADLE = [("speaker cradle", "white", ["spk_cradle"])]
+# the speaker's cage on its own: cradle, keeper and top in one piece (the speaker is a pill: its round ends slip past the ribs' ledges)
+CAGE = [("speaker cage", "white", ["spk_cage"])]
 
 if __name__ == "__main__":
     plates = [(pname, colour, m4.pack(names)) for pname, colour, names in PLATES]
@@ -59,7 +59,7 @@ if __name__ == "__main__":
     pods = [(pname, colour, m4.pack(names)) for pname, colour, names in PODS]
     keeper = [(pname, colour, m4.pack(names)) for pname, colour, names in KEEPER]
     neck = [(pname, colour, m4.pack(names)) for pname, colour, names in NECK]
-    cradle = [(pname, colour, m4.pack(names)) for pname, colour, names in CRADLE]
+    cage = [(pname, colour, m4.pack(names)) for pname, colour, names in CAGE]
     for printer in ("A1", "P2S", None):          # None: "plain", no printer or filament settings of ours (Bambu Studio keeps its own)
         tag = printer or "plain"
         m4.project(plates, HERE / f"LittleBot_v5_{tag}.3mf", "LittleBot v5 Rover", printer)
@@ -67,5 +67,5 @@ if __name__ == "__main__":
         m4.project(pods, HERE / f"LittleBot_v5_pods_{tag}.3mf", "LittleBot v5 wheel pods", printer)
         m4.project(keeper, HERE / f"LittleBot_v5_keeper_{tag}.3mf", "LittleBot v5 stack keeper", printer)
         m4.project(neck, HERE / f"LittleBot_v5_neck_{tag}.3mf", "LittleBot v5 black neck", printer)
-        m4.project(cradle, HERE / f"LittleBot_v5_speaker_cradle_{tag}.3mf", "LittleBot v5 speaker cradle", printer)
+        m4.project(cage, HERE / f"LittleBot_v5_speaker_cage_{tag}.3mf", "LittleBot v5 speaker cage", printer)
     m4.preview(plates, HERE / "plates_v5.png")

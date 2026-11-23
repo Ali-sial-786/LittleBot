@@ -118,7 +118,7 @@ WHITE, DARK, V2, GREY, KEEP = "#f2efe8", "#2b2d31", "#e3ded2", "#a9adbb", "#c8c2
 ASSY = HERE.parent / "stl" / "assembled"; SMALL = OUT / "stl"
 for name, colour, group in [("tub", DARK, "tub"), ("tray", "#34373d", "tray"), ("deck", "#d9d4c8", "deck"), ("switch", "#3a3d44", "tub"),
                             ("stack_keeper", KEEP, "tub"),
-                            ("body", WHITE, "body"), ("slider", WHITE, "body"), ("speaker", "#202124", "body"), ("spk_keeper", KEEP, "body"),
+                            ("body", WHITE, "body"), ("slider", WHITE, "body"), ("speaker", "#202124", "body"), ("spk_cage", KEEP, "body"),
                             ("mic_holder", WHITE, "body"), ("mic_key", KEEP, "body"), ("respeaker", "#1f2328", "body"),
                             ("cap", WHITE, "neck"), ("hub", "#7fb3d5", "neck"), ("neck", DARK, "neck"), ("servo_frame", GREY, "hservo"),
                             ("head_frame", WHITE, "head"), ("head_inlay", DARK, "head"), ("head_back", WHITE, "head"), ("camera_bracket", GREY, "head"),

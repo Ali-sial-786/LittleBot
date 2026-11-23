@@ -474,31 +474,8 @@ module v5_body() {
 // v4's mic holder on this body (clear of the collar's lowest edge)
 module v5_rsl_holder() difference() { sa_rsl_holder(); minkowski() { collar5(); cube(0.4, center = true); } }
 
-// THE SPEAKER'S CRADLE: the speaker (Adafruit 3369, 84 x 43 x 32) is a pill: its round ends stand clear of the ribs'
-// 3 mm ledges, which reach only 3 mm in, while its flat underside is just the middle 41 mm. Tilted, it slips down
-// between them. The cradle holds it at the same height: a plate between the ledges, flush with their tops, under the
-// flat middle, and a saddle under each round end, its outer edge standing on a ledge. Its front edge follows the
-// chest's inside; the saddles' backs stand against the keeper's frame, so it can't slide back out. It goes in first
-// (slid forwards between the ribs, over the ledges), then the speaker, then the keeper. Prints plate down.
+// the speaker (Adafruit 3369, 84 x 43 x 32) is a pill, seen front-on
 module spk_stadium(grow = 0) hull() for (s = [-1, 1]) translate([s * (spk_w/2 - spk_h/2), 0]) circle(r = spk_h/2 + grow, $fn = 96);
-module spk_cradle5() {
-    yb = spk3_c[1] + spk_d;                      // the speaker's back face (the keeper's frame stands 0.15 behind it)
-    z0 = spk3_c[2] - spk_h/2;                    // the ledges' top = the speaker's underside
-    gap = spk_w/2 + 0.3 - 0.2;                   // to each rib's face, less 0.2
-    lg = spk_w/2 - 3 - 0.2;                      // to each ledge's inner edge, less 0.2
-    xs = spk_w/2 - spk_h/2 + 2;                  // where the saddles start
-    intersection() {
-        translate([0, 0.6, 0]) body_inner();     // its front edge: the chest's inside, 0.6 off
-        translate([0, yb, 0]) rotate([90, 0, 0]) linear_extrude(yb + 60) difference() {   // drawn front-on (x, z), towards the front
-            union() {
-                translate([-lg, z0 - 2]) square([2 * lg, 2.01]);                                          // the plate
-                for (sx = [-1, 1]) translate([sx > 0 ? xs : -gap, z0]) square([gap - xs, spk3_c[2] - 6 - z0]);   // the saddles
-            }
-            translate([0, spk3_c[2] + 0.5]) spk_stadium(0.5);    // 0.5 clear round the ends, the flat underside on the plate
-        }
-    }
-}
-
 // -----------------------------------------------------------------------------
 // THE CAP: the body's top, on the collar (8 x M3 x 12 from above, heads sunk). Under it: a lip in the opening, the
 // head servo frame's 2 pillars (thick at their roots), a fence round the gears. Prints top face down.
@@ -562,6 +539,48 @@ module v5_neck() translate([0, neck_y, 0]) difference() {
     for (a = neck_scr) rotate(a) translate([head_screw_r, 0, hub_top - 1]) { cylinder(d = clear_m3, h = 10, $fn = fn_small); translate([0, 0, 1 + 2.8]) cylinder(d = 6.4, h = 10, $fn = 24); }
 }
 
+
+// THE SPEAKER'S CAGE: the cradle, the keeper and a top in one piece. A back frame (where the keeper stands) carries the
+// cradle under the speaker (a plate between the ledges, a saddle under each round end) and a saddle over each round
+// end on top, so the speaker can't drop, lift or slide back. The speaker goes into it from the front (its cable out
+// through the frame's window), then the two slide forwards between the ribs, over the ledges, until 4 tabs on the
+// frame's sides click into the ribs' 4 slots: the ribs spring 1.2 mm apart to let the tabs' ramps past, and the tabs'
+// flat backs then hold it. Out again: pull the ribs' back ends apart a little. Prints back face down.
+cage_ft = 3;                                     // the back frame's thickness
+cage_ztop = spk3_c[2] + spk_h/2 + 0.5;           // the top saddles' top: under the mic sleeve's lowest point (138.4)
+module spk_cage5(tabs = true) {
+    yb = spk3_c[1] + spk_d; zc = spk3_c[2]; z0 = zc - spk_h/2;
+    f0 = yb + 0.15;                              // the frame's front face, where the keeper's was
+    gap = spk_w/2 + 0.3 - 0.2; lg = spk_w/2 - 3 - 0.2; xs = spk_w/2 - spk_h/2 + 2;
+    // the saddles and the plate, forwards from the frame, their front edge on the chest's inside
+    intersection() {
+        translate([0, 0.6, 0]) body_inner();
+        translate([0, f0 + 0.01, 0]) rotate([90, 0, 0]) linear_extrude(f0 + 60) difference() {
+            union() {
+                translate([-lg, z0 - 2]) square([2 * lg, 2.01]);
+                for (sx = [-1, 1]) translate([sx > 0 ? xs : -gap, z0]) square([gap - xs, zc - 6 - z0]);
+            }
+            intersection() { translate([0, zc + 0.5]) spk_stadium(0.5); translate([-60, zc - 40]) square([120, 40]); }   // under: flat on the plate
+            intersection() { translate([0, zc - 0.2]) spk_stadium(0.5); translate([-60, zc]) square([120, 40]); }        // over: 0.3 clear
+        }
+    }
+    // the top saddles: only over the speaker's own depth (in front of it, the mic's sleeve comes down to 136.7)
+    intersection() {
+        translate([0, 0.6, 0]) body_inner();
+        translate([0, f0 + 0.01, 0]) rotate([90, 0, 0]) linear_extrude(f0 + 0.01 - spk3_c[1] - 0.5) difference() {
+            for (sx = [-1, 1]) translate([sx > 0 ? xs : -gap, zc + 6]) square([gap - xs, cage_ztop - zc - 6]);
+            translate([0, zc - 0.2]) spk_stadium(0.5);
+        }
+    }
+    // the back frame, a window for the cable
+    difference() {
+        translate([-gap, f0, z0 - 2]) cube([2 * gap, cage_ft, cage_ztop - z0 + 2]);
+        translate([0, f0 - 1, zc]) rotate([-90, 0, 0]) linear_extrude(cage_ft + 2) rr(2 * (gap - 9), 28, 5);
+    }
+    // the 4 tabs: a ramp in front (it springs the rib out), a flat back (it holds)
+    if (tabs) for (sx = [-1, 1], z = spk_slot_z()) mirror([sx < 0 ? 1 : 0, 0, 0])
+        translate([0, 0, z - 1.3]) linear_extrude(2.6) polygon([[gap - 0.5, yb - 0.6], [gap, yb - 0.6], [gap + 1.4, yb + 0.8], [gap + 1.4, yb + 1.8], [gap - 0.5, yb + 1.8]]);
+}
 // -----------------------------------------------------------------------------
 // LAYOUT
 // -----------------------------------------------------------------------------
@@ -585,7 +604,7 @@ module v5_layout() {
     color(WHITE4) render() v5_body();
     color(WHITE4) render() v5_cap();
     color(WHITE4) v5_slider();
-    speaker3_dummy(); rsl_dummy(); color("#c8c2b4") { render() v5_rsl_holder(); sa_rsl_key(); sa_spk_keeper(); }
+    speaker3_dummy(); rsl_dummy(); color("#c8c2b4") { render() v5_rsl_holder(); sa_rsl_key(); spk_cage5(); }
     v5_neck_static();
     place_head3(head_angle) {
         color("#e6b35a") v5_ring_gear(); color("#7fb3d5") render() v5_hub(); color(DARK4) render() v5_neck();
@@ -618,8 +637,7 @@ module print5(w) {
     if (w == "slider")     translate([0, 0, sl5_z0 + sl_h]) rotate([180, 0, 0]) v5_slider();                     // top down
     if (w == "mic_holder") let (Mi = [[1, 0, 0, 0], [0, rsl_t[1], rsl_t[2], 0], [0, rsl_n[1], rsl_n[2], 0], [0, 0, 0, 1]], o = rsl_pt([0, 0, 0])) multmatrix(Mi) translate(-o) v5_rsl_holder();
     if (w == "mic_key")    translate([0, 0, -sl4_pocket[1][0] - 0.15]) sa_rsl_key();
-    if (w == "spk_keeper") translate([0, 0, -(spk3_c[1] + spk_d + 0.15)]) rotate([90, 0, 0]) sa_spk_keeper();
-    if (w == "spk_cradle") translate([0, 0, -(spk3_c[2] - spk_h/2 - 2)]) spk_cradle5();                                   // plate down
+    if (w == "spk_cage")   translate([0, 0, spk3_c[1] + spk_d + 0.15 + cage_ft]) rotate([-90, 0, 0]) spk_cage5();      // back face down
     if (w == "stack_keeper") translate([0, 0, keeper_mouth(ups_plate_t, ups_plate[1]) + k5_h]) rotate([180, 0, 0]) stack_keeper5();   // top face down
     // test pieces: the first 22 mm of the body (its tongue, the flare onto the tub's rim, the thick band) and a corner of the tub
     // (floor, wall, the door's post): an hour's print each, to try a printer and a spool before the long prints
@@ -655,8 +673,7 @@ module assy5(w) {
     if (w == "eyes")        place_head3(head_angle) translate([0, g3_y - 0.05, scr_cz]) rotate([90, 0, 0]) linear_extrude(0.4) eyes4_2d();
     if (w == "mic_holder")  v5_rsl_holder();
     if (w == "mic_key")     sa_rsl_key();
-    if (w == "spk_keeper")  sa_spk_keeper();
-    if (w == "spk_cradle")  spk_cradle5();
+    if (w == "spk_cage")    spk_cage5();
     if (w == "respeaker")   place_rsl() rsl_board();
     if (w == "speaker")     speaker3_dummy();
     if (w == "pi_ups")      place_stack() { ups_stack(); ups_plugs(); }

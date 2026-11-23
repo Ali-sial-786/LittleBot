@@ -33,7 +33,6 @@ module arm_grown(g) minkowski() { sa_arm(); sphere(r = g, $fn = 8); }
 module arms_grown_at(a) for (k = [-1, 1]) place_arm3(k, a) arm_grown(grow);
 module head_all(a) place_head3(a) { sa_head_frame_body(); sa_head_back(); v5_neck(); }
 module slider_positions() for (st = [-1, 1]) translate([st * ups_knob[2], 0, 0]) v5_slider();
-module spk_keeper_rigid(dx = 0) difference() { sa_spk_keeper(dx); translate([dx - spk_w/2 - 0.3 + spk_k_gap - 6, 0, spk3_c[2] - spk_k_hz + 3.45]) cube([6 + spk_k_leaf[0] + 0.3, 60, spk_k_leaf[1] + 2]); }
 // screws: a shank from under its head (d wide, len long, along the frame's -z) and its head; an M3 nut (shrunk)
 module shank(len, d = 2.9) { translate([0, 0, -len]) cylinder(d = d, h = len, $fn = 12); cylinder(d = 5.6, h = 3, $fn = 16); }
 module nut_s() cylinder(d = (nut_af - 2*s) / cos(30), h = nut_t - 2*s, $fn = 6, center = true);
@@ -99,29 +98,28 @@ if (check == "mic_key_fit")         intersection() { sa_rsl_key(false); union() 
 if (check == "mic_key_clamps")      intersection() { translate([0, -0.2, 0]) sa_rsl_key(false); v5_rsl_holder(); }            // must NOT be empty
 if (check == "mic_key_slides_in")   intersection() { for (d = [2.5, 5, 7.5, 10]) translate([d, 0, 0]) sa_rsl_key(false); union() { v5_body(); v5_rsl_holder(); } }
 if (check == "mic_screws_bite")     intersection() { place_rsl() rsl_screws(); v5_rsl_holder(); }                               // must NOT be empty
-if (check == "spk_keeper_fit")      intersection() { spk_keeper_rigid(); union() { v5_body(); speaker_s(); mic_s(); v5_rsl_holder(); sa_rsl_key(false); } }
-if (check == "spk_keeper_goes_in")  intersection() { for (d = [0.5, 1.5, spk_k_gap - 0.05]) spk_keeper_rigid(-d); union() { v5_body(); speaker_s(); } }
 // the speaker as it is (a pill)
 module speaker_pill_s() translate([0, spk3_c[1] + s, spk3_c[2]]) rotate([-90, 0, 0]) linear_extrude(spk_d - 2*s) mirror([0, 1, 0]) spk_stadium(-s);
-if (check == "spk_cradle_fit")      intersection() { spk_cradle5(); union() { v5_body(); spk_keeper_rigid(); speaker_pill_s(); mic_s(); v5_rsl_holder(); sa_rsl_key(false); } }
-if (check == "spk_cradle_rests")    intersection() { translate([0, 0, -0.2]) spk_cradle5(); v5_body(); }               // must NOT be empty: on the ledges
-if (check == "spk_cradle_holds")    intersection() { translate([0, 0.5, 0]) spk_cradle5(); spk_keeper_rigid(); }      // must NOT be empty: the keeper stops it
-if (check == "spk_cradle_goes_in")  intersection() { for (d = [3, 10, 20, 35]) translate([0, d, 0]) spk_cradle5(); v5_body(); }   // slid in from behind
-if (check == "spk_on_cradle")       intersection() { speaker_pill_s(); union() { v5_body(); spk_keeper_rigid(); mic_s(); v5_rsl_holder(); sa_rsl_key(false); } }
-if (check == "spk_keeper_holds")    intersection() { translate([0, 2, 0]) spk_keeper_rigid(); v5_body(); }                    // must NOT be empty
-if (check == "chest_vs_base")       intersection() { union() { speaker_s(); mic_s(); sa_spk_keeper(); v5_rsl_holder(); } union() { base_stuff(); v5_deck(); keeper5(); } }
+// the one-piece cage (cradle + keeper + top)
+if (check == "spk_cage_fit")        intersection() { spk_cage5(); union() { v5_body(); speaker_pill_s(); mic_s(); v5_rsl_holder(); sa_rsl_key(false); } }
+if (check == "spk_cage_goes_in")    intersection() { for (d = [3, 10, 20, 35]) translate([0, d, 0]) { spk_cage5(false); speaker_pill_s(); } v5_body(); }   // with the speaker, from behind (tabs aside: the ribs give)
+if (check == "spk_cage_rests")      intersection() { translate([0, 0, -0.2]) spk_cage5(); v5_body(); }                 // must NOT be empty: on the ledges
+if (check == "spk_cage_holds")      intersection() { translate([0, 0.5, 0]) spk_cage5(); v5_body(); }                 // must NOT be empty: its tabs in the ribs' slots
+if (check == "spk_cage_holds_top")  intersection() { translate([0, 0, 0.6]) speaker_pill_s(); spk_cage5(); }           // must NOT be empty: the speaker can't lift
+if (check == "chest_vs_base")       intersection() { union() { speaker_s(); mic_s(); spk_cage5(); v5_rsl_holder(); } union() { base_stuff(); v5_deck(); keeper5(); } }
 // --- arms ---
 if (check == "arms_vs_body")        intersection() { union() { v5_body(); v5_tub(); v5_cap(); }; arms_at(arm_angle); }
 if (check == "arms_vs_neck")        intersection() { neck_moving(head_angle); arms_at(arm_angle); }
 if (check == "pinch_arm_head")      intersection() { head_all(head_angle); arms_grown_at(arm_angle); }
 // the printed parts that go face down, turned back over: each must be the model itself, not its mirror image
-pnm = ["cap", "neck", "slider", "stack_keeper"];
+pnm = ["cap", "neck", "slider", "stack_keeper", "spk_cage"];
 module unprint5(w) {
     if (w == "cap")          rotate([180, 0, 0]) translate([0, 0, -BT]) print5(w);
     if (w == "neck")         rotate([180, 0, 0]) translate([0, neck_y, -hd_z0]) print5(w);
     if (w == "slider")       rotate([180, 0, 0]) translate([0, 0, -(sl5_z0 + sl_h)]) print5(w);
+    if (w == "spk_cage")     rotate([90, 0, 0]) translate([0, 0, -(spk3_c[1] + spk_d + 0.15 + cage_ft)]) print5(w);
     if (w == "stack_keeper") rotate([180, 0, 0]) translate([0, 0, -(keeper_mouth(ups_plate_t, ups_plate[1]) + k5_h)]) print5(w);
 }
-module model5(w) { if (w == "cap") v5_cap(); if (w == "neck") v5_neck(); if (w == "slider") v5_slider(); if (w == "stack_keeper") stack_keeper5(); }
+module model5(w) { if (w == "cap") v5_cap(); if (w == "neck") v5_neck(); if (w == "slider") v5_slider(); if (w == "stack_keeper") stack_keeper5(); if (w == "spk_cage") spk_cage5(); }
 if (check == "print_not_mirrored")  for (w = pnm) { difference() { unprint5(w); model5(w); } difference() { model5(w); unprint5(w); } }
 if (check == "selftest_must_fail")  intersection() { v5_body(); translate([96, 70, 100]) cube(10); }

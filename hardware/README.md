@@ -25,7 +25,7 @@ Side and back views, same scale: [side](comparison/littlebot_v1_to_v4_side.png),
 | Checks | 48 | 118 (incl. 12 mm finger-pinch clearance for the arms, every cable route and every screw) | 50 (incl. finger pinch, glass never touched, room to plug in) | 72 |
 | Assembly video | none | [`assembly_video/`](enclosure_v2/assembly_video) (renders it) | none | [`LittleBot_v4_assembly.mp4`](enclosure_v4/LittleBot_v4_assembly.mp4): every part, screw, nut and cable |
 
-**v5 "Rover"** ([`enclosure_v5/`](enclosure_v5/README.md)) is the wheel phase: v4's head and arms on a new body and a wheeled base (2 gear motors, 2 ball casters, a 6×AA drawer, the Pi + UPS, an RP2040 instead of the PCA9685). Every joint is bolted into a captured nut, and the neck turns on a much wider bearing. 93 checks, 5 plates. Assembly video: [`LittleBot_v5_assembly.mp4`](enclosure_v5/LittleBot_v5_assembly.mp4); wiring video, narrated: [`LittleBot_v5_wiring.mp4`](enclosure_v5/LittleBot_v5_wiring.mp4) (the RP2040's program: [`firmware/base_controller`](../firmware/base_controller/README.md)).
+**v5 "Rover"** ([`enclosure_v5/`](enclosure_v5/README.md)) is the wheel phase: v4's head and arms on a new body and a wheeled base (2 gear motors, 2 ball casters, a 6×AA drawer, the Pi + UPS, an RP2040 instead of the PCA9685). Every joint is bolted into a captured nut, and the neck turns on a much wider bearing. 90 checks, 5 plates. Assembly video: [`LittleBot_v5_assembly.mp4`](enclosure_v5/LittleBot_v5_assembly.mp4); wiring video, narrated: [`LittleBot_v5_wiring.mp4`](enclosure_v5/LittleBot_v5_wiring.mp4) (the RP2040's program: [`firmware/base_controller`](../firmware/base_controller/README.md)).
 
 ![v5](enclosure_v5/LittleBot_v5_model.png)
 

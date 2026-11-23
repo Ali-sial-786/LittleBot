@@ -34,7 +34,7 @@ PARTS = [  # (stl name, colour, label)
     ("motors", "metal", "JGA25-370 gear motors"), ("wheels", "black", "65 mm wheels"), ("casters", "metal", "ball casters"),
     ("aa_holder", "black", "6xAA holder"), ("switch", "black", "drive switch"), ("boards", "board", "RP2040, motor driver, 5 V converter, servo power"),
     ("charge_socket", "metal", "USB-C charging socket"),
-    ("speaker", "black", "USB speaker"), ("spk_keeper", "white", "speaker keeper"), ("respeaker", "black", "ReSpeaker Lite (2 mics)"),
+    ("speaker", "black", "USB speaker"), ("spk_cage", "white", "speaker cage"), ("respeaker", "black", "ReSpeaker Lite (2 mics)"),
     ("mic_holder", "white", "ReSpeaker holder"), ("mic_key", "white", "ReSpeaker holder's key"),
     ("screen", "black", "7in screen (EP-0177)"), ("screen_plugs", "metal", "HDMI ribbon plug, USB-C, HDMI coupler"), ("eyes", "eye", "eyes"),
 ]
