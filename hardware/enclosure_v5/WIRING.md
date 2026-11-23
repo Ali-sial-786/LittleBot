@@ -51,7 +51,7 @@ wires would let the drawer come all the way out; it's optional.)
 
 ## 2. The RP2040's pins
 
-The board is a VCC-GND **YD-RP2040** (sold by Elecrow as "RP2040 Core Board"): the Raspberry Pi Pico's pin layout, with three labels that differ. **Vin** is VSYS (pin 39, its 5 V in), **Vout** is VBUS (pin 40, USB's 5 V), and pins 35 and 37 are GP29 and GP23 (the Pico's ADC_VREF and 3V3_EN). None of those three is used here. Don't power a servo from Vout, even at the bench: it collapses under one (4.7 V to 1.25 V), and the servo only buzzes. Servos get their 5 V from the converter (Wagos C and D). **Its VREF jumper** (two tiny pads marked VREF, near pin 26) ships open: bridge it with a blob of solder, or the battery reading (GP26) doesn't work. Nothing else needs it.
+The board is a VCC-GND **YD-RP2040** (sold by Elecrow as "RP2040 Core Board"): the Raspberry Pi Pico's pin layout, with three labels that differ. **Vin** is VSYS (pin 39, its 5 V in), **Vout** is VBUS (pin 40, USB's 5 V), and pins 35 and 37 are GP29 and GP23 (the Pico's ADC_VREF and 3V3_EN). None of those three is used here. **Its VREF jumper** (two tiny pads marked VREF, near pin 26) ships open: bridge it with a blob of solder, or the battery reading (GP26) doesn't work. Nothing else needs it.
 
 | Pin | Goes to | |
 |---|---|---|
