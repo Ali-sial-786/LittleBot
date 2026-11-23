@@ -73,7 +73,9 @@ The board is a VCC-GND **YD-RP2040** (sold by Elecrow as "RP2040 Core Board"): t
 
 The Pi talks to the RP2040 over its UART (the Pi's 4 USB ports go to the speaker, the ReSpeaker, the screen and the camera). On the Pi: add `dtparam=uart0=on` to `/boot/firmware/config.txt` and reboot; the port is `/dev/ttyAMA0`. Then `python3 scripts/base_test.py ping` (from the LittleBot folder) answers `PONG littlebot-base 1`; `battery`, `center`, `wheels` and `calibrate` do the rest (see the firmware's README).
 
-On the breadboard: the board's USB-C end at row 1, across the middle gap; each pin's row has 2 free holes beside it. The 22 kΩ goes from GP26 (row 10, right) to row 22, the 10 kΩ from row 10 to AGND (row 8, right); Wago A slot 4 goes to row 22.
+**On the breadboard ([`wiring/4_breadboard_yd.png`](wiring/4_breadboard_yd.png)):** the YD-RP2040's long pins stick out of its chip side, so it goes in **chip side down** (the side printed YD-RP2040 facing up), its USB-C end at row 1, across the middle gap. Each pin's row has 2 free holes beside it. Upside down, its sides swap compared with a Pico drawn chip side up (and with the video): **GP0-GP15 are on the right**, Vout, Vin, 3V3, GP26 and GP16 on the left. The 22 kΩ goes from GP26 (b10) down to b22, the 10 kΩ from a10 up to a8 (GND); Wago A slot 4 goes to a22. The Pi's ground goes to row 8 on the right (j8).
+
+![the breadboard](wiring/4_breadboard_yd.png)
 
 ![motors](wiring/3_motors.png)
 
