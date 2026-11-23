@@ -51,6 +51,8 @@ wires would let the drawer come all the way out; it's optional.)
 
 ## 2. The RP2040's pins
 
+The board is a VCC-GND **YD-RP2040** (sold by Elecrow as "RP2040 Core Board"): the Raspberry Pi Pico's pin layout, with three labels that differ. **Vin** is VSYS (pin 39, its 5 V in), **Vout** is VBUS (pin 40, USB's 5 V), and pins 35 and 37 are GP29 and GP23 (the Pico's ADC_VREF and 3V3_EN). None of those three is used here.
+
 | Pin | Goes to | |
 |---|---|---|
 | GP0 (TX) | Pi pin 10 (GPIO15, RXD) | the UART to the Pi: it crosses, TX to RX |
@@ -67,7 +69,7 @@ wires would let the drawer come all the way out; it's optional.)
 | GP15 | left arm servo, orange | |
 | GP16 | right arm servo, orange | |
 | GP26 (ADC0) | battery sense: Wago A slot 4 → 22 kΩ → GP26 → 10 kΩ → GND | 8.5 V reads 2.7 V |
-| VSYS (or 5V), GND | Wago C slot 5, Wago B slot 4 | its power (drawing 1) |
+| VSYS (labelled **Vin** on the YD-RP2040), GND | Wago C slot 5, Wago B slot 4 | its power (drawing 1) |
 
 The Pi talks to the RP2040 over its UART (the Pi's 4 USB ports go to the speaker, the ReSpeaker, the screen and the camera). On the Pi: add `dtparam=uart0=on` to `/boot/firmware/config.txt` and reboot; the port is `/dev/ttyAMA0`. Then `python3 scripts/base_test.py ping` (from the LittleBot folder) answers `PONG littlebot-base 1`; `battery`, `center`, `wheels` and `calibrate` do the rest (see the firmware's README).
 

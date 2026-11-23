@@ -1,6 +1,6 @@
 # LittleBot v5 base controller (RP2040, MicroPython)
 
-The RP2040 on the v5 deck (Elecrow RP2040 Core Board; any board with the Raspberry Pi Pico's pin layout works) drives the
+The RP2040 on the v5 deck (a VCC-GND YD-RP2040, sold by Elecrow as "RP2040 Core Board"; any board with the Raspberry Pi Pico's pin layout works; on the YD-RP2040, VSYS is labelled Vin and VBUS Vout) drives the
 two wheels through the Cytron MDD3A, counts their encoders, moves the three servos (head, left arm, right arm) and measures
 the 6 × AA pack. The Pi gives it orders over three wires (its UART). It has no Wi-Fi and needs none.
 
@@ -27,7 +27,7 @@ Wiring: [`hardware/enclosure_v5/WIRING.md`](../../hardware/enclosure_v5/WIRING.m
 Or with `mpremote` (`python3 -m pip install mpremote`): after step 3, `mpremote cp main.py :main.py` and `mpremote reset`.
 
 **Centring a servo at the bench** (before fitting the pinion or an arm): with the board on USB, the servo's brown to a GND pin,
-red to VBUS (pin 40, top right), orange to GP14; type `CENTER` in Thonny's shell. One servo at a time, nothing on its horn.
+red to VBUS (pin 40, top right; labelled Vout on the YD-RP2040), orange to GP14; type `CENTER` in Thonny's shell. One servo at a time, nothing on its horn.
 
 ## Commands (one line each; the same over the UART and in Thonny's shell)
 
