@@ -39,6 +39,11 @@ SERVO_PINS = (14, 15, 16)            # head, left arm, right arm (orange wires)
 VBAT_PIN = 26                        # ADC0: pack + -> 22 k -> GP26 -> 10 k -> GND
 VBAT_RATIO = (22.0 + 10.0) / 10.0
 VREF = 3.3
+# Nothing on the sense pin? Once a second it's read with its pad's pull-down, then its pull-up (50-80 k inside the
+# RP2040): a floating pin follows them rail to rail (~3.3 V apart); with the 22 k / 10 k divider on it (6.9 k) it moves
+# under 1 V. A floating ADC pin can otherwise read any steady voltage (10.56 V once, on a bare board).
+FLOAT_DIFF_V = 2.2
+PADS_BANK0 = 0x4001C000      # RP2040 pad control registers: GPIOn at +4 + 4n; bit 3 = pull-up, bit 2 = pull-down
 
 LOOP_MS = 10
 SILENCE_MS = 500
@@ -82,6 +87,12 @@ def pack_volts(raw_u16):
     """The pack's voltage from a read_u16() of the sense pin, or None when nothing is connected."""
     v = raw_u16 * VREF / 65535 * VBAT_RATIO
     return v if v >= 3.0 else None
+
+
+def floating(low_raw, high_raw):
+    """True when the sense pin, read with the pull-down (low_raw) and then the pull-up (high_raw), follows the pulls:
+    nothing is connected to it."""
+    return (high_raw - low_raw) * VREF / 65535 > FLOAT_DIFF_V
 
 
 def free_speed_mm_s(cfg, vbat):
@@ -378,6 +389,8 @@ def run():
                 self.enc_b.append(Pin(b, Pin.IN, Pin.PULL_UP))
                 pin_a.irq(trigger=Pin.IRQ_RISING, handler=self._enc_handler(i))
             self.adc = ADC(Pin(VBAT_PIN))
+            self.sense_ok = False
+            self.probe_at = 0
 
         def _enc_handler(self, i):
             b = self.enc_b[i]
@@ -417,11 +430,33 @@ def run():
         def counts(self):
             return [self.cnt[0], self.cnt[1]]
 
-        def vbat(self):
+        def _read(self, n=4):
             s = 0
-            for _ in range(4):
+            for _ in range(n):
                 s += self.adc.read_u16()
-            return pack_volts(s // 4)
+            return s // n
+
+        def _pulls(self, up, down):
+            from machine import mem32
+            a = PADS_BANK0 + 4 + 4 * VBAT_PIN
+            mem32[a] = (mem32[a] & ~0b1100) | (0b1000 if up else 0) | (0b0100 if down else 0)
+
+        def vbat(self):
+            now = time.ticks_ms()
+            if time.ticks_diff(now, self.probe_at) >= 1000:      # is anything on the pin?
+                self.probe_at = now
+                try:
+                    self._pulls(False, True)
+                    time.sleep_us(300)
+                    lo = self._read(8)
+                    self._pulls(True, False)
+                    time.sleep_us(300)
+                    hi = self._read(8)
+                finally:
+                    self._pulls(False, False)
+                time.sleep_us(300)
+                self.sense_ok = not floating(lo, hi)
+            return pack_volts(self._read()) if self.sense_ok else None
 
         def write_file(self, name, data):
             with open(name, "wb") as f:

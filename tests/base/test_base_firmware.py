@@ -172,6 +172,13 @@ def test_battery_and_encoders(fw):
     assert b.handle("B") == ["B null"]
 
 
+def test_a_floating_sense_pin_is_null(fw):
+    full = 65535
+    assert fw.floating(0, full)                                        # follows the pulls rail to rail: nothing there
+    assert not fw.floating(int(0.40 * full), int(0.60 * full))        # the divider holds it: it moves under 1 V
+    assert not fw.floating(full, full)                                 # stuck high (a short to 3.3 V) is a reading, not "nothing"
+
+
 def test_telemetry(base):
     base.handle("T 10")
     out = run_for(base, 1000)
