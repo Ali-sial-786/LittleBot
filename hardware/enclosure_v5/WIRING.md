@@ -5,7 +5,10 @@ arms, in order: the XT30 plug and fuse, the switch, the boards onto the deck, th
 side down, as it sits), a test from the Pi, then the body, the cap, the head and the arms. The first video,
 [`LittleBot_v5_wiring.mp4`](LittleBot_v5_wiring.mp4), also shows loading the RP2040's program, but draws the board chip side up.
 
-**On the deck:**
+**On the deck** ([`wiring/5_deck.png`](wiring/5_deck.png), from above, the robot's front at the bottom):
+
+![the deck](wiring/5_deck.png)
+
 - **Breadboard:** peel the paper off its sticky back and press it into its 4 corner guides (no sticky pad: double-sided tape or hot
   glue). The RP2040's USB end points to the middle of the robot, its GP0 side to the back.
 - **Motor driver:** 2 of its corner holes (the 2 nearest the middle) sit right over 2 of the tub's posts. Its 2 outer corners take
