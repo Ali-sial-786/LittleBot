@@ -1,0 +1,977 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>LittleBot v5: finishing the build</title>
+<style>html,body{margin:0;background:#e9edf1;overflow:hidden}canvas{display:block}</style></head>
+<body><canvas id="c" width="1920" height="1080"></canvas>
+<script>
+// LittleBot v5, finishing the build: a 2D canvas animation driven by steps.json (what to show and say) and timeline.json
+// (each step's start and length, from the narration). render.js calls window.render(t) frame by frame; for a '3d' step it
+// first renders the assembly video's page (../assembly_video) and hands the picture and its labels' positions in.
+// The wiring bench is drawn MIRRORED (world x flipped on screen, text kept readable): the YD-RP2040 sits in the
+// breadboard chip side down, so its pins are the mirror image of a Pico drawn chip side up. Breadboard holes are
+// named by their real letters (a-e on the left, f-j on the right, as printed on the breadboard).
+'use strict';
+const W = 1920, H = 1080, cv = document.getElementById('c'), g = cv.getContext('2d');
+const FONT = '"DejaVu Sans", "Noto Sans", sans-serif';
+let STEPS, TL, TOTAL, IMG = {};
+
+// ---------------------------------------------------------------- colours
+const C = {
+  red: '#d62828', black: '#1f1f1f', v5: '#ef6c00', brown: '#7b4a2a', sig: '#f4a300', white: '#f4f4f4',
+  yellow: '#e2b800', green: '#2b9348', blue: '#1c64f2', teal: '#0f8b8d', tx: '#8e24aa', rx: '#5e35b1', sense: '#c2185b',
+  ink: '#1d2430', mute: '#5c6675', hl: '#ffd23f', board: '#f7f6f1'
+};
+
+// ---------------------------------------------------------------- layout (world units)
+const P = 25, BBX = 1250, BBY = 300;
+const COL = { a: 0, b: 1, c: 2, d: 3, e: 4, f: 7, g: 8, h: 9, i: 10, j: 11 };
+const colX = i => BBX + 110 + i * P, rowY = r => BBY + 60 + (r - 1) * P;
+const PICO_L = ['GP0', 'GP1', 'GND', 'GP2', 'GP3', 'GP4', 'GP5', 'GND', 'GP6', 'GP7', 'GP8', 'GP9', 'GND', 'GP10', 'GP11', 'GP12', 'GP13', 'GND', 'GP14', 'GP15'];
+const PICO_R = ['Vout', 'Vin', 'GND', 'GP23', '3V3', 'GP29', 'GP28', 'GND', 'GP27', 'GP26', 'RUN', 'GP22', 'GND', 'GP21', 'GP20', 'GP19', 'GP18', 'GND', 'GP17', 'GP16'];
+const USED = new Set(['GP0', 'GP1', 'GND', 'GP6', 'GP7', 'GP8', 'GP9', 'GP10', 'GP11', 'GP12', 'GP13', 'GP14', 'GP15', 'GP16', 'GP26', 'Vin', '3V3']);
+const MIRL = k => 'jihgfedcba'['abcdefghij'.indexOf(k)];   // a real hole letter -> the world column it's drawn in
+const PI = { x0: 300, x1: 1100, y0: 40, y1: 232, px: n => 430 + Math.floor((n - 1) / 2) * 26, py: n => (n % 2 ? 182 : 207) };
+const MOT = [{ y: 450, name: 'left motor' }, { y: 930, name: 'right motor' }];
+const MOT_W = ['blue', 'black', 'yellow', 'green', 'red', 'white'];
+const MD = { x0: 640, y0: 1230, x1: 1000, y1: 1560, hdr: ['M1A', 'M1B', 'M2A', 'M2B', 'GND', '5V'] };
+const WAGO = { x0: 2050, w: 330, h: 80, y: { A: 360, B: 620, C: 880, D: 1140 },
+  name: { A: 'battery +', B: 'ground', C: '5 V', D: 'ground' }, col: { A: C.red, B: C.black, C: C.v5, D: C.black } };
+const slotX = k => WAGO.x0 + 45 + (k - 1) * 60;
+const BAT = { x0: 2560, y0: 60, x1: 3200, y1: 230 }, FUSE = { x: 2600, y0: 372, y1: 480 }, SW = { x: 2475, y: 480 }, XT = { x: 2650, y: 300 };
+const CONV = { x0: 2560, y0: 690, x1: 2900, y1: 800 };
+const SERVO = { H: { y: 1080, name: 'head servo' }, L: { y: 1290, name: 'left arm servo' }, R: { y: 1500, name: 'right arm servo' }, x: 2800 };
+
+function A(n) {               // a named point
+  let m;
+  if ((m = n.match(/^bb:([a-j])(\d+)$/))) return [colX(COL[MIRL(m[1])]), rowY(+m[2])];
+  if ((m = n.match(/^rp:(\d+)$/))) { const p = +m[1]; return p <= 20 ? [colX(2), rowY(p)] : [colX(9), rowY(41 - p)]; }
+  if ((m = n.match(/^pi:(\d+)$/))) return [PI.px(+m[1]), PI.py(+m[1])];
+  if ((m = n.match(/^w([ABCD])(\d)$/))) return [slotX(+m[2]), WAGO.y[m[1]] + WAGO.h];
+  if ((m = n.match(/^m([LR]):(\d)$/))) return [610, MOT[m[1] === 'L' ? 0 : 1].y + 22 + 15 * m[2]];
+  if ((m = n.match(/^md:t(\d)$/))) return [MD.x0 - 22, [1290, 1330, 1440, 1480][+m[1]]];          // motor terminals M1A M1B M2A M2B
+  if ((m = n.match(/^md:h(\w+)$/))) { const k = MD.hdr.map(s => s.toLowerCase()).indexOf(m[1]); return [700 + k * 50, MD.y0 + 18]; }
+  if (n === 'md:vp') return [790, MD.y1 + 34]; if (n === 'md:vn') return [850, MD.y1 + 34];
+  if (n === 'cv:ip') return [CONV.x0 - 40, 710]; if (n === 'cv:in') return [CONV.x0 - 40, 732];
+  if (n === 'cv:op') return [CONV.x0 - 40, 760]; if (n === 'cv:on') return [CONV.x0 - 40, 782];
+  if (n === 'bat:p') return [XT.x - 10, XT.y + 20]; if (n === 'bat:n') return [XT.x + 10, XT.y + 20];   // the robot's half of the plug
+  if (n === 'fu:a') return [FUSE.x, FUSE.y0]; if (n === 'fu:b') return [FUSE.x, FUSE.y1];
+  if ((m = n.match(/^sw:(\d)$/))) return [SW.x - 35 + (m[1] - 1) * 35, SW.y + 82];
+  if ((m = n.match(/^sv([HLR]):(\w+)$/))) {
+    const y = SERVO[m[1]].y, px = SERVO.x - 230;
+    if (m[2] === 'plug') return [px, y]; return [px - 14, y + { o: -16, r: 0, n: 16 }[m[2]]];
+  }
+  throw new Error('no point ' + n);
+}
+
+// ---------------------------------------------------------------- the wires
+// each: colour, points (start, via..., end), start and end directions (the spline's tangents), kind
+const WIRES = {};
+function wire(id, col, pts, sd, ed, opt = {}) { WIRES[id] = Object.assign({ id, col, pts: pts.map(p => typeof p === 'string' ? A(p) : p), sd, ed }, opt); }
+const R = [1, 0], L = [-1, 0], U = [0, -1], D = [0, 1];
+// orth: true = straight runs with rounded corners through the points (else a smooth spline through them)
+// motors -> driver (already done)
+wire('mL_red', C.red, ['mL:4', [580, 532], [580, 1290], 'md:t0'], R, R, { done: 1, orth: 1 });
+wire('mL_wht', C.white, ['mL:5', [565, 547], [565, 1330], 'md:t1'], R, R, { done: 1, orth: 1 });
+wire('mR_red', C.red, ['mR:4', [550, 1012], [550, 1440], 'md:t2'], R, R, { done: 1, orth: 1 });
+wire('mR_wht', C.white, ['mR:5', [535, 1027], [535, 1480], 'md:t3'], R, R, { done: 1, orth: 1 });
+// power: the batteries, the fuse, the switch
+wire('bat_fuse', C.red, ['bat:p', [2640, 345], [2600, 345], 'fu:a'], D, D, { orth: 1 });
+wire('fuse_sw', C.red, ['fu:b', [2600, 620], [2440, 620], 'sw:1'], D, U, { orth: 1 });
+wire('sw_A1', C.red, ['sw:2', [2475, 600], [2400, 600], [2400, 470], [2095, 470], 'wA1'], D, U, { orth: 1 });
+wire('bat_B1', C.black, ['bat:n', [2660, 345], [2960, 345], [2960, 730], [2095, 730], 'wB1'], D, U, { orth: 1 });
+wire('A2_mdp', C.red, ['wA2', [2155, 486], [1960, 486], [1960, 1650], [790, 1650], 'md:vp'], D, U, { orth: 1 });
+wire('B2_mdn', C.black, ['wB2', [2155, 746], [1980, 746], [1980, 1672], [850, 1672], 'md:vn'], D, U, { orth: 1 });
+wire('A3_cvi', C.red, ['wA3', [2215, 502], [2385, 502], [2385, 710], 'cv:ip'], D, R, { orth: 1 });
+wire('B3_cvi', C.black, ['wB3', [2215, 790], [2410, 790], [2410, 732], 'cv:in'], D, R, { orth: 1 });
+wire('cvo_C1', C.v5, ['cv:op', [2440, 760], [2440, 990], [2095, 990], 'wC1'], L, U, { orth: 1 });
+wire('cvo_D1', C.black, ['cv:on', [2460, 782], [2460, 1250], [2095, 1250], 'wD1'], L, U, { orth: 1 });
+wire('B5_D5', C.black, ['wB5', [2335, 812], [2425, 812], [2425, 1268], [2335, 1268], 'wD5'], D, U, { orth: 1 });
+// the RP2040's power
+wire('vsys_C5', C.v5, ['bb:b2', [1840, 385], [1840, 1008], [2335, 1008], 'wC5'], R, U, { orth: 1 });
+wire('gnd_B4', C.black, ['bb:b3', [1820, 410], [1820, 768], [2275, 768], 'wB4'], R, U, { orth: 1 });
+// the driver's control pins: a nested bundle up the breadboard's left side
+MD.hdr.slice(0, 5).forEach((sn, k) => {
+  const id = ['c_m1a', 'c_m1b', 'c_m2a', 'c_m2b', 'c_gnd'][k], hole = 'bb:j' + (14 + k), x = 700 + k * 50, y = rowY(14 + k);
+  wire(id, k === 4 ? C.black : C.teal, ['md:h' + sn.toLowerCase(), [x, 1150 + 12 * k], [1180 + 14 * k, 1150 + 12 * k], [1180 + 14 * k, y], hole], U, R, { orth: 1 });
+});
+// encoders (lead order top to bottom: blue, black, yellow, green, red, white)
+const enc = (id, side, k, hole, jx) => { const st = A('m' + side + ':' + k), en = A(hole); wire(id, C[MOT_W[k]], [st, [jx, st[1]], [jx, en[1]], en], R, R, { orth: 1 }); };
+wire('eL_k', C.black, [A('mL:1'), [1040, A('mL:1')[1]], [1040, rowY(8) + 12], [colX(1), rowY(8) + 12], 'bb:i8'], R, U, { orth: 1 }); enc('eL_y', 'L', 2, 'bb:j9', 1020); enc('eL_g', 'L', 3, 'bb:j10', 1000);
+enc('eR_y', 'R', 2, 'bb:j11', 1000); enc('eR_g', 'R', 3, 'bb:j12', 1020); enc('eR_k', 'R', 1, 'bb:j13', 1060);
+wire('eL_b', C.blue, ['mL:0', [940, 472], [940, 272], [1800, 272], [1800, 460], 'bb:b5'], R, L, { orth: 1 });
+wire('eR_b', C.blue, ['mR:0', [920, 952], [920, 256], [1816, 256], [1816, 446], [1660, 446], 'bb:a5'], R, D, { orth: 1 });
+// servos (plugs facing left, beside Wagos C and D): orange to the RP2040, red to C, brown to D
+const SV = { H: ['bb:j19', 2, 0], L: ['bb:j20', 3, 1], R: ['bb:a20', 4, 2] };
+for (const k of 'HLR') {
+  const [hole, slot, j] = SV[k], o = A('sv' + k + ':o'), r = A('sv' + k + ':r'), n = A('sv' + k + ':n'), en = A(hole);
+  const left = k !== 'R';
+  wire('s' + k + '_o', C.sig, left
+    ? [o, [2540 - j * 14, o[1]], [2540 - j * 14, 1720 + j * 14], [1200 - j * 14, 1720 + j * 14], [1200 - j * 14, en[1]], hole]
+    : [o, [2512, o[1]], [2512, 1700], [1860, 1700], [1860, en[1]], hole], L, left ? R : L, { orth: 1 });
+  wire('s' + k + '_r', C.red, [r, [2480 - j * 14, r[1]], [2480 - j * 14, 1022 + j * 12], [slotX(slot), 1022 + j * 12], 'wC' + slot], L, U, { orth: 1 });
+  wire('s' + k + '_n', C.brown, [n, [2496 - j * 14, n[1]], [2496 - j * 14, 1286 + j * 12], [slotX(slot), 1286 + j * 12], 'wD' + slot], L, U, { orth: 1 });
+}
+// the battery sense
+wire('r22', null, ['bb:b10', 'bb:b22'], D, D, { res: ['red', 'red', 'orange'], label: '22 kΩ' });
+wire('r10', null, ['bb:a10', 'bb:a8'], U, U, { res: ['brown', 'black', 'orange'], label: '10 kΩ' });
+wire('A4_sense', C.sense, ['wA4', [2275, 518], [1880, 518], [1880, 885], 'bb:a22'], D, L, { orth: 1 });
+// the Pi
+wire('u_tx', C.tx, ['bb:j1', [1300, 360], [1300, 300], [534, 300], 'pi:10'], L, U, { orth: 1 });
+wire('u_rx', C.rx, ['bb:j2', [1286, 385], [1286, 286], [508, 286], 'pi:8'], L, U, { orth: 1 });
+wire('u_gnd', C.black, ['bb:j8', [1272, rowY(8)], [1272, 272], [482, 272], 'pi:6'], L, U, { orth: 1 });
+
+// a Catmull-Rom spline through the points, sampled; its cumulative length
+function buildOrth(wv) {
+  const p = wv.pts, out = [p[0]], rad = 24;
+  for (let i = 1; i < p.length - 1; i++) {
+    const [a, c, b] = [p[i - 1], p[i], p[i + 1]];
+    const la = Math.hypot(c[0] - a[0], c[1] - a[1]), lb = Math.hypot(b[0] - c[0], b[1] - c[1]);
+    const r = Math.min(rad, la / 2, lb / 2);
+    if (r < 0.5) { out.push(c); continue; }
+    const p1 = [c[0] + (a[0] - c[0]) * r / la, c[1] + (a[1] - c[1]) * r / la], p2 = [c[0] + (b[0] - c[0]) * r / lb, c[1] + (b[1] - c[1]) * r / lb];
+    for (let k = 0; k <= 8; k++) { const t = k / 8; out.push([(1 - t) * (1 - t) * p1[0] + 2 * (1 - t) * t * c[0] + t * t * p2[0], (1 - t) * (1 - t) * p1[1] + 2 * (1 - t) * t * c[1] + t * t * p2[1]]); }
+  }
+  out.push(p[p.length - 1]);
+  return out;
+}
+function build(wv) {
+  if (wv.orth) { const out = buildOrth(wv), len = [0]; for (let i = 1; i < out.length; i++) len.push(len[i - 1] + Math.hypot(out[i][0] - out[i - 1][0], out[i][1] - out[i - 1][1])); wv.s = out; wv.len = len; return; }
+  const p = wv.pts, h = 60;
+  const pts = [[p[0][0] - wv.sd[0] * h, p[0][1] - wv.sd[1] * h], ...p, [p[p.length - 1][0] + wv.ed[0] * h, p[p.length - 1][1] + wv.ed[1] * h]];
+  const out = [];
+  for (let i = 1; i < pts.length - 2; i++) {
+    const [p0, p1, p2, p3] = [pts[i - 1], pts[i], pts[i + 1], pts[i + 2]];
+    const n = Math.max(8, Math.ceil(Math.hypot(p2[0] - p1[0], p2[1] - p1[1]) / 6));
+    for (let k = (i === 1 ? 0 : 1); k <= n; k++) {
+      const t = k / n, t2 = t * t, t3 = t2 * t;
+      out.push([0, 1].map(j => 0.5 * ((2 * p1[j]) + (-p0[j] + p2[j]) * t + (2 * p0[j] - 5 * p1[j] + 4 * p2[j] - p3[j]) * t2 + (-p0[j] + 3 * p1[j] - 3 * p2[j] + p3[j]) * t3)));
+    }
+  }
+  // the ends: straight into the hole / slot
+  const len = [0];
+  for (let i = 1; i < out.length; i++) len.push(len[i - 1] + Math.hypot(out[i][0] - out[i - 1][0], out[i][1] - out[i - 1][1]));
+  wv.s = out; wv.len = len;
+}
+
+// ---------------------------------------------------------------- camera
+const VIEWS = {
+  all: [1650, 894, 0.48], bb: [1505, 715, 0.92], bbTop: [1500, 480, 2.0], battery: [2500, 400, 1.0], mddPower: [1520, 1060, 0.59],
+  conv: [2450, 846, 0.85], wagos: [2300, 846, 0.85], bbPower: [1950, 740, 1.0], bbMdd: [1020, 1100, 0.8], encL: [960, 660, 1.0],
+  encR: [800, 860, 1.0], encB: [965, 683, 0.95], servos: [2520, 1260, 1.0], servosH: [2140, 1250, 0.78], sense: [1650, 680, 1.5],
+  senseWire: [1980, 711, 1.1], pi: [880, 351, 1.6], motors: [760, 1010, 0.6], piGnd: [1100, 420, 1.05]
+};
+let cam = VIEWS.all;
+const CY = 430;   // the camera's centre on screen: above the caption card
+const wx = (p) => [W / 2 - (p[0] - cam[0]) * cam[2], (p[1] - cam[1]) * cam[2] + CY];
+let MIR = false;
+function worldT() { MIR = true; g.setTransform(-cam[2], 0, 0, cam[2], W / 2 + cam[0] * cam[2], CY - cam[1] * cam[2]); }
+function screenT() { MIR = false; g.setTransform(1, 0, 0, 1, 0, 0); }
+const ease = t => t <= 0 ? 0 : t >= 1 ? 1 : t * t * (3 - 2 * t);
+const lerp = (a, b, t) => a + (b - a) * t;
+const clamp01 = t => Math.max(0, Math.min(1, t));
+
+// ---------------------------------------------------------------- drawing helpers
+function rr(x, y, w, h, r) { g.beginPath(); g.moveTo(x + r, y); g.arcTo(x + w, y, x + w, y + h, r); g.arcTo(x + w, y + h, x, y + h, r); g.arcTo(x, y + h, x, y, r); g.arcTo(x, y, x + w, y, r); g.closePath(); }
+function box(x, y, w, h, r, fill, stroke, lw = 2) { rr(x, y, w, h, r); if (fill) { g.fillStyle = fill; g.fill(); } if (stroke) { g.strokeStyle = stroke; g.lineWidth = lw; g.stroke(); } }
+function text(s, x, y, size, col = C.ink, align = 'left', weight = '', base = 'middle') {
+  g.font = `${weight} ${size}px ${FONT}`; g.fillStyle = col; g.textBaseline = base;
+  if (!MIR) { g.textAlign = align; g.fillText(s, x, y); return; }
+  g.save(); g.translate(x, y); g.scale(-1, 1); g.textAlign = align === 'left' ? 'right' : align === 'right' ? 'left' : align; g.fillText(s, 0, 0); g.restore();
+}
+function shade(hex, f) { const n = parseInt(hex.slice(1), 16); const c = [n >> 16, (n >> 8) & 255, n & 255].map(v => Math.round(f < 0 ? v * (1 + f) : v + (255 - v) * f)); return `rgb(${c})`; }
+function circle(x, y, r, fill, stroke, lw = 2) { g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); if (fill) { g.fillStyle = fill; g.fill(); } if (stroke) { g.strokeStyle = stroke; g.lineWidth = lw; g.stroke(); } }
+
+// ---------------------------------------------------------------- components (world space)
+function drawBench() {
+  g.fillStyle = '#e4e8ed'; g.fillRect(-2000, -2000, 8000, 6000);
+  g.strokeStyle = '#d8dde3'; g.lineWidth = 2;
+  for (let x = -1000; x < 4400; x += 100) { g.beginPath(); g.moveTo(x, -1000); g.lineTo(x, 3000); g.stroke(); }
+  for (let y = -1000; y < 3000; y += 100) { g.beginPath(); g.moveTo(-1000, y); g.lineTo(4400, y); g.stroke(); }
+}
+function drawBreadboard() {
+  box(BBX + 20, BBY, 470, 850, 14, '#fbfaf5', '#c7c6bb', 3);
+  // the middle gap
+  g.fillStyle = '#e6e4da'; g.fillRect(colX(4) + 18, BBY + 20, colX(7) - colX(4) - 36, 810);
+  // rails
+  for (const [x, col] of [[BBX + 50, C.blue], [BBX + 75, C.red], [colX(11) + 50, C.red], [colX(11) + 75, C.blue]]) {
+    g.strokeStyle = col; g.lineWidth = 2; g.beginPath(); g.moveTo(x + (col === C.red ? 12 : -12), BBY + 30); g.lineTo(x + (col === C.red ? 12 : -12), BBY + 820); g.stroke();
+    for (let r = 1; r <= 30; r++) if (r % 6) { g.fillStyle = '#5b5b5b'; g.fillRect(x - 3.5, rowY(r) - 3.5, 7, 7); }
+  }
+  for (let r = 1; r <= 30; r++) {
+    for (const k of 'abcdefghij') { g.fillStyle = '#4a4a4a'; g.fillRect(colX(COL[k]) - 3.5, rowY(r) - 3.5, 7, 7); }
+    text(String(r), colX(0) - 22, rowY(r), 11, '#8a8a80', 'right');
+    text(String(r), colX(11) + 22, rowY(r), 11, '#8a8a80', 'left');
+  }
+  for (const k of 'abcdefghij') { text(k, colX(COL[MIRL(k)]), BBY + 30, 15, '#6f6f66', 'center', 'bold'); text(k, colX(COL[MIRL(k)]), BBY + 835, 15, '#6f6f66', 'center', 'bold'); }
+}
+function drawPico(lit) {      // the YD-RP2040, chip side down: its back (printed YD-RP2040) up, the USB-C end at row 1
+  const x0 = colX(2) - 22, x1 = colX(9) + 22, y0 = rowY(1) - 30, y1 = rowY(20) + 22;
+  g.save(); g.shadowColor = 'rgba(0,0,0,0.25)'; g.shadowBlur = 10; g.shadowOffsetY = 4;
+  box(x0, y0, x1 - x0, y1 - y0, 8, '#1c1c1f', '#000', 2); g.restore();
+  box((x0 + x1) / 2 - 26, y0 - 14, 52, 22, 5, null, '#9aa1a9', 2);                     // USB-C, underneath
+  text('USB-C end', (x0 + x1) / 2, y0 - 26, 13, C.mute, 'center', 'bold');
+  g.save(); g.translate((x0 + x1) / 2, rowY(10.5)); g.rotate(-Math.PI / 2);
+  text('YD-RP2040 · chip side down', 0, 0, 17, '#d8d8d8', 'center', 'bold'); g.restore();
+  if (lit) { g.save(); g.globalAlpha = 0.5; circle((x0 + x1) / 2, rowY(15), 22, '#ff5252'); g.restore(); text('its LED glows', (x0 + x1) / 2, rowY(15), 12, '#fff', 'center', 'bold'); }
+  for (let i = 1; i <= 20; i++) {
+    for (const [x, lab, al, dx] of [[colX(2), PICO_L[i - 1], 'left', 14], [colX(9), PICO_R[i - 1], 'right', -14]]) {
+      circle(x, rowY(i), 7, '#d9b44a', '#8a6d1e', 1.5); circle(x, rowY(i), 3, '#3b2f0c');
+      text(lab, x + dx, rowY(i), 11, USED.has(lab) ? (lab === 'GND' ? '#9fd3b8' : '#ffffff') : '#6b6b6b', al, 'bold');
+    }
+  }
+}
+function drawPi() {
+  g.save(); g.shadowColor = 'rgba(0,0,0,0.2)'; g.shadowBlur = 12; g.shadowOffsetY = 4;
+  box(PI.x0, PI.y0, PI.x1 - PI.x0, PI.y1 - PI.y0, 14, '#1b7a45', '#0f4f2c', 3); g.restore();
+  box(PI.x1 - 120, PI.y0 + 20, 110, 70, 6, '#c7ccd2', '#7d838a', 2); box(PI.x1 - 120, PI.y0 + 100, 110, 50, 6, '#c7ccd2', '#7d838a', 2);
+  text('USB', PI.x1 - 65, PI.y0 + 55, 14, '#59606a', 'center', 'bold'); text('LAN', PI.x1 - 65, PI.y0 + 125, 14, '#59606a', 'center', 'bold');
+  text('Raspberry Pi 5', PI.x0 + 30, PI.y0 + 40, 26, '#e8f5ec', 'left', 'bold');
+  text('(it stands on edge at the back: this is its bottom edge)', PI.x0 + 30, PI.y0 + 76, 16, '#c5e6d1');
+  box(PI.px(1) - 15, PI.py(1) - 15, PI.px(40) - PI.px(1) + 30, 52, 4, '#151515', '#000', 1.5);
+  for (let n = 1; n <= 40; n++) { const x = PI.px(n), y = PI.py(n); g.fillStyle = '#d9b44a'; g.fillRect(x - 4.5, y - 4.5, 9, 9); }
+  text('1', PI.px(1), PI.py(1) - 24, 13, '#e8f5ec', 'center', 'bold'); text('2', PI.px(2) - 22, PI.py(2), 13, '#e8f5ec', 'center', 'bold');
+  text('39', PI.px(39), PI.py(39) - 24, 13, '#e8f5ec', 'center'); text('40', PI.px(40) + 24, PI.py(40), 13, '#e8f5ec', 'center');
+}
+function drawMotor(i) {
+  const y = MOT[i].y;
+  box(150, y + 5, 70, 100, 8, '#c9a227', '#7c6312', 2);                                       // gearbox
+  g.fillStyle = '#9aa1a8'; g.fillRect(100, y + 48, 50, 14);                                  // shaft
+  const gr = g.createLinearGradient(0, y, 0, y + 110); gr.addColorStop(0, '#d7dbe0'); gr.addColorStop(0.5, '#9aa3ad'); gr.addColorStop(1, '#d7dbe0');
+  box(220, y + 10, 230, 90, 10, gr, '#6c747d', 2);                                           // motor
+  box(450, y + 6, 40, 98, 6, '#222', '#000', 2);                                             // encoder
+  text(MOT[i].name, 300, y - 18, 22, C.ink, 'left', 'bold');
+  // its 6-wire lead
+  for (let k = 0; k < 6; k++) {
+    const e = A('m' + 'LR'[i] + ':' + k);
+    g.strokeStyle = shade(C[MOT_W[k]] || '#eee', -0.3); g.lineWidth = 8; g.beginPath(); g.moveTo(490, y + 40 + k * 6); g.bezierCurveTo(540, y + 40 + k * 6, 550, e[1], e[0], e[1]); g.stroke();
+    g.strokeStyle = C[MOT_W[k]] || '#eee'; g.lineWidth = 5.5; g.stroke();
+  }
+}
+function drawMDD(lit) {
+  g.save(); g.shadowColor = 'rgba(0,0,0,0.25)'; g.shadowBlur = 12; g.shadowOffsetY = 4;
+  box(MD.x0, MD.y0, MD.x1 - MD.x0, MD.y1 - MD.y0, 10, '#b3141f', '#6e0b12', 3); g.restore();
+  text('MDD3A', MD.x0 + 180, MD.y0 + 150, 34, '#ffe1e1', 'center', 'bold');
+  text('motor driver', MD.x0 + 180, MD.y0 + 188, 18, '#ffcaca', 'center');
+  // header
+  MD.hdr.forEach((s, k) => { const [x, y] = A('md:h' + s.toLowerCase()); g.fillStyle = '#d9b44a'; g.fillRect(x - 6, y - 6, 12, 12); text(s, x, y + 22, 13, '#fff', 'center', 'bold'); });
+  text('control pins (read the labels on yours)', MD.x0 + 180, MD.y0 - 18, 14, C.mute, 'center');
+  // motor terminals (left)
+  ['M1A', 'M1B', 'M2A', 'M2B'].forEach((s, k) => { const [x, y] = A('md:t' + k); box(x - 10, y - 16, 44, 32, 4, '#1f4e9c', '#123161', 2); circle(x + 18, y, 8, '#c9cdd2', '#555', 1.5); text(s, x + 44, y, 14, '#fff', 'left', 'bold'); });
+  // the green power block (bottom)
+  box(760, MD.y1 - 6, 120, 40, 5, '#2f9e44', '#1c6b2c', 2);
+  circle(790, MD.y1 + 14, 9, '#c9cdd2', '#555', 1.5); circle(850, MD.y1 + 14, 9, '#c9cdd2', '#555', 1.5);
+  text('+', 790, MD.y1 - 22, 24, '#fff', 'center', 'bold'); text('−', 850, MD.y1 - 22, 24, '#fff', 'center', 'bold');
+  text('power', 820, MD.y1 - 48, 14, '#ffcaca', 'center');
+  circle(MD.x1 - 40, MD.y0 + 60, 7, lit ? '#69ff7a' : '#355', '#222', 1);
+  if (lit) { g.save(); g.globalAlpha = 0.35; circle(MD.x1 - 40, MD.y0 + 60, 18, '#69ff7a'); g.restore(); }
+}
+function drawWago(k, lever = {}) {
+  const x = WAGO.x0, y = WAGO.y[k];
+  g.save(); g.shadowColor = 'rgba(0,0,0,0.2)'; g.shadowBlur = 8; g.shadowOffsetY = 3;
+  box(x, y, WAGO.w, WAGO.h, 8, '#e3e7ec', '#8d96a0', 2.5); g.restore();
+  for (let s = 1; s <= 5; s++) {
+    const sx = slotX(s);
+    box(sx - 22, y + 6, 44, 40, 5, lever[s] ? '#ffb347' : '#f08c00', '#a65c00', 1.5);
+    box(sx - 10, y + WAGO.h - 22, 20, 18, 3, '#3a3f45', '#222', 1);
+  }
+  text(k, x - 26, y + 32, 44, WAGO.col[k], 'right', 'bold');
+  text(WAGO.name[k], x - 26, y + 66, 17, C.mute, 'right');
+}
+function xt30(x, y, female, s = 1) {      // an XT30 half: + left, − right (seen from above), pins pointing down (male) or up (female)
+  g.save(); g.translate(x, y); g.scale(s, s);
+  box(-22, 0, 44, 20, 4, '#e6c229', '#8a6d00', 2); g.beginPath(); g.moveTo(-22, female ? 20 : 0); g.lineTo(-14, female ? 28 : -8); g.lineTo(-22, female ? 28 : -8); g.closePath(); g.fillStyle = '#8a6d00'; g.fill();
+  text('+', -10, 10, 13, '#5a4500', 'center', 'bold'); text('−', 10, 10, 13, '#5a4500', 'center', 'bold');
+  g.restore();
+}
+function drawBattery(cells, plugged) {
+  box(BAT.x0, BAT.y0, BAT.x1 - BAT.x0, BAT.y1 - BAT.y0, 10, '#1d1f22', '#000', 2);
+  for (let r = 0; r < 2; r++) for (let c = 0; c < 3; c++) {
+    const x = BAT.x0 + 25 + c * 200, y = BAT.y0 + 20 + r * 72;
+    if (cells) { box(x, y, 180, 58, 8, '#2e7d32', '#1b4d1e', 2); box(x + 180, y + 18, 10, 22, 2, '#bbb'); text('AA', x + 90, y + 29, 22, '#e8f5e9', 'center', 'bold'); }
+    else { box(x, y, 180, 58, 8, null, '#3a3d42', 2); text('(empty)', x + 90, y + 29, 16, '#5d636b', 'center'); }
+  }
+  text('6 × AA holder (in the drawer)', BAT.x0, BAT.y0 - 22, 20, C.ink, 'left', 'bold');
+  // its leads to the female half; the robot's (male) half below it
+  const fy = plugged ? XT.y - 20 : XT.y - 52;
+  for (const [x0, col, dx] of [[2620, C.red, -10], [2680, C.black, 10]]) { g.strokeStyle = col; g.lineWidth = 6; g.beginPath(); g.moveTo(x0, BAT.y1); g.bezierCurveTo(x0, BAT.y1 + 20, XT.x + dx, fy - 20, XT.x + dx, fy); g.stroke(); }
+  xt30(XT.x, fy, true); xt30(XT.x, XT.y, false);
+  text(plugged ? 'plugged in' : 'XT30 plug', XT.x + 34, XT.y - (plugged ? 2 : 18), 15, C.mute, 'left', 'bold');
+}
+function drawFuse() {
+  box(FUSE.x - 16, FUSE.y0, 32, FUSE.y1 - FUSE.y0, 14, '#222', '#000', 2);
+  box(FUSE.x - 9, FUSE.y0 + 40, 18, 58, 4, '#cfd8dc', '#78909c', 1.5);
+  text('5 A fuse', FUSE.x + 30, (FUSE.y0 + FUSE.y1) / 2, 17, C.ink, 'left', 'bold');
+}
+function drawSwitch(lit, tabsNamed) {
+  circle(SW.x, SW.y, 52, '#2a2d31', '#000', 3); circle(SW.x, SW.y, 36, lit ? '#4fc3f7' : '#1e2a33', '#000', 2);
+  if (lit) { g.save(); g.globalAlpha = 0.35; circle(SW.x, SW.y, 64, '#4fc3f7'); g.restore(); }
+  text(lit ? 'ON' : 'OFF', SW.x, SW.y, 18, lit ? '#012' : '#7d8a94', 'center', 'bold');
+  for (let t = 1; t <= 3; t++) { const [x, y] = A('sw:' + t); box(x - 8, y - 32, 16, 34, 2, '#c0c4c8', '#6b7075', 1.5); }
+  text('drive switch', SW.x - 62, SW.y - 30, 18, C.ink, 'right', 'bold');
+  if (tabsNamed) ['in', 'out', 'light'].forEach((s, k) => text(s, A('sw:' + (k + 1))[0], A('sw:1')[1] + 20, 13, C.mute, 'center'));
+}
+function drawConv() {
+  box(CONV.x0, CONV.y0, CONV.x1 - CONV.x0, CONV.y1 - CONV.y0, 12, '#1d3c6e', '#0e2142', 3);
+  text('5 V converter', (CONV.x0 + CONV.x1) / 2, CONV.y0 + 40, 22, '#e3ecff', 'center', 'bold');
+  text('6-23 V in → 5 V 4 A out', (CONV.x0 + CONV.x1) / 2, CONV.y0 + 74, 15, '#b9cbee', 'center');
+  for (const [n, col, lab] of [['cv:ip', C.red, 'IN +'], ['cv:in', C.black, 'IN −'], ['cv:op', C.v5, 'OUT +'], ['cv:on', C.black, 'OUT −']]) {
+    const [x, y] = A(n); g.strokeStyle = col; g.lineWidth = 6; g.beginPath(); g.moveTo(CONV.x0, y); g.lineTo(x, y); g.stroke();
+    text(lab, CONV.x0 + 8, y, 11, '#ffffff', 'left', 'bold');
+  }
+}
+function drawServo(k) {
+  const y = SERVO[k].y, x = SERVO.x;
+  box(x - 100, y - 22, 200, 22 + 22, 4, '#2c58b0', '#173372', 2);                               // its tabs
+  box(x - 70, y - 40, 140, 80, 8, '#3567c9', '#173372', 2.5);
+  circle(x + 40, y, 18, '#f2f2f2', '#999', 2);                                                 // the output
+  text('MG90S', x - 18, y, 14, '#dfe8ff', 'center', 'bold');
+  text(SERVO[k].name, x + 110, y - 56, 20, C.ink, 'right', 'bold');
+  const px = SERVO.x - 230;
+  [['o', C.sig], ['r', C.red], ['n', C.brown]].forEach(([sn, col], j) => {
+    const sy = y - 16 + j * 16; g.strokeStyle = col; g.lineWidth = 6; g.beginPath(); g.moveTo(x - 70, y - 10 + j * 10); g.bezierCurveTo(x - 120, y - 10 + j * 10, px + 70, sy, px + 14, sy); g.stroke();
+  });
+  box(px - 12, y - 30, 28, 60, 3, '#1b1b1b', '#000', 1.5);
+  for (const sn of ['o', 'r', 'n']) { const [sx, sy] = A(`sv${k}:${sn}`); g.fillStyle = '#555'; g.fillRect(sx + 4, sy - 4, 8, 8); }
+}
+function drawResistor(wv, f) {
+  const [a, b] = [wv.pts[0], wv.pts[1]], mx = (a[0] + b[0]) / 2, my = (a[1] + b[1]) / 2;
+  g.save(); g.globalAlpha = f;
+  g.strokeStyle = '#a7adb3'; g.lineWidth = 3; g.beginPath(); g.moveTo(a[0], a[1]); g.lineTo(b[0], b[1]); g.stroke();
+  const vert = Math.abs(b[1] - a[1]) > Math.abs(b[0] - a[0]), len = Math.min(64, Math.hypot(b[0] - a[0], b[1] - a[1]) - 16);
+  g.translate(mx, my); if (vert) g.rotate(Math.PI / 2);
+  box(-len / 2, -9, len, 18, 8, '#e9d7a8', '#9c8550', 1.5);
+  const bands = { red: '#c62828', orange: '#ef6c00', brown: '#6d4c41', black: '#111', gold: '#c9a227' };
+  [...wv.res, 'gold'].forEach((c, k) => { g.fillStyle = bands[c]; g.fillRect(-len / 2 + 8 + k * (len - 20) / 3.2, -9, 5, 18); });
+  g.rotate(vert ? -Math.PI / 2 : 0);
+  text(wv.label, vert ? 14 : 0, vert ? 0 : -20, 13, C.ink, vert ? 'left' : 'center', 'bold');
+  g.restore();
+  for (const p of [a, b]) circle(p[0], p[1], 3.5, '#8d949b');
+}
+
+// a wire, drawn up to fraction f of its length
+function drawWire(wv, f) {
+  if (!wv.s) build(wv);
+  if (wv.res) return drawResistor(wv, f);
+  const total = wv.len[wv.len.length - 1], upto = total * clamp01(f);
+  if (upto <= 0) return;
+  g.beginPath(); g.moveTo(wv.s[0][0], wv.s[0][1]);
+  let i = 1; for (; i < wv.s.length && wv.len[i] <= upto; i++) g.lineTo(wv.s[i][0], wv.s[i][1]);
+  let tip = wv.s[i - 1];
+  if (i < wv.s.length) { const t = (upto - wv.len[i - 1]) / (wv.len[i] - wv.len[i - 1]); tip = [lerp(wv.s[i - 1][0], wv.s[i][0], t), lerp(wv.s[i - 1][1], wv.s[i][1], t)]; g.lineTo(tip[0], tip[1]); }
+  g.lineCap = 'round'; g.lineJoin = 'round';
+  g.strokeStyle = wv.col === C.white ? '#9aa0a6' : shade(wv.col, -0.35); g.lineWidth = 8.5; g.stroke();
+  g.strokeStyle = wv.col; g.lineWidth = 6; g.stroke();
+  // pin ends
+  const s0 = wv.s[0]; circle(s0[0], s0[1], 4.5, '#3b3b3b');
+  if (f >= 1) { const e = wv.s[wv.s.length - 1]; circle(e[0], e[1], 4.5, '#3b3b3b'); }
+  else circle(tip[0], tip[1], 6, '#ffffff', wv.col, 2);
+}
+
+// ---------------------------------------------------------------- state per step
+function stepAt(t) { let i = 0; while (i + 1 < TL.length && TL[i + 1].t0 <= t) i++; return i; }
+const before = [];          // wires finished before each step
+function prepare() {
+  const have = new Set();
+  STEPS.forEach((s, i) => { (s.done || []).forEach(w => have.add(w)); before[i] = new Set(have); (s.wires || []).forEach(w => have.add(w)); });
+  for (const id in WIRES) build(WIRES[id]);
+}
+// how far each of this step's wires has grown
+function grow(step, lt, dur) {
+  const ws = step.wires || [], n = ws.length, out = {};
+  const span = Math.max(1.2, (dur - 2.0) * 0.8), gap = n > 1 ? Math.min(2.6, (span - 1.1) / (n - 1)) : 0;
+  ws.forEach((w, k) => out[w] = ease((lt - 0.8 - k * gap) / 1.1));
+  return out;
+}
+
+// ---------------------------------------------------------------- highlights, tags, labels
+function pulse(p, t, col = C.hl) {
+  const k = 0.5 + 0.5 * Math.sin(t * 5);
+  g.save(); g.globalAlpha = 0.55 + 0.35 * k; g.strokeStyle = col; g.lineWidth = 5; g.beginPath(); g.arc(p[0], p[1], 15 + 4 * k, 0, Math.PI * 2); g.stroke(); g.restore();
+}
+function tag(p, s, dir, alpha, dist) {
+  const off = { l: [-1, 0], r: [1, 0], u: [0, -1], d: [0, 1] }[dir] || [1, 0], d = dist || 46;
+  if (MIR) off[0] = -off[0];
+  const q = [p[0] + off[0] * d, p[1] + off[1] * d];
+  g.save(); g.globalAlpha = alpha; g.font = `bold 18px ${FONT}`; const w = g.measureText(s).width + 20;
+  g.strokeStyle = C.ink; g.lineWidth = 2; g.beginPath(); g.moveTo(p[0], p[1]); g.lineTo(q[0], q[1]); g.stroke();
+  const bx = off[0] < 0 ? q[0] - w : off[0] > 0 ? q[0] : q[0] - w / 2, by = off[1] < 0 ? q[1] - 32 : off[1] > 0 ? q[1] : q[1] - 16;
+  box(bx, by, w, 32, 8, '#fff7d6', C.ink, 2); text(s, bx + w / 2, by + 16, 18, C.ink, 'center', 'bold'); g.restore();
+}
+function bigLabels(alpha) {
+  const L = [[[700, 110], 'the Pi\'s pins'], [[300, 400], 'motors'], [[1200, 1420], 'motor driver'], [[1505, 240], 'breadboard + RP2040'],
+    [[2215, 300], '4 Wagos'], [[2880, 30], 'batteries, fuse, switch'], [[2730, 640], '5 V converter'], [[2800, 960], '3 servos']];
+  g.save(); g.globalAlpha = alpha;
+  for (const [p, s] of L) { g.font = `bold 46px ${FONT}`; const w = g.measureText(s).width + 36; box(p[0] - w / 2, p[1] - 34, w, 68, 14, 'rgba(255,255,255,0.92)', C.ink, 3); text(s, p[0], p[1], 46, C.ink, 'center', 'bold'); }
+  g.restore();
+}
+
+// ---------------------------------------------------------------- the meter (screen space, probes to world points)
+function meter(m, lt, dur) {
+  const second = lt > dur * 0.52, a = A(second ? m.a2 : m.b2 && second ? m.a2 : m.a), b = A(second ? m.b2 : m.b), read = second ? m.read2 : m.read;
+  const [ax, ay] = wx(a), [bx, by] = wx(b), mx = 1580, my = 560;
+  const fin = ease((lt - 0.6) / 0.8);
+  box(mx, my, 260, 380, 26, '#f9c80e', '#8a6d00', 4); box(mx + 25, my + 25, 210, 90, 8, '#c8d3b0', '#55603e', 3);
+  text(fin > 0.9 ? read : '', mx + 130, my + 72, 46, '#1b2412', 'center', 'bold');
+  text(m.mode === 'beep' ? '•))) beep mode' : 'V  volts', mx + 130, my + 150, 20, '#3d3000', 'center', 'bold');
+  circle(mx + 130, my + 245, 55, '#333', '#111', 3);
+  circle(mx + 80, my + 345, 14, '#c62828', '#000', 2); circle(mx + 180, my + 345, 14, '#222', '#000', 2);
+  for (const [px, py, col, sx] of [[ax, ay, '#c62828', mx + 80], [bx, by, '#222', mx + 180]]) {
+    const ex = lerp(sx, px, fin), ey = lerp(my + 345, py, fin);
+    g.strokeStyle = col; g.lineWidth = 6; g.beginPath(); g.moveTo(sx, my + 345); g.bezierCurveTo(sx, my + 520, ex, ey + 220, ex, ey + 30); g.stroke();
+    box(ex - 7, ey, 14, 34, 4, col, '#000', 1.5); g.strokeStyle = '#ccc'; g.lineWidth = 3; g.beginPath(); g.moveTo(ex, ey); g.lineTo(ex, ey - 12); g.stroke();
+  }
+  if (m.mode === 'beep' && fin > 0.9) text('no beep: good', mx + 130, my - 30, 26, '#2e7d32', 'center', 'bold');
+}
+
+// ---------------------------------------------------------------- the bench scene
+function benchScene(i, lt, dur, t) {
+  const s = STEPS[i], v = VIEWS[s.view || 'all'];
+  // the camera: from the previous bench view
+  let pv = null; for (let k = i - 1; k >= 0; k--) if (STEPS[k].scene === 'bench') { pv = VIEWS[STEPS[k].view || 'all']; break; }
+  const e = pv && STEPS[i - 1] && STEPS[i - 1].scene === 'bench' ? ease(lt / 1.3) : 1;
+  cam = pv ? [lerp(pv[0], v[0], e), lerp(pv[1], v[1], e), Math.exp(lerp(Math.log(pv[2]), Math.log(v[2]), e))] : v;
+  worldT();
+  const lit = !!s.lit, plugged = !!s.plugged, cells = plugged || lit;
+  drawBench(); drawPi(); drawBreadboard(); drawPico(lit); MOT.forEach((_, k) => drawMotor(k)); drawMDD(lit);
+  'ABCD'.split('').forEach(k => drawWago(k)); drawBattery(cells, plugged); drawFuse(); drawSwitch(lit || (s.meter && s.meter.mode === 'volts'), i >= 13); drawConv();
+  'HLR'.split('').forEach(k => drawServo(k));
+  const gw = grow(s, lt, dur);
+  const done = before[i];
+  // finished wires (faded a little when this step adds new ones), then this step's
+  const focus = (s.wires || []).length > 0;
+  for (const id in WIRES) if (done.has(id) && !(s.wires || []).includes(id)) { g.save(); g.globalAlpha = focus ? 0.16 : 0.9; drawWire(WIRES[id], 1); g.restore(); }
+  for (const id of (s.wires || [])) drawWire(WIRES[id], gw[id]);
+  for (const h of (s.hl || [])) pulse(A(h), t);
+  (s.tags || []).forEach(([p, txt, dir, dist], k) => tag(A(p), txt, dir, ease((lt - 0.6 - k * 0.5) / 0.4), dist));
+  if (s.labels) bigLabels(ease((lt - 0.5) / 0.6));
+  screenT();
+  if (s.meter) meter(s.meter, lt, dur);
+}
+
+// ---------------------------------------------------------------- screen scenes
+function panelBg() { g.fillStyle = '#e9edf1'; g.fillRect(0, 0, W, H); }
+function windowFrame(x, y, w, h, title) {
+  g.save(); g.shadowColor = 'rgba(0,0,0,0.25)'; g.shadowBlur = 24; g.shadowOffsetY = 8;
+  box(x, y, w, h, 12, '#ffffff', '#9aa3ad', 2); g.restore();
+  box(x, y, w, 46, 12, '#dfe4ea'); g.fillStyle = '#dfe4ea'; g.fillRect(x, y + 30, w, 16);
+  ['#ff5f57', '#febc2e', '#28c840'].forEach((c, k) => circle(x + 24 + k * 22, y + 23, 7, c));
+  text(title, x + w / 2, y + 23, 18, '#3c4450', 'center', 'bold');
+}
+function boardBig(x, y, s, bootPress) {   // the RP2040 board, top view, scale s (USB-C up)
+  g.save(); g.translate(x, y); g.scale(s, s);
+  box(-55, -130, 110, 260, 8, '#1f5c43', '#123b2b', 2); box(-14, -142, 28, 18, 4, '#b9bec5', '#6f757d', 1.5);
+  box(-18, -18, 36, 36, 3, '#202326'); text('RP2040', 0, 0, 7, '#cfd3d8', 'center', 'bold');
+  box(-38, -92, 20, 14, 3, bootPress ? '#ffd23f' : '#e8e8e8', '#777', 1); text('BOOT', -28, -70, 7, '#d4e6dc', 'center', 'bold');
+  box(18, -92, 20, 14, 3, '#e8e8e8', '#777', 1); text('RST', 28, -70, 7, '#d4e6dc', 'center');
+  for (let i = 0; i < 20; i++) { circle(-45, -118 + i * 12.6, 3.3, '#d9b44a'); circle(45, -118 + i * 12.6, 3.3, '#d9b44a'); }
+  g.restore();
+}
+function laptop(x, y, w, h) {
+  box(x, y, w, h, 16, '#2b3038', '#14171c', 3); box(x + 18, y + 18, w - 36, h - 36, 6, '#f5f7fa');
+  g.beginPath(); g.moveTo(x - 60, y + h); g.lineTo(x + w + 60, y + h); g.lineTo(x + w + 20, y + h + 34); g.lineTo(x - 20, y + h + 34); g.closePath(); g.fillStyle = '#c3c9d1'; g.fill(); g.strokeStyle = '#8b939d'; g.stroke();
+}
+function cable(x0, y0, x1, y1, f) {
+  const ex = lerp(x0, x1, f), ey = lerp(y0, y1, f);
+  g.strokeStyle = '#30343a'; g.lineWidth = 12; g.lineCap = 'round'; g.beginPath(); g.moveTo(x0, y0); g.bezierCurveTo(x0, y0 + 160, ex, ey + 200, ex, ey + 20); g.stroke();
+  box(ex - 13, ey, 26, 40, 5, '#9aa1a9', '#555', 2);
+}
+function cursor(x, y) { g.beginPath(); g.moveTo(x, y); g.lineTo(x, y + 34); g.lineTo(x + 9, y + 26); g.lineTo(x + 16, y + 40); g.lineTo(x + 22, y + 37); g.lineTo(x + 15, y + 24); g.lineTo(x + 26, y + 24); g.closePath(); g.fillStyle = '#fff'; g.fill(); g.strokeStyle = '#000'; g.lineWidth = 2; g.stroke(); }
+function hlBox(x, y, w, h, t) { const k = 0.5 + 0.5 * Math.sin(t * 5); g.save(); g.strokeStyle = C.hl; g.globalAlpha = 0.6 + 0.4 * k; g.lineWidth = 6; rr(x - 6, y - 6, w + 12, h + 12, 10); g.stroke(); g.restore(); }
+function typed(lines, x, y, lt, t0, cps, size, cols, lh) {    // lines typed one after another from t0
+  let tt = lt - t0;
+  lines.forEach((ln, k) => {
+    if (tt <= 0) return;
+    const isCmd = ln.startsWith('$') || ln.startsWith('>>>');
+    const n = isCmd ? Math.min(ln.length, Math.floor(tt * cps)) : ln.length;
+    text(ln.slice(0, n), x, y + k * lh, size, cols(ln), 'left', isCmd ? 'bold' : '');
+    tt -= isCmd ? ln.length / cps + 0.5 : 0.9;
+  });
+}
+function thonny(x, y, w, h, title) {
+  windowFrame(x, y, w, h, title);
+  ['File', 'Edit', 'View', 'Run', 'Tools', 'Help'].forEach((s, k) => text(s, x + 26 + k * 76, y + 70, 18, '#333'));
+  box(x + 14, y + 92, w - 28, 54, 6, '#eef1f5'); ['▶ Run', '■ Stop'].forEach((s, k) => box(x + 26 + k * 120, y + 100, 108, 38, 6, '#ffffff', '#b3bbc4'));
+  text('▶ Run', x + 80, y + 119, 17, '#2e7d32', 'center', 'bold'); text('■ Stop', x + 200, y + 119, 17, '#c62828', 'center', 'bold');
+  box(x + 14, y + h - 46, w - 28, 34, 0, '#eef1f5'); text('MicroPython (Raspberry Pi Pico) • Board CDC', x + w - 30, y + h - 29, 16, '#555', 'right');
+}
+function pcScene(s, lt, dur, t) {
+  panelBg();
+  const p = s.pc;
+  if (p === 'intro') {
+    laptop(170, 230, 640, 400); text('your computer', 490, 430, 30, C.mute, 'center', 'bold');
+    boardBig(1060, 470, 1.4, false); cable(1060, 260, 700, 640, 1);
+    text('USB-C cable', 900, 250, 22, C.mute, 'center');
+    box(1300, 280, 470, 380, 18, '#ffffff', '#c9d0d8', 2);
+    text('later, in the robot:', 1535, 330, 24, C.ink, 'center', 'bold');
+    text('no Wi-Fi', 1535, 390, 30, '#c62828', 'center', 'bold');
+    [[C.tx, 'TX → RX'], [C.rx, 'RX ← TX'], [C.black, 'GND']].forEach(([c, l], k) => { g.strokeStyle = c; g.lineWidth = 8; g.beginPath(); g.moveTo(1350, 460 + k * 50); g.lineTo(1600, 460 + k * 50); g.stroke(); text(l, 1620, 460 + k * 50, 20, C.ink); });
+    text('3 wires to the Pi', 1535, 620, 26, C.ink, 'center', 'bold');
+  } else if (p === 'boot') {
+    laptop(120, 220, 760, 470);
+    const f = ease((lt - 3.0) / 1.5), shown = lt > 5.2;
+    boardBig(1350, 560, 2.0, lt > 1.5 && lt < 7);
+    if (lt > 1.5 && lt < 7) { g.save(); g.globalAlpha = 0.85; circle(1294, 386, 30, '#f2c9a5', '#b07d56', 3); g.restore(); text('hold BOOT', 1180, 360, 28, C.ink, 'right', 'bold'); }
+    cable(820, 640, 1350, 254, f);
+    if (shown) {
+      const a = ease((lt - 5.2) / 0.6); g.save(); g.globalAlpha = a;
+      box(160, 260, 680, 390, 6, '#ffffff', '#c3cad3', 2); text('This PC', 190, 300, 22, '#333', 'left', 'bold');
+      box(200, 360, 260, 150, 10, '#eaf2ff', '#7aa7e6', 2); box(240, 395, 80, 60, 6, '#9aa1a9', '#555', 2); text('RPI-RP2', 330, 470, 26, '#0d47a1', 'center', 'bold');
+      text('a new drive', 520, 430, 22, C.mute); g.restore(); hlBox(200, 360, 260, 150, t);
+    }
+  } else if (p === 'install') {
+    thonny(160, 110, 1600, 860, 'Thonny');
+    const st = lt > 1.5, menu = lt > 3.2, dlg = lt > 5.8;
+    if (!menu) { hlBox(1290, 924, 450, 34, t); cursor(1560, 935); }
+    if (menu && !dlg) {
+      box(1240, 690, 500, 230, 8, '#fff', '#9aa3ad', 2);
+      ['Local Python 3', 'MicroPython (Raspberry Pi Pico)', 'Configure interpreter…', 'Install MicroPython…'].forEach((s2, k) => text(s2, 1265, 725 + k * 52, 20, '#222'));
+      hlBox(1250, 860, 480, 44, t); cursor(1600, 880);
+    }
+    if (dlg) {
+      box(480, 230, 960, 600, 12, '#ffffff', '#7f8a96', 2); text('Install MicroPython', 960, 275, 26, '#222', 'center', 'bold');
+      [['Target volume', 'RPI-RP2'], ['MicroPython family', 'RP2'], ['variant', 'Raspberry Pi • Pico / Pico H'], ['version', '(the latest)']].forEach(([a, b], k) => {
+        text(a, 540, 360 + k * 80, 22, '#444'); box(860, 335 + k * 80, 520, 50, 6, '#f7f9fb', '#aab3bd'); text(b, 880, 360 + k * 80, 22, '#111', 'left', k === 2 ? 'bold' : '');
+      });
+      if (lt > 7.6) hlBox(860, 495, 520, 50, t);
+      box(1210, 740, 170, 56, 10, '#1e88e5', '#0d47a1'); text('Install', 1295, 768, 24, '#fff', 'center', 'bold');
+      if (lt > 9.5) { hlBox(1210, 740, 170, 56, t); cursor(1300, 770); }
+    }
+  } else if (p === 'save') {
+    thonny(160, 110, 1600, 860, 'Thonny - main.py');
+    box(174, 160, 160, 40, 6, '#fff', '#b3bbc4'); text('main.py', 254, 180, 18, '#222', 'center', 'bold');
+    const code = ['# LittleBot base controller - MicroPython for the RP2040', '# on the v5 deck ...', '', 'import json', '', 'FW = 1', 'DEV = "littlebot-base"', '', 'UART_TX, UART_RX = 0, 1', 'ENC_PINS = ((6, 7), (8, 9))', 'MOTOR_PINS = ((10, 11), (12, 13))', 'SERVO_PINS = (14, 15, 16)'];
+    code.forEach((ln, k) => text(ln, 200, 280 + k * 34, 20, ln.startsWith('#') ? '#6a737d' : '#1d2430', 'left'));
+    const m = lt > 2.2 && lt < 4.5, dlg = lt >= 4.5;
+    if (m) { box(170, 84, 330, 220, 8, '#fff', '#9aa3ad', 2); ['New', 'Open…', 'Save', 'Save as…', 'Close'].forEach((s2, k) => text(s2, 195, 112 + k * 40, 20, '#222')); hlBox(180, 210, 310, 36, t); cursor(400, 222); }
+    if (dlg) {
+      box(560, 300, 800, 420, 12, '#ffffff', '#7f8a96', 2); text('Where to save to?', 960, 350, 28, '#222', 'center', 'bold');
+      box(620, 410, 300, 90, 10, '#f3f5f7', '#9aa3ad', 2); text('This computer', 770, 455, 24, '#333', 'center');
+      box(1000, 410, 300, 90, 10, '#e8f1ff', '#1e88e5', 3); text('Raspberry Pi Pico', 1150, 455, 24, '#0d47a1', 'center', 'bold');
+      if (lt < 7) { hlBox(1000, 410, 300, 90, t); cursor(1200, 470); }
+      if (lt >= 7) { text('File name:', 640, 590, 24, '#333'); box(800, 562, 400, 56, 8, '#fff', '#1e88e5', 2); text('main.py', 820, 590, 26, '#111', 'left', 'bold'); hlBox(800, 562, 400, 56, t); }
+    }
+  } else if (p === 'shell') {
+    thonny(160, 110, 1600, 860, 'Thonny');
+    box(174, 160, 1572, 680, 6, '#fbfcfd', '#cfd6de'); text('Shell', 194, 185, 18, '#555', 'left', 'bold');
+    if (lt < 2) { hlBox(146, 100, 108, 38, t); cursor(240, 120); }
+    const lines = ['MicroPython v1.2x on Raspberry Pi Pico with RP2040', 'HELLO littlebot-base 1 (type HELP)', '>>> PING', 'PONG littlebot-base 1', '>>> B', 'B null'];
+    typed(lines, 200, 240, lt, 1.8, 6, 30, ln => ln.startsWith('>>>') ? '#0d47a1' : ln.startsWith('PONG') || ln.startsWith('B null') ? '#2e7d32' : '#333', 56);
+    if (lt > dur - 4) { text('unplug the board', 960, 760, 40, '#c62828', 'center', 'bold'); }
+  } else if (p === 'center') {
+    laptop(80, 300, 520, 330);
+    boardBig(1000, 540, 1.6, false); cable(1000, 336, 560, 600, 1);
+    // the servo and its 3 wires to the board's pins
+    box(1450, 330, 160, 130, 10, '#3567c9', '#173372', 2.5); circle(1500, 330, 22, '#f2f2f2', '#999', 2); text('servo', 1530, 400, 24, '#e6eeff', 'center', 'bold');
+    const pins = [[C.brown, [1072, 361], 'GND (row 3)'], [C.red, [1072, 336], 'VBUS (pin 40)'], [C.sig, [928, 768], 'GP14 (row 19)']];
+    pins.forEach(([col, p2, lab], k) => {
+      const f = ease((lt - 1.5 - k * 1.6) / 1.0); if (f <= 0) return;
+      const sx = 1500 + (k - 1) * 22, sy = 460;
+      g.strokeStyle = col; g.lineWidth = 8; g.beginPath(); g.moveTo(sx, sy);
+      const ex = lerp(sx, p2[0], f), ey = lerp(sy, p2[1], f); g.bezierCurveTo(sx, sy + 200, ex + (k === 2 ? 300 : 200), ey + 100, ex, ey); g.stroke();
+      if (f > 0.95) text(lab, 1650, 560 + k * 46, 24, col === C.sig ? '#a86b00' : col, 'left', 'bold');
+    });
+    box(1300, 660, 520, 150, 10, '#fbfcfd', '#cfd6de'); text('Thonny shell', 1320, 682, 16, '#555', 'left', 'bold');
+    typed(['>>> CENTER', 'OK'], 1330, 720, lt, 7.5, 6, 30, ln => ln.startsWith('>>>') ? '#0d47a1' : '#2e7d32', 50);
+    text('one servo at a time · nothing on its horn', 960, 80, 30, '#c62828', 'center', 'bold');
+  }
+}
+function termScene(s, lt, dur) {
+  panelBg(); cam = VIEWS.all; worldT(); g.globalAlpha = 0.25; drawBench(); g.globalAlpha = 1; screenT();
+  box(230, 110, 1460, 780, 14, '#101418', '#000', 3); box(230, 110, 1460, 44, 14, '#262c33');
+  text('pi@littlebot: ~/LittleBot', 960, 132, 18, '#c9d1d9', 'center', 'bold');
+  typed(s.term, 270, 210, lt, 0.8, 16, 28, ln => ln.startsWith('$') ? '#8be28b' : ln.trim().startsWith('dtparam') ? '#ffd166' : '#e6edf3', 50);
+}
+function wagoScene(s, lt, dur, t) {
+  panelBg();
+  // a big Wago, one lever animated: up, the wire in, down, tug
+  const x = 560, y = 330, wdt = 800, h = 220;
+  g.save(); g.shadowColor = 'rgba(0,0,0,0.25)'; g.shadowBlur = 20; g.shadowOffsetY = 6; box(x, y, wdt, h, 20, '#e3e7ec', '#8d96a0', 4); g.restore();
+  const up = clamp01(ease((lt - 4.5) / 0.8)) - clamp01(ease((lt - 8.5) / 0.8));
+  for (let k = 0; k < 5; k++) {
+    const sx = x + 80 + k * 160, lift = k === 2 ? up : 0;
+    g.save(); g.translate(sx, y + 40); g.rotate(-lift * 0.9); box(-55, -lift * 30, 110, 100, 12, '#f08c00', '#a65c00', 3); g.restore();
+    box(sx - 26, y + h - 60, 52, 46, 6, '#3a3f45', '#222', 2);
+  }
+  text('lever', x + 400, y - 40 - up * 40, 26, C.mute, 'center', 'bold');
+  // the wire
+  const ins = ease((lt - 6.2) / 1.6) - (lt > 10.5 ? 0.03 * Math.sin((lt - 10.5) * 20) * clamp01(12 - lt) : 0);
+  const wy = y + h + 200 - ins * 230, wxx = x + 400;
+  g.strokeStyle = '#c62828'; g.lineWidth = 34; g.lineCap = 'butt'; g.beginPath(); g.moveTo(wxx, wy + 110); g.lineTo(wxx, wy + 600); g.stroke();
+  g.strokeStyle = '#d08b3e'; g.lineWidth = 16; g.beginPath(); g.moveTo(wxx, wy); g.lineTo(wxx, wy + 110); g.stroke();
+  if (lt > 1.5 && lt < 6.2) { g.strokeStyle = C.ink; g.lineWidth = 3; g.beginPath(); g.moveTo(wxx + 50, wy); g.lineTo(wxx + 50, wy + 110); g.stroke(); text('11 mm', wxx + 70, wy + 55, 34, C.ink, 'left', 'bold'); }
+  if (lt > 10.2) { text('tug it: it must not come out', 960, 180, 40, '#2e7d32', 'center', 'bold'); }
+}
+function switchScene(s, lt, dur, t) {
+  panelBg();
+  const on = Math.floor(lt / 2.5) % 2 === 0 && lt > 2;
+  circle(760, 420, 170, '#2a2d31', '#000', 4); circle(760, 420, 120, on ? '#4fc3f7' : '#1e2a33', '#000', 3);
+  text(on ? 'ON' : 'OFF', 760, 420, 52, on ? '#012' : '#7d8a94', 'center', 'bold');
+  const tabs = [[650, 'in'], [760, 'out'], [870, 'light']];
+  tabs.forEach(([x, lab], k) => { box(x - 22, 600, 44, 120, 4, '#c0c4c8', '#6b7075', 2); if (lt > dur * 0.62) text(lab, x, 760, 30, k === 2 ? '#9a9a9a' : C.ink, 'center', 'bold'); });
+  // probes on the two switching tabs
+  for (const [x, col] of [[650, '#c62828'], [760, '#222']]) { g.strokeStyle = col; g.lineWidth = 7; g.beginPath(); g.moveTo(x, 690); g.bezierCurveTo(x, 860, 1300, 900, 1400, 820); g.stroke(); box(x - 8, 670, 16, 40, 4, col); }
+  box(1400, 360, 300, 440, 28, '#f9c80e', '#8a6d00', 4); box(1430, 390, 240, 100, 8, '#c8d3b0', '#55603e', 3);
+  text(on ? '0.0' : 'OL', 1550, 440, 50, '#1b2412', 'center', 'bold'); text('•))) beep mode', 1550, 530, 22, '#3d3000', 'center', 'bold');
+  text(on ? 'BEEP' : 'silent', 1550, 300, 40, on ? '#2e7d32' : '#777', 'center', 'bold');
+  if (lt > dur * 0.62) text('3rd tab: the light only · leave it empty', 760, 120, 30, C.mute, 'center', 'bold');
+}
+function plugScene(s, lt, dur) {
+  panelBg();
+  // the servo's plug (left) and three jumper pins (right) going in
+  box(500, 380, 200, 260, 12, '#1b1b1b', '#000', 3);
+  const cols = [C.brown, C.red, C.sig], names = ['brown', 'red', 'orange'];
+  cols.forEach((c, k) => { const y = 440 + k * 70; g.strokeStyle = c; g.lineWidth = 18; g.beginPath(); g.moveTo(140, y); g.lineTo(500, y); g.stroke(); box(660, y - 14, 24, 28, 3, '#555'); text(names[k], 300, y - 30, 24, c === C.sig ? '#a86b00' : c, 'center', 'bold'); });
+  text("the servo's plug", 600, 680, 26, C.mute, 'center', 'bold');
+  cols.forEach((c, k) => {
+    const y = 440 + k * 70, f = ease((lt - 2 - k * 1.5) / 1.2), x = lerp(1050, 690, f);
+    g.strokeStyle = '#b0b6bc'; g.lineWidth = 8; g.beginPath(); g.moveTo(x, y); g.lineTo(x + 60, y); g.stroke();
+    box(x + 60, y - 18, 70, 36, 5, '#222'); g.strokeStyle = c; g.lineWidth = 16; g.beginPath(); g.moveTo(x + 130, y); g.lineTo(x + 520, y); g.stroke();
+  });
+  text('the tail (3 jumpers)', 1350, 680, 26, C.mute, 'center', 'bold');
+  if (lt > dur - 5) text('plugged in backwards, it won\'t move', 960, 150, 36, '#c62828', 'center', 'bold');
+}
+function xt30Side(x, y, male) {      // an XT30 half seen from the side, mating face towards the other half; + on top
+  const dir = male ? -1 : 1;                                     // the female faces right, the male faces left
+  box(x - 34, y - 62, 68, 124, 8, '#e6c229', '#8a6d00', 3);
+  g.beginPath(); g.moveTo(x - 34, y - 40); g.lineTo(x - 34, y - 62); g.lineTo(x - 12, y - 62); g.closePath(); g.fillStyle = '#e9edf1'; g.fill();   // the chamfer: + side
+  text('+', x, y - 30, 34, '#5a4500', 'center', 'bold'); text('−', x, y + 32, 34, '#5a4500', 'center', 'bold');
+  if (male) for (const dy of [-30, 30]) box(x - 34 - 22, y + dy - 7, 24, 14, 3, '#d9b44a', '#8a6d00', 2);
+  else for (const dy of [-30, 30]) box(x + 26, y + dy - 9, 10, 18, 2, '#3b2f0c');
+}
+function xt30Scene(s, lt, dur) {
+  panelBg();
+  // left: the holder and its new (female) half; right: the robot's (male) half; then they meet
+  box(110, 170, 520, 300, 16, '#1d1f22', '#000', 3);
+  for (let r = 0; r < 2; r++) for (let c = 0; c < 3; c++) box(135 + c * 165, 195 + r * 135, 150, 115, 10, null, '#3a3d42', 2);
+  text('6 × AA holder', 370, 140, 30, C.ink, 'center', 'bold');
+  const meet = ease((lt - dur * 0.68) / 2.0), fx = lerp(960, 1180, meet), mx = lerp(1480, 1270, meet);
+  for (const [y0, col, dy] of [[330, C.red, -30], [380, C.black, 30]]) {        // the holder's wires: red to +, black to −
+    g.strokeStyle = col; g.lineWidth = 14; g.beginPath(); g.moveTo(630, y0); g.bezierCurveTo(760, y0, fx - 200, 355 + dy, fx - 34, 355 + dy); g.stroke();
+    const a = ease((lt - 6.5) / 1.0); if (a > 0) { g.save(); g.globalAlpha = a; box(fx - 150, 355 + dy - 13, 70, 26, 6, '#222', '#000', 2); g.restore(); }
+  }
+  xt30Side(fx, 355, false);
+  if (lt > 6.5 && meet < 0.5) text('solder + heat-shrink', fx - 115, 450, 24, C.ink, 'center', 'bold');
+  if (meet < 0.5) text('female half', fx, 260, 26, '#8a6d00', 'center', 'bold');
+  const ma = ease((lt - dur * 0.45) / 0.8);
+  if (ma > 0) {
+    g.save(); g.globalAlpha = ma;
+    for (const [dy, col, lab] of [[-30, C.red, 'to the 5 A fuse → the switch'], [30, C.black, 'to Wago B slot 1']]) {
+      g.strokeStyle = col; g.lineWidth = 14; g.beginPath(); g.moveTo(mx + 34, 355 + dy); g.bezierCurveTo(mx + 200, 355 + dy, mx + 220, 355 + dy * 5, 1880, 355 + dy * 5); g.stroke();
+      text(lab, 1860, 355 + dy * 5 + (dy < 0 ? -30 : 30), 24, col === C.red ? '#b71c1c' : C.ink, 'right', 'bold');
+    }
+    xt30Side(mx, 355, true);
+    if (meet < 0.5) text('male half: stays in the robot', mx + 40, 260, 26, '#8a6d00', 'center', 'bold');
+    g.restore();
+  }
+  if (meet > 0.95) text('it only fits one way round: + to +', 960, 600, 34, '#2e7d32', 'center', 'bold');
+}
+function drawerScene(s, lt, dur) {
+  panelBg();
+  const k = 9, X = y => 190 + (y + 130) * k, Z = z => 830 - (z - 14) * k;     // a side cut through the tub's front: mm -> px
+  const T = [3.5, 6.5, 9, 15, 19];                                        // cells in, bay plug out, plugged, drawer in, screws
+  const d = lerp(-110, 0, ease((lt - T[2]) / (T[3] - T[2])));             // the drawer's travel (mm)
+  // the tub: floor, front wall above the door, rim; the deck with its lead hole at the front
+  g.fillStyle = '#2b2e33'; g.fillRect(X(-24), Z(17), X(70) - X(-24), (17 - 14) * k);
+  g.fillRect(X(-24), Z(88), 3 * k, (88 - 67) * k);
+  text('tub', X(56), Z(10), 22, C.mute, 'right', 'bold');
+  g.fillStyle = '#d9c9a6'; g.fillRect(X(2), Z(72.5), X(70) - X(2), 2.5 * k); g.strokeStyle = '#9c8a60'; g.lineWidth = 2; g.strokeRect(X(2), Z(72.5), X(70) - X(2), 2.5 * k);
+  text('deck', X(56), Z(77), 24, '#6b5a2f', 'right', 'bold');
+  text('lead hole ↓', X(-6), Z(81), 20, C.mute, 'right', 'bold');
+  box(X(30), Z(86), 18 * k, 13 * k, 6, '#e3e7ec', '#8d96a0', 2); text('Wagos', X(39), Z(79.5), 18, C.mute, 'center', 'bold');
+  // the drawer (moves): door, tray, holder, cells
+  g.save(); g.translate(d * k, 0);
+  g.fillStyle = '#3a3e44'; g.fillRect(X(-24), Z(66), 3 * k, (66 - 20) * k);
+  g.fillRect(X(-21), Z(33), X(40) - X(-21), 2 * k);
+  box(X(-19.4), Z(49), 57 * k, 16 * k, 4, '#1d1f22', '#000', 2);
+  const cellsIn = ease(lt / T[0]);
+  if (cellsIn > 0) { g.save(); g.globalAlpha = cellsIn; box(X(-17), Z(47.5), 52 * k, 13 * k, 6, '#2e7d32', '#1b4d1e', 2); text('6 × AA', X(9), Z(41), 22, '#e8f5e9', 'center', 'bold'); g.restore(); }
+  text('the drawer', X(9), Z(25), 22, '#d0d4d9', 'center', 'bold');
+  if (lt > T[4]) for (const z of [30, 56]) { circle(X(-25.5), Z(z), 9, '#c9cdd2', '#555', 2); }
+  g.restore();
+  // the bay plug (male half): hangs under the lead hole, is pulled out to meet the holder's, then rides in above the holder
+  const out = ease((lt - T[0]) / (T[1] - T[0])), back = ease((lt - T[2]) / (T[3] - T[2]));
+  const bay = [lerp(lerp(-2, -70, out), 8, back), lerp(lerp(60, 54, out), 57, back)];
+  const join = ease((lt - T[1]) / (T[2] - T[1]));
+  const hold = [-15 + d, 49];                                            // where the holder's lead leaves it
+  const fem = join < 1 && back === 0 ? [lerp(hold[0] - 4, bay[0] - 9, join), lerp(52, bay[1], join)] : [bay[0] - 9, bay[1]];
+  // wires: from above the deck down through the hole to the bay plug; the holder's lead to its half
+  for (const [dz, col] of [[-1.5, C.red], [1.5, C.black]]) {
+    g.strokeStyle = col; g.lineWidth = 7; g.beginPath(); g.moveTo(X(-3 + dz), Z(92)); g.bezierCurveTo(X(-3 + dz), Z(74), X(bay[0] + 18), Z(bay[1] + 14), X(bay[0] + 4), Z(bay[1] + dz));
+    g.stroke();
+    g.beginPath(); g.moveTo(X(hold[0]), Z(hold[1])); g.bezierCurveTo(X(hold[0] - 10), Z(hold[1] + 10), X(fem[0] - 12), Z(fem[1] + dz), X(fem[0] - 4), Z(fem[1] + dz)); g.stroke();
+  }
+  box(X(bay[0]), Z(bay[1] + 3), 6 * k, 6 * k, 3, '#e6c229', '#8a6d00', 2);
+  box(X(fem[0] - 4), Z(fem[1] + 3), 6 * k, 6 * k, 3, '#f0d24f', '#8a6d00', 2);
+  text('from the switch (+) and Wago B (−)', X(-6), Z(94), 22, C.ink, 'right', 'bold');
+  if (lt < T[2] + 1) text('the plug in the bay', X(bay[0]) - 10, Z(bay[1]) - 42, 22, '#8a6d00', 'right', 'bold');
+  if (lt > T[3]) {
+    const px = X(bay[0] + 3), py = Z(bay[1] + 3);
+    g.strokeStyle = '#2e7d32'; g.lineWidth = 3; g.beginPath(); g.moveTo(px + 30, py); g.lineTo(1560, 390); g.stroke();
+    box(1560, 335, 350, 110, 14, '#ffffff', '#2e7d32', 3);
+    text('the plug folds in here:', 1735, 372, 24, '#2e7d32', 'center', 'bold');
+    text('21 mm above the holder', 1735, 410, 24, '#2e7d32', 'center', 'bold');
+  }
+  if (lt > T[4]) text('2 × M3 × 10', X(-28), Z(62), 24, C.ink, 'right', 'bold');
+  if (lt > dur - 6.5) {
+    box(40, 100, 560, 120, 16, '#fff', '#c9d0d8', 2);
+    text('to change the batteries:', 320, 138, 26, C.ink, 'center', 'bold');
+    text('switch off · 2 screws out · slide out · unplug', 320, 182, 22, '#39424e', 'center');
+  }
+  text('← FRONT (the battery door)', 40, 60, 26, C.mute, 'left', 'bold');
+}
+function mapScene(s, lt) {
+  panelBg();
+  const im = IMG.deck, sc = 1.45, x0 = (W - im.width * sc) / 2 - 120, y0 = 60;
+  g.drawImage(im, x0, y0, im.width * sc, im.height * sc);
+  const L = [[[200, 175], 'motor driver (MDD3A)', 0.8], [[160, 278], '5 V converter', 2.2], [[318, 262], '4 Wagos', 3.6], [[505, 268], 'breadboard + RP2040', 5.0], [[430, 140], 'Pi + UPS', 6.6], [[515, 520], 'drive switch', 8.0]];
+  L.forEach(([p, lab, t0]) => {
+    const a = ease((lt - t0) / 0.5); if (a <= 0) return;
+    const px = x0 + p[0] * sc, py = y0 + p[1] * sc; g.save(); g.globalAlpha = a;
+    g.font = `bold 28px ${FONT}`; const w = g.measureText(lab).width + 28;
+    const bx = px > W / 2 ? px + 40 : px - 40 - w; g.strokeStyle = C.ink; g.lineWidth = 3; g.beginPath(); g.moveTo(px, py); g.lineTo(bx + (px > W / 2 ? 0 : w), py - 40); g.stroke();
+    circle(px, py, 9, C.hl, C.ink, 3); box(bx, py - 62, w, 44, 10, '#fff', C.ink, 2.5); text(lab, bx + w / 2, py - 40, 28, C.ink, 'center', 'bold'); g.restore();
+  });
+  text('FRONT ↓ (the battery door and the switch)', x0 + im.width * sc / 2, y0 + im.height * sc + 16, 24, C.mute, 'center', 'bold');
+}
+function titleScene(s, lt, end) {
+  panelBg();
+  const im = IMG.robot, sc = 1.1; g.drawImage(im, 150, 60, im.width * sc, im.height * sc);
+  const a = ease((lt - 0.3) / 0.8);
+  g.save(); g.globalAlpha = a;
+  text(end ? 'All done' : 'LittleBot v5', 760, 330, 92, C.ink, 'left', 'bold');
+  text(end ? '' : 'Finishing the build', 760, 440, 64, '#ef6c00', 'left', 'bold');
+  if (!end) { text('battery plug · deck · every wire · a test · body · cap · head · arms', 765, 530, 30, C.mute); text('about 18 minutes · pause it whenever you need', 765, 585, 30, C.mute); }
+  else (s.cap || []).forEach((l, k) => text(l, 765, 460 + k * 60, 36, C.mute));
+  g.restore();
+}
+// ---------------------------------------------------------------- scenes added for the finishing video
+function card(x, y, w, h, fill = '#ffffff', stroke = '#c9d0d8') { g.save(); g.shadowColor = 'rgba(0,0,0,0.12)'; g.shadowBlur = 16; g.shadowOffsetY = 5; box(x, y, w, h, 18, fill, stroke, 2); g.restore(); }
+function tick(x, y, r, col) { g.strokeStyle = col; g.lineWidth = r * 0.28; g.lineCap = 'round'; g.beginPath(); g.moveTo(x - r * 0.5, y); g.lineTo(x - r * 0.12, y + r * 0.4); g.lineTo(x + r * 0.55, y - r * 0.45); g.stroke(); }
+function checklistScene(s, lt) {
+  panelBg();
+  card(70, 70, 860, 760); card(990, 70, 860, 760);
+  text('Done', 110, 125, 40, '#2e7d32', 'left', 'bold'); text('Still to do, in this order', 1030, 125, 40, '#ef6c00', 'left', 'bold');
+  s.done.forEach((l, k) => { const a = ease((lt - 0.6 - k * 0.55) / 0.4); if (a <= 0) return; g.save(); g.globalAlpha = a;
+    circle(130, 200 + k * 62, 20, '#e8f5e9', '#2e7d32', 2.5); tick(130, 200 + k * 62, 22, '#2e7d32'); text(l, 170, 200 + k * 62, 27, C.ink); g.restore(); });
+  const t1 = s.todoAt || 0.6;
+  s.todo.forEach((l, k) => { const a = ease((lt - t1 - k * 0.55) / 0.4); if (a <= 0) return; g.save(); g.globalAlpha = a;
+    circle(1050, 200 + k * 62, 20, '#fff3e0', '#ef6c00', 2.5); text(String(k + 1), 1050, 201 + k * 62, 20, '#ef6c00', 'center', 'bold'); text(l, 1090, 200 + k * 62, 27, C.ink); g.restore(); });
+}
+function orderScene(s, lt) {
+  panelBg();
+  text(s.head || 'Why this order', 960, 90, 46, C.ink, 'center', 'bold');
+  s.items.forEach(([what, why, t0], k) => {
+    const a = ease((lt - t0) / 0.5); if (a <= 0) return; const y = 140 + k * 132;
+    g.save(); g.globalAlpha = a; card(160, y, 1600, 116);
+    circle(240, y + 58, 36, '#ef6c00'); text(String(k + 1), 240, y + 60, 36, '#fff', 'center', 'bold');
+    text(what, 310, y + 38, 30, C.ink, 'left', 'bold'); text(why, 310, y + 82, 25, '#4a5463'); g.restore();
+  });
+}
+const TOOLICON = {
+  iron: (x, y) => { g.save(); g.translate(x, y); g.rotate(-0.5); box(-150, -16, 120, 32, 14, '#2d6cb5', '#173372', 3); g.fillStyle = '#b0b6bc'; g.fillRect(-30, -7, 120, 14); g.beginPath(); g.moveTo(90, -7); g.lineTo(140, 0); g.lineTo(90, 7); g.fill(); g.restore(); },
+  solder: (x, y) => { circle(x - 30, y, 60, '#9aa1a8', '#5c636a', 3); circle(x - 30, y, 22, '#e9edf1', '#5c636a', 2); g.strokeStyle = '#c4c9ce'; g.lineWidth = 7; g.beginPath(); g.moveTo(x + 25, y - 20); g.bezierCurveTo(x + 80, y - 40, x + 100, y + 30, x + 150, y + 10); g.stroke(); },
+  shrink: (x, y) => { [C.red, C.black, '#1e88e5'].forEach((c, k) => box(x - 120 + k * 85, y - 60 + k * 18, 60, 120, 12, c, '#000', 2)); },
+  stripper: (x, y) => { g.strokeStyle = '#333'; g.lineWidth = 18; g.beginPath(); g.moveTo(x - 160, y - 80); g.lineTo(x + 60, y); g.moveTo(x - 160, y + 60); g.lineTo(x + 60, y - 20); g.stroke(); g.strokeStyle = '#f9a825'; g.lineWidth = 26; g.beginPath(); g.moveTo(x - 200, y - 95); g.lineTo(x - 110, y - 62); g.moveTo(x - 200, y + 75); g.lineTo(x - 110, y + 42); g.stroke(); },
+  driver: (x, y) => { box(x - 170, y - 25, 200, 50, 18, '#e53935', '#8e1b18', 3); g.fillStyle = '#9aa1a8'; g.fillRect(x + 30, y - 7, 150, 14); },
+  meter: (x, y) => { box(x - 70, y - 110, 140, 200, 18, '#f9c80e', '#8a6d00', 3); box(x - 50, y - 90, 100, 50, 6, '#c8d3b0'); circle(x, y + 25, 30, '#333'); },
+  jumpers: (x, y) => { [C.red, C.black, C.v5, C.teal].forEach((c, j) => { g.strokeStyle = c; g.lineWidth = 9; g.beginPath(); g.moveTo(x - 180, y - 70 + j * 40); g.bezierCurveTo(x - 60, y - 140 + j * 40, x + 60, y + 20 + j * 40, x + 180, y - 50 + j * 40); g.stroke(); box(x - 200, y - 80 + j * 40, 24, 20, 3, '#222'); box(x + 176, y - 60 + j * 40, 24, 20, 3, j % 2 ? '#222' : '#555'); }); },
+  zip: (x, y) => { g.strokeStyle = '#26282c'; g.lineWidth = 12; g.beginPath(); g.arc(x - 40, y, 70, 0.3, Math.PI * 2 - 0.3); g.stroke(); g.lineWidth = 10; g.beginPath(); g.moveTo(x + 25, y - 25); g.lineTo(x + 170, y - 70); g.stroke(); },
+  tape: (x, y) => { circle(x, y, 85, '#d7ccc8', '#8d6e63', 3); circle(x, y, 40, '#e9edf1', '#8d6e63', 2); g.fillStyle = '#d7ccc8'; g.fillRect(x + 60, y - 80, 110, 40); },
+  pigtail: (x, y) => { for (const [dy, c] of [[-15, C.red], [15, C.black]]) { g.strokeStyle = c; g.lineWidth = 12; g.beginPath(); g.moveTo(x - 60, y + dy); g.lineTo(x + 170, y + dy); g.stroke(); } box(x - 130, y - 40, 70, 80, 8, '#e6c229', '#8a6d00', 3); text('cut off', x - 95, y + 70, 22, '#c62828', 'center', 'bold'); g.strokeStyle = '#c62828'; g.lineWidth = 4; g.setLineDash([8, 6]); g.beginPath(); g.moveTo(x - 45, y - 55); g.lineTo(x - 45, y + 50); g.stroke(); g.setLineDash([]); },
+  nobat: (x, y) => { for (let j = 0; j < 3; j++) box(x - 150 + j * 100, y - 80, 70, 150, 12, '#2e7d32', '#1b4d1e', 3); g.strokeStyle = '#c62828'; g.lineWidth = 14; g.beginPath(); g.moveTo(x - 170, y - 100); g.lineTo(x + 170, y + 90); g.moveTo(x + 170, y - 100); g.lineTo(x - 170, y + 90); g.stroke(); },
+};
+function toolsScene(s, lt) {
+  panelBg();
+  const n = s.items.length, cols = Math.min(4, n), rows = Math.ceil(n / cols), cw = 430, ch = 400 / Math.max(rows, 2) * 2 - 20;
+  s.items.forEach(([icon, lab, t0], k) => {
+    const a = ease((lt - t0) / 0.5); if (a <= 0) return;
+    const cx = 960 + ((k % cols) - (cols - 1) / 2) * (cw + 20), cy = 90 + (Math.floor(k / cols) + 0.5) * (ch + 20);
+    g.save(); g.globalAlpha = a; card(cx - cw / 2, cy - ch / 2, cw, ch);
+    g.save(); g.translate(cx, cy - 30); g.scale(0.62, 0.62); TOOLICON[icon](0, 0); g.restore();
+    text(lab, cx, cy + ch / 2 - 36, 26, icon === 'nobat' ? '#c62828' : C.ink, 'center', 'bold'); g.restore();
+  });
+}
+// joining two wires: heat-shrink on, strip, twist, solder, shrink
+function solderScene(s, lt, dur) {
+  panelBg();
+  const f = lt / dur, y = 470, ph = k => clamp01((f - k[0]) / (k[1] - k[0]));
+  const strip = ease(ph([0.12, 0.24])), meet = ease(ph([0.26, 0.4])), sol = ph([0.42, 0.62]), slide = ease(ph([0.64, 0.76])), shrink = ease(ph([0.78, 0.88]));
+  const [la, ca] = s.wa, [lb, cb] = s.wb, gap = lerp(260, 0, meet), cx = 960;
+  const ins = (x0, x1, c) => { g.strokeStyle = shade(c === C.white ? '#bbbbbb' : c, -0.3); g.lineWidth = 34; g.lineCap = 'butt'; g.beginPath(); g.moveTo(x0, y); g.lineTo(x1, y); g.stroke(); g.strokeStyle = c; g.lineWidth = 28; g.stroke(); };
+  const bare = lerp(0, 90, strip);
+  // the left wire ends at cx - gap/2 + overlap, the right starts at cx + gap/2 - overlap
+  const ov = 45 * meet, aEnd = cx - gap / 2 + ov, bEnd = cx + gap / 2 - ov;
+  ins(80, aEnd - bare, ca); ins(bEnd + bare, 1840, cb);
+  g.strokeStyle = sol > 0.6 ? '#c9ced4' : '#d08b3e'; g.lineWidth = 14; g.beginPath(); g.moveTo(aEnd - bare, y - 4); g.lineTo(aEnd, y - 4); g.stroke();
+  g.beginPath(); g.moveTo(bEnd, y + 4); g.lineTo(bEnd + bare, y + 4); g.stroke();
+  if (sol > 0) { g.save(); g.globalAlpha = clamp01(sol * 2); box(cx - 70, y - 18, 140, 36, 16, '#c9ced4', '#8d949b', 2); g.restore(); }
+  // the iron and the solder wire
+  if (sol > 0 && sol < 1) { g.save(); g.translate(cx - 40, y - 30); g.rotate(-0.9); box(-260, -16, 150, 32, 14, '#2d6cb5', '#173372', 3); g.fillStyle = '#b0b6bc'; g.fillRect(-110, -7, 110, 14); g.restore();
+    g.strokeStyle = '#c4c9ce'; g.lineWidth = 7; g.beginPath(); g.moveTo(cx + 30, y - 22); g.lineTo(cx + 200, y - 220); g.stroke(); text('solder', cx + 215, y - 230, 26, C.mute, 'left', 'bold'); text('iron', cx - 330, y - 250, 26, C.mute, 'left', 'bold'); }
+  // the heat-shrink: parked on the left wire, then slid over the joint, then shrunk
+  const hsx = lerp(380, cx, slide), hw = 200, th = lerp(46, 34, shrink);
+  const hsA = ease(ph([0.0, 0.1]));
+  g.save(); g.globalAlpha = hsA * 0.92; box(hsx - hw / 2, y - th / 2, hw, th, th / 2, shrink > 0.5 ? '#202124' : '#3a3d42', '#000', 2); g.restore();
+  // labels
+  text(la, 120, y - 70, 30, ca === C.black ? C.ink : ca === C.white ? '#555' : shade(ca, -0.2), 'left', 'bold');
+  text(lb, 1800, y - 70, 30, cb === C.black ? C.ink : cb === C.white ? '#555' : shade(cb, -0.2), 'right', 'bold');
+  const st = [[0.0, '1. heat-shrink onto one wire first'], [0.12, '2. strip 8 mm from both ends'], [0.26, '3. twist them together'], [0.42, '4. heat the twist, feed in solder'],
+              [0.64, '5. slide the heat-shrink over'], [0.78, '6. shrink it: hair dryer, or the side of the iron']];
+  let cur = 0; st.forEach(([t0], k) => { if (f >= t0) cur = k; });
+  text(st[cur][1], 960, 220, 40, C.ink, 'center', 'bold');
+  if (s.note && f > 0.9) text(s.note, 960, 660, 30, '#2e7d32', 'center', 'bold');
+}
+// the fuse holder: a loop of wire, cut in the middle; a 5 A fuse in; the cap on
+function fuseScene(s, lt, dur) {
+  panelBg();
+  const f = lt / dur, cut = f > 0.25, open = ease(clamp01((f - 0.3) / 0.12)), fin = ease(clamp01((f - 0.5) / 0.15)), cap = ease(clamp01((f - 0.72) / 0.1));
+  const hx = 960, hy = 360;
+  // the holder body and its cap
+  box(hx - 60, hy - 40, 120, 160, 20, '#202124', '#000', 3); text('fuse holder', hx + 90, hy + 60, 26, C.mute, 'left', 'bold');
+  // the leads: a loop below, cut at its bottom
+  g.lineCap = 'round';
+  for (const s2 of [-1, 1]) {
+    g.strokeStyle = shade(C.red, -0.3); g.lineWidth = 22; g.beginPath(); g.moveTo(hx + s2 * 30, hy + 120);
+    const ex = cut ? hx + s2 * (60 + 300 * open) : hx + s2 * 2, ey = cut ? hy + 520 : hy + 620;
+    g.bezierCurveTo(hx + s2 * 30, hy + 330, hx + s2 * 360, hy + 380, ex, ey); g.stroke(); g.strokeStyle = C.red; g.lineWidth = 16; g.stroke();
+    if (cut) { g.strokeStyle = '#d08b3e'; g.lineWidth = 9; g.beginPath(); g.moveTo(ex, ey); g.lineTo(ex + s2 * 4, ey + 36); g.stroke(); }
+  }
+  if (!cut && f > 0.08) { text('✂ cut the loop here', hx + 60, hy + 560, 34, '#c62828', 'left', 'bold'); }
+  if (cut) text('two leads: strip both ends', hx + 420, hy + 300, 30, C.ink, 'left', 'bold');
+  // the fuse: comes down into the top
+  const fy = lerp(hy - 330, hy - 30, fin);
+  if (f > 0.45) { box(hx - 34, fy - 70, 68, 70, 8, '#d7b98a', '#8a6d3b', 3); text('5', hx, fy - 38, 34, '#5a3d14', 'center', 'bold'); g.fillStyle = '#c0c4c8'; g.fillRect(hx - 24, fy, 14, 40); g.fillRect(hx + 10, fy, 14, 40);
+    if (fin < 1) text('5 A fuse: tan', hx + 70, fy - 40, 30, '#8a6d3b', 'left', 'bold'); }
+  // the cap
+  g.save(); g.translate(hx + 60, hy - 40); g.rotate(-1.6 * (1 - cap)); box(-120, -46, 120, 46, 14, '#2a2d31', '#000', 3); g.restore();
+  if (cap > 0.95) text('cap closed', hx + 90, hy - 80, 30, '#2e7d32', 'left', 'bold');
+  text(f < 0.45 ? 'take out the fuse it came with' : '', hx, 120, 34, C.mute, 'center', 'bold');
+}
+// a wire soldered to a switch tab: through its hole, bent over, soldered
+function tabScene(s, lt, dur) {
+  panelBg();
+  const f = lt / dur;
+  text('the switch from behind (inside the tub)', 960, 70, 30, C.mute, 'center', 'bold');
+  box(560, 160, 800, 230, 30, '#2a2d31', '#000', 3);
+  const tabs = [[760, 'in'], [960, 'out'], [1160, 'light']];
+  tabs.forEach(([x, lab], k) => { box(x - 34, 390, 68, 200, 6, '#c0c4c8', '#6b7075', 3); circle(x, 540, 13, '#e9edf1', '#6b7075', 2); text(lab, x, 640, 30, k === 2 ? '#9a9a9a' : C.ink, 'center', 'bold'); });
+  const done = s.done || [];
+  const draw = (k, col, lab, p) => {
+    const x = tabs[k][0], e = ease(clamp01(p / 0.4)), sol = clamp01((p - 0.45) / 0.25);
+    g.strokeStyle = shade(col, -0.3); g.lineWidth = 22; g.lineCap = 'round'; const sx = x + (k === 0 ? -520 : 520), ex = lerp(sx, x, e);
+    g.beginPath(); g.moveTo(sx, 900); g.bezierCurveTo(sx, 720, ex, 760, ex, 640 + (1 - e) * 60); g.stroke(); g.strokeStyle = col; g.lineWidth = 16; g.stroke();
+    if (e > 0.98) { g.strokeStyle = '#d08b3e'; g.lineWidth = 8; g.beginPath(); g.moveTo(x, 600); g.lineTo(x, 540); g.lineTo(x + 26, 520); g.stroke(); }
+    if (sol > 0) { g.save(); g.globalAlpha = sol; circle(x, 548, 24, '#c9ced4', '#8d949b', 2); g.restore(); }
+    text(lab, x + (k === 0 ? -40 : 40), 760, 28, col === C.red ? '#b71c1c' : C.ink, k === 0 ? 'right' : 'left', 'bold');
+  };
+  done.forEach(([k, col, lab]) => draw(k, col, lab, 1));
+  if (s.tab !== undefined) draw(s.tab, s.col || C.red, s.lab, clamp01((f - 0.1) / 0.6));
+  if (f > 0.75 && s.tip) text(s.tip, 960, 130, 30, '#c62828', 'center', 'bold');
+}
+// a servo's long tail: per wire, a male-to-male jumper and a male-to-female one on it
+function tailScene(s, lt, dur) {
+  panelBg();
+  const f = lt / dur;
+  const rows = [[C.sig, 'orange', 'its male end into the breadboard', 'pin'], [C.red, 'red', 'cut, strip, fold: into Wago C', 'bare'], [C.brown, 'brown', 'cut, strip, fold: into Wago D', 'bare']];
+  text('one long tail per servo: 3 wires, each 2 jumpers long', 960, 90, 36, C.ink, 'center', 'bold');
+  rows.forEach(([col, name, endTxt, end], k) => {
+    const y = 260 + k * 200, a = ease(clamp01((f - 0.05 - k * 0.12) / 0.15)); if (a <= 0) return;
+    g.save(); g.globalAlpha = a;
+    // the deck end
+    if (end === 'pin') { g.fillStyle = '#b0b6bc'; g.fillRect(150, y - 5, 50, 10); box(200, y - 16, 60, 32, 4, '#222'); }
+    else { g.strokeStyle = '#d08b3e'; g.lineWidth = 8; g.beginPath(); g.moveTo(258, y); g.lineTo(190, y); g.lineTo(190, y - 12); g.lineTo(240, y - 12); g.stroke(); }
+    g.strokeStyle = col; g.lineWidth = 14; g.beginPath(); g.moveTo(260, y); g.lineTo(820, y); g.stroke();
+    box(820, y - 16, 60, 32, 4, '#222'); g.fillStyle = '#b0b6bc'; g.fillRect(880, y - 5, 40, 10);        // its male end...
+    box(910, y - 18, 70, 36, 4, '#3a3a3a'); g.strokeStyle = col; g.lineWidth = 14; g.beginPath(); g.moveTo(980, y); g.lineTo(1500, y); g.stroke();   // ...into an M-F's female end
+    box(1500, y - 16, 60, 32, 4, '#222'); g.fillStyle = '#b0b6bc'; g.fillRect(1560, y - 5, 50, 10);
+    text(name, 540, y - 40, 26, col === C.sig ? '#a86b00' : col, 'center', 'bold');
+    text(endTxt, 150, y + 72, 22, C.mute, 'left');
+    text('male-to-male', 540, y + 38, 20, C.mute, 'center'); text('male-to-female', 1240, y + 38, 20, C.mute, 'center');
+    if (k === 0) text('into the servo’s plug →', 1630, y - 40, 24, C.ink, 'left', 'bold');
+    g.restore();
+  });
+  if (f > 0.55) { const a = ease((f - 0.55) / 0.1); g.save(); g.globalAlpha = a; box(800, 200, 200, 540, 16, null, '#ef6c00', 4); text('tape over each joint', 900, 175, 26, '#ef6c00', 'center', 'bold'); g.restore(); }
+  if (f > 0.75) text(s.label || 'label each tail with tape: head, left arm, right arm', 960, 960, 30, '#2e7d32', 'center', 'bold');
+}
+// a frame of the assembly video's page (render.js renders it and passes it in), with this step's labels
+let IMG3D = null, PINS3D = [];
+function threeDScene(s, lt) {
+  panelBg();
+  if (IMG3D) g.drawImage(IMG3D, 0, 0, W, H);
+  (s.pins || []).forEach(([, lab, t0, dir], k) => {
+    const p = PINS3D[k]; if (!p) return; const a = ease((lt - (t0 ?? 0.8)) / 0.5); if (a <= 0) return;
+    const [px, py] = [p[0] * 1.5, p[1] * 1.5];
+    g.save(); g.globalAlpha = a; g.font = `bold 26px ${FONT}`; const w = g.measureText(lab).width + 28;
+    const off = { l: [-90, -50], r: [90, -50], u: [0, -110], d: [0, 90], ul: [-80, -100], ur: [80, -100], dl: [-80, 80], dr: [80, 80] }[dir || 'u'];
+    const bx = px + off[0] - (off[0] < 0 ? w : off[0] > 0 ? 0 : w / 2), by = py + off[1] - 22;
+    g.strokeStyle = C.ink; g.lineWidth = 3; g.beginPath(); g.moveTo(px, py); g.lineTo(px + off[0], py + off[1]); g.stroke();
+    circle(px, py, 8, C.hl, C.ink, 3); box(bx, by, w, 44, 10, '#fff7d6', C.ink, 2.5); text(lab, bx + w / 2, by + 22, 26, C.ink, 'center', 'bold'); g.restore();
+  });
+}
+
+// ---------------------------------------------------------------- caption card + progress
+function caption(i, lt, dur) {
+  const s = STEPS[i]; if (s.scene === 'title' || s.scene === 'end') return;
+  const a = ease(lt / 0.5) * (1 - ease((lt - dur + 0.35) / 0.35));
+  const lines = s.cap || [], h = 86 + lines.length * 40;
+  g.save(); g.globalAlpha = Math.max(a, 0.001);
+  g.shadowColor = 'rgba(0,0,0,0.2)'; g.shadowBlur = 18; g.shadowOffsetY = 6;
+  box(40, H - h - 40, 1180, h, 18, 'rgba(255,255,255,0.95)', '#c9d0d8', 2); g.restore();
+  g.save(); g.globalAlpha = a;
+  text(s.part.toUpperCase(), 72, H - h - 40 + 32, 18, '#ef6c00', 'left', 'bold');
+  text(s.title, 72, H - h - 40 + 66, 34, C.ink, 'left', 'bold');
+  lines.forEach((l, k) => text(l, 72, H - h - 40 + 108 + k * 40, 26, '#39424e'));
+  g.restore();
+}
+function progress(t, i) {
+  g.fillStyle = 'rgba(0,0,0,0.08)'; g.fillRect(0, H - 8, W, 8); g.fillStyle = '#ef6c00'; g.fillRect(0, H - 8, W * t / TOTAL, 8);
+  if (STEPS[i].scene !== 'title') text(`${i} / ${STEPS.length - 1}`, W - 40, 40, 22, C.mute, 'right', 'bold');
+}
+
+// ---------------------------------------------------------------- frame
+function drawStep(i, t) {
+  const s = STEPS[i], lt = t - TL[i].t0, dur = TL[i].dur;
+  screenT();
+  if (s.scene === 'bench') benchScene(i, lt, dur, t);
+  else if (s.scene === 'pc') pcScene(s, lt, dur, t);
+  else if (s.scene === 'term') termScene(s, lt, dur);
+  else if (s.scene === 'wago') wagoScene(s, lt, dur, t);
+  else if (s.scene === 'switch') switchScene(s, lt, dur, t);
+  else if (s.scene === 'plug') plugScene(s, lt, dur);
+  else if (s.scene === 'xt30') xt30Scene(s, lt, dur);
+  else if (s.scene === 'drawer') drawerScene(s, lt, dur);
+  else if (s.scene === 'map') mapScene(s, lt);
+  else if (s.scene === 'title') titleScene(s, lt, false);
+  else if (s.scene === 'end') titleScene(s, lt, true);
+  else if (s.scene === 'tools') toolsScene(s, lt);
+  else if (s.scene === 'checklist') checklistScene(s, lt);
+  else if (s.scene === 'order') orderScene(s, lt);
+  else if (s.scene === 'solder') solderScene(s, lt, dur);
+  else if (s.scene === 'fuse') fuseScene(s, lt, dur);
+  else if (s.scene === 'tab') tabScene(s, lt, dur);
+  else if (s.scene === 'tail') tailScene(s, lt, dur);
+  else if (s.scene === '3d') threeDScene(s, lt);
+  screenT(); caption(i, lt, dur);
+}
+window.render = async function (t, d3) {
+  t = Math.min(t, TOTAL - 0.001);
+  if (d3) { IMG3D = await loadImg(d3.img); PINS3D = d3.pins || []; }
+  const i = stepAt(t), lt = t - TL[i].t0, prev = i > 0 ? STEPS[i - 1] : null, s = STEPS[i];
+  drawStep(i, t);
+  // a short cross-fade when the scene changes (not between two bench views)
+  const fade = 0.45;
+  if (prev && lt < fade && !(prev.scene === s.scene && (s.scene === 'bench' || (s.scene === '3d' && prev.asm.id === s.asm.id)))) {
+    g.save(); g.globalAlpha = 1 - lt / fade; g.fillStyle = '#e9edf1'; g.fillRect(0, 0, W, H); g.restore();
+  }
+  screenT(); progress(t, i);
+};
+function loadImg(src) { return new Promise(r => { const im = new Image(); im.onload = () => r(im); im.src = src; }); }
+window.ready = (async () => {
+  STEPS = await (await fetch('steps.json')).json();
+  TL = await (await fetch('timeline.json')).json();
+  TOTAL = TL[TL.length - 1].t0 + TL[TL.length - 1].dur;
+  IMG.robot = await loadImg('robot_front.png');
+  prepare();
+  return { total: TOTAL, steps: STEPS.length };
+})();
+window.timeline = () => TL.map((x, i) => [i, x.t0, STEPS[i].title]);
+</script></body></html>

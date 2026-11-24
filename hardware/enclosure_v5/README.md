@@ -38,7 +38,7 @@ Same height as v4 (437 mm). The base is 230 × 204 mm (v4: 186 × 160), with 18 
 | Behind the motors | **Pi 5 + UPS**, on v2's V-groove mount, under v5's keeper | The same mount as before, 19 mm higher (over the rear caster's screws). The keeper is new: v4's broke at a screw (its ends hung 1.85 mm above the posts, so the screws bent it, and it had 2.8 mm under each screw head). v5's is a 12 × 12 mm frame whose ends stand on the posts, 7.5 mm of plastic under each screw head, and legs 18 mm down both ends of the stack like a cage (the left one hooks behind the Pi's corner). Reprint it from `LittleBot_v5_keeper_<printer>.3mf` (5 wall loops, 40 % infill). |
 | In front of the motors | **6×AA drawer.** Its front is the battery door | 2 screws, then it slides out on its leads. |
 | Front, beside the door | **Drive switch** (a 20 mm round rocker), in the tub's wall | It switches the 6×AA pack: wheels and servos. The Pi has its own switch at the back. |
-| Over the motors | **Deck**, on 4 posts: RP2040 on its breadboard, motor driver, servo power board, 5 V converter | Wired at the bench, then 4 screws. |
+| Over the motors | **Deck**, on 4 posts: RP2040 on its breadboard, motor driver, 4 Wagos, 5 V converter | Boards on at the bench; then 3 screws, 2 of them through the motor driver; wired in place. |
 | Back, left corner | **USB-C charging socket** for the UPS (the extension cable, as v4) | Square to the wall. |
 | Back of the body, low | **UPS switch slider** | As v4's, shorter. |
 
@@ -58,7 +58,8 @@ The motors' tails rest in 2 saddles with zip-tie slots. The Pi's fan blows down 
 | `LittleBot_v5_pods_A1.3mf`, `LittleBot_v5_pods_P2S.3mf`, `LittleBot_v5_pods_plain.3mf` | the 2 wheel pods on their own plate, to reprint them (the second version: no roof, room for 67 mm wheels) |
 | `LittleBot_v5_assembled.3mf` | the whole robot assembled and coloured, to look at (not to print) |
 | `WIRING.md`, `wiring/` | **the base's wiring**: power (fuse, switch, 4 Wagos), the RP2040's pins (the Pi's UART, encoders, motor driver, servos, battery sense), the motors' 6 wires |
-| `LittleBot_v5_wiring.mp4` | **the wiring video** (11 minutes, narrated): loading the RP2040's program, then every wire of the base, the battery plug and drawer, and the first power-up; made by `wiring_video/` (`steps.json` is the script) |
+| `LittleBot_v5_finish.mp4` | **finishing the build (18 minutes, narrated): start here if the base, body and head are built but not wired.** The battery plug and fuse, the switch, the boards onto the deck, the deck onto the tub, every wire (the YD-RP2040 drawn chip side down), a test from the Pi, then the head's cables, the body, the cap, the head, the arms and the drawer, in the order there's room for each; made by `finish_video/` (`steps.json` is the script; its 3D shots come from `assembly_video/`) |
+| `LittleBot_v5_wiring.mp4` | **the first wiring video** (11 minutes, narrated): loading the RP2040's program, then every wire of the base, the battery plug and drawer, and the first power-up; made by `wiring_video/` (`steps.json` is the script) |
 | `LittleBot_v5_assembly.mp4` | **the assembly video** (6 minutes): every part, screw, nut and cable going in, in the order below (the order there is room for each thing), each screw turned in by its tool with its size on a tag |
 | `assembly_video/` | re-makes the video (`OPENSCAD=... ./make_video.sh`). The screws, nuts, cable routes and part positions come from the model (`video5.scad`). |
 | `stl/*.stl` | each new part on its own, in its print orientation |
@@ -123,8 +124,8 @@ Not needed any more: the PCA9685 and both 4×AA holders.
 | Wheel pods → tub | 8 × M3 × 12 (4 each), down through the pods' flanges | holes in the tub's ridges |
 | Casters → tub | the casters' own 4 × #2-56 screws, from below | their nuts, on top of the seats inside the tub |
 | Stack keeper | 2 × M3 × 20, snug: its ends sit on the posts | the mount's 2 bosses |
-| Deck → tub | 4 × M3 × 8 | the 4 posts |
-| Motor driver → deck | 4 × M3 × 8 | the deck's 4 short posts |
+| Motor driver → deck | 2 × M3 × 8, its 2 outer corners | the deck's 2 outer short posts |
+| Deck (and motor driver) → tub | 2 × M3 × 16 down through the driver's 2 inner corners, their posts and the deck; 1 × M3 × 8 at the back left | the tub's posts: the driver's inner corners sit right over 2 of them. The front-left post is under the breadboard: it stays empty. |
 | Battery door | 2 × M3 × 10, through its lower corners | the 2 posts behind it |
 | Body → tub | 8 × M3 × 10, through the tub's rim | 8 nuts in the body's tongue |
 | Cap → body | 8 × M3 × 12, from the top, heads sunk | holes in the collar: they cut their own thread, 9 mm deep. No nuts. |
@@ -134,7 +135,7 @@ Not needed any more: the PCA9685 and both 4×AA holders.
 | Head → neck | 3 × M3 × 20, down through the head's floor and the black neck | 3 nuts in the hub's side slots |
 | Screen, head back, camera, ReSpeaker, servos, horns, arms | as v4 | |
 
-In total for the new parts: 22 × M3 × 12, 12 × M3 × 10, 12 × M3 × 8, 5 × M3 × 20, 11 M3 nuts.
+In total for the new parts: 22 × M3 × 12, 12 × M3 × 10, 7 × M3 × 8, 2 × M3 × 16, 5 × M3 × 20, 11 M3 nuts.
 
 ## Assembly order
 
@@ -152,15 +153,15 @@ In total for the new parts: 22 × M3 × 12, 12 × M3 × 10, 12 × M3 × 8, 5 × 
    - Pi + UPS: stand its plate in the groove, ports up. The keeper over it, its legs down the stack's 2 ends (the left one behind the Pi's corner): 2 × M3 × 20, snug, not tight.
    - Charging cable: plug in the UPS's USB-C marked POWER; socket zip-tied into the holder at the back's left corner.
 4. **Drive switch, wired now:** snap it into its hole in the front wall, from outside. Use the 2 tabs that beep when it's on (meter on beep); the third only lights it. One tab: a lead through the 5 A fuse to the battery holder's red; the holder's black goes to Wago B. Both run up through the deck's front hole, with about 10 cm of slack so the drawer can slide out to change cells (the holder sits in the drawer, wired in for good). The other tab: a lead long enough to reach Wago A on the deck. The deck covers the tabs. See [WIRING.md](WIRING.md), "The battery wires".
-5. **Deck, at the bench:** breadboard with the RP2040 (it sticks down), motor driver on its 4 posts (4 × M3 × 8), servo power (Wagos C and D in the perfboard's fence: [WIRING.md](WIRING.md)) and 5 V converter (zip ties). Wire them as [WIRING.md](WIRING.md). Then onto the tub's 4 posts (4 × M3 × 8), and connect the motors, the encoders and the switch's lead.
-6. **The head's cables, now, while you can reach the Pi:** the HDMI (micro end in the Pi), the screen's USB-C and the camera's USB (Pi's USB ports), and a 3-wire jumper extension onto the servo power board for the head servo. Leave them standing up.
+5. **Deck:** at the bench, the breadboard with the RP2040 (its sticky back, in its 4 corner guides; the RP2040's USB end towards the middle, its GP0 side towards the back), the motor driver (terminals at the back; 2 × M3 × 8 in its 2 **outer** corners only), the 4 Wagos in a 2 × 2 block in the middle fence (A, B on the right, C, D on the left, A and C at the front) and the 5 V converter (a zip tie). Then onto the tub, the switch's red and the plug's black up through the front notch: 2 × M3 × 16 down through the driver's 2 inner corners into the tub's posts, 1 × M3 × 8 at the back left (the front-left post is under the breadboard). Wire it all in place as [WIRING.md](WIRING.md), test it from the Pi, then one zip tie over the Wagos. `LittleBot_v5_finish.mp4` shows each step.
+6. **The head's cables, now, while you can reach the Pi:** the HDMI (micro end in the Pi), the screen's USB-C and the camera's USB (Pi's USB ports), and the head servo's long tail (on the deck). Leave them standing up.
 7. **Body, upside down on the bench:** its whole bottom is open, so everything inside goes in from there. Drop a nut into each of the 8 slots in the tongue's edge (a dab of tape keeps them in). The speaker into its cage from the front, cable out through the cage's back window; slide the two forwards between the ribs, over their ledges, until the cage's 4 tabs click into the ribs' slots (the speaker is a pill: without the cage its round ends slip past the ledges, [picture](speaker_cage.png)). To take it out, spread the ribs' back ends a little and pull. (The assembly video still shows the older separate keeper.) The mic holder with its key and the ReSpeaker (2 × M2 × 8), its USB-C cable plugged in. Turn it back up; arm servos in from outside (2 servo screws each), a jumper extension on each lead.
-8. **Body onto the tub:** push the slider in through the back, fork first. Hold the body over the tub (or prop it on something) and plug in its cables: the speaker and the ReSpeaker into the Pi's USB ports, the arm servos onto the servo power board. Lower it, the cables from step 6 up through its top: its tongue goes inside the rim, the slider's fork over the UPS switch's knob. Fit 8 × M3 × 10 through the rim.
+8. **Body onto the tub:** push the slider in through the back, fork first. Hold the body over the tub (or prop it on something) and plug in its cables: the speaker and the ReSpeaker into the Pi's USB ports, the arm servos onto their tails. Lower it, the cables from step 6 up through its top: its tongue goes inside the rim, the slider's fork over the UPS switch's knob. Fit 8 × M3 × 10 through the rim.
 9. **Neck, at the bench:**
    - Hub up through the cap from below; ring gear onto the hub's flange (3 × M3 × 12 from below).
    - Slide 3 nuts into the slots in the hub's side. Black neck over the hub (its rib in the hub's groove): 3 × M3 × 12.
    - Servo frame with the head servo and the pinion (glue cured) onto the cap's 2 pillars; mesh the gears with the servo centred (A cap printed from the earlier files: the frame goes on turned round 180°, see **Mirror-image parts**.)
-10. **Cap onto the body:** hold the cap just over the body's top, the head servo's lead onto its extension, the HDMI, USB-C and camera cables up through the neck. Lower the cap in and fit 8 × M3 × 12 straight down into the collar's holes. Stop when each is snug: they thread into plastic, and overtightening strips it.
+10. **Cap onto the body:** hold the cap just over the body's top, the head servo's lead onto its tail, the HDMI, USB-C and camera cables up through the neck. Before lowering it: batteries in, switch on, `python3 scripts/base_test.py center`, and sit the head on the black neck facing front. If its 3 holes don't line up with the neck's, loosen the servo frame's 2 collar screws, drop it off the ring gear, turn the neck until they do, and push it back up. Switch off, then lower the cap in and fit 8 × M3 × 12 straight down into the collar's holes. Stop when each is snug: they thread into plastic, and overtightening strips it.
 
    ![the cap's screws](cap_screws.png)
 

@@ -1,8 +1,24 @@
 # LittleBot v5: wiring the base
 
-**Video, with narration:** [`LittleBot_v5_wiring.mp4`](LittleBot_v5_wiring.mp4) (about 11 minutes): loading the RP2040's program, the
-breadboard, power, the motor driver, the encoders, the servos, the battery sense, the Pi, the battery drawer and the first power-up.
-(The video shows an XT30 plug on the battery; without it, the holder's wires join the fuse and Wago B directly, as below.)
+**Video, with narration: [`LittleBot_v5_finish.mp4`](LittleBot_v5_finish.mp4)** (18 minutes): everything from the battery plug to the
+arms, in order: the XT30 plug and fuse, the switch, the boards onto the deck, the deck onto the tub, every wire (the YD-RP2040 drawn chip
+side down, as it sits), a test from the Pi, then the body, the cap, the head and the arms. The first video,
+[`LittleBot_v5_wiring.mp4`](LittleBot_v5_wiring.mp4), also shows loading the RP2040's program, but draws the board chip side up.
+
+**On the deck:**
+- **Breadboard:** peel the paper off its sticky back and press it into its 4 corner guides (no sticky pad: double-sided tape or hot
+  glue). The RP2040's USB end points to the middle of the robot, its GP0 side to the back.
+- **Motor driver:** 2 of its corner holes (the 2 nearest the middle) sit right over 2 of the tub's posts. Its 2 outer corners take
+  M3 × 8 into the deck; the 2 inner ones take M3 × 16 down through the deck into the tub's posts, and hold the deck down too. The
+  deck's third screw is an M3 × 8 at the back left; the front-left post is under the breadboard and stays empty.
+- **Wagos:** a 2 × 2 block in the middle fence, labelled with tape: A, B on the right (levers towards the driver), C, D on the left
+  (levers towards the breadboard), A and C at the front. Once wired, one zip tie over them through the fence's 2 slots. The 5 slots
+  of a Wago are all joined inside: the slot numbers below only keep it tidy. Jumper wire is thinner than a Wago likes: strip 22 mm,
+  fold the bare end in half and twist it.
+- **Servo tails:** per wire, a male-to-male jumper with a male-to-female one pushed onto its end (long enough to reach up into the
+  body); tape over each joint.
+- **The XT30 plug:** the female half on the battery holder, the male half in the robot: its red through the 5 A fuse to a switch tab,
+  its black to Wago B. The fuse sits in the bay, behind the battery door.
 
 Three drawings, in the order you wire them. The RP2040's pins here are the ones its firmware
 ([`firmware/base_controller`](../../firmware/base_controller/README.md)) uses: wire exactly these.

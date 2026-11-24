@@ -154,12 +154,12 @@ function defineSteps() {
   { id: 'switch', title: 'Drive switch, wired now', detail: 'Snap the switch into its hole in the front wall, from outside. Wire it now: the deck will cover its tabs. One tab: a lead with the 5 A fuse, to the drawer’s bay (the battery plugs onto it last). The other: a lead long enough to reach the deck.',
     hide: LATER, phases: [{ parts: [['switch', [17, -36, 0], { label: 'drive switch' }]] }, { cables: ['battery'] }],
     view: { t: [45, 0, 45], az: -36, el: 42, d: 460 } },
-  { id: 'deck_bench', title: 'Deck, at the bench', detail: 'The breadboard with the RP2040 on it, the motor driver on its 4 posts (4 × M3 × 8), the servo power board and the 5 V converter (zip ties through the slots). Wire them up here, where you can reach everything.',
+  { id: 'deck_bench', title: 'Deck, at the bench', detail: 'The breadboard (its sticky back) with the RP2040 on it, the motor driver: 2 × M3 × 8 in its 2 outer corners only, the 4 Wagos in a block and the 5 V converter (zip ties through the slots).',
     hide: [...LATER, ...BASE.filter(g => g !== 'deck')], phases: [{ parts: [['deck', null, { label: 'deck' }]] }, { parts: [['breadboard', [0, 0, 40], { label: 'breadboard' }], ['rp2040', [0, 0, 70], { label: 'RP2040' }]], gap: 0.5 },
              { parts: [['driver', [0, 0, 40], { label: 'motor driver (MDD3A)' }], ['driver_terms', [0, 0, 40]]], gap: 0 }, { screws: true, dt: 1.0 },
-             { parts: [['perfboard', [0, 0, 40], { label: 'servo power board' }]] }, { parts: [['converter', [0, 0, 40], { label: '5 V converter' }]] }],
+             { parts: [['perfboard', [0, 0, 40], { label: '4 Wagos' }], ['wago_levers', [0, 0, 40]]], gap: 0 }, { parts: [['wago_tie', [0, 0, 30], { label: 'zip tie' }]] }, { parts: [['converter', [0, 0, 40], { label: '5 V converter' }]] }],
     view: { t: [0, 45, 75], az: -18, el: 52, d: 500 } },
-  { id: 'deck_in', title: 'Deck onto the tub', detail: 'Onto the tub’s 4 posts: 4 × M3 × 8. Then the motors’ leads to the driver and their encoders’ to the RP2040 (they come up beside the Pi’s mount), and the switch’s lead to the deck.',
+  { id: 'deck_in', title: 'Deck onto the tub', detail: 'The driver’s 2 inner corners sit over 2 of the tub’s posts: 2 × M3 × 16 down through them into the posts, and 1 × M3 × 8 at the back left (the front-left post is under the breadboard). Then the motors’ leads to the driver and their encoders’ to the RP2040 (they come up beside the Pi’s mount), and the switch’s lead to the deck.',
     hide: LATER, phases: [{ move: ['deck', [0, 0, 120], 0.001], at: 0 }, { move: ['deck', [0, 0, 0], 2.0], at: 0.5 }, { screws: true, dt: 1.0 }, { cables: ['motor_l', 'motor_r', 'enc_l', 'enc_r', 'switched'] }],
     view: { t: [0, 62, 62], az: -32, el: 44, d: 640 } },
   { id: 'cables_up', title: 'Plug in the head’s cables now', detail: 'While you can reach the Pi: the HDMI (its micro end in the Pi), the screen’s USB-C and the camera’s USB (both in the Pi’s USB ports), and a 3-wire jumper extension onto the servo power board for the head servo. Leave them standing up: they go up through the body and the neck.',
@@ -369,16 +369,17 @@ function render(T) {
   document.getElementById('detail').textContent = s.detail;
   document.getElementById('cap').style.opacity = s.outro ? 1 : clamp(Math.min(u / 0.35, (s.dur - u) / 0.25));
   document.getElementById('bar').style.width = (100 * T / TOTAL).toFixed(2) + '%';
-  const v = viewAt(i, u), az = v.az * Math.PI / 180, el = v.el * Math.PI / 180;
+  const v = OVR.view || viewAt(i, u), az = v.az * Math.PI / 180, el = v.el * Math.PI / 180;
   const eye = V.add(v.t, V.mul([Math.sin(az) * Math.cos(el), -Math.cos(az) * Math.cos(el), Math.sin(el)], v.d));
   const SHIFT = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0.30,0.06,0,1];   // the subject beside the caption, not behind it
   const VP = mmul(SHIFT, mmul(perspective(32 * Math.PI / 180, 1280 / 720, 20, 8000), lookAt(eye, v.t, [0, 0, 1])));
+  LASTVP = VP;
   gl.viewport(0, 0, 1280, 720); gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
   gl.enable(gl.DEPTH_TEST); gl.disable(gl.CULL_FACE);
   gl.uniformMatrix4fv(uVP, false, VP); gl.uniform3fv(uEye, eye);
   const show = s.intro || s.outro, W = show ? (WPIV = WPIV0, R3.I) : worldAt(T);
   gl.uniformMatrix3fv(uW, false, R3.col(W)); gl.uniform3fv(uWP, WPIV);
-  drawLabels(show ? [] : (LABELS[i] = LABELS[i] || stepLabels(i)), s, u, VP, T, W);
+  drawLabels(show || OVR.noLabels ? [] : (LABELS[i] = LABELS[i] || stepLabels(i)), s, u, VP, T, W);
   const draws = [];
   const push = (p, o) => draws.push({ p, R: o.R || R3.I, piv: o.piv || Z3, off: o.off || Z3, alpha: o.alpha ?? 1, hi: o.hi || 0, grow: o.grow ?? 1,
                                        dist: Math.hypot(...V.sub(toWorld(W, V.add(p.centre, o.off || Z3)), eye)) });
@@ -504,6 +505,17 @@ function drawOne(d) {
 }
 window.ready = loadAll().then(() => ({ total: TOTAL, steps: STEPS.length }));
 window.render = render;
+// for the finish video (../finish_video): a step's state at a fraction of it, no caption; an optional camera; where a
+// model point lands on the 1280 x 720 page
+let OVR = {}, LASTVP = null;
+window.renderAsm = (id, frac, o = {}) => {
+  OVR = o; ['cap', 'brand', 'bar'].forEach(k => document.getElementById(k).style.display = 'none');
+  const s = STEPS.find(x => x.id === id); if (!s) throw 'no step ' + id;
+  const r = render(s.t0 + Math.min(Math.max(frac, 0), 0.9999) * s.dur); OVR = {}; return r;
+};
+window.asmView = id => { const s = STEPS.find(x => x.id === id); return s.view2 || s.view; };
+window.project = p => { const M = LASTVP, x = M[0]*p[0] + M[4]*p[1] + M[8]*p[2] + M[12], y = M[1]*p[0] + M[5]*p[1] + M[9]*p[2] + M[13],
+  w = M[3]*p[0] + M[7]*p[1] + M[11]*p[2] + M[15]; return [(x / w + 1) * 640, (1 - y / w) * 360]; };
 window.timeline = () => STEPS.map((s, i) => ({ i, id: s.id || (s.intro ? 'intro' : 'outro'), t0: +s.t0.toFixed(2), dur: +s.dur.toFixed(2) }));
 </script>
 </body></html>

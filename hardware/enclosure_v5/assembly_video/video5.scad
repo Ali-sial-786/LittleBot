@@ -39,9 +39,12 @@ function hw5_screws() = concat(
     [for (s = [1, -1], p = pod_scr) ["pods_in", "M3 × 12", 3, 12, "btn", [s * p[0], yw + p[1] * (pod_fl[0] + pod_fl[1] / 2), pod_fl[2] + 3.1], [0, 0, -1]]],
     // v4's keeper over the Pi + UPS
     [for (x = keeper_x) ["stack", "M3 × 20", 3, 20, "btn", [x, stk_yc, keeper_mouth(ups_plate_t, ups_plate[1]) + keeper_t - 1.8] + S5, [0, 0, -1]]],
-    // the deck: the motor driver onto its 4 posts (at the bench), then the deck onto the tub's 4 posts
-    [for (sx = [-1, 1], sy = [-1, 1]) ["deck_bench", "M3 × 8", 3, 8, "btn", [drv_c[0] + sx * drv_holes[0] / 2, drv_c[1] + sy * drv_holes[1] / 2, deck_z + deck_t + 4 + 1.6], [0, 0, -1]]],
-    [for (p = deck_posts) ["deck_in", "M3 × 8", 3, 8, "btn", [p[0], p[1], deck_z + deck_t], [0, 0, -1]]],
+    // the deck: the motor driver's 2 outer corners into its posts (at the bench). Its 2 inner corners sit over 2 of the
+    // tub's posts: one M3 x 16 each goes down through the driver, its post and the deck into the tub's post. The deck's
+    // back-left post takes an M3 x 8; its front-left one is under the breadboard and stays empty.
+    [for (sy = [-1, 1]) ["deck_bench", "M3 × 8", 3, 8, "btn", [drv_c[0] - drv_holes[0] / 2, drv_c[1] + sy * drv_holes[1] / 2, deck_z + deck_t + 4 + 1.6], [0, 0, -1]]],
+    [for (sy = [-1, 1]) ["deck_in", "M3 × 16", 3, 16, "btn", [drv_c[0] + drv_holes[0] / 2, drv_c[1] + sy * drv_holes[1] / 2, deck_z + deck_t + 4 + 1.6], [0, 0, -1]]],
+    [["deck_in", "M3 × 8", 3, 8, "btn", [deck_posts[3][0], deck_posts[3][1], deck_z + deck_t], [0, 0, -1]]],
     // the drawer: through the door's lower corners into the 2 posts behind it
     [for (s = [-1, 1]) ["drawer", "M3 × 10", 3, 10, "btn", [s * (door_hw - 2.6), tub_fy(door_hw, 0) + 0.9, tray_z + 6], [0, 1, 0]]],
     // the body: arm servos (from v4), the ReSpeaker onto its holder
@@ -131,13 +134,13 @@ function hw5_cables() = let (hdmi0 = stk5(25.8, -0.5, stk_pi_w1 + 1.7), pv = per
     ["battery", "switch", "wires", "#c0392b", 3, "lead with a 5 A fuse → the drawer's bay",
         [sw_back, sw_back + [0, 0, 4], [sw_back[0] - 4, sw_back[1] + 14, sw_z + 8], [aa[0] / 2 + 8, 30, tray_z + 26], aa_lead + [0, 0, 12], aa_lead + [0, 0, 6]],
         [[aa_lead + [-3, -2.5, 0], aa_lead + [3, 2.5, 6]]]],
-    ["switched", "deck_in", "wires", "#1d1d1d", 3, "switch → deck (driver, servo power)",
+    ["switched", "deck_in", "wires", "#1d1d1d", 3, "switch → Wago A",
         [sw_back + [0, 0, -4], sw_back + [-6, 6, -6], [40, 6, 52], [6, -7, 58], [6, -7, deck_top + 12], [pv[0], pv[1] - 4, deck_top + 14], [pv[0], pv[1], deck_top + 3.2]], []],
     // the body's: speaker and ReSpeaker into the Pi's USB ports, the arm servos onto the servo power board
     ["speaker_h", "body_on", "wires", "#16a085", 3.5, "speaker → Pi USB", hov(spk_route, 3, H_body), [usb_box5(47, 4)]],
     ["mic_h", "body_on", "wires", "#e67e22", 3.5, "ReSpeaker USB-C → Pi USB", hov(mic_route, 4, H_body), [usb_box5(47, 12)]],
-    ["servo_left_h", "body_on", "wires", "#8d6e63", 2.4, "left arm servo → servo power board", hov(arm_route(1, 1), 3, H_body), [servo_plug5(1)]],
-    ["servo_right_h", "body_on", "wires", "#8d6e63", 2.4, "right arm servo → servo power board", hov(arm_route(-1, 2), 3, H_body), [servo_plug5(2)]],
+    ["servo_left_h", "body_on", "wires", "#8d6e63", 2.4, "left arm servo → its tail", hov(arm_route(1, 1), 3, H_body), [servo_plug5(1)]],
+    ["servo_right_h", "body_on", "wires", "#8d6e63", 2.4, "right arm servo → its tail", hov(arm_route(-1, 2), 3, H_body), [servo_plug5(2)]],
     ["speaker", "body_on", "wires", "#16a085", 3.5, "", spk_route, [usb_box5(47, 4)]],
     ["mic", "body_on", "wires", "#e67e22", 3.5, "", mic_route, [usb_box5(47, 12)]],
     ["servo_left", "body_on", "wires", "#8d6e63", 2.4, "", arm_route(1, 1), [servo_plug5(1)]],
@@ -151,10 +154,10 @@ function hw5_cables() = let (hdmi0 = stk5(25.8, -0.5, stk_pi_w1 + 1.7), pv = per
         [usb_end5(29.1, 12), usb_end5(29.1, 12) + [14, 0, 0], [84, 156, 98], [40, 112, 172], nk(nko("camera"), 225), nk(nko("camera"), join_z)], [usb_box5(29.1, 12)]],
     // the head servo: an extension from the servo power board, its end up out of the body's top (it goes up with the
     // cables above); the servo's own lead onto it with the cap held over the body
-    ["servo_ext", "cables_up", "wires", "#a1887f", 2.4, "head servo's extension (3 jumpers)",
+    ["servo_ext", "cables_up", "wires", "#a1887f", 2.4, "head servo's long tail (3 jumpers)",
         [perf_ch(0) + [0, 0, 14], perf_ch(0) + [0, 0, 26], [perf_ch(0)[0] + 4, 90, 104], [10, 84, 170], [14, 70, 236], ext_top],
         [servo_plug5(0), [ext_top - [1.3, 4, 14], ext_top]]],
-    ["servo_head_h", "cap_on", "wires", "#8d6e63", 2.4, "head servo → its extension",
+    ["servo_head_h", "cap_on", "wires", "#8d6e63", 2.4, "head servo → its tail",
         [hs_exit + [0, 0, H_cap], hs_exit + [-2, 8, H_cap + 4], ext_top + [0, 0, 14], ext_top + [0, 0, 1]], []],
     ["servo_head", "cap_on", "wires", "#8d6e63", 2.4, "", hs_route, [servo_plug5(0)]],
     // in the head (v4's)

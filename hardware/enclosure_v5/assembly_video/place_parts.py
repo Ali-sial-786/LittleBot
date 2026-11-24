@@ -163,9 +163,18 @@ add("driver", cat(box([dx - dw / 2, dy - dd / 2, dz], [dx + dw / 2, dy + dd / 2,
 add("driver_terms", cat(box([dx - 17, dy + dd / 2 - 8, dz + 1.6], [dx + 17, dy + dd / 2 - 0.5, dz + 11.6]),
                         *[dark(box([dx - 15 + k * 7.6, dy + dd / 2 - 7, dz + 11.6], [dx - 12 + k * 7.6, dy + dd / 2 - 1.5, dz + 11.7])) for k in range(5)]), "#2d6cb5", "deck")
 (pw, pd), (px, py) = P["perf"]
-add("perfboard", cat(box([px - pw / 2, py - pd / 2, top + 0.2], [px + pw / 2, py + pd / 2, top + 1.8]),
-                     *[box([c[0] - 1.3, c[1] - 3.9, c[2]], [c[0] + 1.3, c[1] + 3.9, c[2] + 2.5]) for c in P["perf_ch"]],
-                     box([px + pw / 2 - 16, py - pd / 2 + 4, top + 1.8], [px + pw / 2 - 4, py - pd / 2 + 14, top + 11])), "#c9a24a", "deck")
+# the 4 Wagos (221-415: 18.7 deep, 29.8 wide, 8.4 high) in a 2 x 2 block in the old perfboard's fence: A, B on the robot's
+# right (their wire entries towards the driver and converter), C, D on its left (towards the breadboard), backs touching;
+# one zip tie through the fence's 2 slots over the seam
+WD, WW, WH = 18.7, 29.8, 8.4
+wagos = [(s, f) for s in (-1, 1) for f in (-1, 1)]
+def wago_x(s): return (px - 0.2 - WD, px - 0.2) if s < 0 else (px + 0.2, px + 0.2 + WD)
+def wago_y(f): return (py - 0.2 - WW, py - 0.2) if f < 0 else (py + 0.2, py + 0.2 + WW)
+add("perfboard", cat(*[box([wago_x(s)[0], wago_y(f)[0], top], [wago_x(s)[1], wago_y(f)[1], top + WH]) for s, f in wagos]), "#e3e6ea", "deck")
+add("wago_levers", cat(*[box([wago_x(s)[0] + (0.6 if s < 0 else 4.0), wago_y(f)[0] + 1.2 + k * 5.6, top + WH],
+                             [wago_x(s)[1] - (4.0 if s < 0 else 0.6), wago_y(f)[0] + 5.6 + k * 5.6, top + WH + 1.2]) for s, f in wagos for k in range(5)]),
+    "#f08c00", "deck")
+add("wago_tie", box([px - 2.5, py - pd / 2 - 4.8, top + WH + 1.3], [px + 2.5, py + pd / 2 + 4.8, top + WH + 2.1]), "#26282c", "deck")
 (kw, kd, kh), (kx, ky) = P["buck"]
 add("converter", box([kx - kw / 2, ky - kd / 2, top + 0.2], [kx + kw / 2, ky + kd / 2, top + 0.2 + kh]), "#1c3d6e", "deck")
 
