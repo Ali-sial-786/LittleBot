@@ -14,8 +14,9 @@ side down, as it sits), a test from the Pi, then the body, the cap, the head and
 - **Motor driver:** 2 of its corner holes (the 2 nearest the middle) sit right over 2 of the tub's posts. Its 2 outer corners take
   M3 × 8 into the deck; the 2 inner ones take M3 × 16 down through the deck into the tub's posts, and hold the deck down too. The
   deck's third screw is an M3 × 8 at the back left; the front-left post is under the breadboard and stays empty.
-- **Wagos:** a 2 × 2 block in the middle fence, labelled with tape: A, B on the right (levers towards the driver), C, D on the left
-  (levers towards the breadboard), A and C at the front. Once wired, one zip tie over them through the fence's 2 slots. The 5 slots
+- **Wagos:** a 2 × 2 block in the middle fence, labelled with tape: A, B on the right, C, D on the left, A and C at the front. Each
+  Wago's wire holes (its clear end) face outwards: A's and B's towards the driver, C's and D's towards the breadboard. The orange
+  levers' tab ends meet in the middle, back to back. Once wired, one zip tie over them through the fence's 2 slots. The 5 slots
   of a Wago are all joined inside: the slot numbers below only keep it tidy. Jumper wire is thinner than a Wago likes: strip 22 mm,
   fold the bare end in half and twist it.
 - **Servo tails:** per wire, a male-to-male jumper with a male-to-female one pushed onto its end (long enough to reach up into the
