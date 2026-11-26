@@ -115,6 +115,16 @@ def test_motor_inversion(fw):
     assert hw.duty[0] < 0 < hw.duty[1]
 
 
+def test_swap_puts_the_left_wheel_on_m2(fw):
+    hw = FakeBoard()
+    b = fw.Base(hw, {"swap": 1})
+    b.handle("D 50 0")                   # the robot's left wheel only
+    run_for(b, 200)
+    assert hw.duty[1] > 0 and hw.duty[0] == 0
+    hw.cnt = [10, 99]                    # GP6/GP7 (M1's encoder) = 10, GP8/GP9 = 99
+    assert b.handle("E") == ["E 99 10"]
+
+
 def test_open_loop_duty_follows_the_pack(fw):
     cfg = dict(fw.DEFAULTS)
     assert fw.open_loop_duty(cfg, 0, 8.0) == 0

@@ -61,6 +61,7 @@ DEFAULTS = {
     "trim_max": 0.25,     # the trim never moves the duty more than this
     "minv_l": 0, "minv_r": 0,     # 1: that motor turns the other way (instead of swapping its red and white)
     "einv_l": 0, "einv_r": 0,     # 1: that encoder counts the other way
+    "swap": 0,            # 1: the robot's left wheel is on M2 (encoder GP8/GP9) and its right on M1 (GP6/GP7)
     "low_v": 5.8,         # the wheels stop under this pack voltage (0 = never); the servos keep working
     "us_min": 500, "us_max": 2500,                  # servo pulse at 0 and at 180 degrees
     "s0_min": 0, "s0_max": 180, "s1_min": 0, "s1_max": 180, "s2_min": 0, "s2_max": 180,   # servo limits (deg)
@@ -162,6 +163,8 @@ class Base:
 
     def signed_counts(self):
         c = self.hw.counts()
+        if self.cfg["swap"]:
+            c = [c[1], c[0]]
         return [-c[0] if self.cfg["einv_l"] else c[0], -c[1] if self.cfg["einv_r"] else c[1]]
 
     def step(self, dt_ms):
@@ -195,7 +198,7 @@ class Base:
                         duty = 0.0
             if self.cfg["minv_l" if i == 0 else "minv_r"]:
                 duty = -duty
-            self.hw.set_motor(i, duty)
+            self.hw.set_motor(i ^ 1 if self.cfg["swap"] else i, duty)
         self.prev_counts = counts
         for i in (0, 1, 2):
             t = self.servo_target[i]
