@@ -35,14 +35,18 @@ DEV = "littlebot-base"
 UART_TX, UART_RX = 0, 1
 ENC_PINS = ((6, 7), (8, 9))          # (A yellow, B green): left, right
 MOTOR_PINS = ((10, 11), (12, 13))    # MDD3A M1A, M1B (left); M2A, M2B (right): motor 2's can move (m2_gp)
-M2_SPARE = (2, 4, 12, 18, 20)        # free pairs, each one PWM slice like GP12/GP13: GP2/3, GP4/5 (right side), GP18/19, GP20/21 (left)
+M2_FREE = (2, 3, 4, 5, 12, 13, 18, 19, 20, 21, 22)   # GPIOs nothing else uses (each can pulse: its own PWM output)
 
 
 def motor_gpios(cfg):
-    """The 2 motors' input pins, with motor 2's moved by the m2_gp setting (GP12 + GP13 if it isn't a free pair)."""
-    m2 = cfg.get("m2_gp", 12) if cfg else 12
-    m2 = m2 if m2 in M2_SPARE else 12
-    return (MOTOR_PINS[0], (m2, m2 + 1))
+    """The 2 motors' input pins. Motor 2's can move: m2_gp (IN1) and m2_gp2 (IN2; 0 = the pin after m2_gp), any 2 free
+    pins that aren't the same PWM output (slice (gp >> 1) & 7, channel gp & 1; GP2 and GP18 are one output). Else GP12 + GP13."""
+    a = cfg.get("m2_gp", 12) if cfg else 12
+    b = (cfg.get("m2_gp2", 0) if cfg else 0) or a + 1
+    out = lambda g: ((g >> 1) & 7, g & 1)
+    if a not in M2_FREE or b not in M2_FREE or out(a) == out(b):
+        a, b = 12, 13
+    return (MOTOR_PINS[0], (a, b))
 SERVO_PINS = (14, 15, 16)            # head, left arm, right arm (orange wires)
 VBAT_PIN = 26                        # ADC0: pack + -> 22 k -> GP26 -> 10 k -> GND
 VBAT_RATIO = (22.0 + 10.0) / 10.0
@@ -71,7 +75,8 @@ DEFAULTS = {
     "einv_l": 0, "einv_r": 0,     # 1: that encoder counts the other way
     "swap": 0,            # 1: the robot's left wheel is on M2 (encoder GP8/GP9) and its right on M1 (GP6/GP7)
     "drv8871": 0,         # 1: two DRV8871 boards instead of the MDD3A (see motor_pins)
-    "m2_gp": 12,          # motor 2's inputs: GP12 + GP13, or the pair from GP2, GP4, GP18 or GP20 if those are damaged; RESET after
+    "m2_gp": 12,          # motor 2's IN1 pin: GP12, or another free one if it's damaged (motor_gpios); RESET after
+    "m2_gp2": 0,          # motor 2's IN2 pin: 0 = the pin after m2_gp
     "low_v": 5.8,         # the wheels stop under this pack voltage (0 = never); the servos keep working
     "us_min": 500, "us_max": 2500,                  # servo pulse at 0 and at 180 degrees
     "s0_min": 0, "s0_max": 180, "s1_min": 0, "s1_max": 180, "s2_min": 0, "s2_max": 180,   # servo limits (deg)
