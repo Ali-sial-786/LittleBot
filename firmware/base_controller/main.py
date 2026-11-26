@@ -34,7 +34,15 @@ DEV = "littlebot-base"
 # --- pins (hardware/enclosure_v5/WIRING.md) ---
 UART_TX, UART_RX = 0, 1
 ENC_PINS = ((6, 7), (8, 9))          # (A yellow, B green): left, right
-MOTOR_PINS = ((10, 11), (12, 13))    # MDD3A M1A, M1B (left); M2A, M2B (right)
+MOTOR_PINS = ((10, 11), (12, 13))    # MDD3A M1A, M1B (left); M2A, M2B (right): motor 2's can move (m2_gp)
+M2_SPARE = (2, 4, 12)                # GP2/GP3 and GP4/GP5 are free (each pair one PWM slice, like GP12/GP13)
+
+
+def motor_gpios(cfg):
+    """The 2 motors' input pins, with motor 2's moved by the m2_gp setting (GP12 + GP13 if it isn't a free pair)."""
+    m2 = cfg.get("m2_gp", 12) if cfg else 12
+    m2 = m2 if m2 in M2_SPARE else 12
+    return (MOTOR_PINS[0], (m2, m2 + 1))
 SERVO_PINS = (14, 15, 16)            # head, left arm, right arm (orange wires)
 VBAT_PIN = 26                        # ADC0: pack + -> 22 k -> GP26 -> 10 k -> GND
 VBAT_RATIO = (22.0 + 10.0) / 10.0
@@ -63,6 +71,7 @@ DEFAULTS = {
     "einv_l": 0, "einv_r": 0,     # 1: that encoder counts the other way
     "swap": 0,            # 1: the robot's left wheel is on M2 (encoder GP8/GP9) and its right on M1 (GP6/GP7)
     "drv8871": 0,         # 1: two DRV8871 boards instead of the MDD3A (see motor_pins)
+    "m2_gp": 12,          # motor 2's inputs: GP12 + GP13, or 2 (GP2 + GP3) or 4 (GP4 + GP5) if those are damaged; RESET after
     "low_v": 5.8,         # the wheels stop under this pack voltage (0 = never); the servos keep working
     "us_min": 500, "us_max": 2500,                  # servo pulse at 0 and at 180 degrees
     "s0_min": 0, "s0_max": 180, "s1_min": 0, "s1_max": 180, "s2_min": 0, "s2_max": 180,   # servo limits (deg)
@@ -393,10 +402,10 @@ def run():
         poll = None
 
     class Board:
-        def __init__(self):
+        def __init__(self, motor_pins=MOTOR_PINS):
             self.uart = UART(0, baudrate=115200, tx=Pin(UART_TX), rx=Pin(UART_RX), rxbuf=1024, txbuf=1024, timeout_char=20)
             self.motor = []
-            for a, b in MOTOR_PINS:
+            for a, b in motor_pins:
                 pa, pb = PWM(Pin(a)), PWM(Pin(b))
                 for p in (pa, pb):
                     p.freq(MOTOR_PWM_HZ)
@@ -492,7 +501,7 @@ def run():
     except (OSError, ValueError):
         pass
 
-    hw = Board()
+    hw = Board(motor_gpios(cfg))
     base = Base(hw, cfg)
     uart_lines, usb_lines = Lines(base), Lines(base)
 

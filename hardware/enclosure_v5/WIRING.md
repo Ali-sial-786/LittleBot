@@ -117,7 +117,8 @@ A wheel that turns backwards: swap that motor's red and white at the MDD3A (or f
 The motor kits each came with a DRV8871 board (one motor each). Two of them replace the MDD3A on the same 4 GPIOs.
 The firmware needs one setting: `base_test.py send "SET drv8871 1"`, then `send SAVE`. It then holds one input high
 and pulses the other (drive / brake); with the MDD3A's pattern (one pulsed, the other low) a DRV8871 coasts in the gaps
-and at 20 kHz the wheels don't turn. They sit on the printed DRV8871 plate
+and at 20 kHz the wheels don't turn. If GP12/GP13 are damaged, motor 2 moves to GP2/GP3 (rows 4, 5):
+`SET m2_gp 2`, `SAVE`, `RESET`. They sit on the printed DRV8871 plate
 (`LittleBot_v5_drv_plate_<printer>.3mf`), which goes on the MDD3A's 4 posts with its 4 screws. Each board: 2 × M3 × 8
 into its posts, screw terminals towards the outer wall, POWER terminals towards the back, the 4 pins towards the Wagos.
 Board 1 (M1) at the back, board 2 (M2) in front ("1 ↑ 2 ↓" on the plate between them).
