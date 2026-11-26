@@ -62,6 +62,7 @@ DEFAULTS = {
     "minv_l": 0, "minv_r": 0,     # 1: that motor turns the other way (instead of swapping its red and white)
     "einv_l": 0, "einv_r": 0,     # 1: that encoder counts the other way
     "swap": 0,            # 1: the robot's left wheel is on M2 (encoder GP8/GP9) and its right on M1 (GP6/GP7)
+    "drv8871": 0,         # 1: two DRV8871 boards instead of the MDD3A (see motor_pins)
     "low_v": 5.8,         # the wheels stop under this pack voltage (0 = never); the servos keep working
     "us_min": 500, "us_max": 2500,                  # servo pulse at 0 and at 180 degrees
     "s0_min": 0, "s0_max": 180, "s1_min": 0, "s1_max": 180, "s2_min": 0, "s2_max": 180,   # servo limits (deg)
@@ -115,6 +116,20 @@ def open_loop_duty(cfg, v_mm_s, vbat):
     return d if v_mm_s > 0 else -d
 
 
+def motor_pins(duty, drv8871=0):
+    """The two inputs' PWM (duty_u16) for one motor at duty -1..1.
+    MDD3A: A pulsed, B low (forwards); B pulsed, A low (backwards).
+    DRV8871: one input held high and the other pulsed low for the duty's share: drive / brake. Pulsing one input
+    with the other low (as for the MDD3A) has it drive / coast, and at 20 kHz its current dies away in the gaps: the
+    wheels don't move. Both low (stopped) lets it sleep."""
+    if duty == 0:
+        return 0, 0
+    d = int(min(abs(duty), 1.0) * 65535)
+    if drv8871:
+        return (65535, 65535 - d) if duty > 0 else (65535 - d, 65535)
+    return (d, 0) if duty > 0 else (0, d)
+
+
 def crc32(data, crc=0):
     """zlib's CRC-32 (binascii.crc32 isn't in every MicroPython build)."""
     crc = ~crc & 0xFFFFFFFF
@@ -127,7 +142,7 @@ def crc32(data, crc=0):
 
 class Base:
     """Everything but the hardware: the board (or a test's fake) gives it
-    set_motor(i, duty -1..1), set_servo(i, us or None), counts() -> [l, r], vbat() -> volts or None,
+    set_motor(i, duty -1..1, drv8871), set_servo(i, us or None), counts() -> [l, r], vbat() -> volts or None,
     and write_file(name, data) / swap_main() for PUT."""
 
     def __init__(self, hw, cfg=None):
@@ -198,7 +213,7 @@ class Base:
                         duty = 0.0
             if self.cfg["minv_l" if i == 0 else "minv_r"]:
                 duty = -duty
-            self.hw.set_motor(i ^ 1 if self.cfg["swap"] else i, duty)
+            self.hw.set_motor(i ^ 1 if self.cfg["swap"] else i, duty, self.cfg["drv8871"])
         self.prev_counts = counts
         for i in (0, 1, 2):
             t = self.servo_target[i]
@@ -224,7 +239,7 @@ class Base:
         self.target = [0.0, 0.0]
         self.v = [0.0, 0.0]
         for i in (0, 1):
-            self.hw.set_motor(i, 0.0)
+            self.hw.set_motor(i, 0.0, self.cfg["drv8871"])
         for i in (0, 1, 2):
             self.servo_target[i] = None
             self.servo_pos[i] = None
@@ -407,18 +422,11 @@ def run():
                 cnt[i] += -1 if b.value() else 1
             return h
 
-        def set_motor(self, i, duty):
+        def set_motor(self, i, duty, drv8871=0):
             pa, pb = self.motor[i]
-            d = int(min(abs(duty), 1.0) * 65535)
-            if duty > 0:         # MDD3A: A = PWM, B = low: forwards; A low, B PWM: backwards; both low: brake
-                pb.duty_u16(0)
-                pa.duty_u16(d)
-            elif duty < 0:
-                pa.duty_u16(0)
-                pb.duty_u16(d)
-            else:
-                pa.duty_u16(0)
-                pb.duty_u16(0)
+            a, b = motor_pins(duty, drv8871)
+            for p, v in sorted(((pa, a), (pb, b)), key=lambda t: t[1]):   # the lower one first: never both up on the way
+                p.duty_u16(v)
 
         def set_servo(self, i, us):
             p = self.servo_pwm[i]

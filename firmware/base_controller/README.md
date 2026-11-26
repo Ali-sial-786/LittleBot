@@ -57,7 +57,7 @@ and slow down at `accel` (500 mm/s²), stop when the orders stop (0.5 s), when t
 servos stay limp until their first command.
 
 Settings: `max_mm_s`, `accel`, `wheel_mm` (67), `rpm6` (170: the motors' no-load speed at 6 V), `kick`, `cpr` (encoder counts
-per wheel turn: `base_test.py calibrate` sets it), `ki`, `trim_max`, `swap` (1: the robot's left wheel is on M2 with its encoder on GP8/GP9, its right on M1 with GP6/GP7; nothing to rewire), `minv_l`/`minv_r` and `einv_l`/`einv_r` (a motor or
+per wheel turn: `base_test.py calibrate` sets it), `ki`, `trim_max`, `swap` (1: the robot's left wheel is on M2 with its encoder on GP8/GP9, its right on M1 with GP6/GP7; nothing to rewire), `drv8871` (1: two DRV8871 boards instead of the MDD3A, GP10/GP11 to board 1's IN1/IN2 and GP12/GP13 to board 2's: each input pair is driven high + pulsed low, drive / brake, as the MDD3A's pattern (one pulsed, the other low) leaves a DRV8871 coasting at 20 kHz and the wheels don't turn), `minv_l`/`minv_r` and `einv_l`/`einv_r` (a motor or
 encoder the other way round: `base_test.py wheels` sets them), `low_v` (5.8), `us_min`/`us_max` (servo pulse at 0 and 180°),
 `s0_min` … `s2_max` (servo limits in degrees).
 

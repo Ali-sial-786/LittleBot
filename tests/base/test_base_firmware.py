@@ -29,8 +29,9 @@ class FakeBoard:
         self.files = {}
         self.swapped = False
 
-    def set_motor(self, i, duty):
+    def set_motor(self, i, duty, drv8871=0):
         self.duty[i] = duty
+        self.drv8871 = drv8871
 
     def set_servo(self, i, us):
         self.servo[i] = us
@@ -235,3 +236,25 @@ def test_lines_and_reset(fw):
     lines = fw.Lines(fw.Base(FakeBoard()))
     assert lines.feed(b"PI") == []
     assert lines.feed(b"NG\r\nreset\n") == [("reply", "PONG littlebot-base 1"), ("reset", None)]
+
+
+def test_motor_pins_mdd3a_pulses_one_input_with_the_other_low(fw):
+    assert fw.motor_pins(0.5, 0) == (32767, 0)
+    assert fw.motor_pins(-0.5, 0) == (0, 32767)
+    assert fw.motor_pins(0.0, 0) == (0, 0)
+
+
+def test_motor_pins_drv8871_holds_one_input_high(fw):
+    assert fw.motor_pins(0.25, 1) == (65535, 65535 - 16383)      # forwards: IN1 high, IN2 low a quarter of the time
+    assert fw.motor_pins(-0.25, 1) == (65535 - 16383, 65535)     # backwards
+    assert fw.motor_pins(1.0, 1) == (65535, 0)                   # full: IN2 always low
+    assert fw.motor_pins(0.0, 1) == (0, 0)                       # stopped: both low, the board sleeps
+
+
+def test_the_drv8871_setting_reaches_the_board(fw):
+    hw = FakeBoard()
+    b = fw.Base(hw, {"drv8871": 1})
+    b.handle("D 50 50")
+    b.step(10)
+    assert hw.drv8871 == 1 and hw.duty[0] > 0
+
