@@ -75,7 +75,7 @@ The board is a VCC-GND **YD-RP2040** (sold by Elecrow as "RP2040 Core Board"): t
 
 | Pin | Goes to | |
 |---|---|---|
-| GP0 (TX) | Pi pin 10 (GPIO15, RXD) | the UART to the Pi: it crosses, TX to RX |
+| GP0 (TX) | Pi pin 10 (GPIO15, RXD) | the UART to the Pi: it crosses, TX to RX. **Put these 3 jumpers on the Pi before the Pi + UPS goes into its groove under the keeper**: standing there, its header faces the wall. |
 | GP1 (RX) | Pi pin 8 (GPIO14, TXD) | |
 | GND | Pi pin 6 | |
 | GP6, GP7 | left motor's encoder: yellow (A), green (B) | |
