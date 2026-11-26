@@ -381,6 +381,30 @@ module v5_deck() difference() {
     // zip-tie slots: across the perfboard, the converter and the breadboard
     for (c = [[perf_c, perf], [buck_c, buck], [bb_c, bb]]) for (s = [-1, 1]) translate([c[0][0] - 2.5, c[0][1] + s * (c[1][1] / 2 + 3.6) - 1.2, deck_z - 1]) cube([5, 2.4, deck_t + 5]);
 }
+// THE DRV8871 PLATE: in place of the MDD3A, on its 4 posts and with its 4 screws (2 x M3 x 8 outer, 2 x M3 x 16 inner),
+// 2 DRV8871 boards (one a motor) on 5 mm posts: their screw terminals towards the outer wall, their 4 pins towards the
+// Wagos, POWER terminals towards the back. Each board: 2 x M3 x 8 into its posts. The boards keep clear of the plate's
+// 4 screw heads (the inner 2 go in last, through the deck into the tub). Prints flat.
+// The board (North Spark DRV8871, from its listing photo at the terminals' 5.0 mm pitch): 24.6 x 20.5 mm, M3 holes 21.8 mm
+// from the terminal edge, 2.46 and 18.95 mm from the POWER end. MEASURE if yours differs: the posts move with dp_*.
+dp_t = 2.4; dp_post = 5;
+dp_board = [24.6, 20.5]; dp_hole = [21.8, 2.46, 18.95];
+dp_x0 = -10.1;                                    // the boards' terminal edge (x from the plate's centre)
+dp_y = [23.0, -2.5];                              // the boards' POWER ends (y): board 1 at the back, board 2 in front
+module drv_plate_local() difference() {
+    union() {
+        linear_extrude(dp_t) rr(drv[0], drv[1], 3);
+        for (yt = dp_y) {
+            for (hy = [dp_hole[1], dp_hole[2]]) translate([dp_x0 + dp_hole[0], yt - hy, 0]) cylinder(d = 6, h = dp_t + dp_post, $fn = 32);
+            for (hy = [2.2, dp_board[1] - 2.2]) translate([dp_x0 + 10 - 2, yt - hy - 2, 0]) cube([4, 4, dp_t + dp_post]);   // rests
+        }
+    }
+    for (sx = [-1, 1], sy = [-1, 1]) translate([sx * drv_holes[0] / 2, sy * drv_holes[1] / 2, -1]) cylinder(d = clear_m3, h = dp_t + 2, $fn = fn_small);
+    for (yt = dp_y, hy = [dp_hole[1], dp_hole[2]]) translate([dp_x0 + dp_hole[0], yt - hy, 1]) cylinder(d = pilot_m3, h = dp_t + dp_post, $fn = fn_small);
+    // the boards' numbers, in the gap between them
+    translate([-4, 0, dp_t - 0.6]) linear_extrude(1) text("1 ↑   2 ↓", size = 3.2, halign = "center", valign = "center", font = "DejaVu Sans:style=Bold");
+}
+module v5_drv_plate() translate([drv_c[0], drv_c[1], deck_z + deck_t + 4]) drv_plate_local();
 module deck_dummies(s = 0) {
     color("#eee") translate([bb_c[0] - bb[0]/2 + s, bb_c[1] - bb[1]/2 + s, deck_z + deck_t]) cube([bb[0] - 2*s, bb[1] - 2*s, bb[2]]);
     color("#1a5") translate([bb_c[0] - 26.7, bb_c[1] - 11.4, deck_z + deck_t + bb[2]]) cube([53.34, 22.86, 12]);                 // the RP2040 on its pins
@@ -630,6 +654,7 @@ module print5(w) {
     if (w == "pod_left")   mirror([0, 1, 0]) print5("pod_right");
     if (w == "tray")       translate([0, 0, -tray_z]) v5_tray();                                               // tray down, the door standing
     if (w == "deck")       translate([0, 0, -deck_z]) v5_deck();                                               // flat
+    if (w == "drv_plate")  drv_plate_local();                                                                  // flat
     if (w == "body")       translate([0, 0, -(z_bt - tg[2])]) v5_body();                                      // upright, tongue down (5 mm brim)
     if (w == "cap")        translate([0, 0, BT]) rotate([180, 0, 0]) v5_cap();                                         // top face down
     if (w == "hub")        translate([0, -neck_y, -(zc0 - hub_play - hub_fl[1])]) v5_hub();                    // flange down
@@ -654,6 +679,7 @@ module assy5(w) {
     if (w == "pods")        for (s = [-1, 1]) place_pod(s) v5_pod();
     if (w == "tray")        v5_tray();
     if (w == "deck")        v5_deck();
+    if (w == "drv_plate")   v5_drv_plate();
     if (w == "body")        v5_body();
     if (w == "cap")         v5_cap();
     if (w == "slider")      v5_slider();

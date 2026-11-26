@@ -111,3 +111,27 @@ The Pi talks to the RP2040 over its UART (the Pi's 4 USB ports go to the speaker
 | green (encoder B) | GP7 | GP9 |
 
 A wheel that turns backwards: swap that motor's red and white at the MDD3A (or flip it in the firmware).
+
+## Instead of the MDD3A: 2 × DRV8871
+
+The motor kits each came with a DRV8871 board (one motor each). Two of them replace the MDD3A with no firmware change:
+they take the same two signals per motor (one pulsed, the other low). They sit on the printed DRV8871 plate
+(`LittleBot_v5_drv_plate_<printer>.3mf`), which goes on the MDD3A's 4 posts with its 4 screws. Each board: 2 × M3 × 8
+into its posts, screw terminals towards the outer wall, POWER terminals towards the back, the 4 pins towards the Wagos.
+Board 1 (M1) at the back, board 2 (M2) in front ("1 ↑ 2 ↓" on the plate between them).
+
+| From | To |
+|---|---|
+| Wago A (+) | board 1 POWER ⊕; a short red on to board 2 ⊕ |
+| Wago B (−) | board 1 POWER ⊖; a short black on to board 2 ⊖ |
+| M1 motor red / white | board 1 MOTOR |
+| M2 motor red / white | board 2 MOTOR |
+| GP10 / GP11 (rows 14, 15) | board 1 IN1 / IN2 |
+| GP12 / GP13 (rows 16, 17) | board 2 IN1 / IN2 |
+| RP2040 GND (rows 18, 13) | board 1 GND, board 2 GND |
+| VM (both boards) | nothing: it carries the battery's voltage |
+
+The DRV8871 has no reverse-polarity protection: check ⊕/⊖ with a meter (+7 V or more) before tightening. It stops
+under 6.5 V, so the wheels stop before the AAs are fully flat (the servos and the Pi keep going). After the swap, run
+`base_test.py wheels` again (set `minv_l` and `minv_r` to 0 first).
+

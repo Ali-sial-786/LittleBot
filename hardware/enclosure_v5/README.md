@@ -55,6 +55,7 @@ The motors' tails rest in 2 saddles with zip-tie slots. The Pi's fan blows down 
 | `LittleBot_v5_keeper_A1.3mf`, `LittleBot_v5_keeper_P2S.3mf`, `LittleBot_v5_keeper_plain.3mf` | the stack keeper on its own plate (v5's: stronger, with legs down the stack's ends) |
 | `LittleBot_v5_neck_A1.3mf`, `LittleBot_v5_neck_P2S.3mf`, `LittleBot_v5_neck_plain.3mf` | the black neck on its own plate, to reprint it (see **Mirror-image parts** below) |
 | `LittleBot_v5_speaker_cage_A1.3mf`, `..._P2S.3mf`, `..._plain.3mf` | the speaker's cage on its own plate (white, back face down, no supports): cradle under it, keeper behind it and saddles over it in one piece; 4 tabs click into the ribs' slots ([picture](speaker_cage.png)) |
+| `LittleBot_v5_drv_plate_A1.3mf`, `..._P2S.3mf`, `..._plain.3mf` | the DRV8871 plate (dark, flat, no supports): 2 of the motor kits' DRV8871 boards in place of the MDD3A, on its 4 posts with its 4 screws; each board on 2 posts, 2 × M3 × 8. Wiring: [WIRING.md](WIRING.md#instead-of-the-mdd3a-2--drv8871) |
 | `LittleBot_v5_pods_A1.3mf`, `LittleBot_v5_pods_P2S.3mf`, `LittleBot_v5_pods_plain.3mf` | the 2 wheel pods on their own plate, to reprint them (the second version: no roof, room for 67 mm wheels) |
 | `LittleBot_v5_assembled.3mf` | the whole robot assembled and coloured, to look at (not to print) |
 | `WIRING.md`, `wiring/` | **the base's wiring**: power (fuse, switch, 4 Wagos), the RP2040's pins (the Pi's UART, encoders, motor driver, servos, battery sense), the motors' 6 wires |
@@ -146,7 +147,7 @@ In total for the new parts: 22 × M3 × 12, 12 × M3 × 10, 7 × M3 × 8, 2 × M
    - The pod is a plate with 2 walls on one side. **The wheel goes between the walls; the motor stays outside them**, on the plate's bare face (the one with the 2 shallow dips: they clear the gearbox's own screw heads). Put the motor on **without its coupler**: its boss (the collar round the shaft) into the middle hole, its shaft pointing between the walls, its 2 threaded holes over the 2 small ones.
    - Fit 2 × M3 × 8 from the walls' side (the plate is 4 mm: the kit's shorter screws for its metal bracket won't bite; nothing longer than 8, the gearbox's holes are 4.5 mm deep).
    - Then, between the walls, push the coupler onto the shaft (it doesn't go through the plate), about 1 mm off the plate, and tighten its grub screw on the shaft's flat. The wheel onto the coupler's hex, with its screw: about a quarter of it pokes out below the pod (through the floor's slot, once in the tub).
-   - Not used from the motor kits: the black L-bracket (the pod replaces it) and the DRV8871 boards (the deck has one MDD3A for both motors).
+   - Not used from the motor kits: the black L-bracket (the pod replaces it) and the DRV8871 boards (the deck has one MDD3A for both motors; or 2 DRV8871 on the printed DRV8871 plate instead: [WIRING.md](WIRING.md#instead-of-the-mdd3a-2--drv8871)).
 3. **Tub:**
    - Casters: turn the tub over; each caster into its recess with its 2 screws. Turn it back and fit their nuts while the floor is bare (the rear ones end up under the Pi).
    - Pods: lower each in, wheel through the floor, and fit 4 × M3 × 12. Zip-tie each motor's tail to its saddle now: the deck covers them.
