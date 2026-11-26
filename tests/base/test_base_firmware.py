@@ -263,6 +263,8 @@ def test_motor_2_can_move_to_free_pins(fw):
     assert fw.motor_gpios(None) == ((10, 11), (12, 13))
     assert fw.motor_gpios({"m2_gp": 2}) == ((10, 11), (2, 3))
     assert fw.motor_gpios({"m2_gp": 4}) == ((10, 11), (4, 5))
+    assert fw.motor_gpios({"m2_gp": 20}) == ((10, 11), (20, 21))
+    assert fw.motor_gpios({"m2_gp": 18}) == ((10, 11), (18, 19))
     assert fw.motor_gpios({"m2_gp": 6}) == ((10, 11), (12, 13))      # the encoders' pins: refused
     b = fw.Base(FakeBoard())
     assert b.handle("SET m2_gp 2") == ["OK m2_gp 2"]

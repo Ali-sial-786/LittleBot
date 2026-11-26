@@ -35,7 +35,7 @@ DEV = "littlebot-base"
 UART_TX, UART_RX = 0, 1
 ENC_PINS = ((6, 7), (8, 9))          # (A yellow, B green): left, right
 MOTOR_PINS = ((10, 11), (12, 13))    # MDD3A M1A, M1B (left); M2A, M2B (right): motor 2's can move (m2_gp)
-M2_SPARE = (2, 4, 12)                # GP2/GP3 and GP4/GP5 are free (each pair one PWM slice, like GP12/GP13)
+M2_SPARE = (2, 4, 12, 18, 20)        # free pairs, each one PWM slice like GP12/GP13: GP2/3, GP4/5 (right side), GP18/19, GP20/21 (left)
 
 
 def motor_gpios(cfg):
@@ -71,7 +71,7 @@ DEFAULTS = {
     "einv_l": 0, "einv_r": 0,     # 1: that encoder counts the other way
     "swap": 0,            # 1: the robot's left wheel is on M2 (encoder GP8/GP9) and its right on M1 (GP6/GP7)
     "drv8871": 0,         # 1: two DRV8871 boards instead of the MDD3A (see motor_pins)
-    "m2_gp": 12,          # motor 2's inputs: GP12 + GP13, or 2 (GP2 + GP3) or 4 (GP4 + GP5) if those are damaged; RESET after
+    "m2_gp": 12,          # motor 2's inputs: GP12 + GP13, or the pair from GP2, GP4, GP18 or GP20 if those are damaged; RESET after
     "low_v": 5.8,         # the wheels stop under this pack voltage (0 = never); the servos keep working
     "us_min": 500, "us_max": 2500,                  # servo pulse at 0 and at 180 degrees
     "s0_min": 0, "s0_max": 180, "s1_min": 0, "s1_max": 180, "s2_min": 0, "s2_max": 180,   # servo limits (deg)
