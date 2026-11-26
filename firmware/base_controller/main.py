@@ -379,7 +379,7 @@ def run():
 
     class Board:
         def __init__(self):
-            self.uart = UART(0, baudrate=115200, tx=Pin(UART_TX), rx=Pin(UART_RX), rxbuf=1024)
+            self.uart = UART(0, baudrate=115200, tx=Pin(UART_TX), rx=Pin(UART_RX), rxbuf=1024, txbuf=1024, timeout_char=20)
             self.motor = []
             for a, b in MOTOR_PINS:
                 pa, pb = PWM(Pin(a)), PWM(Pin(b))
@@ -490,7 +490,15 @@ def run():
 
     def say(dest, text):
         if dest == "uart":
-            hw.uart.write(text.encode() + b"\n")
+            # all of it: a long line (GET's CFG is 300+ bytes) can outgrow the UART's send buffer, and a
+            # write that returns early would cut it off before its newline (the Pi then sees no reply)
+            data = text.encode() + b"\n"
+            sent, t0 = 0, time.ticks_ms()
+            while sent < len(data) and time.ticks_diff(time.ticks_ms(), t0) < 500:
+                n = hw.uart.write(data[sent:])
+                sent += len(data) - sent if n is None else n
+                if not n:
+                    time.sleep_ms(1)
         else:
             print(text)
 
