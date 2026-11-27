@@ -14,7 +14,7 @@ dashboard after every start. Nothing here loosens those rules.
 | `look_at(x, y)`: the head follows a person | `motion/look.py` + `MotionController.look_at` | the simulated head turns toward a face the camera sees |
 | Conversation gestures | `motion/gestures.py` | nod, head shake, curious tilt, thinking look, shrug, perk up, point at the screen, hello / goodbye waves, happy wiggle, sad droop, tiny idle shift (+ the old wave, look left/right, raise arms, celebrate, dance, shake) |
 | Body language | `motion/body.py` (started by `app/behaviours.py`) | **the face part works now**: eyes look at you while listening, glance up while thinking, nod at the end of sentences |
-| Wheels | `motion/drive.py` | a simulated base with a pose (x, y, heading); off (`motion.drive.enabled: false`) and not used by anything yet |
+| Wheels | `motion/drive.py` | the drive base with a pose (x, y, heading); v5's RP2040 base (`RP2040Wheels`), the dashboard's Camera & drive page, the voice (`skills/wheels.py`) |
 
 ## The joints
 
@@ -93,7 +93,7 @@ never interrupt a gesture and any other command on the head replaces them.
 
 If the tilt servo goes on later than the others, leave it out of `motion.servos` until then.
 
-## Wheels (later phase)
+## Wheels
 
 `littlebot/motion/drive.py` has the drive base, owned by the motion controller (`ctx.motion.drive`) so
 the emergency stop, the parent's STOP, arming and shutdown already cover it:
@@ -109,15 +109,28 @@ the emergency stop, the parent's STOP, arming and shutdown already cover it:
   stops the wheels. The e-stop cuts them at once and latches.
 * It publishes `motion.drive` events and the Motion page shows the pose once it is enabled.
 
-To fit real wheels: write `MotorHatWheels` in `drive.py` (its docstring lists what to implement:
-open the HAT, `set_velocity` -> wheel speeds -> PWM, a keep-alive with `CommandWatchdog`, `stop`,
-`close`), then set `motion.drive.backend: motor_hat` and `enabled: true`. Until it is written, that
-backend falls back to the simulation.
+**v5's real wheels: `RP2040Wheels`** (`motion.drive.backend: rp2040`, set in `config/pi.yaml`). It talks to the
+base's RP2040 over the Pi's UART (`port: /dev/ttyAMA0`, firmware/base_controller): `set_velocity` sends
+`D <left %> <right %>`, each wheel's speed as a share of the firmware's `top_speed_mm_s` (350); `stop` sends
+`STOP`. The firmware ramps the wheels, keeps their speeds with the encoders and stops them when the lines stop for
+0.5 s (the keep-alive). At start the driver asks `PING`: no answer (switch off, wires loose) and the simulation
+takes over, with the reason on the dashboard. `wheel_base_m: 0.185` is v5's track. Real wheels also need
+`motion.physical_enabled: true` in `config/local.yaml` (every shipped config keeps it false) and a parent arming
+them on the Motion page each time LittleBot starts. Nothing else may hold the UART meanwhile
+(`scripts/base_test.py` needs LittleBot stopped). A motor HAT would go in `MotorHatWheels` (its docstring lists
+what to implement).
 
-To let the voice drive later: add a skill tool (`littlebot/skills/`) that calls
-`ctx.motion.drive.forward(...)` / `turn(...)` with small fixed steps (e.g. "come closer" = 0.2 m), and
-check `ctx.motion.drive.status()["reason"]` to tell the person why it can't move. Keep the steps short
-and never drive while nobody is watching. Nothing is wired yet on purpose.
+**Driving from the dashboard:** the Camera & drive page (`static/js/pages/drive_panel.js`): the live view beside a
+pad. Holding a button (or W A S D / the arrow keys; two at once drive an arc) sends `POST /api/motion/drive`
+`{linear, angular}` (shares of the speed limits) every 250 ms; letting go sends `/api/motion/drive/stop`, and the
+drive's watchdog stops the wheels within a second if the page goes quiet (a locked phone, a lost Wi-Fi). Quick
+moves: `/api/motion/drive/move` `{meters}` and `/api/motion/drive/turn` `{degrees}`. A speed slider, the pose
+since start and the emergency stop are on the same card. A refused move answers 409 with the reason ("not armed").
+
+**Driving by voice:** `littlebot/skills/wheels.py`: `drive_distance` (cm, forward / backward; 30 cm when not
+said, at most 2 m), `turn` (degrees, left / right as LittleBot sees it; 90 when not said), `stop_moving`. A move
+starts in the background as the answer is spoken; a locked or switched-off base gets a plain answer ("a grown-up
+unlocks my wheels on the dashboard").
 
 ## Config keys (`motion:`)
 

@@ -459,3 +459,19 @@ class LookBody(Body):
     @classmethod
     def _clean(cls, v: str | None) -> str | None:
         return None if v is None else (clean_text(v, max_len=300, field="question") or None)
+
+
+class DriveBody(Body):
+    """Hold-to-drive from the dashboard: shares of the wheels' speed limits (motion.drive.max_*), re-sent while held."""
+
+    linear: float = Field(default=0.0, ge=-1.0, le=1.0)  # + forwards
+    angular: float = Field(default=0.0, ge=-1.0, le=1.0)  # + turning left (the robot's own left)
+
+
+class DriveMoveBody(Body):
+    meters: float = Field(ge=-2.0, le=2.0)  # + forwards
+
+
+class DriveTurnBody(Body):
+    degrees: float = Field(ge=-360.0, le=360.0)  # + left
+

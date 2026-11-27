@@ -1,4 +1,5 @@
-"""Motion: gestures, joints, neutral pose, emergency stop and (guarded) physical arming."""
+"""Motion: gestures, joints, neutral pose, emergency stop, (guarded) physical arming and the wheels (hold-to-drive,
+a set distance, a turn)."""
 
 from __future__ import annotations
 
@@ -7,7 +8,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException
 
 from littlebot.dashboard.deps import DashState, get_dash, log
-from littlebot.dashboard.models import ARM_PHRASE, ArmBody, GestureBody, JointBody
+from littlebot.dashboard.models import ARM_PHRASE, ArmBody, DriveBody, DriveMoveBody, DriveTurnBody, GestureBody, JointBody
 
 router = APIRouter(prefix="/api/motion", tags=["motion"])
 
@@ -133,3 +134,61 @@ async def arm(body: ArmBody, dash: DashState = Depends(get_dash)) -> dict[str, A
     ctx.settings.set("motion.physical_armed", True, source="dashboard")
     log.warning("physical motion ARMED from the dashboard")
     return {"ok": True, **_view(dash)}
+
+
+# ------------------------------------------------------------------ the wheels
+def _drive(dash: DashState) -> Any:
+    drive = getattr(dash.need("motion"), "drive", None)
+    if drive is None:
+        raise HTTPException(status_code=503, detail="LittleBot has no wheels.")
+    return drive
+
+
+def _drive_or_409(dash: DashState) -> Any:
+    drive = _drive(dash)
+    why = drive.refusal()
+    if why:
+        raise HTTPException(status_code=409, detail=f"The wheels can't move: {why}.")
+    return drive
+
+
+@router.get("/drive")
+async def drive_info(dash: DashState = Depends(get_dash)) -> dict[str, Any]:
+    drive = _drive(dash)
+    return {"ok": True, "drive": drive.status(), "refusal": drive.refusal()}
+
+
+@router.post("/drive")
+async def drive_hold(body: DriveBody, dash: DashState = Depends(get_dash)) -> dict[str, Any]:
+    """Hold-to-drive: the page sends this every ~0.3 s while a button is held. Open-ended: the wheels stop by
+    themselves (motion.drive.watchdog_seconds) when it stops coming, so a dropped phone can't leave them running."""
+    drive = _drive_or_409(dash)
+    lim = drive.status().get("limits") or {}
+    linear = float(body.linear) * float(lim.get("max_linear_mps", 0.0))
+    angular = float(body.angular) * float(lim.get("max_angular_dps", 0.0))
+    if abs(linear) < 1e-6 and abs(angular) < 1e-6:
+        drive.stop()
+        return {"ok": True, "stopped": True}
+    dash.spawn(drive.drive(linear, angular, None))
+    return {"ok": True, "linear_mps": round(linear, 3), "angular_dps": round(angular, 1)}
+
+
+@router.post("/drive/stop")
+async def drive_stop(dash: DashState = Depends(get_dash)) -> dict[str, Any]:
+    _drive(dash).stop()
+    return {"ok": True}
+
+
+@router.post("/drive/move")
+async def drive_move(body: DriveMoveBody, dash: DashState = Depends(get_dash)) -> dict[str, Any]:
+    drive = _drive_or_409(dash)
+    dash.spawn(drive.forward(float(body.meters)))
+    return {"ok": True, "meters": body.meters}
+
+
+@router.post("/drive/turn")
+async def drive_turn(body: DriveTurnBody, dash: DashState = Depends(get_dash)) -> dict[str, Any]:
+    drive = _drive_or_409(dash)
+    dash.spawn(drive.turn(float(body.degrees)))
+    return {"ok": True, "degrees": body.degrees}
+

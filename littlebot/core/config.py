@@ -997,10 +997,15 @@ class LookConfig(_Section):
 
 
 class DriveConfig(_Section):
-    """``motion.drive``: the wheels phase (littlebot/motion/drive.py). Off by default; nothing calls it yet."""
+    """``motion.drive``: the wheels (littlebot/motion/drive.py). Off by default: the dashboard's Drive page, the
+    voice tools (littlebot/skills/wheels.py) and anything else are refused until ``enabled``."""
 
     enabled: bool = False  # commands are refused while false
-    backend: Literal["mock", "motor_hat"] = "mock"  # motor_hat: placeholder for the future motor HAT driver
+    # rp2040: v5's base, the RP2040 on the deck over the Pi's UART (firmware/base_controller, "D <l> <r>" lines);
+    # motor_hat: placeholder for a motor HAT driver
+    backend: Literal["mock", "motor_hat", "rp2040"] = "mock"
+    port: str = "/dev/ttyAMA0"  # rp2040: the Pi's UART (dtparam=uart0=on)
+    top_speed_mm_s: float = 350.0  # rp2040: the firmware's max_mm_s, the wheel speed "D 100 100" asks for
     max_linear_mps: float = 0.15  # forward / back speed limit (hard ceiling in code: 0.5)
     max_angular_dps: float = 60.0  # turning speed limit (hard ceiling: 180)
     max_linear_accel_mps2: float = 0.3  # speeds ramp at most this fast (no jerks, no tipping)

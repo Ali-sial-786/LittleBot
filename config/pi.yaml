@@ -33,7 +33,21 @@ audio:
   tts:
     provider: auto      # espeak-ng if installed; piper if a model is configured
 motion:
-  backend: mock         # switch to pca9685 only after calibration (docs/MOTION_SAFETY.md)
+  backend: mock         # the servos: switch to pca9685 only after calibration (docs/MOTION_SAFETY.md)
+  # Off in every shipped config (docs/MOTION_SAFETY.md). For v5's real wheels (the RP2040 base) set
+  # motion.physical_enabled: true in config/local.yaml: a parent can then arm them on the dashboard (Motion page),
+  # nothing moves before that, and the servos stay simulated while backend is mock.
   physical_enabled: false
+  drive:
+    enabled: true
+    backend: rp2040     # the base over the Pi's UART (firmware/base_controller): "D <left %> <right %>"
+    port: /dev/ttyAMA0
+    top_speed_mm_s: 350 # the firmware's max_mm_s
+    wheel_base_m: 0.185 # v5: the wheels' centres, 2 x (61.5 + 44.5 - 13.5) mm
+    max_linear_mps: 0.25
+    max_angular_dps: 90
+    max_linear_accel_mps2: 0.4   # under the firmware's own ramp (0.5 m/s2), so it keeps up
+    cruise_linear_mps: 0.15      # "forward 50 cm" / "turn left" speeds
+    cruise_angular_dps: 60
 logging:
   format: json

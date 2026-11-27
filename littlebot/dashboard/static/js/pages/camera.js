@@ -5,6 +5,7 @@
 
 import { get } from '../api.js';
 import { button, clear, h, icon, pageHead, setText, toast } from '../ui.js';
+import { drivePanel } from './drive_panel.js';
 
 const FPS_WINDOW_MS = 3000;
 const FRAME_TIMEOUT_MS = 8000; // the robot answers within ~2 s (a frame, or why there is none)
@@ -65,13 +66,16 @@ export default {
     const snapBtn = button('Take snapshot', { kind: 'soft', iconName: 'camera', onClick: () => snapshot() });
     const facts = h('dl', { class: 'kv' });
 
+    const drive = drivePanel(app);
     view.append(
-      pageHead('Camera', 'See what LittleBot sees, live, on this phone or computer. Nothing is recorded.'),
+      pageHead('Camera & drive', 'See what LittleBot sees, live, and drive it from here. Nothing is recorded.'),
       h('div', { class: 'grid two' },
         h('section', { class: 'card cam-card' },
           h('div', { class: 'card-head' }, h('h2', {}, icon('camera'), 'Live view'), badge),
           stage,
           h('div', { class: 'btn-row mt-2' }, startBtn, stopBtn, snapBtn)),
+        drive.el),
+      h('div', { class: 'grid two mt-2' },
         h('section', { class: 'card' },
           h('div', { class: 'card-head' }, h('h2', {}, icon('shield'), 'While you watch')),
           h('ul', { class: 'cam-notes' },
@@ -360,6 +364,7 @@ export default {
 
     return {
       destroy() {
+        drive.destroy();
         clearInterval(statusTimer);
         document.removeEventListener('visibilitychange', onVisibility);
         window.removeEventListener('pagehide', onPageHide);

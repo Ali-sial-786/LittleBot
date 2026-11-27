@@ -185,6 +185,135 @@ class MotorHatWheels:
         return {"driver": "motor HAT (not implemented)"}
 
 
+class RP2040Wheels:
+    """v5's base: the RP2040 on the deck (firmware/base_controller/main.py) over the Pi's UART.
+
+    ``set_velocity`` sends ``D <left %> <right %>`` (each wheel's surface speed as a share of the firmware's top
+    speed, ``top_speed_mm_s``). The firmware ramps the wheels itself, keeps their speeds with the encoders, and stops
+    them when the lines stop coming for 0.5 s: that is the keep-alive (``Drive`` sends one every control tick while
+    moving), so a hung process can't leave them turning. ``stop`` sends ``STOP``. Nothing else on the Pi may hold the
+    port meanwhile (``scripts/base_test.py`` needs LittleBot stopped).
+    """
+
+    physical = True
+
+    def __init__(self, cfg: DriveConfig, *, opener: Callable[[str], int] | None = None, probe_s: float = 1.5) -> None:
+        import os
+        import threading as _threading
+
+        self.cfg = cfg
+        self.port = str(cfg.port)
+        self.top = max(1.0, float(cfg.top_speed_mm_s))
+        self._lock = _threading.Lock()
+        self._left = self._right = 0.0
+        self._os = os
+        try:
+            self.fd = (opener or _open_uart)(self.port)
+        except OSError as e:
+            raise DriveError(f"can't open {self.port}: {e}") from e
+        if probe_s > 0 and not self._ping(probe_s):
+            self._close_fd()
+            raise DriveError(f"no answer from the base on {self.port} (is its switch on?)")
+        self._write(b"STOP\n")
+
+    def percents(self, linear_mps: float, angular_dps: float) -> tuple[float, float]:
+        left, right = wheel_speeds(linear_mps, angular_dps, self.cfg.wheel_base_m)
+        pct = lambda v: max(-100.0, min(100.0, v * 1000.0 / self.top * 100.0))  # noqa: E731
+        return round(pct(left), 1), round(pct(right), 1)
+
+    def set_velocity(self, linear_mps: float, angular_dps: float) -> None:
+        left, right = self.percents(linear_mps, angular_dps)
+        with self._lock:
+            self._left, self._right = left, right
+        self._write(f"D {left:g} {right:g}\n".encode())
+
+    def stop(self) -> None:
+        with self._lock:
+            self._left = self._right = 0.0
+        try:
+            self._write(b"STOP\n")
+        except Exception:  # noqa: BLE001 - stop never raises
+            pass
+
+    def close(self) -> None:
+        self.stop()
+        self._close_fd()
+
+    def describe(self) -> dict[str, Any]:
+        return {"driver": "RP2040 base", "port": self.port, "left_pct": self._left, "right_pct": self._right}
+
+    # ---------------------------------------------------------------- the port
+    def _write(self, data: bytes) -> None:
+        import select
+
+        with self._lock:
+            fd = getattr(self, "fd", None)
+            if fd is None:
+                return
+            self._drain(fd)
+            view = memoryview(data)
+            while view:
+                _, w, _ = select.select([], [fd], [], 0.2)
+                if not w:
+                    raise DriveError(f"the base's port {self.port} won't take more bytes")
+                n = self._os.write(fd, view)
+                view = view[n:]
+
+    def _drain(self, fd: int) -> bytes:
+        """Replies the firmware sent ("OK" for STOP): read and dropped, so they never pile up."""
+        out = b""
+        while True:
+            try:
+                chunk = self._os.read(fd, 1024)
+            except (BlockingIOError, OSError):
+                return out
+            if not chunk:
+                return out
+            out += chunk
+
+    def _ping(self, timeout_s: float) -> bool:
+        import select
+        import time
+
+        self._write(b"PING\n")
+        end, buf = time.monotonic() + timeout_s, b""
+        while time.monotonic() < end:
+            r, _, _ = select.select([self.fd], [], [], max(0.0, end - time.monotonic()))
+            if r:
+                try:
+                    buf += self._os.read(self.fd, 1024)
+                except BlockingIOError:
+                    pass
+                if b"PONG littlebot-base" in buf:
+                    return True
+        return False
+
+    def _close_fd(self) -> None:
+        with self._lock:
+            fd, self.fd = getattr(self, "fd", None), None
+        if fd is not None:
+            try:
+                self._os.close(fd)
+            except OSError:
+                pass
+
+
+def _open_uart(path: str) -> int:
+    """The UART read-write, raw (the battery monitor's raw set-up), non-blocking."""
+    import os
+
+    from littlebot.power.monitor import _make_raw
+
+    fd = os.open(path, os.O_RDWR | os.O_NOCTTY | os.O_NONBLOCK)
+    try:
+        if os.isatty(fd):
+            _make_raw(fd)
+    except Exception:
+        os.close(fd)
+        raise
+    return fd
+
+
 class CommandWatchdog:
     """Keep-alive for a real wheel driver: calls ``on_expire`` when ``kick()`` stops coming.
 
@@ -759,23 +888,24 @@ class MockDrive(Drive):
 
 
 def create_drive(cfg: DriveConfig, *, physical_enabled: bool = False, **kwargs: Any) -> Drive:
-    """The drive for this configuration: the motor HAT only with backend=motor_hat AND physical_enabled (and
-    then still only after a parent arms motion); otherwise, or when the HAT can't be opened, the simulation."""
-    if cfg.backend == "motor_hat":
+    """The drive for this configuration: real wheels (backend rp2040 or motor_hat) only with physical_enabled (and
+    then still only after a parent arms motion); otherwise, or when the board can't be opened, the simulation."""
+    if cfg.backend in ("motor_hat", "rp2040"):
+        what = "the RP2040 base" if cfg.backend == "rp2040" else "the motor HAT"
         if not physical_enabled:
             return MockDrive(cfg, physical_enabled=physical_enabled,
-                             note="motor_hat configured but motion.physical_enabled is false", **kwargs)
+                             note=f"{cfg.backend} configured but motion.physical_enabled is false", **kwargs)
         try:
-            wheels = MotorHatWheels(cfg)
-        except Exception as e:  # noqa: BLE001 - not written yet / no HAT: simulate
+            wheels: WheelDriver = RP2040Wheels(cfg) if cfg.backend == "rp2040" else MotorHatWheels(cfg)
+        except Exception as e:  # noqa: BLE001 - no board / not answering: simulate
             log.warning("wheels: %s - using simulated wheels", e)
-            return MockDrive(cfg, physical_enabled=physical_enabled, note=f"motor HAT unavailable: {e}", **kwargs)
+            return MockDrive(cfg, physical_enabled=physical_enabled, note=f"{what} unavailable: {e}", **kwargs)
         return Drive(cfg, wheels=wheels, physical_enabled=physical_enabled, **kwargs)
     return MockDrive(cfg, physical_enabled=physical_enabled, **kwargs)
 
 
 __all__ = [
     "CommandWatchdog", "DRIVE_TOPIC", "Drive", "DriveBase", "DriveError", "DriveLimits", "MockDrive",
-    "MotorHatWheels", "Pose", "SimulatedWheels", "WheelDriver", "create_drive", "validate_drive_config",
+    "MotorHatWheels", "Pose", "RP2040Wheels", "SimulatedWheels", "WheelDriver", "create_drive", "validate_drive_config",
     "wheel_speeds",
 ]

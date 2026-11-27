@@ -28,7 +28,7 @@ export const NAV = [
   { id: 'media', label: 'Videos', icon: 'film', tab: true, page: media },
   { id: 'photos', label: 'Photos', icon: 'camera', page: photos, blurb: 'Pictures and videos LittleBot took' },
   { id: 'face', label: 'Face', icon: 'face', page: face, blurb: 'Expressions and animations' },
-  { id: 'camera', label: 'Camera', icon: 'camera', page: camera, blurb: 'Live view from LittleBot' },
+  { id: 'camera', label: 'Camera & drive', icon: 'camera', page: camera, blurb: 'Live view, and drive LittleBot' },
   { id: 'games', label: 'Games', icon: 'star', page: games, blurb: 'Fun games on the robot\'s screen' },
   { id: 'profile', label: 'Child profile', icon: 'user', page: profile, blurb: 'Age, name and favourites' },
   { id: 'ai', label: 'AI', icon: 'sparkles', page: ai, blurb: 'Optional cloud conversation' },

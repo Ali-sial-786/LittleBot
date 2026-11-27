@@ -40,6 +40,7 @@ SKILLS: tuple[tuple[str, str], ...] = (
     ("littlebot.skills.android", "Android"),
     ("littlebot.skills.calls", "Calls"),
     ("littlebot.skills.camera", "Camera"),
+    ("littlebot.skills.wheels", "Wheels"),
     ("littlebot.games.voice.skill", "VoiceGames"),
 )
 
