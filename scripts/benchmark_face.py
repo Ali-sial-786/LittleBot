@@ -3,7 +3,11 @@
 
     .venv/bin/python scripts/benchmark_face.py               # table, 150 frames per scenario
     .venv/bin/python scripts/benchmark_face.py --frames 300 --json
-    .venv/bin/python scripts/benchmark_face.py --scale 2      # include the window up-scale cost
+    .venv/bin/python scripts/benchmark_face.py --scale 1.5    # a desktop window 1.5x the screen (scaled after)
+
+Each frame is drawn the way the robot draws it: straight at the screen's size (display.width x height,
+1024x600 on the 7" screen; the face's design space is 546x320 there, littlebot/face/frame.py face_size).
+``--scale`` other than 1 draws into a window that much bigger, as the desktop simulator does.
 
 Runs headless (SDL dummy driver). "cpu@30fps" estimates the share of ONE core the
 face would need at 30 fps (mean_ms * 30 / 10). Frames are rendered with a fixed
@@ -50,8 +54,9 @@ def run(frames: int, scale: float, seed: int) -> dict[str, Any]:
 
     pygame.display.init()
     pygame.font.init()
-    native = pygame.Surface((480, 320))
-    window = pygame.Surface((int(480 * scale), int(320 * scale))) if scale != 1.0 else None
+    cfg = make_test_context(fakes=False).config.display
+    native = pygame.Surface((int(cfg.width), int(cfg.height)))  # the robot's screen: drawn straight in
+    window = pygame.Surface((int(cfg.width * scale), int(cfg.height * scale))) if scale > 0 and scale != 1 else None
     rows = []
     dt = 1 / 30
     for name, setup in _scenarios():
@@ -116,7 +121,8 @@ def run(frames: int, scale: float, seed: int) -> dict[str, Any]:
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--frames", type=int, default=150)
-    p.add_argument("--scale", type=float, default=1.0, help="also scale into a window-sized surface")
+    p.add_argument("--scale", type=float, default=1.0,
+                   help="draw into a window this many times the screen (display.width x height); 1: the screen")
     p.add_argument("--seed", type=int, default=3)
     p.add_argument("--json", action="store_true", help="print JSON instead of a table")
     args = p.parse_args(argv)

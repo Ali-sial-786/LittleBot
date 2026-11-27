@@ -30,18 +30,20 @@ from littlebot.screens.base import (
     Card,
     CardHost,
     CardType,
+    H,
     W,
     register,
 )
 from littlebot.screens.cards import candy
-from littlebot.screens.cards.weather import weather_icon
+from littlebot.screens.cards.weather import LOW_INK, weather_icon
 
 log = logging.getLogger("littlebot.screens.clock")
 
-FACE_PX = 316
-FACE_CENTER = (candy.PANEL.left + 176, candy.PANEL.centery)
-TEXT_X = candy.PANEL.left + 520  # the centre of the text column
-TEXT_W = 320
+FACE_PX = 414  # the dial: as tall as the panel allows
+FACE_CENTER = (candy.PANEL.left + 26 + FACE_PX // 2, candy.PANEL.centery)
+_TEXT_LEFT = candy.PANEL.left + FACE_PX + 60
+TEXT_W = candy.PANEL.right - 24 - _TEXT_LEFT  # the text column right of the dial
+TEXT_X = _TEXT_LEFT + TEXT_W // 2  # its centre
 
 # Common places -> IANA zones (a country is its capital's or biggest city's zone).
 ZONES: dict[str, str] = {
@@ -168,6 +170,11 @@ def _offset_words(there: _dt.datetime, here: _dt.datetime) -> str:
     return f"{amount} {unit} {'ahead' if minutes > 0 else 'behind'}"
 
 
+def day_part(hour: int) -> str:
+    """ "morning" (5-11), "afternoon" (12-16), "evening" (17-20) or "night"."""
+    return "morning" if 5 <= hour < 12 else "afternoon" if 12 <= hour < 17 else "evening" if 17 <= hour < 21 else "night"
+
+
 def _face(size: int, hour: int, minute: int) -> pygame.Surface:
     """The analogue clock face showing hour:minute (cached: redrawn once a minute)."""
     def make() -> pygame.Surface:
@@ -252,14 +259,26 @@ class ClockCard(Card):
             self.time_text, self.ampm = f"{there.hour:02d}:{there.minute:02d}", ""
         self.weekday = f"{there:%A}"
         self.date_text = f"{there.day} {there:%B}"
+        self.year = there.year
+        self.part = day_part(there.hour)
         self.offset = _offset_words(there, here) if self.zone else ""
+        self.home_text = self._home_words(there, here) if self.zone else ""
         self.daytime = 6 <= there.hour < 18
         self._lines = self._compose()
+
+    def _home_words(self, there: _dt.datetime, here: _dt.datetime) -> str:
+        """ "At home it's 4:30 am" ("... on Friday" when it is another day there)."""
+        if self.twelve:
+            t = f"{here.hour % 12 or 12}:{here.minute:02d} {'am' if here.hour < 12 else 'pm'}"
+        else:
+            t = f"{here.hour:02d}:{here.minute:02d}"
+        day = f" on {here:%A}" if here.date() != there.date() else ""
+        return f"At home it's {t}{day}"
 
     def _compose(self) -> list[pygame.Surface]:
         """The text column, made once a minute (not every frame)."""
         lines: list[pygame.Surface] = []
-        big = candy.fit(self.time_text, 150, TEXT_W - (70 if self.ampm else 0), min_size=96)
+        big = candy.fit(self.time_text, 176, TEXT_W - (80 if self.ampm else 0), min_size=110)
         if self.ampm:
             ampm = art.text(self.ampm, TITLE_PX, art.INK)
             row = pygame.Surface((big.get_width() + 8 + ampm.get_width(), big.get_height()), pygame.SRCALPHA)
@@ -267,16 +286,18 @@ class ClockCard(Card):
             row.blit(ampm, ampm.get_rect(bottomleft=(big.get_width() + 8, big.get_height() - big.get_height() // 7)))
             big = row
         lines.append(big)
-        icon = weather_icon("sun" if self.daytime else "moon", 58)
-        day = art.text(self.weekday, TITLE_PX, art.INK)
-        row = pygame.Surface((icon.get_width() + 8 + day.get_width(), max(icon.get_height(), day.get_height())),
+        icon = weather_icon("sun" if self.daytime else "moon", 66)
+        day = candy.fit(f"{self.weekday} {self.part}", TITLE_PX, TEXT_W - icon.get_width() - 10, min_size=BODY_PX)
+        row = pygame.Surface((icon.get_width() + 10 + day.get_width(), max(icon.get_height(), day.get_height())),
                              pygame.SRCALPHA)
         row.blit(icon, icon.get_rect(midleft=(0, row.get_height() // 2)))
-        row.blit(day, day.get_rect(midleft=(icon.get_width() + 8, row.get_height() // 2 + 2)))
+        row.blit(day, day.get_rect(midleft=(icon.get_width() + 10, row.get_height() // 2 + 2)))
         lines.append(row)
-        lines.append(art.text(self.date_text, 38, art.INK))
+        lines.append(art.text(f"{self.date_text} {self.year}", 42, art.INK))
         if self.offset:
             lines.append(candy.chip(self.offset, BODY_PX, art.INK, art.lighten(art.SKY, 0.7)))
+        if self.home_text:
+            lines.append(candy.fit(self.home_text, BODY_PX, TEXT_W, LOW_INK))
         return lines
 
     def update(self, dt: float) -> None:
@@ -307,14 +328,14 @@ class ClockCard(Card):
         return {**super().status(), "zone": self.zone or self.home_zone or "local"}
 
     def draw(self, surf: pygame.Surface) -> None:
-        surf.blit(art.background((W, 480), seed=5), (0, 0))
+        surf.blit(art.background((W, H), seed=5), (0, 0))
         dy = candy.slide_in(self.t)
         candy.header(surf, self.title, dy=dy * 0.5)
         box = candy.panel(surf, dy=dy)
         candy.blit_mid(surf, _face(FACE_PX, self.local.hour, self.local.minute),
                        (FACE_CENTER[0], FACE_CENTER[1] + dy))
         lines = self._lines
-        gaps = 14
+        gaps = 16
         total = sum(img.get_height() for img in lines) + gaps * (len(lines) - 1)
         y = box.centery - total / 2
         for img in lines:
@@ -370,8 +391,9 @@ async def build(spec: dict[str, Any], ctx: Any, host: CardHost) -> ClockCard | N
 
 register(CardType(
     kind="clock",
-    description="The time and date, big, with a friendly clock face: here, or in another city or country "
-                "('what time is it in Tokyo?', 'what day is it?').",
+    description="The time and date, big, with a friendly clock face, the weekday and part of the day and the "
+                "date with the year: here, or in another city or country ('what time is it in Tokyo?', 'what day "
+                "is it?'); for another place it also shows how far ahead or behind it is and the time at home.",
     fields={
         "place": {"type": "string", "description": "A city or country, only for somewhere else: 'Tokyo', "
                                                    "'Australia'. Leave out for here."},
@@ -390,6 +412,7 @@ SAMPLES: list[dict[str, Any]] = [
     {"card": "clock", "place": "Tokyo", "at": "2026-10-24T13:30:00+00:00", "home_timezone": "America/Toronto"},
     {"card": "clock", "place": "Delhi", "at": "2026-10-24T13:05:00+00:00", "home_timezone": "Europe/London",
      "twelve_hour": False},
+    {"card": "clock", "place": "Auckland", "at": "2026-10-28T02:40:00+00:00", "home_timezone": "America/Los_Angeles"},
 ]
 
-__all__ = ["SAMPLES", "ZONES", "ClockCard", "find_zone"]
+__all__ = ["SAMPLES", "ZONES", "ClockCard", "day_part", "find_zone"]

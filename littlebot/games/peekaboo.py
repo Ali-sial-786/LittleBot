@@ -13,6 +13,8 @@ import pygame
 from littlebot.games import art
 from littlebot.games.base import Game
 
+# The layout for a 480 px tall canvas; a game scales it to its own (x1.25 on the 1024x600 screen: heads of 78 px
+# radius, blocks of 220 x 190).
 R = 62  # head radius (px)
 BLOCK_W, BLOCK_H, BLOCK_TOP = 176, 152, 262
 FLOOR_Y = 398
@@ -208,13 +210,17 @@ def animal_sprite(name: str, rr: int = R) -> pygame.Surface:
     return art.cached(("animal", name, rr), make)
 
 
-def block_sprite(color: art.Color, icon: str) -> pygame.Surface:
-    def make() -> pygame.Surface:
-        w, h = BLOCK_W, BLOCK_H
-        out = pygame.Surface((w, h + 8), pygame.SRCALPHA)
-        out.blit(art.rounded_rect(w, h, 30, art.inkier(color, 0.35)), (0, 8))
+def block_sprite(color: art.Color, icon: str, size: tuple[int, int] = (BLOCK_W, BLOCK_H)) -> pygame.Surface:
+    w, h = int(size[0]), int(size[1])
 
-        def draw(s: pygame.Surface, k: float) -> None:
+    def make() -> pygame.Surface:
+        z = h / BLOCK_H  # the design's px at this size
+        drop = int(round(8 * z))
+        out = pygame.Surface((w, h + drop), pygame.SRCALPHA)
+        out.blit(art.rounded_rect(w, h, int(30 * z), art.inkier(color, 0.35)), (0, drop))
+
+        def draw(s: pygame.Surface, ss: float) -> None:
+            k = ss * z
             rect = s.get_rect()
             pygame.draw.rect(s, art.inkier(color, 0.32), rect, border_radius=int(30 * k))
             inner = rect.inflate(-int(8 * k), -int(8 * k))
@@ -236,12 +242,15 @@ def block_sprite(color: art.Color, icon: str) -> pygame.Surface:
         out.blit(art.supersampled((w, h), draw, ss=2), (0, 0))
         return out
 
-    return art.cached(("block", color, icon), make)
+    return art.cached(("block", color, icon, w, h), make)
 
 
-def paw_sprite(color: art.Color) -> pygame.Surface:
+def paw_sprite(color: art.Color, z: float = 1.0) -> pygame.Surface:
+    z = round(z, 2)
+
     def make() -> pygame.Surface:
-        def draw(s: pygame.Surface, k: float) -> None:
+        def draw(s: pygame.Surface, ss: float) -> None:
+            k = ss * z
             r = s.get_rect()
             pygame.draw.ellipse(s, art.inkier(color, 0.4), r)
             pygame.draw.ellipse(s, color, r.inflate(-int(6 * k), -int(6 * k)))
@@ -249,9 +258,9 @@ def paw_sprite(color: art.Color) -> pygame.Surface:
                 pygame.draw.line(s, art.inkier(color, 0.45), (r.centerx + dx * r.w, r.y + r.h * 0.12),
                                  (r.centerx + dx * r.w, r.y + r.h * 0.42), max(2, int(3 * k)))
 
-        return art.supersampled((46, 36), draw)
+        return art.supersampled((int(46 * z), int(36 * z)), draw)
 
-    return art.cached(("paw", color), make)
+    return art.cached(("paw", color, z), make)
 
 
 # ------------------------------------------------------------------ the game
@@ -278,6 +287,11 @@ class PeekabooFriends(Game):
 
     def __init__(self, host: Any = None, *, size: tuple[int, int] = (art.W, art.H), seed: int | None = None) -> None:
         super().__init__(host, size=size, seed=seed)
+        k = self.k = self.h / 480  # px scale (1.25 on the 1024x600 screen)
+        self.R = int(round(R * k))
+        self.block_w, self.block_h = int(round(BLOCK_W * k)), int(round(BLOCK_H * k))
+        self.block_top = BLOCK_TOP * k
+        self.floor_y = FLOOR_Y * k
         xs = (self.w * 0.21, self.w * 0.5, self.w * 0.79)
         self.spots = [Spot(x, c, i) for x, c, i in zip(xs, BLOCK_COLORS, ICONS)]
         for sp in self.spots:
@@ -287,7 +301,7 @@ class PeekabooFriends(Game):
         self.last_say = -9.0
         self.peeks = 0
         self.giggles = 0
-        self.eyes = art.EyeState(self.w / 2, 82, 0.72, self.eye_color)
+        self.eyes = art.EyeState(self.w / 2, 82 * k, 0.72 * k, self.eye_color)
 
     def begin(self) -> None:
         super().begin()
@@ -318,8 +332,10 @@ class PeekabooFriends(Game):
             self.host.say(PHRASES[sp.animal])
         elif by_tap:
             self.host.sound("boing")
-        self.burst(sp.x, BLOCK_TOP - 10, [art.WHITE, art.LEMON, sp.color], 10, speed=(80, 220), life=(0.5, 0.9),
-                   size=(6, 10), kinds=("spark", "star"), spread=(math.pi * 1.1, math.pi * 1.9))
+        k = self.k
+        self.burst(sp.x, self.block_top - 10 * k, [art.WHITE, art.LEMON, sp.color], 10, speed=(80 * k, 220 * k),
+                   life=(0.5, 0.9), size=(6 * k, 10 * k), kinds=("spark", "star"),
+                   spread=(math.pi * 1.1, math.pi * 1.9))
 
     def giggle(self, sp: Spot) -> None:
         sp.jump = 0.5
@@ -328,9 +344,10 @@ class PeekabooFriends(Game):
         self.score += 1
         self.eyes.feel("happy", 1.0)
         self.host.sound("giggle", max_wait=2.0)  # may queue behind "Moo!": a late giggle beats none
-        y = self.head_y(sp) - R * 0.6
-        self.burst(sp.x, y, [art.STRAWBERRY, art.BUBBLEGUM, art.BLUSH], 7, speed=(70, 160), life=(0.8, 1.3),
-                   size=(9, 13), kinds=("heart",), gravity=-60, spread=(math.pi * 1.15, math.pi * 1.85))
+        k = self.k
+        y = self.head_y(sp) - self.R * 0.6
+        self.burst(sp.x, y, [art.STRAWBERRY, art.BUBBLEGUM, art.BLUSH], 7, speed=(70 * k, 160 * k), life=(0.8, 1.3),
+                   size=(9 * k, 13 * k), kinds=("heart",), gravity=-60 * k, spread=(math.pi * 1.15, math.pi * 1.85))
 
     def step(self, dt: float) -> None:
         for sp in self.spots:
@@ -355,22 +372,24 @@ class PeekabooFriends(Game):
                 self.next_peek = self.rng.uniform(0.9, 2.2)
         up = [sp for sp in self.spots if sp.visible]
         if up:
-            self.eyes.look_at_point(up[-1].x, BLOCK_TOP, 340)
+            self.eyes.look_at_point(up[-1].x, self.block_top, 340 * self.k)
         else:
             self.eyes.look(math.sin(self.t * 0.9) * 0.6, 0.3)
         self.eyes.update(dt, self.rng)
 
     def spot_at(self, x: float, y: float) -> Spot | None:
-        if y < BLOCK_TOP - 2.2 * R:
+        if y < self.block_top - 2.2 * self.R:
             return None
         best = min(self.spots, key=lambda sp: abs(sp.x - x))
-        return best if abs(best.x - x) <= BLOCK_W / 2 + 26 else None
+        return best if abs(best.x - x) <= self.block_w / 2 + 26 * self.k else None
 
     def on_tap(self, x: float, y: float) -> bool:
         sp = self.spot_at(x, y)
         if sp is None:
             self.eyes.feel("happy", 0.6)
-            self.burst(x, y, [art.WHITE, art.LEMON], 5, speed=(40, 120), life=(0.4, 0.7), size=(6, 9), kinds=("spark",))
+            k = self.k
+            self.burst(x, y, [art.WHITE, art.LEMON], 5, speed=(40 * k, 120 * k), life=(0.4, 0.7), size=(6 * k, 9 * k),
+                       kinds=("spark",))
             self.host.sound("boop", volume=0.6)
             return True
         if sp.visible:
@@ -384,40 +403,45 @@ class PeekabooFriends(Game):
         if idx is None:
             return False
         sp = self.spots[idx]
-        self.on_tap(sp.x, BLOCK_TOP + 40)
+        self.on_tap(sp.x, self.block_top + 40 * self.k)
         return True
 
     # ------------------------------------------------------------ drawing
     def head_y(self, sp: Spot) -> float:
-        hidden_y, up_y = BLOCK_TOP + 1.32 * R, BLOCK_TOP - 0.5 * R
+        hidden_y, up_y = self.block_top + 1.32 * self.R, self.block_top - 0.5 * self.R
         k = art.ease_out_back(sp.pos, 2.2) if sp.state in ("rising", "up") else art.ease_in_out(sp.pos)
-        hop = math.sin(math.pi * (1 - sp.jump / 0.5)) * 34 if sp.jump > 0 else 0.0
+        hop = math.sin(math.pi * (1 - sp.jump / 0.5)) * 34 * self.k if sp.jump > 0 else 0.0
         return art.lerp(hidden_y, up_y, k) - hop
 
     def render(self, surf: pygame.Surface) -> None:
+        k = self.k
         surf.blit(art.background(self.size, seed=11), (0, 0))
-        rug = art.rounded_rect(self.w + 80, 200, 90, (255, 228, 240), border=(255, 196, 222), border_w=4)
-        surf.blit(rug, (-40, FLOOR_Y - 10))
-        for i in range(14):
-            x = 40 + i * 50
-            surf.blit(art.circle(4, (255, 255, 255), 200), (x, FLOOR_Y + 22))
+        rug = art.rounded_rect(self.w + int(80 * k), int(200 * k), int(90 * k), (255, 228, 240), border=(255, 196, 222),
+                               border_w=4)
+        surf.blit(rug, (int(-40 * k), int(self.floor_y - 10 * k)))
+        step = 50 * k
+        dot = art.circle(4 * k, (255, 255, 255), 200)
+        for i in range(int((self.w - 40 * k) // step) + 1):
+            surf.blit(dot, (int(40 * k + i * step), int(self.floor_y + 22 * k)))
         self.eyes.draw(surf)
+        bw, bh, top = self.block_w, self.block_h, self.block_top
+        shadow = art.shadow_ellipse(bw + int(20 * k), int(34 * k), 70)
         for sp in self.spots:
-            surf.blit(art.shadow_ellipse(BLOCK_W + 20, 34, 70), (sp.x - BLOCK_W / 2 - 10, BLOCK_TOP + BLOCK_H - 14))
+            surf.blit(shadow, (sp.x - bw / 2 - 10 * k, top + bh - 14 * k))
             if sp.state != "hidden":
-                spr = animal_sprite(sp.animal)
+                spr = animal_sprite(sp.animal, self.R)
                 wig = math.sin(self.t * 7 + sp.x) * 7 if sp.state == "up" else 0.0
                 if sp.jump > 0:
                     wig = math.sin(self.t * 22) * 10
-                spr = art.rotated(spr, wig, key=("animal", sp.animal), step=2.0)
+                spr = art.rotated(spr, wig, key=("animal", sp.animal, self.R), step=2.0)
                 art.blit_center(surf, spr, (sp.x, self.head_y(sp)))
-            block = block_sprite(sp.color, sp.icon)
-            surf.blit(block, (int(sp.x - BLOCK_W / 2), BLOCK_TOP))
+            block = block_sprite(sp.color, sp.icon, (bw, bh))
+            surf.blit(block, (int(sp.x - bw / 2), int(top)))
             if sp.state != "hidden" and sp.pos > 0.55:
-                paw = paw_sprite(PAW_COLORS[sp.animal])
-                lift = 0 if sp.jump <= 0 else -math.sin(math.pi * (1 - sp.jump / 0.5)) * 16
+                paw = paw_sprite(PAW_COLORS[sp.animal], k)
+                lift = 0 if sp.jump <= 0 else -math.sin(math.pi * (1 - sp.jump / 0.5)) * 16 * k
                 for sx in (-1, 1):
-                    art.blit_center(surf, paw, (sp.x + sx * R * 0.58, BLOCK_TOP + 6 + lift))
+                    art.blit_center(surf, paw, (sp.x + sx * self.R * 0.58, top + 6 * k + lift))
 
     def summary(self) -> str:
         return f"{self.peeks} peekaboo{'s' if self.peeks != 1 else ''}"

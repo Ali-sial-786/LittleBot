@@ -218,12 +218,12 @@ def test_command_goes_to_the_card(svc):
 def test_render_draws_card_and_presenter_scaled_into_the_face(svc, sctx):
     assert svc.render(pygame.Surface((W, H)), None, 0.03) is False  # no card
     svc.show_card(DummyCard({"title": "x"}))
-    win = pygame.Surface((960, 640))
+    k = 1.25  # a window bigger than the 1024x600 canvas (the desktop simulator)
+    win = pygame.Surface((int(W * k), int(H * k)))
     win.fill((0, 0, 0))
-    rect = pygame.Rect(0, 0, 960, 640)
+    rect = win.get_rect()
     assert svc.render(win, rect, 0.5) is True
     assert svc.current.draws == 1
-    k = 960 / W
     assert tuple(win.get_at((int(600 * k), int(400 * k))))[:3] == CARD_RGB
     x, y, w, h = PRESENTER_BOX
     inside = {tuple(win.get_at((int((x + dx) * k), int((y + dy) * k))))[:3]
@@ -476,7 +476,8 @@ def test_a_cards_picture_fills_the_screen_zooms_and_a_tap_brings_the_card_back(s
     svc.command("picture", {"view": "in"})
     assert svc.status()["card"]["picture_zoom"] == 2.25
     svc.render(surf, surf.get_rect(), 0.03)  # zoomed in on the middle: both halves still there
-    assert tuple(surf.get_at((300, 240)))[:3] == (220, 30, 30) and tuple(surf.get_at((420, 240)))[:3] == (30, 30, 220)
+    mid = W // 2  # the picture's red / blue edge stays in the middle
+    assert tuple(surf.get_at((mid - 60, 240)))[:3] == (220, 30, 30) and tuple(surf.get_at((mid + 60, 240)))[:3] == (30, 30, 220)
     assert svc.command("picture", {"view": "sideways"}) is False
     assert svc.handle_tap(600 / W, 400 / H) is True
     assert "picture_zoom" not in svc.status()["card"] and svc.current.taps == []  # the tap only brought it back
@@ -507,3 +508,21 @@ def test_a_closed_card_lets_its_drawings_and_pictures_go(svc, sctx, monkeypatch)
     svc.close("test")
     svc._freeing.join(5)
     assert art.cache_bytes() == 0 and images.cache_bytes() == 0 and svc._canvas is None and given == [1]
+
+
+def test_a_4gb_board_keeps_a_closed_cards_drawings_and_pictures(svc, sctx, monkeypatch):
+    from littlebot.core import memory
+    from littlebot.games import art
+    from littlebot.screens import images
+
+    monkeypatch.setattr(memory, "total_mb", lambda: 3900)
+    surf = pygame.Surface((W, H))
+    svc.show_card(DummyCard({"title": "one"}))
+    art.cached(("test", 2), lambda: pygame.Surface((300, 200)))
+    images._cache_put("a zebra", (pygame.Surface((100, 100)), "", "wikipedia"))
+    svc.render(surf, surf.get_rect(), 0.03)
+    svc.close("test")
+    assert svc._freeing is None and art.cache_bytes() >= 300 * 200 * 4 and images.cache_bytes() > 0
+    assert svc._canvas is None  # the card's own canvas still goes
+    art.clear_caches()
+    images.clear_cache()

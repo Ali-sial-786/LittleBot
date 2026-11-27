@@ -279,6 +279,35 @@ def test_ask_what_littlebot_sees_card_and_privacy_switch(phone):
     expect(row.get_by_role("switch")).not_to_be_checked()  # off by default
 
 
+def test_whos_who_shows_the_live_camera_to_line_people_up(phone):
+    page = phone.open("profile")
+    card = page.locator("section.card", has=page.get_by_role("heading", name="Who's who"))
+    card.scroll_into_view_if_needed()
+    vision = phone.bot.ctx.vision
+    assert vision.status()["live_view"]["viewers"] == 0  # not until asked
+    streams = []
+    page.on("request", lambda r: streams.append(r.url) if "/api/camera/stream" in r.url else None)
+    card.get_by_role("button", name="Show camera").click()
+    expect(card.locator(".cam-fps")).to_have_text(re.compile(r"^\d+\.\d fps$"))
+    expect(card.get_by_role("button", name="Hide camera")).to_be_visible()
+    assert vision.status()["live_view"]["viewers"] == 1 and streams  # the same stream as the Camera page
+    painted = page.evaluate("""() => {
+        const c = document.querySelector('section.card .cam-canvas');
+        const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+        let sum = 0; for (let i = 0; i < d.length; i += 397) sum += d[i];
+        return [c.width, sum]; }""")
+    assert painted[0] > 0 and painted[1] > 0
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")  # no sideways scroll
+    card.get_by_role("button", name="Hide camera").click()
+    expect(card.get_by_role("button", name="Show camera")).to_be_visible()
+    assert _wait(lambda: vision.status()["live_view"]["viewers"] == 0, timeout=2.0)
+    card.get_by_role("button", name="Show camera").click()  # and leaving the page stops it at once
+    expect(card.locator(".cam-fps")).to_have_text(re.compile(r"^\d+\.\d fps$"))
+    page.goto(f"{phone.base}/#/home")
+    expect(page.get_by_role("heading", name="Devices & privacy")).to_be_visible()
+    assert _wait(lambda: vision.status()["live_view"]["viewers"] == 0, timeout=2.0)
+
+
 def test_whos_who_on_the_profile_page_and_its_privacy_switch(phone):
     page = phone.open("profile")
     card = page.locator("section.card", has=page.get_by_role("heading", name="Who's who"))
@@ -358,6 +387,9 @@ def test_camera_live_view_on_a_phone(phone):
     expect(stage.get_by_text("Press “Start live view” to see what LittleBot sees.")).to_be_visible()
     vision = phone.bot.ctx.vision
     assert vision.status()["live_view"]["viewers"] == 0  # nothing until the parent presses Start
+    stream_requests, frame_requests = [], []
+    page.on("request", lambda r: stream_requests.append(r.url) if "/api/camera/stream" in r.url
+            else frame_requests.append(r.url) if "/api/camera/frame" in r.url else None)
     page.get_by_role("button", name="Start live view").click()
     expect(page.locator(".cam-live")).to_be_visible()
     expect(page.locator(".cam-fps")).to_have_text(re.compile(r"^\d+\.\d fps$"))
@@ -367,7 +399,9 @@ def test_camera_live_view_on_a_phone(phone):
         const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
         let sum = 0; for (let i = 0; i < d.length; i += 397) sum += d[i];
         return [c.width, c.height, sum]; }""")
-    assert 0 < painted[0] <= 480 and painted[0] * 3 == painted[1] * 4 and painted[2] > 0  # the mock camera's picture
+    cc = phone.bot.ctx.config.camera  # the mock camera's picture, in the configured shape (16:9 for 1080p)
+    assert 0 < painted[0] <= 480 and painted[0] * cc.capture_height == painted[1] * cc.capture_width and painted[2] > 0
+    assert stream_requests and not frame_requests  # one stream, not one request per frame
     expect(page.get_by_text(re.compile(r"^1 device \(this one\)$"))).to_be_visible()
     with page.expect_download() as download:
         page.get_by_role("button", name="Take snapshot").click()
@@ -505,3 +539,69 @@ def test_ai_page_fast_decisions_panel_saves_the_provider_and_modes(phone):
     expect(switch).not_to_be_checked()
     assert phone.api("GET", "/decide")["log_context"] is False
     phone.api("PUT", "/decide/settings", {"provider": "off", "modes": {"cards": "shadow"}, "log_context": True})
+
+
+@pytest.fixture
+def gallery(robot, tmp_path):
+    """The robot's photos go to a fresh folder for the test (never the checkout's data/gallery)."""
+    from littlebot.capture.gallery import Gallery
+
+    svc = robot[0].ctx.capture
+    saved = svc.gallery
+    svc.gallery = Gallery(tmp_path / "gallery")
+    yield svc.gallery
+    svc.revoke_shares()  # (their tokens point into the test folder)
+    svc.gallery = saved
+
+
+def test_photos_page_takes_a_photo_and_opens_it_full_screen(phone, gallery):
+    page = phone.open("more")
+    page.get_by_role("link", name="Photos Pictures and videos LittleBot took").click()  # on a phone: More -> Photos
+    expect(page.get_by_role("heading", name="Photos", exact=True)).to_be_visible()
+    expect(page.get_by_text("No photos yet.", exact=False)).to_be_visible()
+    page.get_by_role("button", name="Take a photo").click()  # the mock camera's picture
+    thumbs = page.locator(".pg-thumb")
+    expect(thumbs).to_have_count(1, timeout=10000)
+    expect(page.locator(".pg-day").first).to_have_text("Today")
+    expect(page.get_by_text(re.compile(r"^1 photo · \d+(\.\d)? [KM]B$"))).to_be_visible()
+    (item,) = gallery.items()
+    assert item.kind == "photo" and item.source == "dashboard" and gallery.file(item).is_file()
+    thumbs.first.click()
+    viewer = page.get_by_role("dialog", name="Photo")
+    expect(viewer).to_be_visible()
+    expect(viewer.locator("img.pv-media")).to_be_visible()
+    expect(viewer.get_by_role("link", name="Save this photo to this device")).to_have_attribute(
+        "href", f"/api/capture/items/{item.id}/file?download=1")
+    expect(viewer.get_by_role("button", name="Close")).to_be_focused()
+    assert page.evaluate("getComputedStyle(document.documentElement).overflow") == "hidden"  # the page behind stays put
+    page.keyboard.press("Escape")
+    expect(viewer).to_be_hidden()
+    expect(thumbs.first).to_be_focused()  # back where the parent was
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")  # no sideways scroll
+
+
+def test_photos_viewer_goes_to_the_next_one_shares_a_link_and_deletes(desktop, gallery):
+    page = desktop.open("photos")
+    for _ in range(2):
+        assert desktop.api("POST", "/capture/photo")["ok"]
+    thumbs = page.locator(".pg-thumb")
+    expect(thumbs).to_have_count(2, timeout=10000)  # the page's own poll picks them up
+    thumbs.first.click()
+    viewer = page.get_by_role("dialog", name="Photo")
+    expect(viewer.get_by_text("1 of 2", exact=False)).to_be_visible()
+    page.keyboard.press("ArrowRight")
+    expect(viewer.get_by_text("2 of 2", exact=False)).to_be_visible()
+    expect(viewer.get_by_role("button", name="Next (older)")).to_be_disabled()
+    viewer.get_by_role("button", name="Share link").click()
+    expect(viewer.locator("img.pv-qr")).to_have_attribute("src", re.compile(r"^data:image/svg\+xml;base64,"))
+    expect(viewer.get_by_role("textbox", name="Share link")).to_have_value(re.compile(r"/share/[A-Za-z0-9_-]{16,}$"))
+    viewer.get_by_role("button", name="Delete").click()
+    dialog = page.locator("#dialog")
+    expect(dialog.get_by_role("heading", name="Delete this photo?")).to_be_visible()
+    dialog.get_by_role("button", name="Delete").click()
+    expect(thumbs).to_have_count(1)
+    expect(viewer.get_by_text("The photo was deleted.")).to_be_visible()
+    expect(viewer.get_by_text("1 of 1", exact=False)).to_be_visible()  # moved to the one that's left
+    assert len(gallery.items()) == 1
+    viewer.get_by_role("button", name="Close").click()
+    expect(viewer).to_be_hidden()

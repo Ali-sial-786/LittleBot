@@ -96,7 +96,7 @@ async def test_setup_locks_the_page_down_before_it_loads(env: Any) -> None:
     assert "littlebot-strip" in injected[0]["source"] and "(window, 'open'" in injected[1]["source"]
     assert dt.last("Fetch.enable") == {"patterns": service_mod.FETCH_PATTERNS}
     assert dt.last("Page.setInterceptFileChooserDialog") == {"enabled": True}
-    assert dt.last("Emulation.setDeviceMetricsOverride") == {"width": 0, "height": 0, "deviceScaleFactor": 1.4,
+    assert dt.last("Emulation.setDeviceMetricsOverride") == {"width": 0, "height": 0, "deviceScaleFactor": 1.25,
                                                              "mobile": False}
     assert dt.last("Emulation.setUserAgentOverride") is None  # it says what it is (browser.mobile_layout off)
     # everything for the page is in place before the first real page is asked for
@@ -440,11 +440,11 @@ async def test_reload_and_zoom(env: Any) -> None:
     await env.open()
     await env.browser.control("reload")
     assert env.devtools.last("Page.reload") == {"ignoreCache": False}
-    assert (await env.browser.control("zoom", {"level": "in"}))["zoom"] == 1.55
-    assert env.devtools.last("Emulation.setDeviceMetricsOverride")["deviceScaleFactor"] == 1.55
+    assert (await env.browser.control("zoom", {"level": "in"}))["zoom"] == 1.4  # 1.25 on the 7" screen, + 0.15
+    assert env.devtools.last("Emulation.setDeviceMetricsOverride")["deviceScaleFactor"] == 1.4
     assert (await env.browser.control("zoom", {"level": "150%"}))["zoom"] == 1.5
     assert (await env.browser.control("zoom", {"level": 9}))["zoom"] == 2.5
-    assert (await env.browser.control("zoom", {"level": "reset"}))["zoom"] == 1.4
+    assert (await env.browser.control("zoom", {"level": "reset"}))["zoom"] == 1.25
     assert (await env.browser.control("zoom", {"level": "huge"}))["error"] == "bad_action"
     assert (await env.browser.control("fly"))["error"] == "bad_action"
 
@@ -818,7 +818,7 @@ async def test_status(env: Any) -> None:
     env.clock.advance(3)
     st = env.browser.status()
     assert st["active"] and st["showing"] == f"Google results for “{QUERY}”" and st["source"] == "dashboard"
-    assert st["seconds"] == 3 and st["zoom"] == 1.4 and st["closes_in"] == st["idle_seconds"] - 3
+    assert st["seconds"] == 3 and st["zoom"] == 1.25 and st["closes_in"] == st["idle_seconds"] - 3
     env.browser.close("parent")
     st = env.browser.status()
     assert st["active"] is False and st["last"]["reason"] == "parent"

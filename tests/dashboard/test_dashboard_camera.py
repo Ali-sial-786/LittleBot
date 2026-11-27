@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import struct
 import time
 from typing import Any
 
@@ -62,6 +63,7 @@ async def test_camera_refuses_without_login(client, vision):
     for method, path, kw in (
         ("GET", "/api/camera", {}),
         ("GET", "/api/camera/frame", {"params": {"viewer": VIEWER}}),
+        ("GET", "/api/camera/stream", {"params": {"viewer": VIEWER}}),
         ("POST", "/api/camera/stop", {"json": {"viewer": VIEWER}}),
         ("POST", "/api/camera/snapshot", {"json": {"viewer": VIEWER}}),
     ):
@@ -105,6 +107,44 @@ async def test_live_frames_come_from_the_mock_camera(authed, vision, dctx):
     assert d["available"] and d["blocked"] is None and d["simulated"] is True
     assert d["live_view"]["viewers"] == 1 and d["live_view"]["max_fps"] == vs.LIVE_VIEW_MAX_FPS
     assert seen and seen[0].data == {"active": True, "viewers": 1}
+
+
+def stream_frames(data: bytes) -> list[tuple[int, bytes]]:
+    frames = []
+    while data:
+        n, seq = struct.unpack(">II", data[:8])
+        assert len(data) >= 8 + n
+        frames.append((seq, data[8:8 + n]))
+        data = data[8 + n:]
+    return frames
+
+
+async def test_the_stream_sends_frame_after_frame_until_stopped(authed, vision):
+    async def stop_soon():
+        assert await wait_for(lambda: vision._view_seq >= 4)
+        vision.stop_live_view(VIEWER)
+    stopper = asyncio.create_task(stop_soon())
+    r = await asyncio.wait_for(authed.get("/api/camera/stream", params={"viewer": VIEWER}), 10)
+    await stopper
+    assert r.status_code == 200 and r.headers["content-type"] == "application/octet-stream"
+    assert r.headers["cache-control"] == "no-store"
+    frames = stream_frames(r.content)
+    assert len(frames) >= 2 and all(b > a for (a, _), (b, _) in zip(frames, frames[1:]))  # new frames only
+    assert decode(frames[-1][1]).shape[:2] == (480, 640)
+    assert vision.camera.open_count == 1
+
+
+async def test_the_stream_ends_when_the_camera_is_turned_off(authed, vision):
+    async def turn_off_soon():
+        assert await wait_for(lambda: vision._view_seq >= 3)
+        assert (await authed.put("/api/privacy", json={"camera_enabled": False})).status_code == 200
+    task = asyncio.create_task(turn_off_soon())
+    r = await asyncio.wait_for(authed.get("/api/camera/stream", params={"viewer": VIEWER}), 10)
+    await task
+    assert r.status_code == 200 and stream_frames(r.content)  # some frames, then the end
+    assert vision.status()["live_view"]["viewers"] == 0
+    r = await authed.get("/api/camera/stream", params={"viewer": "another-viewer-0002"})
+    assert r.status_code == 403 and r.json()["code"] == "camera_off"
 
 
 async def test_rejects_a_bad_viewer_id(authed, vision):

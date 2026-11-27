@@ -184,7 +184,7 @@ def main(argv: list[str] | None = None) -> int:
                 say("  " + h)
             report["camera"] = {"ok": False, "detail": "no camera found"}
             return finish(2)
-        cam = OpenCVCamera(dev, width, height, fps, fourcc)
+        cam = OpenCVCamera(dev, width, height, fps, fourcc, buffer_size=int(getattr(cam_cfg, "buffers", 3) or 3))
         label = f"{path} requesting {width}x{height} @ {fps:g} fps {fourcc or '(driver default format)'}"
     say("")
     say(f"Opening {label} ...")

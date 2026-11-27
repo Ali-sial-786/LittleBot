@@ -1,4 +1,4 @@
-"""The games menu card: every game in a list; drag to scroll, tap to play; opened by a long press."""
+"""The games menu card: every game in a grid; drag to scroll, tap to play (the 5 s hold opens the settings)."""
 
 from __future__ import annotations
 
@@ -85,14 +85,36 @@ def test_drag_scrolls_flings_and_springs_back():
     assert card.offset == 0.0
 
 
-def test_arrow_keys_move_the_highlight_and_scroll_to_it():
+def test_arrow_keys_move_the_highlight_through_the_grid_and_scroll_to_it():
     card, started = menu()
-    for _ in range(7):
-        assert card.key("down")
-    assert card.selected == 7 and card.row_rect(7).bottom <= H and card.offset > 0
-    assert card.key("up") and card.selected == 6
-    assert card.key("return") and started == ["reaction"]
+    for _ in range(3):
+        assert card.key("down")  # down a row: the same column
+    assert card.selected == 6 and card.tile_rect(6).bottom <= H and card.offset > 0
+    assert card.key("right") and card.selected == 7
+    assert card.key("down") and card.selected == 1 and card.offset == 0  # round to the top of the column
+    assert card.key("left") and card.selected == 0
+    assert card.key("left") and card.selected == 7  # back round to the last game
+    assert card.key("up") and card.selected == 5
+    assert card.key("return") and started == ["tictactoe"]
     assert card.key("q") is False
+
+
+def test_two_big_tiles_a_row_filling_the_width():
+    card, _ = menu()
+    a, b, c = card.tile_rect(0), card.tile_rect(1), card.tile_rect(2)
+    assert a.y == b.y and b.x > a.right and c.x == a.x and c.y > a.bottom  # reading order: left, right, down
+    assert a.h >= 90 and a.w >= 400 and b.right <= W - 20  # big touch targets, clear of the scrollbar
+    assert card.rows == 4 and card.max_offset > 0 and card.grid_top == G.LIST_TOP
+    few = G.GamesMenuCard({"card": "games"}, RecordingHost(), games=GAMES[:4])
+    assert few.max_offset == 0 and few.grid_top > G.LIST_TOP  # no scrolling: centred under the header
+    assert few.tile_rect(3).bottom <= H
+
+
+def test_play_buttons_are_readable_on_every_colour():
+    from littlebot.games import art
+
+    assert G._on(art.LEMON) == art.INK and G._on(art.GRAPE) == art.WHITE
+    assert G.play_button(art.SKY).get_size() == G.play_button(art.SKY, busy=True).get_size()
 
 
 def test_tap_a_game_to_play_it():
@@ -246,15 +268,30 @@ def _wait(cond, seconds=2.0):
     return cond()
 
 
-def test_long_press_on_the_face_opens_the_games_menu(window):
+def test_a_5s_hold_anywhere_opens_the_settings_not_a_1s_one(window):
     loop, ctx = window
     r = loop.face_rect
     loop.handle_click(r.center, 1, 0)  # a plain press: the usual reaction, and the hold starts
-    assert loop._press is not None
-    assert loop.check_long_press(time.monotonic()) is False  # not held long enough
-    assert loop.check_long_press(time.monotonic() + D.LONG_PRESS_SECONDS + 0.05) is True
+    assert loop._hold is not None
+    assert loop.check_long_press(time.monotonic() + 1.2) is False  # a second is no longer the games menu
+    assert not ctx.screens.active
+    now = time.monotonic()
+    assert loop.hold_progress(now + 0.5) is None and 0.4 < loop.hold_progress(now + 3.0) < 0.6  # the ring fills
+    assert loop.check_long_press(time.monotonic() + D.SETTINGS_HOLD_SECONDS + 0.05) is True
     assert _wait(lambda: ctx.screens.active)
-    assert ctx.screens.current.kind == "games" and ctx.screens.status()["source"] == "touch"
+    assert ctx.screens.current.kind == "settings" and ctx.screens.status()["source"] == "touch"
+    assert loop._hold is None  # used up
+
+
+def test_a_5s_hold_over_a_card_opens_the_settings_too(window):
+    loop, ctx = window
+    ctx.screens.show_card(G.GamesMenuCard({"card": "games"}), source="touch")
+    assert _wait(lambda: ctx.screens.active)
+    r = loop.face_rect
+    loop.handle_click((r.x + r.w // 2, r.y + r.h // 2), 1, 0)  # on the card: the card gets the press...
+    assert loop._hold is not None  # ...and the hold is timed all the same
+    assert loop.check_long_press(time.monotonic() + D.SETTINGS_HOLD_SECONDS + 0.05) is True
+    assert _wait(lambda: ctx.screens.current is not None and ctx.screens.current.kind == "settings")
 
 
 def test_a_tap_or_a_wandering_finger_is_not_a_long_press(window):
@@ -268,8 +305,8 @@ def test_a_tap_or_a_wandering_finger_is_not_a_long_press(window):
     loop.handle_click(r.center, 1, 0)
     pg.event.post(pg.event.Event(pg.MOUSEMOTION, pos=(r.centerx + r.w // 4, r.centery), rel=(0, 0), buttons=(1, 0, 0)))
     loop._handle_events()
-    assert loop._press is None  # moved away: a swipe, not a hold
-    assert loop.check_long_press(time.monotonic() + 5) is False and not ctx.screens.active
+    assert loop._press is None and loop._hold is None  # moved away: a swipe, not a hold
+    assert loop.check_long_press(time.monotonic() + 9) is False and not ctx.screens.active
 
 
 def test_drag_events_scroll_the_menu_in_the_window(window):

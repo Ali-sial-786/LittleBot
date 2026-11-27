@@ -108,6 +108,15 @@ person who stays and keeps still lets it doze again. Waking is gentle: the lids 
 a small stretch and yawn, a soft double blink. Off with `face.doze_enabled` (dashboard: Face page,
 "Dozing and sleep", which also sets `system.sleep_after_idle_minutes`, the real sleep).
 
+Screen off (the same timer, `DozeTimer.update_screen`): after `face.screen_off_after_seconds` (180;
+0 = never, else at least 30) with nothing happening, in IDLE and in SLEEPING (going to sleep is
+not "something happening", and the SLEEPING state doesn't keep the screen on), `face.screen_off`
+turns True, `face.screen` `{on, reason}` is published and the display loop switches the robot
+screen's signal off with `wlopm` (fullscreen on the robot only; not the desktop simulator), draws
+nothing and runs at 4 fps for events. The awake reasons above light it again; a touch on the dark
+screen only lights it (`FaceController.activity`). The screen is switched on when the window opens
+and closes. About 0.4 W saved; see [POWER.md](../POWER.md) section 8.4.
+
 One-shot animations: bounce (squash, hop, stretch, land; "wheee" mouth), wiggle, nod, shake,
 spin_eyes (dizzy roll; a little "ooh"), sparkle, hearts, zzz, confetti, peek (duck down with
 eyes shut, rise with a bounce and pop open wide with an open-mouthed "boo!"). The mouth moves
@@ -164,8 +173,14 @@ cached by the quantised shape.
 * Runs on the main thread until the window is closed / Q / Esc (calls
   `robot.request_shutdown`) or `robot.shutdown_event` is set; then returns (`main.py`
   calls `robot.shutdown()`). Only `pygame.display` is quit, never the mixer.
-* Renders natively at `display.width x display.height` (480x320) and scales smoothly to
-  `display.scale` (windowed) or to the screen (fullscreen, aspect preserved, black borders).
+* `display.width x display.height` is the screen: the 7" panel's 1024x600. The face's design space is
+  `frame.face_size(width, height)`: 320 units tall and as wide as the screen's shape (546x320 here;
+  480x320 on a 3:2 screen), centred, with screen-wide extras (confetti, rising hearts, corner sparkles)
+  spread across the width and face-anchored ones (zzz, "?", the thought cloud) moved with its centre.
+  The renderer draws it straight at the screen's size (`FaceRenderer(scale=1.875)`): every super-sampled
+  eye, mouth and sprite is shrunk to its size on the screen, never stretched afterwards, so the edges are
+  sharp on the 7" glass. A desktop window of another size (`display.scale`) gets one smooth scale at the
+  end. Cards and games draw at the screen's own 1024x600 too.
 * Frame rate: `display.fps` while anything animates, `display.idle_fps` when calm, 10 fps
   while dozing, 5 fps while hidden (`controller.target_fps()`); pygame's `Clock.tick` sleeps in between.
 * If the display cannot open (no X/Wayland/KMS, bad `SDL_VIDEODRIVER`) or frames keep
@@ -176,23 +191,36 @@ cached by the quantised shape.
 * Touch: when not in simulator mode (the robot's own screen), tapping the face makes
   LittleBot look at the finger, smile, bounce and giggle (`audio.play_sound("giggle")`),
   with a 1.5 s cooldown. Disable with `TAP_REACTION_ENABLED = False` in `face/display.py`.
+* A finger held still for `SETTINGS_HOLD_SECONDS` (5 s) anywhere (the face, a card or a game) opens LittleBot's
+  settings panel (`littlebot/screens/cards/settings.py`; a running game stops for it). From
+  `HOLD_RING_FROM` (1 s) a ring fills around the finger with "Settings" above it, so a grown-up knows it is
+  coming; a finger that wanders more than `LONG_PRESS_SLOP` starts again. (The 1 s hold that opened the games
+  menu is gone: the games are in the settings panel.)
+* Dark mode (setting `display.theme`: "dark mode" / "light mode" by voice, the settings panel, or the dashboard's
+  Face page): the face's background is `face.dark_background_color` (night blue, so the renderer's glowing-eye
+  look), and the display loop sets `art.set_dark` once a frame so the cards, games and level bars draw dark
+  (littlebot/games/art.py: pale surfaces turn dark with their hue, dark ink turns light, candy colours stay).
+* The picture's orientation (setting `display.flipped`): at start, fullscreen, the display loop sets the
+  output's transform with `wlr-randr` (`normal`, or `180` when flipped), so a turn left in the desktop's own
+  settings doesn't keep the screen upside down; a change applies at once.
 * Edge swipes (MX Player style, `face/edge_controls.py`), on the idle face only (not over a game,
   an info card, the setup banner, a hidden face or a video holding the screen lease): press in the
-  outer 14 % of the width and slide up / down (past a 12 px slop, mostly vertical). The right edge
+  outer 10 % of the width (about 15 mm on the 7" glass) and slide up / down (past a 14 px slop on the
+  1024x600 canvas, about 2 mm, mostly vertical). The right edge
   sets the speaker volume (`audio.set_volume`, 0..`audio.speaker.max_volume`, applied ~10 times a
   second off the display thread, with a soft `blip` at most every 0.25 s while the speaker is free),
-  the left edge the brightness (setting `display.brightness`, 0.15..1). A sweep of 70 % of the
-  height covers the whole range, relative to where the finger started. A rounded bar with the
+  the left edge the brightness (setting `display.brightness`, 0.15..1). A sweep of 60 % of the
+  height (about 5 cm) covers the whole range, relative to where the finger started. A rounded bar with the
   icon and percentage shows while sliding and 3 s after, then fades; it also shows when the volume
   changes elsewhere (dashboard, voice). A press at the edge that doesn't slide is the usual tap
-  (its giggle waits for the release, or 0.3 s of a resting finger) or long press. Brightness uses
+  (its giggle waits for the release, or 0.3 s of a resting finger) or a 5 s hold. Brightness uses
   a real backlight (`/sys/class/backlight/*`, only if writable without root, only fullscreen
   without the sim panel) and otherwise dims in software: one cached black veil over the face,
   re-made only when the level changes. Each swipe logs one INFO line (`touch: volume 45% -> 70%`).
 * Camera sign: while a parent watches the camera live on the dashboard (`vision.live_view`
   with `active: true`; read from `vision.status()` when the window opens), a small rounded
-  camera with a dot sits in the face's top-right corner (30x22 px at 480x320, scaled with the
-  window), over the face, a game or the video veil, so watching is never hidden. It uses the
+  camera with a dot sits in the face's top-right corner (45 px wide on the 600 px tall screen,
+  `OVERLAY_REF_H`, scaled with the window), over the face, a game or the video veil, so watching is never hidden. It uses the
   face's palette: plum ink at ~60 % with a raspberry dot on the pastel screen, the eye colour on a
   dark one. Drawn 4x and smooth-scaled once per size (cached), so it costs one blit a frame;
   still, never animated, so it doesn't pull a child's attention.
@@ -286,8 +314,8 @@ simulator window (`window.png`, `window_help.png`, `window_debug.png`).
 
 ## Performance (Xeon 2.8 GHz container, Python 3.13, pygame-ce 2.5.8)
 
-`scripts/benchmark_face.py --frames 150` (headless, 480x320, update + render per frame),
-measured 2026-10-23 with the cartoon eyes:
+`scripts/benchmark_face.py --frames 150` (headless, update + render per frame; then 480x320 with
+no scaling), measured 2026-10-23 with the cartoon eyes:
 
 | Scenario | mean ms | p95 ms | cpu @ 30 fps |
 |---|---|---|---|
@@ -310,8 +338,11 @@ worst scenario (expression changed every 0.4 s) 4.2-4.5 ms vs 3.5-3.6 ms. The li
 looks cost the same; the resting mouth is one cached blit, a mouth cache miss costs
 0.13-0.38 ms, and lip-synced talking renders at ~1.2 ms/frame.
 
-`--scale 2` (desktop window 960x640) adds ~2 ms/frame of smooth-scaling (desktop only;
-the Pi runs at scale 1 / fullscreen 480x320).
+The 7" screen (2026-11-09, same container): `benchmark_face.py` draws the way the robot does, straight
+at 1024x600 (scale 1.875, sharp): overall mean **2.1 ms/frame**, calm face 1.6 ms, worst scenario 4.0 ms
+(expression changed every 0.4 s: bigger shapes to make on a cache miss), sleeping 0.8 ms, hidden 0.6 ms.
+The first version, drawn at 546x320 and stretched to the screen, was 1.8 ms mean but soft. Expect 2-3x
+that on the Pi 5: roughly 4-6 ms, 13-19 % of one core at 30 fps while animating (less at the idle rate).
 
 Real-time run of the display loop (dummy video driver, scale 1, no panel, 6 s; measured
 2026-10-20, before the cartoon eyes):
@@ -322,7 +353,7 @@ animating (the PERFORMANCE.md budget); measure on the Pi with the benchmark scri
 
 ## Known limitations
 
-* Hardware unverified: the 480x320 HDMI panel, KMS/Wayland fullscreen and touch input are
+* Hardware unverified: the 7" 1024x600 HDMI panel, KMS/Wayland fullscreen and its USB touch are
   untested on the real Pi (see DISPLAY_SETUP.md). With `SDL_VIDEODRIVER=kmsdrm` pygame owns
   the screen, so the Chromium video player cannot appear on top.
 * The hidden state only draws a calm screen; it does not iconify the window. The media

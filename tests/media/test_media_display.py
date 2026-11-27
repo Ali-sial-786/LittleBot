@@ -190,7 +190,7 @@ def test_select_backend():
     assert isinstance(select_backend(auto, is_pi=False), DesktopBrowserBackend)
     kiosk = select_backend(auto, is_pi=True, which=which_chromium)
     assert isinstance(kiosk, BrowserKioskBackend) and kiosk.browser == "/usr/bin/chromium-browser"
-    assert kiosk.width == 480 and kiosk.height == 320
+    assert kiosk.width == 1024 and kiosk.height == 600  # the 7" screen (display.width x height)
     assert str(kiosk.user_data_dir).endswith(os.path.join("data", "media", "chromium-profile"))
     assert isinstance(select_backend(auto, is_pi=True, which={}.get), NoneBackend)
     # headless runs auto -> none (test config is headless)

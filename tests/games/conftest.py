@@ -39,4 +39,6 @@ def svc(ctx, clock):
 def surface():
     import pygame
 
-    return pygame.Surface((720, 480))
+    from littlebot.games import art
+
+    return pygame.Surface((art.W, art.H))  # the robot's 7" screen, 1024x600

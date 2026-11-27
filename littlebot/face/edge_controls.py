@@ -27,12 +27,12 @@ from typing import Any, NamedTuple
 
 log = logging.getLogger("littlebot.face.edge_controls")
 
-# Tuned for the MPI3508 3.5" screen shown at 720x480: a fingertip is ~60 px there.
-EDGE_ZONE = 0.14  # of the face width, on each side (~100 px)
-CANVAS = (720, 480)  # px the slop is measured in (normalised moves are scaled to this)
-SLOP_PX = 12.0  # a finger must move this far before it is a slide (else: a tap or a hold)
+# Tuned for the 7" 1024x600 screen (154 x 86 mm of glass, ~0.15 mm a pixel): a fingertip is ~65 px there.
+EDGE_ZONE = 0.10  # of the face width, on each side (~100 px, 15 mm: about one and a half fingertips)
+CANVAS = (1024, 600)  # px the slop is measured in (normalised moves are scaled to this)
+SLOP_PX = 14.0  # a finger must move this far (~2 mm) before it is a slide (else: a tap or a hold)
 VERTICAL = 1.3  # |dy| >= VERTICAL * |dx|: mostly vertical (within ~37 degrees of straight up/down)
-SWEEP = 0.70  # of the face height: one sweep covers a level's whole range
+SWEEP = 0.60  # of the face height (~52 mm): one sweep covers a level's whole range
 APPLY_INTERVAL = 0.1  # apply a sliding level at most ~10 times a second
 FEEDBACK_INTERVAL = 0.25  # the volume blip at most every 0.25 s
 STILL_SECONDS = 0.3  # a finger resting this long in an edge zone is a tap / hold: its usual reaction plays
@@ -411,8 +411,8 @@ class Brightness:
 
 
 # ====================================================================== the bar
-BAR_X = 0.2  # bar centre, as a fraction of the width from its edge: just inside the zone, beside the finger
-BAR_W, BAR_H = 96, 340  # px on the 720x480 canvas (~0.4 x 1.4 inch on the 3.5" screen)
+BAR_X = 0.17  # bar centre, as a fraction of the width from its edge: just inside the zone, beside the finger
+BAR_W, BAR_H = 96, 340  # px on the 1024x600 canvas (~14 x 51 mm on the 7" screen)
 TRACK_W, TRACK_TOP, TRACK_H = 30, 72, 190
 ICON = 60
 _COLOURS = {"volume": ((78, 192, 240), (150, 224, 255)),  # SKY, light

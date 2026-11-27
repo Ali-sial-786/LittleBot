@@ -33,6 +33,8 @@ from littlebot.core.events import Event, Subscription, Topics
 from littlebot.core.service import Service, ServiceStatus
 from littlebot.core.state import RobotState
 from littlebot.power.battery import BatteryGauge, TimeLeft
+from littlebot.power import ups_hat
+from littlebot.power.last_seen import LastSeen
 from littlebot.power.monitor import SerialMonitor, SimulatedMonitor
 from littlebot.power.policy import PowerPolicy, Snapshot, Thresholds
 from littlebot.power.protocol import Reading
@@ -112,6 +114,7 @@ class PowerService(Service):
         self.shutdown_reason: str | None = None
         self._published: tuple[Any, ...] | None = None
         self._published_at = -math.inf
+        self.last_seen = LastSeen.for_context(ctx)  # tells a power cut from a clean stop (last_seen.py)
         self._register_settings()
 
     # ------------------------------------------------------------------ setup
@@ -121,6 +124,9 @@ class PowerService(Service):
             return None
         if cfg.monitor == "simulated":
             return SimulatedMonitor(percent=cfg.simulated_percent, drain_per_hour=cfg.simulated_drain_per_hour)
+        if cfg.monitor == "ups_hat_e" or (cfg.monitor == "auto" and ups_hat.probe(cfg.i2c_bus, cfg.i2c_address)):
+            return ups_hat.UpsHatMonitor(bus=cfg.i2c_bus, address=cfg.i2c_address, stale_s=cfg.stale_seconds,
+                                         scan_s=cfg.scan_seconds)
         return SerialMonitor(port=cfg.port, globs=list(cfg.port_globs), match_any=cfg.probe_any_port,
                              scan_s=cfg.scan_seconds, probe_s=cfg.probe_seconds, stale_s=cfg.stale_seconds)
 
@@ -159,13 +165,14 @@ class PowerService(Service):
             bus.subscribe(Topics.FACE_DOZE, self._on_doze),
             bus.subscribe(Topics.STATE_CHANGED, self._on_state),
         ]
+        await asyncio.to_thread(self.last_seen.check)
+        self._task = self._loop.create_task(self._tick_loop(), name="power")  # (the last sign of life even then)
         if self.source is None:
             self.set_status(ServiceStatus.DISABLED, "no battery (power.monitor: none)")
             return
         self.source.start(self._on_reading, self._on_source_status)
-        self._task = self._loop.create_task(self._tick_loop(), name="power")
-        self.set_status(ServiceStatus.RUNNING, "looking for the battery monitor" if self.source.kind == "serial"
-                        else "simulated battery")
+        self.set_status(ServiceStatus.RUNNING, "simulated battery" if self.source.kind == "simulated"
+                        else "looking for the battery monitor")
 
     async def stop(self) -> None:
         for s in self._subs:
@@ -179,6 +186,7 @@ class PowerService(Service):
         if pending:
             await asyncio.gather(*pending, return_exceptions=True)
         self._task = None
+        await asyncio.to_thread(self.last_seen.clean)
         self.set_status(ServiceStatus.STOPPED)
 
     # ------------------------------------------------------------------ source callbacks (any thread)
@@ -209,6 +217,7 @@ class PowerService(Service):
         if self.fitted:
             self._try_announce_low()
             self._maybe_publish(self._now())
+        self.last_seen.note(self.latest, self.percent)
         return n
 
     # ------------------------------------------------------------------ state
@@ -219,7 +228,7 @@ class PowerService(Service):
         if connected:
             first = not self.fitted
             self.fitted, self.port = True, port
-            if self.source is not None and getattr(self.source, "kind", "") == "serial":
+            if self.source is not None and getattr(self.source, "kind", "") != "simulated":
                 self.set_status(ServiceStatus.RUNNING, "battery monitor connected")
             if first:
                 log.info("battery monitor found: running on the battery")
@@ -545,7 +554,7 @@ class PowerService(Service):
                 flags.append("voltage_unknown")
             if r.temperature_c is None:
                 flags.append("temperature_unknown")
-            if len(r.cells) == 2 and abs(r.cells[0] - r.cells[1]) > IMBALANCE_V:
+            if len(r.cells) >= 2 and max(r.cells) - min(r.cells) > IMBALANCE_V:
                 flags.append("cell_imbalance")
         if self._shutdown is not None and not self._shutdown.done():
             flags.append("shutting_down")

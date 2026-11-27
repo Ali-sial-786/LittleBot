@@ -1,7 +1,7 @@
 # Raspberry Pi setup
 
 How to go from an empty microSD card to LittleBot running on the Raspberry Pi 5 (4 GB)
-with its 3.5" HDMI screen, USB camera, USB microphone and USB speaker.
+with its 7" HDMI touch screen (1024x600), USB camera, USB microphone and USB speaker.
 
 > **Status: written before the hardware arrived.** Commands are standard Raspberry Pi
 > OS procedure, but every LittleBot-specific step is **UNVERIFIED on the real robot**
@@ -18,12 +18,12 @@ format reference `config/calibration.example.yaml`).
 
 ## 0. What you need
 
-- Raspberry Pi 5 (4 GB) with the official active cooler fitted.
+- Raspberry Pi 5 (4 GB; a 2 GB one also works, keeping less loaded) with the official active cooler fitted.
 - Patriot 64 GB A1/V30 microSD card and a card reader for your computer.
 - **For bring-up: the official Raspberry Pi 27 W USB-C power supply** (5.1 V / 5 A).
   Test the power bank only later, following [POWER.md](POWER.md).
-- Micro-HDMI to HDMI cable and the MPI3508 screen. A normal HDMI monitor/TV is handy
-  for the very first boot.
+- Micro-HDMI to HDMI cable and the GeeekPi 7" screen (with its USB cable for touch and power). A normal
+  HDMI monitor/TV is handy for the very first boot.
 - USB keyboard + mouse for the first boot (or set up SSH in Imager and skip them).
 - Your home Wi-Fi name and password.
 
@@ -48,7 +48,7 @@ format reference `config/calibration.example.yaml`).
 1. Insert the card, connect the screen (micro-HDMI port **HDMI0, next to the USB-C
    power socket**), keyboard/mouse, and *finally* the official power supply.
 2. The first boot resizes the file system and reboots once; give it 2-3 minutes.
-3. If the small screen shows nothing or a garbled picture, use a normal monitor for now
+3. If the 7" screen shows nothing or a garbled picture, use a normal monitor for now
    and come back to [DISPLAY_SETUP.md](DISPLAY_SETUP.md) later. Everything below also
    works over SSH: `ssh pi@littlebot.local`.
 4. Quick health check (before installing anything):
@@ -121,7 +121,7 @@ Options: `--with-service` (autostart, section 10), `--headless-service`, `--enab
 `--echo-cancel` (section [Echo cancelling](#echo-cancelling)), `--yes`. See `scripts/install_pi.sh --help`.
 
 The wake word keeps the USB microphone open while it is switched on (**AI** → **Live voice**), and
-hands it over to push to talk, the microphone test and live voice. On the Pi it costs about
+hands it over to push to talk, the microphone test and live voice. It costs about
 140 MB of RAM and roughly a tenth of one CPU core; turn the switch off if you don't use it.
 
 ### Why a plain venv with pip wheels (and when to use `--system-opencv`)

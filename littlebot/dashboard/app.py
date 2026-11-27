@@ -4,13 +4,16 @@ Security layers applied here (details in docs/modules/dashboard.md):
 
 * an outermost ASGI guard (:class:`RequestGuard`) that runs before routing and
   before any body byte is read: ``Host`` allowlist (400, DNS-rebinding defence),
-  request-body caps (413: 64 KB, 16 KB under ``/player``; ``Content-Length`` is
+  request-body caps (413: 64 KB, 16 KB under ``/player``, 50 MB for a wake word recording's upload;
+  ``Content-Length`` is
   checked up front and chunked bodies are cut off while streaming) and the
   client address for the auth failure accounting;
 * an HTTP middleware that, for every ``/api/*`` request except the public
   allowlist, resolves the session cookie (401 if missing / expired) and, for
   state-changing methods, checks the ``X-CSRF-Token`` header and the
-  Origin / Referer host (403 on mismatch);
+  Origin / Referer host (403 on mismatch); ``/hooks/doorbell/{secret}`` is outside ``/api`` on purpose (a phone
+  can't log in: the secret is its password; littlebot/dashboard/routes/doorbell_routes.py), the guard above still
+  applies; so is ``/share/{token}`` (one photo or video for a phone, littlebot/dashboard/routes/capture_routes.py);
 * security headers on every response (CSP, X-Frame-Options, nosniff ...);
 * exception mapping: PermissionError -> 403, KeyError -> 404, ValueError -> 422,
   with sanitised validation errors (request values are never echoed back).
@@ -33,6 +36,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from littlebot.core.context import RobotContext
 from littlebot.dashboard.auth import CSRF_HEADER, SESSION_COOKIE, AuthManager, current_client
 from littlebot.dashboard.deps import DashState
+from littlebot.dashboard.routes.wake_clip_routes import MAX_UPLOAD_BYTES, UPLOAD_PATH
 
 log = logging.getLogger("littlebot.dashboard")
 
@@ -82,11 +86,14 @@ SETUP_CODE_PATHS = frozenset({"/api/session", "/api/setup"})
 # /player uses the media module's own, smaller cap (littlebot.media.player_routes.MAX_BODY_BYTES).
 MAX_BODY_BYTES = 64 * 1024
 DEFAULT_PLAYER_MAX_BODY_BYTES = 16 * 1024
+# The one exception: UPLOAD_PATH, a recording of the family saying the wake phrase (MAX_UPLOAD_BYTES;
+# littlebot/dashboard/routes/wake_clip_routes.py)
 UNKNOWN_HOST_MESSAGE = ("Unknown host name. Open the dashboard at the address LittleBot shows in its "
                         "console (or add this name to dashboard.allowed_hosts).\n")
 SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
-# Paths served by other modules' routers that set their own security headers.
-EXTERNAL_PREFIXES = ("/player",)
+# Paths served by other modules' routers that set their own security headers (/share: a photo or video for a
+# phone, littlebot/dashboard/routes/capture_routes.py).
+EXTERNAL_PREFIXES = ("/player", "/share/")
 
 CONTENT_SECURITY_POLICY = "; ".join([
     "default-src 'self'",
@@ -95,7 +102,7 @@ CONTENT_SECURITY_POLICY = "; ".join([
     "img-src 'self' data: https://i.ytimg.com",  # YouTube thumbnails for approved videos
     "connect-src 'self'",
     "font-src 'self'",
-    "media-src 'none'",
+    "media-src 'self'",  # the Photos page plays LittleBot's own videos
     "object-src 'none'",
     "frame-src 'none'",
     "frame-ancestors 'none'",
@@ -275,6 +282,8 @@ class RequestGuard:
             await _unknown_host(path)(scope, receive, send)
             return
         limit = self.player_max_body if path == "/player" or path.startswith("/player/") else self.max_body
+        if path == UPLOAD_PATH:  # a wake word recording (only there, and only once logged in: the app checks that)
+            limit = MAX_UPLOAD_BYTES
         if length is not None:
             try:
                 declared = int(length)

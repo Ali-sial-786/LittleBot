@@ -1,5 +1,7 @@
 """Small drawing helpers shared by the weather, clock, timer and maths cards (the games' candy look).
 
+Laid out for the 1024x600 canvas: the title right of the presenter's eyes, the content in :data:`PANEL`.
+
 Everything here draws through littlebot/games/art.py, so it is cached the same way: a card's frame is
 mostly blits of sprites made once.
 """
@@ -13,11 +15,12 @@ from typing import Any
 import pygame
 
 from littlebot.games import art
-from littlebot.screens.base import BODY_PX, PRESENTER_BOX, TITLE_PX, W
+from littlebot.screens.base import BODY_PX, PRESENTER_BOX, TITLE_PX, H, W
 
-HEADER_X = PRESENTER_BOX[0] + PRESENTER_BOX[2] + 16  # the title starts right of the presenter's eyes
+HEADER_X = PRESENTER_BOX[0] + PRESENTER_BOX[2] + 20  # the title starts right of the presenter's eyes
 HEADER_Y = PRESENTER_BOX[1] + PRESENTER_BOX[3] // 2 + 4
-PANEL = pygame.Rect(16, 108, W - 32, 360)  # the card's content box under the title
+_TOP = PRESENTER_BOX[1] + PRESENTER_BOX[3] + 14
+PANEL = pygame.Rect(16, _TOP, W - 32, H - _TOP - 14)  # the card's content box under the title (992 x 454)
 PANEL_FILL: art.Color = (255, 248, 251)
 PANEL_EDGE: art.Color = (246, 196, 220)
 
@@ -64,7 +67,7 @@ def panel(surf: pygame.Surface, rect: pygame.Rect = PANEL, *, dy: float = 0.0, f
 def chip(s: str, size: int = BODY_PX, fg: Sequence[int] = art.INK, bg: Sequence[int] = art.WHITE,
          border: Sequence[int] | None = None) -> pygame.Surface:
     """A rounded label ("High 13°")."""
-    return art.pill(s, size, fg, bg, pad=(16, 7), border=border)
+    return art.pill(s, size, fg, bg, pad=(18, 8), border=border)
 
 
 def degrees(value: Any, size: int, color: Sequence[int] = art.INK) -> pygame.Surface:
@@ -73,13 +76,13 @@ def degrees(value: Any, size: int, color: Sequence[int] = art.INK) -> pygame.Sur
     key = ("deg", s, int(size), tuple(color))
 
     def make() -> pygame.Surface:
-        num = art.font(size).render(s, True, color)
+        num = art.font(size).render(s, True, art.ink(color))
         r = max(3, round(size * 0.1))
         lw = max(2, round(size * 0.036))
         gap = max(1, round(size * 0.035))
         out = pygame.Surface((num.get_width() + gap + 2 * r + 1, num.get_height()), pygame.SRCALPHA)
         out.blit(num, (0, 0))
-        out.blit(art.ring(r, lw, color), (num.get_width() + gap, round(size * 0.07)))
+        out.blit(art.ring(r, lw, art.ink(color)), (num.get_width() + gap, round(size * 0.07)))
         return out
 
     return art.cached(key, make)
@@ -91,7 +94,7 @@ def blit_mid(surf: pygame.Surface, img: pygame.Surface, center: tuple[float, flo
     return r
 
 
-def slide_in(t: float, seconds: float = 0.35, distance: float = 26.0) -> float:
+def slide_in(t: float, seconds: float = 0.35, distance: float = 32.0) -> float:
     """How far below its place a card's content still is ``t`` seconds after it appeared."""
     return (1.0 - art.ease_out_cubic(t / seconds)) * distance if t < seconds else 0.0
 

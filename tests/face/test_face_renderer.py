@@ -335,3 +335,34 @@ def test_mouth_is_dark_ink_on_the_pink_screen(renderer, expression):
     darkest = min(surf.get_at((x, y)).r + surf.get_at((x, y)).g + surf.get_at((x, y)).b
                   for x in range(box.left, box.right) for y in range(box.top, box.bottom))
     assert darkest < 250, expression
+
+
+def test_drawn_sharp_at_the_screens_size():
+    """On the 7" screen the face is drawn at 1024x600 (scale 1.875), not drawn at 546x320 and stretched: the same
+    picture, but an eye's outline is a hard edge, not a smear."""
+    from littlebot.core.config import FaceConfig
+    from littlebot.face.animator import FaceAnimator
+    from littlebot.face.renderer import FaceRenderer
+
+    anim = FaceAnimator(FaceConfig(idle_gaze=False), seed=1, width=546, height=320)
+    anim.next_blink = 1e9
+    frame = anim.frame()
+    sharp = FaceRenderer((546, 320), scale=1.875)
+    assert sharp.out_size == (1024, 600)
+    out = pygame.Surface((1024, 600))
+    sharp.render(frame, out)
+    stretched = pygame.Surface((1024, 600))
+    FaceRenderer((546, 320)).render(frame, stretched, stretched.get_rect())
+    eye = frame.eyes[0]
+    cx, cy = int(eye.cx * 1.875), int(eye.cy * 1.875)
+
+    def steepest(surf):  # the biggest brightness jump along a row through the eye's outer edge
+        y = cy
+        vals = [sum(surf.get_at((x, y))[:3]) for x in range(cx - int(eye.w * 1.875 * 0.75), cx)]
+        return max(abs(b - a) for a, b in zip(vals, vals[1:]))
+
+    assert steepest(out) > steepest(stretched)  # crisper edge
+    # where the eye is drawn agrees between the two (within a pixel or two of the stretched one)
+    dark = [x for x in range(0, 1024) if sum(out.get_at((x, cy))[:3]) < 120]
+    dark_s = [x for x in range(0, 1024) if sum(stretched.get_at((x, cy))[:3]) < 120]
+    assert dark and dark_s and abs(dark[0] - dark_s[0]) <= 3 and abs(dark[-1] - dark_s[-1]) <= 3

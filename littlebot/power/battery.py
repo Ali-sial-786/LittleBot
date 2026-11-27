@@ -116,6 +116,8 @@ class BatteryGauge:
             return self.percent
         if self.charged:
             target = 100.0
+        elif reading.percent is not None:  # the UPS board's own gauge counts the charge: trust it over volts
+            target = max(0.0, min(100.0, float(reading.percent)))
         elif self.charging:
             target = percent_for_cell(weakest - CHARGE_RISE_PER_CELL)
         else:

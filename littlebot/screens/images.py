@@ -10,7 +10,7 @@ Where a picture of ``query`` comes from, in order (the first that gives a usable
                    there is no such article (or it is a disambiguation page) the title comes from
                    GET https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=<query>
     2. Commons     GET https://commons.wikimedia.org/w/api.php?action=query&generator=search
-                   &gsrsearch=<query> filetype:bitmap&gsrnamespace=6&prop=imageinfo&iiurlwidth=400
+                   &gsrsearch=<query> filetype:bitmap&gsrnamespace=6&prop=imageinfo&iiurlwidth=500
     3. Openverse   GET https://api.openverse.org/v1/images/?q=<query>&mature=false (no key) -> ``thumbnail``
 
 ``fetch(ctx, url="https://...")`` loads that one image instead (credit: its site's name).
@@ -48,8 +48,8 @@ COMMONS_URL = "https://commons.wikimedia.org/w/api.php"
 OPENVERSE_URL = "https://api.openverse.org/v1/images/"
 
 MAX_BYTES = 2_000_000  # per image download
-MAX_SIZE = (360, 300)  # decoded pictures are scaled down to fit this (cards scale them into their box)
-CACHE_ITEMS = 16  # decoded pictures kept in memory (at most ~430 KB each)
+MAX_SIZE = (560, 440)  # decoded pictures are scaled down to fit this (a card's picture column on the 7" screen)
+CACHE_ITEMS = 16  # decoded pictures kept in memory (at most ~1 MB each)
 MAX_IN_FLIGHT = 3  # fetches at once; more are refused (the card shows no picture)
 TIMEOUT = httpx.Timeout(4.0, connect=2.5)
 SLOW_TIMEOUT = httpx.Timeout(7.0, connect=2.5)  # Openverse's search often takes 3-6 s
@@ -351,7 +351,7 @@ def _wikipedia(client: httpx.Client, query: str) -> Iterator[tuple[str, str]]:
 def _commons(client: httpx.Client, query: str) -> Iterator[tuple[str, str]]:
     found = _get_json(client, COMMONS_URL, {
         "action": "query", "generator": "search", "gsrsearch": f"{query} filetype:bitmap", "gsrnamespace": 6,
-        "gsrlimit": 6, "prop": "imageinfo", "iiprop": "url|mime|size", "iiurlwidth": 400, "format": "json",
+        "gsrlimit": 6, "prop": "imageinfo", "iiprop": "url|mime|size", "iiurlwidth": 500, "format": "json",
         "formatversion": 2})
     pages = sorted((found.get("query") or {}).get("pages") or [], key=lambda p: p.get("index", 0))
     n = 0

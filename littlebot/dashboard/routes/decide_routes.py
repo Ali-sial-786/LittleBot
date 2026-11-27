@@ -15,7 +15,7 @@ router = APIRouter(prefix="/api/decide", tags=["decide"])
 
 
 class DecideSettingsBody(Body):
-    provider: Literal["off", "jev", "openai"] | None = None
+    provider: Literal["off", "jev", "openai", "claude"] | None = None
     modes: dict[str, Literal["off", "shadow", "on"]] | None = None  # {feature: mode}; only the features given change
     log_context: bool | None = None  # the log says what each decision was shown and who was recognised
 

@@ -5,7 +5,7 @@ LittleBot's own eyes sit small in a corner as the presenter. A card is a plain o
 display loop, like an on-screen game (littlebot/games/base.py):
 
 * ``update(dt)`` advances it by ``dt`` seconds (pure logic, no drawing);
-* ``draw(surface)`` paints the whole 720x480 canvas (:data:`W` x :data:`H`), leaving
+* ``draw(surface)`` paints the whole 1024x600 canvas (:data:`W` x :data:`H`), leaving
   :attr:`Card.presenter_box` free: the screen service draws the presenter's eyes there afterwards;
 * ``tap(x, y)`` / ``key(name)`` deliver touch (canvas pixels) and keys (pygame key names);
 * ``command(action, args)`` is the voice steering it ("show me tomorrow": ``("day", {"offset": 1})``,
@@ -20,10 +20,12 @@ Where cards come from: :func:`register` adds a card type (its ``kind``, a one-li
 the JSON fields the AI fills in, see :class:`CardType`); littlebot/screens/director.py picks one from
 :func:`card_types` for what was just asked and builds it with :func:`build`.
 
-Readability rules every card keeps (a 3.5" screen across a room; a parent cooking):
-* text at least :data:`BODY_PX` (titles :data:`TITLE_PX`, a recipe step :data:`STEP_PX`);
+Readability rules every card keeps (a 7" screen across a room; a parent cooking):
+* text at least :data:`BODY_PX` (titles :data:`TITLE_PX`, a recipe step :data:`STEP_PX`), and nothing under
+  :data:`SMALL_PX`, which is only for labels and credits;
 * at most :data:`MAX_LINES` lines of text at a time: more is paged (tap, swipe or "next");
-* the gist, not the transcript: the voice says the rest.
+* the gist, not the transcript: the voice says the rest. The bigger screen shows more of it (a few more
+  points, a second column, the numbers behind the answer), never smaller text.
 """
 
 from __future__ import annotations
@@ -35,21 +37,26 @@ from typing import Any, Awaitable, Callable, Protocol
 
 log = logging.getLogger("littlebot.screens")
 
-W, H = 720, 480  # the canvas (same as the games: the robot's 720x480 screen)
-TITLE_PX = 44
-BODY_PX = 32
-SMALL_PX = 26  # the smallest text anywhere (labels under a number, a source line)
-STEP_PX = 42
-MAX_LINES = 5
+# The canvas: the robot's 7" 1024x600 screen, pixel for pixel (the same as the games, littlebot/games/art.py).
+# One canvas pixel is about 0.15 mm on the glass (154 x 86 mm), so these sizes read from across a room:
+# body text is about 3.6 mm tall, half as big again as on the old 3.5" screen.
+W, H = 1024, 600
+TITLE_PX = 52
+BODY_PX = 36
+SMALL_PX = 28  # the smallest text anywhere (labels under a number, a source line)
+STEP_PX = 48
+MAX_LINES = 8
 # Every card with a picture (a ``slot``, littlebot/screens/cards/_kit.py PictureSlot) understands this action:
 # the screen service shows its picture full screen, zoomed ("zoom in", "make the picture fill the screen").
 PICTURE_ACTION = "picture"
 PICTURE_ACTION_HELP = ("the picture full screen or zoomed: {\"view\": \"fill\" | \"in\" | \"out\" | \"back\"} (back: "
                        "the whole card again)")
 PICTURE_ZOOMS = (1.0, 1.5, 2.25, 3.0)  # fill the screen, then "in" steps (the picture's middle)
+# A card with room for a picture it was made without (a recipe: ``add_picture``) gets one: {"query": "the dish"}
+ADD_PICTURE_ACTION = "add_picture"
 # Where the presenter's eyes sit by default: top-left, (x, y, w, h) on the canvas. A card may move it
 # (presenter_box) but keeps it on screen: the eyes are what make it LittleBot presenting.
-PRESENTER_BOX = (12, 10, 150, 86)
+PRESENTER_BOX = (16, 12, 184, 106)
 
 
 class Picture(Protocol):
@@ -148,6 +155,9 @@ class CardType:
     build: Builder
     required: tuple[str, ...] = ()
     actions: dict[str, str] = field(default_factory=dict)
+    # False: shown only by LittleBot's own code (a voice game's quiz card, a reminder ringing), never offered to
+    # the AI's show_on_screen or the screen director.
+    offered: bool = True
 
 
 _TYPES: dict[str, CardType] = {}
@@ -158,11 +168,12 @@ def register(card_type: CardType) -> CardType:
     return card_type
 
 
-def card_types() -> dict[str, CardType]:
-    """Every registered card type (importing littlebot.screens.cards registers the built-in ones)."""
+def card_types(*, offered_only: bool = False) -> dict[str, CardType]:
+    """Every registered card type (importing littlebot.screens.cards registers the built-in ones);
+    ``offered_only``: the ones the AI may ask for (not the internal ones, ``CardType.offered``)."""
     import littlebot.screens.cards  # noqa: F401, PLC0415
 
-    return dict(_TYPES)
+    return {k: v for k, v in _TYPES.items() if v.offered or not offered_only}
 
 
 async def build(spec: dict[str, Any], ctx: Any, host: CardHost) -> Card | None:

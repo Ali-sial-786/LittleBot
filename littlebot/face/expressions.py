@@ -6,7 +6,8 @@ extras). The animator interpolates between them; the renderer never needs to
 know an expression's name. The mouth is always shown: while LittleBot talks
 the spoken mouth shapes take over from the resting one (see ``face.mouth``).
 
-Design units are pixels at the native 480x320 screen. Conventions:
+Design units are pixels of the face's 320 px tall design space (480 wide on a 3:2 screen, 546 on the
+7" 1024x600 one; the face is centred, so these shapes are the same on both). Conventions:
 
 * ``tilt`` and ``lid_angle`` are *mirrored* per eye so symmetric expressions
   stay symmetric: ``tilt > 0`` leans the top of the eye outwards; ``lid_angle

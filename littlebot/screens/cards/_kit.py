@@ -29,11 +29,16 @@ from littlebot.screens.base import (
     W,
 )
 
-# The header sits to the right of the presenter's eyes; the content panel below both.
+# The header sits to the right of the presenter's eyes; the content panel below both
+# (on the 1024x600 canvas: the header 788 x 112, the panel 992 x 454).
 _PX, _PY, _PW, _PH = PRESENTER_BOX
-HEADER = pygame.Rect(_PX + _PW + 16, 8, W - (_PX + _PW + 16) - 14, _PY + _PH - 6)
-PANEL = pygame.Rect(12, _PY + _PH + 12, W - 24, H - (_PY + _PH + 12) - 12)
-PAD = 22  # inside the panel
+HEADER = pygame.Rect(_PX + _PW + 20, 8, W - (_PX + _PW + 20) - 16, _PY + _PH - 6)
+PANEL = pygame.Rect(16, _PY + _PH + 14, W - 32, H - (_PY + _PH + 14) - 14)
+PAD = 26  # inside the panel
+# The panel split in two: text on the left, a picture (or a second column) on the right. The picture
+# column is about the width a 4:3 photo needs at the panel's height.
+PIC_W = 380
+GUTTER = 24  # between the text column and the picture
 PANEL_COLOR: art.Color = art.CREAM
 PANEL_BORDER: art.Color = art.mix(art.INK, art.BG_BOTTOM, 0.55)
 TEXT: art.Color = art.INK  # body text on cream: contrast ~10:1
@@ -46,13 +51,26 @@ ACCENTS: tuple[art.Color, ...] = (art.STRAWBERRY, art.SKY, art.MINT, art.TANGERI
 # ---------------------------------------------------------------- spec cleaning
 _SPACE = re.compile(r"\s+")
 _MARKUP = re.compile(r"[*_`#>]+")
+# Signs the card's font has no glyph for (they would show as an empty box): what to write instead.
+_NO_GLYPH = (("\u2248", "~"), ("\u2192", "->"), ("\u2190", "<-"), ("\u221e", "infinity"), ("\u2713", ""),
+             ("\u2032", "'"), ("\u2033", '"'), ("\u20b9", "Rs "))
+
+
+def typeset(text: str) -> str:
+    """``text`` with only signs the card's font can draw: " ≈ " becomes " = about ", "→" "->" and so on."""
+    s = re.sub(r"^\s*\u2248\s*", "about ", str(text or ""))
+    s = re.sub(r"\s\u2248\s*", " = about ", s)
+    for sign, instead in _NO_GLYPH:
+        s = s.replace(sign, instead)
+    return " ".join(s.split())
 
 
 def clean(value: Any, limit: int = 120) -> str:
-    """One tidy line from whatever the AI sent (no markdown, no newlines, at most ``limit`` chars)."""
+    """One tidy line from whatever the AI sent (no markdown, no newlines, only signs the font can draw, at most
+    ``limit`` chars)."""
     if value is None or isinstance(value, (dict, list, tuple)):
         return ""
-    s = _SPACE.sub(" ", _MARKUP.sub("", str(value))).strip()
+    s = typeset(_SPACE.sub(" ", _MARKUP.sub("", str(value))).strip())
     if len(s) > limit:
         s = s[:limit].rsplit(" ", 1)[0].rstrip(",;:-") + "..."
     return s
@@ -145,6 +163,38 @@ def paged(blocks: Sequence[int], max_lines: int = MAX_LINES) -> list[list[int]]:
     return pages
 
 
+def pages_by_height(heights: Sequence[int], lines: Sequence[int], *, gap: int, room: int,
+                    max_lines: int = MAX_LINES) -> list[list[int]]:
+    """Items (``heights[i]`` px and ``lines[i]`` lines of text each) split into as few pages as fit ``room``
+    px and ``max_lines`` lines, then evened out (8 points: 4 + 4, not 6 + 2); an item too big for a page gets
+    one of its own. (The explain, definition and facts cards page with it.)"""
+
+    def greedy(limit: int) -> list[list[int]]:
+        pages: list[list[int]] = []
+        cur: list[int] = []
+        px = n = 0
+        for i, (h, k) in enumerate(zip(heights, lines)):
+            add = h + (gap if cur else 0)
+            if cur and (px + add > limit or n + k > max_lines):
+                pages.append(cur)
+                cur, px, n, add = [], 0, 0, h
+            cur.append(i)
+            px += add
+            n += k
+        if cur:
+            pages.append(cur)
+        return pages
+
+    pages = greedy(room)
+    if len(pages) > 1:
+        total = sum(heights) + gap * max(0, len(heights) - len(pages))
+        for limit in range(max(max(heights), total // len(pages)), room + 1, 4):
+            even = greedy(limit)
+            if len(even) == len(pages):
+                return even
+    return pages
+
+
 def _greedy(blocks: Sequence[int], max_lines: int) -> list[list[int]]:
     pages: list[list[int]] = []
     cur: list[int] = []
@@ -167,7 +217,7 @@ def text_block(lines: Sequence[str], size: int, color: Sequence[int] = TEXT, *, 
     key = ("kit_block", tuple(lines), size, tuple(color), align, pitch)
 
     def make() -> pygame.Surface:
-        imgs = [art.font(size).render(s, True, color) for s in lines]
+        imgs = [art.font(size).render(s, True, art.ink(color)) for s in lines]  # (the theme: light ink when dark)
         w = max((i.get_width() for i in imgs), default=1)
         h = pitch * (len(imgs) - 1) + (imgs[-1].get_height() if imgs else 1)
         out = pygame.Surface((max(1, w), max(1, h)), pygame.SRCALPHA)
@@ -213,10 +263,10 @@ def outlined_fit(word: str, sizes: Sequence[int], width: int, color: Sequence[in
 
 def chip(label: str, color: Sequence[int], *, size: int = SMALL_PX, fg: Sequence[int] = art.WHITE) -> pygame.Surface:
     """A candy label (part of speech, "Step 3 of 8"). White text on a darkened candy colour for contrast."""
-    return art.pill(label, size, fg, art.inkier(color, 0.22) if fg == art.WHITE else color, pad=(16, 7))
+    return art.pill(label, size, fg, art.inkier(color, 0.22) if fg == art.WHITE else color, pad=(18, 8))
 
 
-def number_badge(n: int | str, color: Sequence[int], r: int = 22) -> pygame.Surface:
+def number_badge(n: int | str, color: Sequence[int], r: int = 25) -> pygame.Surface:
     key = ("kit_badge", str(n), tuple(color), r)
 
     def make() -> pygame.Surface:
@@ -235,15 +285,15 @@ def page_dots(surf: pygame.Surface, n: int, i: int, center: tuple[float, float])
     """``n`` dots, the ``i``-th one big and coloured (only when there is more than one page)."""
     if n <= 1:
         return
-    gap = 26
+    gap = 30
     x0 = center[0] - gap * (n - 1) / 2
     for k in range(n):
         on = k == i
-        art.blit_center(surf, art.circle(8 if on else 6, art.STRAWBERRY if on else art.mix(art.INK_SOFT, art.WHITE, .4)),
+        art.blit_center(surf, art.circle(10 if on else 7, art.STRAWBERRY if on else art.mix(art.INK_SOFT, art.WHITE, .4)),
                         (x0 + k * gap, center[1]))
 
 
-def arrow(direction: int, color: Sequence[int] = art.WHITE, r: int = 24) -> pygame.Surface:
+def arrow(direction: int, color: Sequence[int] = art.WHITE, r: int = 30) -> pygame.Surface:
     """A round next/back button (tap targets on paged cards)."""
     key = ("kit_arrow", direction, tuple(color), r)
 
@@ -337,7 +387,7 @@ class PictureSlot:
         if self._sprite is not None and self._sprite[0] == box:
             return self._sprite[1]
         src = self.picture.surface
-        frame = 6
+        frame = 7
         bw, bh = box[0] - 2 * frame, box[1] - 2 * frame
         w, h = src.get_size()
         k = min(bw / max(1, w), bh / max(1, h), 1.5)
@@ -346,9 +396,9 @@ class PictureSlot:
             img = pygame.transform.smoothscale(src, size)
         except (ValueError, pygame.error):
             img = pygame.transform.scale(src, size)
-        img = _rounded(img, 14)
+        img = _rounded(img, 16)
         out = pygame.Surface((size[0] + 2 * frame, size[1] + 2 * frame + 4), pygame.SRCALPHA)
-        out.blit(art.rounded_rect(size[0] + 2 * frame, size[1] + 2 * frame, 18, art.WHITE, shadow=4,
+        out.blit(art.rounded_rect(size[0] + 2 * frame, size[1] + 2 * frame, 20, art.WHITE, shadow=4,
                                   border=PANEL_BORDER, border_w=2), (0, 0))
         out.blit(img, (frame, frame))
         self._sprite = (box, out)
@@ -377,12 +427,12 @@ def placeholder(surf: pygame.Surface, rect: pygame.Rect, t: float) -> None:
         art.BG_BOTTOM, art.INK_SOFT, 0.25), border_w=2), rect.topleft)
     for k in range(3):
         phase = t * 3.2 - k * 0.55
-        lift = max(0.0, math.sin(phase)) * 10
-        art.blit_center(surf, art.circle(8, art.mix(ACCENTS[k], art.WHITE, 0.25)),
-                        (rect.centerx + (k - 1) * 28, rect.centery - lift))
+        lift = max(0.0, math.sin(phase)) * 12
+        art.blit_center(surf, art.circle(10, art.mix(ACCENTS[k], art.WHITE, 0.25)),
+                        (rect.centerx + (k - 1) * 34, rect.centery - lift))
 
 
-__all__ = ["ACCENTS", "BODY_PX", "HEADER", "MAX_LINES", "PAD", "PANEL", "SMALL_PX", "TEXT", "TEXT_SOFT", "TITLE_PX",
+__all__ = ["ACCENTS", "BODY_PX", "GUTTER", "HEADER", "MAX_LINES", "PAD", "PANEL", "PIC_W", "SMALL_PX", "TEXT", "TEXT_SOFT", "TITLE_PX",
            "PictureSlot", "appear", "arrow", "as_int", "background", "blit_alpha", "chip", "clean", "ellipsize",
-           "fit", "header_title", "line_h", "number_badge", "outlined_fit", "page_dots", "paged", "panel",
-           "placeholder", "str_list", "text_block", "text_w", "wrap"]
+           "fit", "header_title", "line_h", "number_badge", "outlined_fit", "page_dots", "paged", "pages_by_height", "panel",
+           "placeholder", "str_list", "text_block", "text_w", "typeset", "wrap"]

@@ -361,3 +361,22 @@ async def test_assistant_message_items_are_replayed_as_plain_output_text(tmp_pat
         {"type": "function_call", "name": "set_volume", "arguments": '{"percent": 5}', "call_id": "c1"},
         {"type": "function_call_output", "call_id": "c1", "output": "ok"},
     ]
+
+
+async def test_each_call_logs_its_timing_without_the_words(tmp_path, caplog):
+    import logging
+
+    def handler(r: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text=OK, headers={"content-type": "text/event-stream"})
+
+    auth = signed_in_auth(tmp_path)
+    p = ChatGPTProvider(auth, models=["gpt-6-luna"], transport=httpx.MockTransport(handler), purpose="handoff")
+    with caplog.at_level(logging.INFO, logger="littlebot.text_model"):
+        await p.reply([{"role": "user", "content": "what does a cow say"}], system="s", max_tokens=50, timeout=5)
+    lines = [r.getMessage() for r in caplog.records if r.name == "littlebot.text_model"]
+    assert len(lines) == 1
+    line = lines[0]
+    assert "provider=chatgpt model=gpt-6-luna purpose=handoff result=ok first_token_ms=" in line
+    assert "total_ms=" in line and "tokens_in=12 tokens_out=5" in line
+    assert "first_token_ms=-" not in line  # the first words were timed
+    assert "cow" not in line and "Moo" not in line

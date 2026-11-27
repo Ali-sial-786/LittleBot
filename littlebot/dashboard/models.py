@@ -93,12 +93,20 @@ class AnimationBody(Body):
         return v
 
 
+class FaceLookBody(Body):
+    """How the screen looks: dark mode (display.theme) and the picture turned round (display.flipped)."""
+
+    dark_mode: bool | None = None
+    flipped: bool | None = None
+
+
 class FaceSleepBody(Body):
     """Dozing (an idle look, littlebot/face/doze.py) and the deeper sleep after a long quiet spell."""
 
     doze_enabled: bool | None = None
     doze_after_seconds: int | None = Field(default=None, ge=5, le=3600)
     awake_on_arrival_seconds: int | None = Field(default=None, ge=0, le=3600)
+    screen_off_after_seconds: int | None = Field(default=None, ge=0, le=3600)  # 0: never (1-29 become 30)
     sleep_after_idle_minutes: float | None = Field(default=None, ge=0, le=720)  # 0: never
 
 

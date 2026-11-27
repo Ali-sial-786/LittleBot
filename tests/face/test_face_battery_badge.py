@@ -57,6 +57,24 @@ def test_bad_values_from_the_bus_are_safe():
     assert badge.current() is None
 
 
+def test_the_corner_copy_follows_the_battery_and_goes_when_the_monitor_does():
+    badge = B.BatteryBadge(Clock())
+    assert badge.steady() is None
+    badge.on_state({"fitted": True, "connected": True, "percent": 63.6, "charging": False, "charged": False})
+    assert badge.steady() == B.Badge(64, False, 1.0, small=True)
+    badge.on_state({"fitted": True, "connected": True, "percent": 64, "charging": False, "charged": True})
+    assert badge.steady().charging is True
+    badge.on_state({"fitted": True, "connected": False, "percent": 64})  # the monitor is lost: no stale number
+    assert badge.steady() is None
+    badge.on_state({"fitted": True, "connected": True, "percent": None})
+    assert badge.steady() is None
+    badge.on_state({"fitted": True, "connected": True, "percent": 140})
+    assert badge.steady().percent == 100
+    small = B.badge_rect(pygame.Rect(0, 0, 720, 480), small=True)
+    big = B.badge_rect(pygame.Rect(0, 0, 720, 480))
+    assert small[:2] == big[:2] and small[2] < big[2] and small[3] < big[3]  # the same corner, smaller
+
+
 def test_colours_follow_the_level():
     from littlebot.games import art
 
@@ -111,6 +129,28 @@ def test_the_display_draws_the_sign_on_power_show():
         loop.battery.hide()
         gone = _frame(loop)
         assert _changed(before, gone, rect) < rect.w * rect.h // 50  # gone again (the face itself may move a pixel)
+    finally:
+        loop.close()
+        robot.ctx.face.stop_ticker()
+        robot.ctx.db.close()
+
+
+def test_the_display_keeps_the_percentage_in_the_corner():
+    loop, robot = _loop()
+    assert robot.ctx.config.power.corner
+    loop.open()
+    try:
+        before = _frame(loop)
+        x, y, w, h = B.badge_rect(loop.face_rect, small=True)
+        rect = pygame.Rect(x, y, w, h)
+        robot.ctx.bus.publish(Topics.POWER_BATTERY, {"fitted": True, "connected": True, "percent": 71,
+                                                     "charging": False, "charged": False}, source="power")
+        shown = _frame(loop)
+        assert _changed(before, shown, rect) > rect.w * rect.h // 5
+        assert _changed(before, _frame(loop), rect) > rect.w * rect.h // 5  # it stays
+        robot.ctx.bus.publish(Topics.POWER_BATTERY, {"fitted": True, "connected": False, "percent": 71},
+                              source="power")
+        assert _changed(before, _frame(loop), rect) < rect.w * rect.h // 50  # monitor lost: gone
     finally:
         loop.close()
         robot.ctx.face.stop_ticker()

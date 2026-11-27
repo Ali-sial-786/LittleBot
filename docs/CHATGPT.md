@@ -389,17 +389,23 @@ as if you had pressed **Start live voice**.
 ```yaml
 wake:                                # config/local.yaml
   enabled: true                      # default of the dashboard switch
-  phrases: ["hey little bot", "hey littlebot", "hey lil bot", "hey bot"]   # "littlebot" is heard as "little bot"
+  phrases: ["hey little bot", "hey littlebot", "hey lil bot", "okay little bot", "okay lil bot", "lil bot", "little bot", "hey bot", "bot"]
+                                     # "littlebot" is heard as "little bot", "lilbot" as "lil bot"; "lil bot":
+                                     # the "hey" got lost; "hey bot" also wakes on "hey Bob" and "hey, but...";
+                                     # "bot" alone only as the first word, sure of it, and not while Spotify plays
   model_path: models/vosk-model-small-en-us-0.15
-  min_confidence: 0.5                # per word, 0..1: higher = fewer false starts, more misses
-  short_min_confidence: 0.7          # "hey bot" (two words) needs this, or a face in front of the camera
+  end_silence_seconds: 0.25          # silence that ends a phrase (the model's own: 0.5-1.0 s); heard ~0.2 s sooner
+  early: true                        # decide the phrase as soon as it is heard, not after the whole sentence
+  min_confidence: 0.35               # per word, 0..1: higher = fewer false starts, more misses (0.5 missed some)
+  short_min_confidence: 0.7          # two-word phrases ("hey bot", "lil bot") need this, or a face at the camera;
+                                     # "bot" alone always needs it
   short_face_seconds: 10             # ...seen this recently
   follow_up_seconds: 8               # after a chat ended by itself: talking while facing it starts a new one (0 = off)
   follow_up_words: 2                 # ...with at least this many words
   distractors: true                  # common words the recogniser may pick instead: fewer false starts
   cooldown_seconds: 4
   during_videos: true                # listen while a video plays (with the stricter rules below)
-  video_phrases: ["hey little bot", "hey lil bot"]  # only these count during a video ([] = all phrases)
+  video_phrases: ["hey little bot", "hey lil bot", "okay little bot", "okay lil bot"]  # only these count during a video ([] = all phrases)
   video_min_confidence: 0.7
   video_duck: false                  # turn the video down for a moment after "hey ..." (off: videos say "hey" a lot)
   video_no_words_seconds: 15         # a call that paused a video and nobody talks: back to the video
@@ -526,6 +532,16 @@ it was handed, so LittleBot answers as early as it can:
   match: another place's time, "why does it rain?", "cancel the egg timer" or "play baby shark
   louder" go to the text model as before, and so does one whose tool fails or takes over 3 s. The
   journal then says something like `hand-off received (kind=quick:weather); answered in 160 ms without the text model`.
+  The text model never sees these, so every later hand-off in the call starts with a short note of the
+  last five ("LittleBot started a timer for 5 minutes on its screen 1 minute ago"), and, with a screen
+  service, what the timers really are now, from the screen's own count ("LittleBot's timers right now
+  (this is what counts): Timer: 3:58 left (behind the card on the screen)", or "none"): "how much time
+  is left on it?" is then answered from that, not with "I didn't set a timer". (Without a screen
+  service the note guesses instead: "about 4 minutes left, unless someone stopped it".) The timers line
+  also starts every hand-off while a timer runs (or once one ran in the call), whoever set it: tested on
+  2026-10-29, none of four text models looked in `change_card`'s description for "how long is left?". A
+  timer that runs behind another card is also in `change_card`'s description, so the text model can add
+  time to it, pause it or cancel it (`ctx.screens.command(..., card=...)`).
 * **The first sentence goes to the voice as soon as it is written** (camera looks already did this):
   the voice starts saying it while the text model writes the rest, which follows as a note ("More of
   the answer ..."). Words that only say what's coming ("Let me check.") are skipped; if the answer
@@ -677,6 +693,38 @@ audio:
 
 All keys and defaults are listed in the [technical section](#configuration).
 
+### Trying a faster model for hand-offs
+
+The text model that answers hand-offs is the first of `chatgpt.models` that works
+(`gpt-6-luna`, then `gpt-6-sol`, then `gpt-5.6-luna`, at reasoning effort `low`; light hand-offs go at
+`minimal` effort with no web search). The voice is `chatgpt.live_model` (`gpt-live-1-codex`), voice
+`bubbie`, then `sol`.
+
+To see which models your sign-in offers:
+
+```bash
+.venv/bin/python scripts/chatgpt_models.py
+```
+
+It prints the model names (and marks the ones in use), never your sign-in's tokens. To try a smaller
+model for hand-offs only, put it first in `config/local.yaml` and restart:
+
+```yaml
+chatgpt:
+  handoff_models: [the-model-name]   # tried first for hand-offs; then chatgpt.models as before
+```
+
+Default: `[]` (no change). A name your sign-in doesn't offer costs one refused request, then the usual
+models answer. Cards and camera looks keep their own models (`look_models`). Compare the
+`live voice: the text model answered in N ms` lines in the log before and after
+(`journalctl --user -u littlebot --since today | grep -E 'text model'`); each call also logs a
+`text model: provider=chatgpt model=...` line with its time to the first word. Remove the line to go back.
+
+### Claude instead of ChatGPT for the text work
+
+Cards, the screen director and hand-offs can use Claude (Anthropic's API, your own key) with ChatGPT
+behind it. The live voice stays GPT-Live. See [CLAUDE.md](CLAUDE.md).
+
 <a id="5-troubleshooting"></a>
 <a id="6-troubleshooting"></a>
 
@@ -710,7 +758,7 @@ All keys and defaults are listed in the [technical section](#configuration).
 | Wake word: **The wake-word model is missing** / **isn't available** | The vosk library or its model is not installed | `.venv/bin/python -m pip install --prefer-binary -e '.[local-stt]'` and `.venv/bin/python scripts/download_models.py vosk-en`, then `systemctl --user restart littlebot` |
 | Wake word: "uh-oh" after the listening sound | Live voice couldn't start; the status line under the switch says why (often: not signed in, or cloud communication off) | Fix that reason, then say it again |
 | Wake word: nothing happens | Paused (the status line says why), too far away, or the microphone is too quiet | Speak within about a metre; raise **Audio & devices → Microphone level**; check **Audio & devices** → test the microphone |
-| Live voice starts by itself | A false start on "Hey Bot" | "Hey bot" already needs `wake.short_min_confidence` (0.7) or a face in front of the camera; the journal says "'hey bot' ignored" for the ones it skipped. Raise it (0.85), or set `wake.phrases: ["hey little bot", "hey lil bot"]` |
+| Live voice starts by itself | A false start on "Hey Bot" or "Bot" ("hey, but...", "hey Bob", "but I...") | "Hey bot" already needs `wake.short_min_confidence` (0.7) or a face in front of the camera, and "bot" alone needs it always and must start the sentence; the log says "'hey bot' ignored" / "'bot' ignored" for the ones it skipped. Raise it (0.85), or drop the short ones: `wake.phrases: ["hey little bot", "hey littlebot", "hey lil bot", "okay little bot", "okay lil bot", "lil bot", "little bot"]` |
 | A video pauses by itself and the voice says hello | The wake word heard something like "hey little bot" in the video | Nobody answering, the video carries on after `wake.video_no_words_seconds` (15 s); say "keep watching" to carry on at once. If it happens often: raise `wake.video_min_confidence` (0.85), or `wake.during_videos: false` |
 | Wake word: nothing happens during a video | The video is louder than you at the microphone, or you said "Hey Bot" (only "Hey LittleBot" counts during a video) | Say "Hey LittleBot" louder or closer; lower the video volume; try `wake.video_duck: true`. The log shows what was heard and ignored ("ignored while a video plays") |
 | "Keep watching" doesn't carry on | The video stopped meanwhile (2 minutes after the chat: `media.chat_pause_minutes`, or the day's video time ran out) | Start it again from the Videos page |
@@ -835,8 +883,10 @@ voice is audible:
   best wins, so a baby's 450 Hz never reads as 225 Hz). Voiced (correlation 0.5 or more) at 75 Hz to
   `live_barge_in_max_pitch_hz` (260) counts as a grown-up, above it as a child.
 * *Long enough:* a run of loud frames (gaps under 0.12 s are consonants) fires after
-  `live_barge_in_speech_ms` (300 ms) when at least 40 % of its frames are grown-up voiced and more
-  than twice as many as child voiced. A cough (no pitch), a short "mm" (too short), the baby (too
+  `live_barge_in_speech_ms` (300 ms) when at least 25 % of its frames are grown-up voiced and more
+  of them than child voiced. (It was 40 % and twice as many until 2026-10-29: on the robot, with the
+  ReSpeaker Lite and the echo canceller, a parent's real speech was only 30-56 % clearly pitched and
+  two of three tries didn't get through.) A cough (no pitch), a short "mm" (too short), the baby (too
   high), the voice's own echo (not louder than itself) and a quiet TV (the floor) don't.
 * *Voice recognition* (optional): after 0.2 s of a run, `ctx.voices.identify(samples, 16000)` is
   asked once in the background, if `ctx.voices` has it. A grown-up's match lets it fire after
@@ -865,6 +915,10 @@ and state go to listening (`LiveCall._barge_in_changed`). Then either:
 * **No words within `live_barge_in_false_alarm_ms`** (2.5 s; longer while they are still making
   sound, at most 4 s): a false alarm. The gate shuts and the held voice fades back in where it
   stopped (a little late for the rest of that turn).
+* **Quiet the moment the voice stopped** (nothing loud from 0.25 s after it was held): its own echo
+  leaking through, or a bump, not a person (they go on talking): it carries on after 0.6 s instead
+  ("false alarm (quiet as soon as the voice stopped: its own echo, 0.6 s)"). On the robot such an
+  echo held an answer 2.5 s (2026-10-31).
 
 One INFO line each time, never any sound: "live voice: interrupted by a grown-up after 0.3 s of
 speech (pitch 120 Hz, voice Ali)", "live voice: false alarm (no words within 2.5 s), the voice
@@ -911,6 +965,7 @@ back to text-to-speech; the index is re-read when the file changes. Dashboard: `
 | `token_file` | `chatgpt_auth.json` | under `data_dir` (`data/`), mode 0600 |
 | `models` | `[gpt-6-luna, gpt-6-sol, gpt-5.6-luna]` | text model for replies and look-ups: the first one that works |
 | `reasoning_effort` | `low` | `minimal` / `low` / `medium` / `high` |
+| `handoff_models` | `[]` | models tried first for live-voice hand-offs, then `models` ([Trying a faster model](#trying-a-faster-model-for-hand-offs)) |
 | `live_model` | `gpt-live-1-codex` | the voice model |
 | `live_voice` | `bubbie` | the voice asked for first. Any name is passed to OpenAI as is (no list is enforced). Known voices: `cove`, `arbor`, `breeze`, `ember`, `juniper`, `maple`, `sol`, `spruce`, `vale` |
 | `live_voice_fallbacks` | `[sol]` | if OpenAI refuses a voice (HTTP 400/422), the next one in this list is tried. The card shows the voice in use |
@@ -925,6 +980,7 @@ back to text-to-speech; the index is re-read when the file changes. Dashboard: `
 | `live_barge_in_min_level` | `0.008` | and at least this loud (microphone RMS, full scale 1.0) |
 | `live_barge_in_max_pitch_hz` | `260.0` | (150-400) voiced above this counts as a child and doesn't interrupt |
 | `live_barge_in_false_alarm_ms` | `2500` | (300-5000) no words of theirs from ChatGPT by then: the voice carries on |
+| `live_stop_words` | `true` | "stop", "wait", "hold on", "be quiet" ... said over the voice stop it however short (`littlebot/chatgpt/stop_words.py`: offline, the wake word's Vosk model; only with barge-in, and only when the sound was louder than the voice's own echo, the voice didn't just say the word itself, and voice recognition didn't say it was the child; a shouted "stop" above `live_barge_in_max_pitch_hz` still counts, but not above 400 Hz (the baby) and not "wait" / "hold on" / "hang on", which the voice says itself) |
 | `live_thinking_sound` | `true` | a soft sound while a hand-off is worked on and the voice is quiet |
 | `live_voice_level` | `0.012` | speaker RMS (0..1) above which the voice counts as speaking |
 | `live_volume` | `null` | `null` = the speaker volume setting. Always capped at `audio.speaker.max_volume` |
@@ -945,9 +1001,9 @@ choice on the dashboard (settings `info.location`, `info.units`) wins over `loca
 (`""` = automatic), `GET /api/info/weather`.
 
 Wake word (`wake:` section, `WakeConfig`): `enabled` (`true`, the switch's default), `phrases`,
-`model_path` (`models/vosk-model-small-en-us-0.15`), `min_confidence` (`0.5`), `distractors`
+`model_path` (`models/vosk-model-small-en-us-0.15`), `min_confidence` (`0.35`), `distractors`
 (`true`), `cooldown_seconds` (`4`), `sound` (`listen`); during a video: `during_videos` (`true`),
-`video_phrases` (`["hey little bot", "hey lil bot"]`), `video_min_confidence` (`0.7`), `video_duck` (`false`),
+`video_phrases` (`["hey little bot", "hey lil bot", "okay little bot", "okay lil bot"]`), `video_min_confidence` (`0.7`), `video_duck` (`false`),
 `video_duck_volume` (`0.3`), `video_duck_seconds` (`2`), `video_pause_wait_seconds` (`1`),
 `video_no_words_seconds` (`15`); and `media.chat_pause_minutes` (`2`). See [Wake word](#wake-word-hey-littlebot)
 and [YOUTUBE_ON_PI.md section 10](YOUTUBE_ON_PI.md#10-talking-to-littlebot-during-a-video).

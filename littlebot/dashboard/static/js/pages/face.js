@@ -53,16 +53,19 @@ export default {
       onChange: async (v) => (await app.act(() => put('/face/sleep', { doze_enabled: v }), v ? 'LittleBot dozes when nothing is happening.' : 'LittleBot stays wide awake.')) !== null });
     const dozeAfter = h('input', { type: 'number', id: 'doze-after', min: 5, max: 3600, inputmode: 'numeric' });
     const awakeFor = h('input', { type: 'number', id: 'doze-arrival', min: 0, max: 3600, inputmode: 'numeric' });
+    const screenAfter = h('input', { type: 'number', id: 'screen-off-after', min: 0, max: 3600, inputmode: 'numeric' });
     const sleepAfter = h('input', { type: 'number', id: 'sleep-after', min: 0, max: 720, step: 1, inputmode: 'numeric' });
     const sleepNote = h('p', { class: 'muted' });
     const saveSleep = button('Save', {
       kind: 'primary', iconName: 'check',
       onClick: async () => {
         const after = parseInt(dozeAfter.value, 10), awake = parseInt(awakeFor.value, 10), mins = Number(sleepAfter.value);
+        const screen = parseInt(screenAfter.value, 10);
         if (!(after >= 5 && after <= 3600)) { toast('Doze after must be between 5 and 3600 seconds.', 'error'); dozeAfter.focus(); return; }
         if (!(awake >= 0 && awake <= 3600)) { toast('Awake after someone walks in must be between 0 and 3600 seconds.', 'error'); awakeFor.focus(); return; }
+        if (!(screen >= 0 && screen <= 3600)) { toast('Screen off after must be between 0 and 3600 seconds.', 'error'); screenAfter.focus(); return; }
         if (!(mins >= 0 && mins <= 720)) { toast('Go to sleep after must be between 0 and 720 minutes.', 'error'); sleepAfter.focus(); return; }
-        const r = await app.act(() => put('/face/sleep', { doze_after_seconds: after, awake_on_arrival_seconds: awake, sleep_after_idle_minutes: mins }), 'Saved.');
+        const r = await app.act(() => put('/face/sleep', { doze_after_seconds: after, awake_on_arrival_seconds: awake, screen_off_after_seconds: screen, sleep_after_idle_minutes: mins }), 'Saved.');
         if (r?.sleep) showSleep(r.sleep);
       },
     });
@@ -74,15 +77,35 @@ export default {
             h('span', { class: 'hint', text: 'How long nothing has to happen first. A voice chat, a game, a video or a card on the screen never dozes.' })),
           h('div', { class: 'field' }, h('label', { for: 'doze-arrival', text: 'Awake after someone walks in (seconds)' }), awakeFor,
             h('span', { class: 'hint', text: 'Someone sitting still may let it doze again after this; moving or talking wakes it.' })),
+          h('div', { class: 'field' }, h('label', { for: 'screen-off-after', text: 'Screen off after (seconds)' }), screenAfter,
+            h('span', { class: 'hint', text: 'The screen goes dark to save the battery; "Hey LittleBot", a tap or someone walking in lights it again. 0: never.' })),
           h('div', { class: 'field' }, h('label', { for: 'sleep-after', text: 'Go to sleep after (minutes)' }), sleepAfter,
             h('span', { class: 'hint', text: 'Real sleep after a long quiet spell (the camera checks less often). 0: never.' }))),
         h('div', { class: 'btn-row' }, saveSleep), sleepNote));
+
+    // How the screen looks: dark mode (also "dark mode" by voice, or the robot's own settings: hold 5 s) and turned round.
+    const darkRow = switchRow({ title: 'Dark mode',
+      text: 'A night-blue face with glowing eyes, and dark cards and games: gentler in a dark room. Also by voice: "dark mode", "light mode".',
+      onChange: async (v) => (await app.act(() => put('/face/look', { dark_mode: v }), v ? 'Dark mode is on.' : 'Light mode is on.')) !== null });
+    const flipRow = switchRow({ title: 'Turn the screen upside down',
+      text: 'Only for a screen mounted upside down. Off: the right way up.',
+      onChange: async (v) => (await app.act(() => put('/face/look', { flipped: v }), v ? 'The screen is turned round.' : 'The screen is the right way up.')) !== null });
+    const lookCard = h('section', { class: 'card' },
+      h('div', { class: 'card-head' }, h('h2', {}, icon('moon'), 'Screen')),
+      h('p', { class: 'muted', text: 'On the robot itself, hold a finger still on the screen for 5 seconds for its settings and the games.' }),
+      h('div', { class: 'stack' }, darkRow.el, flipRow.el));
+    function showLook(l) {
+      if (!l) return;
+      darkRow.set(!!l.dark_mode);
+      flipRow.set(!!l.flipped);
+    }
 
     function showSleep(s) {
       if (!s) return;
       doze.set(s.doze_enabled);
       if (document.activeElement !== dozeAfter) dozeAfter.value = s.doze_after_seconds;
       if (document.activeElement !== awakeFor) awakeFor.value = s.awake_on_arrival_seconds;
+      if (document.activeElement !== screenAfter) screenAfter.value = s.screen_off_after_seconds ?? 180;
       if (document.activeElement !== sleepAfter) sleepAfter.value = s.sleep_after_idle_minutes;
     }
 
@@ -113,7 +136,8 @@ export default {
           h('div', { class: 'card-head' }, h('h2', {}, icon('zap'), 'Animations')),
           h('p', { class: 'muted', text: 'Little flourishes played on top of the current expression.' }),
           h('div', { class: 'mt-2' }, animRow)),
-        sleepCard));
+        sleepCard,
+        lookCard));
 
     function build(expressions, animations) {
       clear(exprGrid);
@@ -134,6 +158,7 @@ export default {
     get('/face').then((info) => {
       build(info.expressions || FALLBACK_EXPRESSIONS, info.animations || FALLBACK_ANIMATIONS);
       showSleep(info.sleep);
+      showLook(info.look);
       unavailable = !info.available;
       if (unavailable) view.querySelector('.page-head')?.after(h('div', { class: 'banner warn mt-2' }, icon('alert'), h('div', {}, h('strong', { text: 'The face display is unavailable' }), h('span', { text: 'Buttons will not have any effect until it is running.' }))));
       if (app.status) update(app.status);
@@ -144,8 +169,9 @@ export default {
       const expr = fs.expression || 'neutral';
       preview.update(expr, fs.gaze, !!fs.eyes_closed, `LittleBot looks ${expr}`);
       setText(exprLabel, fs.status === 'unavailable' ? 'Unavailable' : titleCase(expr));
-      setText(faceState, fs.state ? `Mode: ${titleCase(fs.state)}${fs.dozing ? ' · dozing' : ''}${fs.fps ? ` · ${Math.round(fs.fps)} fps` : ''}` : '');
-      setText(sleepNote, fs.dozing ? 'LittleBot is dozing right now (still listening).' : '');
+      setText(faceState, fs.state ? `Mode: ${titleCase(fs.state)}${fs.dozing ? ' · dozing' : ''}${fs.screen_on === false ? ' · screen off' : ''}${fs.fps ? ` · ${Math.round(fs.fps)} fps` : ''}` : '');
+      setText(sleepNote, fs.screen_on === false ? 'The screen is off right now to save the battery (still listening).'
+        : fs.dozing ? 'LittleBot is dozing right now (still listening).' : '');
       for (const [name, b] of exprButtons) b.setAttribute('aria-pressed', String(name === expr));
     }
     return { update };

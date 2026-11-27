@@ -49,6 +49,7 @@ from littlebot.brain.providers.base import (
     AuthenticationError, BaseProvider, Message, NetworkError, ProviderError, ProviderReply, ProviderTimeoutError,
     RateLimitError,
 )
+from littlebot.brain.providers.timing import CallTimer
 from littlebot.chatgpt.auth import CODEX_BASE, ChatGPTAuth, ChatGPTAuthError
 
 MODEL_UNAVAILABLE = re.compile(r"model.*(not supported|does not exist|not found|unsupported)", re.I)
@@ -79,8 +80,9 @@ class ChatGPTProvider(BaseProvider):
 
     def __init__(self, auth: ChatGPTAuth, *, models: list[str], effort: str = "low",
                  base_url: str = CODEX_BASE, transport: httpx.AsyncBaseTransport | None = None,
-                 now: Any = time.time) -> None:
+                 now: Any = time.time, purpose: str = "") -> None:
         self.auth = auth
+        self.purpose = purpose  # what it is used for, in the timing log line (littlebot/brain/providers/timing.py)
         self.models = [m for m in models if m] or ["gpt-6-luna"]
         self._model_index = 0
         self.effort = effort
@@ -185,7 +187,24 @@ class ChatGPTProvider(BaseProvider):
         answer text and calls only these runs them and is the answer, with no second request for words.
 
         Hosted tools in ``tools`` (``{"type": "web_search", ...}``) are offered even without ``run_tool``;
-        if the endpoint refuses one, the request is sent again without it (see the module docstring)."""
+        if the endpoint refuses one, the request is sent again without it (see the module docstring).
+
+        Each call logs one timing line (provider, model, first word, total: littlebot/brain/providers/timing.py)."""
+        timer = CallTimer(self.name, self.purpose)
+        try:
+            reply = await self._reply(messages, system=system, timeout=timeout, images=images, tools=tools,
+                                      run_tool=run_tool, max_tool_rounds=max_tool_rounds, detail=detail,
+                                      effort=effort, on_delta=on_delta, final_tools=final_tools, timer=timer)
+        except ProviderError as e:
+            timer.done(self.model, result=e.kind)
+            raise
+        timer.done(reply.model or self.model, tokens_in=reply.input_tokens, tokens_out=reply.output_tokens)
+        return reply
+
+    async def _reply(self, messages: list[Message], *, system: str, timeout: float, images: list[bytes] | None,
+                     tools: list[dict[str, Any]] | None, run_tool: ToolRunner | None, max_tool_rounds: int,
+                     detail: str | None, effort: str | None, on_delta: Callable[[str], Any] | None,
+                     final_tools: Collection[str], timer: CallTimer) -> ProviderReply:
         t0 = time.monotonic()
         try:
             bearer = await self.auth.bearer()
@@ -209,7 +228,7 @@ class ChatGPTProvider(BaseProvider):
                                                                       if i.get("type") not in HOSTED_ITEMS],
                                    detail=detail, effort=used_effort)
             try:
-                result = await asyncio.wait_for(self._stream(bearer, body, on_delta), timeout)
+                result = await asyncio.wait_for(self._stream(bearer, body, on_delta, timer), timeout)
             except asyncio.TimeoutError:
                 raise ProviderTimeoutError(f"chatgpt: no answer within {timeout:.0f}s") from None
             except _HostedRejected as e:
@@ -274,6 +293,7 @@ class ChatGPTProvider(BaseProvider):
             if result.calls and run_tool is not None and rounds < max(0, int(max_tool_rounds)):
                 # Stateless endpoint: replay the model's items, then the results, and ask again.
                 rounds += 1
+                timer.rounds = rounds
                 outputs = [{"type": "function_call_output", "call_id": call.call_id,
                             "output": await _run_tool(run_tool, call)} for call in result.calls]
                 replay = replay + [it for it in (_replayable(i) for i in result.items) if it] + outputs
@@ -281,8 +301,8 @@ class ChatGPTProvider(BaseProvider):
             return ProviderReply(text=result.text.strip(), input_tokens=tokens_in, output_tokens=tokens_out,
                                  model=model, latency_ms=int((time.monotonic() - t0) * 1000), stop_reason=result.stop)
 
-    async def _stream(self, bearer: Any, body: dict[str, Any],
-                      on_delta: Callable[[str], Any] | None = None) -> "_StreamResult":
+    async def _stream(self, bearer: Any, body: dict[str, Any], on_delta: Callable[[str], Any] | None = None,
+                      timer: CallTimer | None = None) -> "_StreamResult":
         headers = {**self.auth.headers(bearer), "Accept": "text/event-stream", "content-type": "application/json",
                    "session-id": self._session_id}
         res = _StreamResult()
@@ -302,10 +322,15 @@ class ChatGPTProvider(BaseProvider):
                     kind = data.get("type") or event
                     if kind == "response.output_text.delta":
                         out.append(str(data.get("delta") or ""))
+                        if timer is not None and out[-1]:
+                            timer.first()
                         if on_delta is not None and out[-1]:
                             _notify(on_delta, out[-1])
                     elif kind in ("response.output_item.added", "response.output_item.done"):
                         item = data.get("item")
+                        if timer is not None and isinstance(item, dict) and item.get("type") in (
+                                "function_call", *HOSTED_ITEMS):
+                            timer.first()  # a tool call is the answer's first piece too
                         if isinstance(item, dict) and item.get("type") in HOSTED_ITEMS:
                             res.searched, cut = True, len(out)
                         if kind == "response.output_item.done" and isinstance(item, dict):

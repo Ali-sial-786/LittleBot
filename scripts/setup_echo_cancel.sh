@@ -253,6 +253,24 @@ default_name() {
     sed -n 's/^[[:space:]*]*node\.name = "\(.*\)"$/\1/p' <<<"$out" | head -n 1
 }
 
+# Where the canceller's sound really goes (pw-link -l), not just what the drop-in asks for: WirePlumber links it
+# to another output when the speaker isn't there yet as PipeWire starts (on the robot: the ReSpeaker Lite's own
+# headphone socket, so nothing was heard while every other check passed). littlebot/audio/ec_route.py.
+check_route() {
+    local py out rc=0
+    py="${LITTLEBOT_EC_PYTHON:-$REPO_DIR/.venv/bin/python}"
+    [[ -x "$py" ]] && have pw-link || return 0
+    out="$("$py" -c "import sys; sys.path.insert(0, sys.argv[1]); from littlebot.audio import ec_route; \
+raise SystemExit(ec_route.main(sys.argv[2:]))" "$REPO_DIR" 2>/dev/null)" || rc=$?
+    out="${out%%$'\n'*}"
+    [[ -z "$out" ]] && return 0
+    case "$rc" in
+        0) pass "${out%.}" ;;
+        2) fail "${out%.}: nobody hears it. Move it: .venv/bin/python -m littlebot.audio.ec_route --fix (LittleBot also does when it starts and at every call)" ;;
+        *) cwarn "${out%.}" ;;
+    esac
+}
+
 # ---------------------------------------------------------------------------
 # The files
 # ---------------------------------------------------------------------------
@@ -484,6 +502,7 @@ do_check() {
         def="$(default_name @DEFAULT_AUDIO_SOURCE@)"
         if [[ "$def" == "$EC_SOURCE" ]]; then pass "default microphone: $EC_SOURCE"
         else cwarn "default microphone is ${def:-unknown}, not $EC_SOURCE"; fi
+        check_route
     fi
     if have arecord && have aplay; then
         if arecord -L 2>/dev/null | grep -qx "$EC_SOURCE"; then pass "arecord -L lists $EC_SOURCE"; else fail "arecord -L doesn't list $EC_SOURCE ($ASOUNDRC not read?)"; fi

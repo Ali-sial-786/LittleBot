@@ -79,6 +79,9 @@ export default {
                 }
               } })))),
         h('section', { class: 'card span-2' }, h('div', { class: 'card-head' }, h('h2', {}, icon('wifi'), 'Dashboard access')), accessBox),
+        h('section', { class: 'card span-2' }, h('div', { class: 'card-head' }, h('h2', {}, icon('key'), 'API keys')),
+          h('p', { class: 'muted', text: 'Add, change, check or remove the keys for Claude, the voices (Cartesia, ElevenLabs, Deepgram, OpenAI) and the smart home.' }),
+          h('div', { class: 'btn-row mt-2' }, h('a', { class: 'btn soft', href: '#/keys' }, icon('key'), h('span', { text: 'Open the Keys page' })))),
         weatherCard,
         h('section', { class: 'card' }, h('div', { class: 'card-head' }, h('h2', {}, icon('cpu'), 'System')), h('div', { class: 'stack' }, sysKv, services)),
         h('section', { class: 'card' }, h('div', { class: 'card-head' }, h('h2', {}, icon('power'), 'Restart or shut down')),

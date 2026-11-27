@@ -135,6 +135,24 @@ async def test_cutting_in_listens_at_once_and_oops_go_ahead_carries_on(ctx, tmp_
         await server.close()
 
 
+async def test_a_stop_word_heard_on_the_robot_quiets_the_voice_without_waiting_for_their_caption(ctx, tmp_path):
+    # on the robot (2026-10-29) a short "stop" got no caption from ChatGPT: a false alarm, the voice talked on
+    from littlebot.chatgpt.live import QUIET_NOTE
+
+    audio = BargeAudio()
+    svc, server = await start_call(ctx, tmp_path, audio)
+    try:
+        audio.speaking = True
+        await wait_for(lambda: ctx.state.state == RobotState.SPEAKING)
+        audio.interrupt()
+        audio.on_change("stop_word", {"said": "stop"})  # what LiveAudio sends next for a stop word
+        assert audio.dropped == 1 and svc.status()["active"]
+        await wait_for(lambda: QUIET_NOTE in notes(server))
+    finally:
+        await svc.stop()
+        await server.close()
+
+
 async def test_room_talk_over_the_voice_lets_it_carry_on(ctx, tmp_path):
     audio = BargeAudio()
     svc, server = await start_call(ctx, tmp_path, audio)
@@ -164,7 +182,10 @@ async def test_room_talk_over_the_voice_lets_it_carry_on(ctx, tmp_path):
     ("Hassan, come here please", False),
     ("Why are you not showing it on the screen", True),
     ("Can you, can you show me the, uh, precipitation on an hourly basis for Hamilton", True),
-    ("the weather by hour", False),  # a fragment: room talk to the rules (the decision model may know better)
+    ("the weather by hour", True),  # a piece of what they said: for it (the voice heard all of it)
+    ("Under the Great", True),  # ChatGPT's caption of "tell me more about Alexander the Great" (2026-10-29)
+    ("He stopped talking", True),  # and of "hey, stop talking"
+    ("We're leaving in two minutes", False),
     ("Show me the hourly weather", True),
     ("Hey LittleBot, are you there", True),
     ("Lil Bot, wait", True),

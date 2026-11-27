@@ -98,7 +98,7 @@ async def test_real_chromium_smoke(site: str, tmp_path: Path) -> None:
         # the strip is in the page, its binding invisible to the page's own scripts; zoomed
         assert await _until(lambda: ev("!!document.querySelector('littlebot-strip')"))
         assert await ev("typeof window.littlebotView") == "undefined"
-        assert await ev("window.devicePixelRatio") == pytest.approx(1.4)
+        assert await ev("window.devicePixelRatio") == pytest.approx(1.25)  # browser.zoom on the 7" screen
         assert "Mobile" not in await ev("navigator.userAgent")  # it says what it is (fewer captchas from Google)
         assert await ev("window.open('/two.html')") is None  # no new windows
 

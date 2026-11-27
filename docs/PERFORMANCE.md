@@ -1,7 +1,8 @@
 # Performance on the Raspberry Pi 5 (4 GB)
 
-The Pi 5 is fast enough for LittleBot's face, vision and dashboard; **memory** is
-the scarce resource, and Chromium playing YouTube is by far the heaviest component.
+The Pi 5 is fast enough for LittleBot's face, vision and dashboard. On the first robot (2 GB)
+**memory** was the scarce resource; the 4 GB board has room to keep more loaded
+([Memory profile](#memory-profile)). Chromium playing YouTube is by far the heaviest component.
 This page says how to measure, and holds the budget. Every number in a "Measured"
 column is **TO MEASURE** on the real robot.
 
@@ -10,7 +11,7 @@ column is **TO MEASURE** on the real robot.
 | Tool | What it measures |
 |---|---|
 | `scripts/perf_monitor.py` | CPU %, RSS, threads of the running app (+ children / Chromium), system RAM, swap, temperature, CPU clock, throttling; live line + CSV + avg/max summary |
-| `scripts/benchmark_face.py` (face module) | update + render cost per frame for every expression/animation, headless; its `cpu@30fps` column is the share of ONE core the face needs at 30 fps (`--frames 300 --json`, `--scale 2` adds the up-scale cost) |
+| `scripts/benchmark_face.py` (face module) | update + render cost per frame for every expression/animation, headless; its `cpu@30fps` column is the share of ONE core the face needs at 30 fps (`--frames 300 --json`; it draws the way the robot does, straight at the 1024x600 screen; `--scale 1.5` into a bigger window, as the simulator) |
 | `scripts/diagnose.py --section power --section memory` | snapshot of temperature, throttling, RAM/swap |
 | `vcgencmd measure_temp`, `vcgencmd measure_clock arm`, `vcgencmd get_throttled` | quick checks |
 | `top -H -p "$(pgrep -of '^[^ ]*python[^ ]* -m littlebot')"` | per-thread CPU inside the app (`perf_monitor.py` prints the PID too) |
@@ -55,16 +56,47 @@ mock camera frames through face detection at 6 Hz, simulated audio, dashboard li
 | Process RSS | 146 MB average (136–149 MB) |
 | Process CPU | 13.6 % of one core average (startup spike 76 %, steady 9.5–12 %) |
 | Threads | 14 |
-| Face update + render | 1.2 ms/frame mean at scale 1 (`scripts/benchmark_face.py`) |
+| Face update + render | 1.2 ms/frame mean at scale 1 (`scripts/benchmark_face.py`); on the 7" screen (2026-11-09) 2.1 ms mean drawn straight at 1024x600 (sharp), 1.6 ms for a calm face |
 | Face detection | YuNet 6.5–8.6 ms/frame at 320 px |
 
 The Pi 5 is roughly 2–3x slower per core than this machine, but runs at scale 1 without the
 simulator panel (the 2x scaling alone costs ~2 ms/frame here). Expect the app alone to stay
 well under 400 MB RSS on the Pi; Chromium during YouTube is the big unknown.
 
-## Memory budget (sized for 2 GB)
+## Memory profile
 
-The robot now has the 4 GB board, so this budget leaves about 2 GB more headroom.
+`system.memory` (config/default.yaml, `littlebot/core/memory.py`) decides what LittleBot keeps in
+memory. `auto` (the default) reads the board's RAM: 3 GB or more (a 4 GB Pi 5 reports ~3.9 GB) is
+**roomy**, less is **small**. `small` or `roomy` in `config/local.yaml` forces one. The log says
+which at start: `memory: 3.9 GB RAM, keeping more loaded (system.memory: auto)`.
+
+| | small (2 GB) | roomy (4 GB) | What it buys |
+|---|---|---|---|
+| Face recognition models (~110 MB) | dropped after 2 min unused | kept while recognition is on | every chat knows who is there at once, no ~0.4-1 s reload |
+| Voice recognition model (~75 MB) | dropped after 2 min unused | kept while recognition is on | who woke it is known at once |
+| A closed card's drawings and pictures (bounded caches, ~10-40 MB) | freed at once | kept | a card asked for again comes back at once, its picture not downloaded again |
+| Face detection with the browser open | 1.5/s (as when asleep) | full rate (`camera.detect_fps`) | the eyes keep following you, someone arriving is noticed |
+
+Both profiles: the recognition models go when their switch is off, the browser is closed and
+given back when it closes, detection pauses during videos and slows while asleep, the wake word
+stays loaded during videos (`wake.during_videos`). The browser keeps one renderer and no site
+isolation on both: with frames from other sites in processes of their own, LittleBot's address
+check (`littlebot/browser/policy.py`) would no longer see what those frames load.
+
+Roomy costs about 200-300 MB more at most (*estimate*); the 4 GB budget below has room for it.
+
+## Memory budget (4 GB)
+
+| Component | Budget *(estimate)* | Measured |
+|---|---|---|
+| Kernel, firmware reservations, system services | ~150 MB | TO MEASURE |
+| Desktop session (labwc, panel, PipeWire) | 150-250 MB | TO MEASURE |
+| **LittleBot app**, roomy (models kept, card caches, wake word) | **target <= 600 MB RSS, alarm at 800 MB** | TO MEASURE |
+| Chromium kiosk playing YouTube, or the browser view | 400-700 MB (largest item) | TO MEASURE |
+| Headroom (page cache, spikes, dashboard browser on the Pi) | >= 1.5 GB free | TO MEASURE |
+| **Total** | < ~2 GB with ~1.5-2 GB available | TO MEASURE |
+
+## Memory budget (2 GB)
 
 | Component | Budget *(estimate)* | Measured |
 |---|---|---|
@@ -84,7 +116,7 @@ own desktop browser at the same time, and consider `MemoryHigh=` in the user ser
 
 | Item | Target | Measured |
 |---|---|---|
-| Face animating | 30 FPS (`display.fps`) using <= 25 % of one core | TO MEASURE on Pi (desktop x86: ~4 % of one core during the demo; 1.2 ms mean update+render per frame at scale 1) |
+| Face animating | 30 FPS (`display.fps`) using <= 25 % of one core | TO MEASURE on Pi (desktop x86: ~4 % of one core during the demo; 2.1 ms mean update+render per frame drawn at the 1024x600 screen, ~6 % of one core) |
 | Face idle | 15 FPS (`display.idle_fps`) using <= 10 % of one core | TO MEASURE on Pi (desktop x86: ~3 % of one core) |
 | Vision (640x480 MJPG capture, 320 px detection at 15 Hz, `config/pi.yaml`) | <= 40 % of one core | **Pi 5, measured 2026-10-22** (`check_camera.py`, U20CAM, 5 s): YuNet 7.9 ms mean / 9.5 ms p95 per frame, face found in 100 % of frames, ~4 % of one core at 5 Hz; Haar 13.6 ms, face in 1 % of frames. Camera delivers 15 fps MJPG 640x480, 0 empty reads. Raised to 15 Hz (every frame) for smoother eye tracking: ~12 % of one core estimated from those numbers; **TO MEASURE** on the Pi with the app running (`perf_monitor.py --children`, a voice chat, and with the browser open). Lower it in `config/local.yaml` if the voice or temperature suffer |
 | Dashboard idle | ~0 % | TO MEASURE |
@@ -102,6 +134,7 @@ own desktop browser at the same time, and consider `MemoryHigh=` in the user ser
 | `camera.detect_fps`, `camera.process_width` | detection cost |
 | `vision.opencv_threads` | OpenCV worker threads (leave cores for the face and audio) |
 | `media.player: none` | disables YouTube entirely (saves the most memory) |
+| `system.memory: small` | a 4 GB board saves memory like a 2 GB one ([Memory profile](#memory-profile)) |
 
 ## Results log
 

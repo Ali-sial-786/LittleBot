@@ -51,6 +51,14 @@ async def test_get_time_here_and_elsewhere(ctx):
     assert tokyo["place"] == "Tokyo, Japan" and tokyo["timezone"] == "Asia/Tokyo" and tokyo["utc_offset"] == "+09:00"
     ctx.config.info.timezone = "America/Toronto"
     assert json.loads(await run(box, "get_time"))["timezone"] == "America/Toronto"
+    # worked out, not left to the brain ("nine hours ahead" from Ontario; the robot, 2026-10-31)
+    ahead = json.loads(await run(box, "get_time", place="Tokyo"))["compared_with_home"]
+    assert ahead in ("13 hours ahead of home", "14 hours ahead of home")  # (summer time in Ontario or not)
+    ctx.config.info.timezone = "Asia/Kolkata"
+    assert json.loads(await run(box, "get_time", place="Tokyo"))["compared_with_home"] == "3½ hours ahead of home"
+    ctx.config.info.timezone = "Asia/Tokyo"
+    assert json.loads(await run(box, "get_time", place="Tokyo"))["compared_with_home"] == "the same time as home"
+    assert "compared_with_home" not in json.loads(await run(box, "get_time"))
     ctx.config.info.timezone = "Nowhere/Special"
     assert json.loads(await run(box, "get_time"))["day"]  # a wrong setting: the robot's own clock
     out = await run(box, "get_time", place="43.6, -79.4")

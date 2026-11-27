@@ -10,6 +10,20 @@
   <script src="player/static/player.js" defer></script>
 </head>
 <body>
+  <!-- Music (an item with presentation "music"): a now-playing screen BESIDE a smaller player (at least
+       200x200 px, never covered), shown only while that player exists. -->
+  <div id="music-view" aria-label="Now playing">
+    <div class="np-eyes" aria-hidden="true"><span class="np-eye"></span><span class="np-eye"></span></div>
+    <div class="np-info">
+      <div>
+        <p class="np-label">Now playing</p>
+        <p class="np-title" id="np-title"></p>
+        <p class="np-channel" id="np-channel"></p>
+      </div>
+      <div class="np-bars" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div>
+    </div>
+  </div>
+
   <!-- The official YouTube IFrame Player API puts its <iframe> inside #yt-host.
        Nothing is ever drawn over a live player (YouTube Required Minimum Functionality):
        the screens below are only shown while no player exists. -->

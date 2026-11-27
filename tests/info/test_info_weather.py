@@ -273,3 +273,17 @@ def httpx_host(url: str) -> str:
     import httpx
 
     return httpx.URL(url).host
+
+
+async def test_hour_by_hour_when_asked(online):
+    """On the robot (2026-10-31) LittleBot said it had no hourly forecast: hourly=True gives it hour by hour."""
+    svc = weather_service(online, FakeWeb())
+    plain = await svc.report()
+    assert "hour_by_hour" not in plain and "hours" not in plain["forecast"][0]
+    report = await svc.report(hourly=True)
+    hours = report["hour_by_hour"]
+    assert hours[0] == {"time": "18:00", "temperature": 12, "conditions": "sunny", "chance_of_rain_or_snow_percent": 0}
+    assert hours[4]["time"] == "22:00" and hours[4]["conditions"] == "light rain"
+    assert hours[4]["chance_of_rain_or_snow_percent"] == 70
+    assert len(hours) == 24
+    assert report["forecast"][1]["hours"]  # and a few hours across each day

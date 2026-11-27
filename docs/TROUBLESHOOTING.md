@@ -55,9 +55,9 @@ a video is closed for a chat the earcon waits until the browser has let go of th
 
 1. Cable in **HDMI0** (next to USB-C power)? Screen powered (backlight on)?
 2. `cat /sys/class/drm/card*-HDMI-A-*/status` - `connected`? If `disconnected`, try
-   another cable, or force the output with `video=HDMI-A-1:720x480@60D` (DISPLAY_SETUP.md).
-3. Works on a normal monitor but not on the MPI3508 -> mode problem: DISPLAY_SETUP.md
-   section 3 (try 720x480, then 640x480).
+   another cable, or force the output with `video=HDMI-A-1:1024x600@60D` (DISPLAY_SETUP.md).
+3. Works on a normal monitor but not on the 7" screen -> mode problem: DISPLAY_SETUP.md
+   section 2 (1024x600 at 60 Hz). Is the screen's USB (power) cable plugged in?
 4. You ran the vendor `LCD-show` script? Restore `config.txt`/`cmdline.txt` from the
    `.bak` files (or from your computer: the boot partition is FAT) - see DISPLAY_SETUP.md.
 5. Boots to a console instead of the desktop: you flashed *Lite*, or the desktop failed -
@@ -65,10 +65,12 @@ a video is closed for a chat the earcon waits until the browser has let go of th
 
 ## Wrong resolution / blurry / squashed face
 
-- The panel is 480x320; anything else is scaled by the screen's own chip.
-  `diagnose.py --section display` shows the EDID modes and the active one.
-- 4:3 modes (640x480, 1024x768) squash a 3:2 face; 16:9 (1280x720, 1920x1080) too.
-  720x480 is 3:2 and scales cleanly.
+- The panel is 1024x600; anything else is scaled by the screen's own chip and looks soft.
+  `diagnose.py --section display` shows the EDID modes and the active one. LittleBot asks for
+  1024x600 at start-up (`display.output_mode`); `video=HDMI-A-1:1024x600@60` sets it from boot.
+- Bars at the sides / a squashed face after moving from the 3.5" screen: `config/local.yaml` still has
+  the old `display: width: 480, height: 320, output_mode: "720x480@60"` (the log warns); remove those
+  lines (DISPLAY_SETUP.md section 7).
 - `hdmi_cvt` / `hdmi_mode` / `display_rotate` in `config.txt` are ignored on the Pi 5.
 - Face drawn in a small window or with the desktop panel visible: `display.fullscreen: true`
   in `config/local.yaml`; check `diagnose.py --section config`.
@@ -91,6 +93,14 @@ the screen, which (most likely) has no speaker.
 5. Very quiet: check `alsamixer` (F6 -> the USB card) and the app volume/ceiling
    (`audio.speaker.volume`, `max_volume`, dashboard volume).
 6. Crackling / dropouts at high volume: often power - see POWER.md (600 mA USB limit).
+7. **It talks (the face moves) but nothing is heard, with echo cancelling on**: the echo canceller may be playing
+   on another output, e.g. the ReSpeaker Lite microphone's own headphone socket (it happened on the robot after
+   the USB plugs were swapped: WirePlumber links it elsewhere when the speaker isn't there yet as PipeWire
+   starts). See where it plays: `pw-link -l | grep -A3 littlebot_ec_playback`, or
+   `.venv/bin/python -m littlebot.audio.ec_route`; move it to the speaker with `... ec_route --fix`.
+   LittleBot checks this itself when it starts and at every conversation, and moves it back (log:
+   `audio: the echo canceller plays on ..., not on the speaker ...: moved it back to the speaker`);
+   `scripts/setup_echo_cancel.sh --check` reports it as a FAIL.
 
 ## Sound comes out of the screen (HDMI) instead of the speaker
 
@@ -183,8 +193,8 @@ Optional and **untested on a real Pi** ([PI_SETUP.md](PI_SETUP.md#echo-cancellin
 2. `perf_monitor.py` (PERFORMANCE.md) shows whether LittleBot or Chromium is the load.
 3. Reduce load in `config/local.yaml`: `display.fps: 24`, `display.idle_fps: 10`,
    `camera.detect_fps: 3`, `camera.capture_fps: 10`.
-4. YouTube in Chromium is the heaviest part (software video decoding at 480p/720p on a
-   480x320 screen); keep video sessions short (that is also the parental default).
+4. YouTube in Chromium is the heaviest part (software video decoding, up to 480p-720p in the
+   1024x600 player); keep video sessions short (that is also the parental default).
 
 ## Under-voltage / "power supply is not capable of supplying 5A"
 

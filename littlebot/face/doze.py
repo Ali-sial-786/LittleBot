@@ -21,6 +21,11 @@ The face is awake while something is happening and dozes once it has all been qu
 Feed it events with a timestamp and call ``update(now)``; it returns ``("doze" | "wake", reason)`` when
 the decision changes. Every method takes ``now`` so tests can use a fake clock. Not thread-safe on its own:
 the face controller calls it under its lock.
+
+The screen goes dark after a longer quiet spell (``screen_off_after``, 180 s; 0 = never) to save the battery:
+``update_screen(now, asleep=...)`` returns ``("off" | "on", reason)`` when that changes. Same inputs as dozing:
+anything that wakes the face lights the screen again. In the SLEEPING state (``asleep``) the state's own hold
+doesn't keep it on, and going to sleep is not "something happening" (``begin(..., poke=False)``).
 """
 
 from __future__ import annotations
@@ -32,6 +37,9 @@ DOZE_AFTER_S = 30.0  # quiet for this long -> doze
 AWAKE_ON_ARRIVAL_S = 20.0  # someone walked in -> awake for at least this long
 MIN_DOZE_AFTER_S = 5.0
 MAX_SECONDS = 3600.0  # settings are clamped into a sane range
+SCREEN_OFF_AFTER_S = 180.0  # quiet for this long -> the screen goes dark (0 = never)
+MIN_SCREEN_OFF_AFTER_S = 30.0  # a shorter setting would darken it between two sentences
+ASLEEP_HOLD = "state"  # the robot state's hold: in SLEEPING it keeps the face from dozing, not the screen on
 
 
 @dataclass
@@ -50,29 +58,45 @@ def _seconds(value: object, default: float, lo: float) -> float:
     return max(lo, min(MAX_SECONDS, v))
 
 
+def screen_seconds(value: object, default: float = SCREEN_OFF_AFTER_S) -> float:
+    """``screen_off_after`` from a setting: 0 (or less) = never, else MIN_SCREEN_OFF_AFTER_S..MAX_SECONDS."""
+    try:
+        v = float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return default
+    if math.isnan(v):
+        return default
+    return 0.0 if v <= 0 else max(MIN_SCREEN_OFF_AFTER_S, min(MAX_SECONDS, v))
+
+
 class DozeTimer:
-    """Decides whether the face should be awake or dozing. See the module docstring."""
+    """Decides whether the face should be awake or dozing, and the screen on or off. See the module docstring."""
 
     def __init__(self, *, enabled: bool = True, doze_after: float = DOZE_AFTER_S,
-                 awake_on_arrival: float = AWAKE_ON_ARRIVAL_S, now: float = 0.0) -> None:
+                 awake_on_arrival: float = AWAKE_ON_ARRIVAL_S, screen_off_after: float = SCREEN_OFF_AFTER_S,
+                 now: float = 0.0) -> None:
         self.enabled = bool(enabled)
         self.doze_after = _seconds(doze_after, DOZE_AFTER_S, MIN_DOZE_AFTER_S)
         self.awake_on_arrival = _seconds(awake_on_arrival, AWAKE_ON_ARRIVAL_S, 0.0)
+        self.screen_off_after = screen_seconds(screen_off_after)
         self._last_activity = now  # starts awake: it dozes after the first quiet spell
         self._awake_until = now  # arrivals and glances
         self._holds: dict[str, _Hold] = {}
         self._reason = "starting up"
         self.dozing = False
+        self.screen_dark = False
 
     # ------------------------------------------------------------ settings
     def configure(self, *, enabled: bool | None = None, doze_after: float | None = None,
-                  awake_on_arrival: float | None = None) -> None:
+                  awake_on_arrival: float | None = None, screen_off_after: float | None = None) -> None:
         if enabled is not None:
             self.enabled = bool(enabled)
         if doze_after is not None:
             self.doze_after = _seconds(doze_after, self.doze_after, MIN_DOZE_AFTER_S)
         if awake_on_arrival is not None:
             self.awake_on_arrival = _seconds(awake_on_arrival, self.awake_on_arrival, 0.0)
+        if screen_off_after is not None:
+            self.screen_off_after = screen_seconds(screen_off_after, self.screen_off_after)
 
     # ------------------------------------------------------------ inputs
     def activity(self, now: float, reason: str) -> None:
@@ -89,10 +113,13 @@ class DozeTimer:
         self._awake_until = max(self._awake_until, now + max(0.0, seconds))
         self._reason = reason
 
-    def begin(self, key: str, now: float, reason: str, max_seconds: float | None = None) -> None:
-        """Something that lasts started (``end(key)`` when it is over). Never dozes meanwhile."""
+    def begin(self, key: str, now: float, reason: str, max_seconds: float | None = None, *,
+              poke: bool = True) -> None:
+        """Something that lasts started (``end(key)`` when it is over). Never dozes meanwhile. ``poke=False``:
+        it doesn't count as something happening (going to sleep: a dark screen stays dark)."""
         self._holds[key] = _Hold(reason, None if max_seconds is None else now + max_seconds)
-        self.activity(now, reason)
+        if poke:
+            self.activity(now, reason)
 
     def end(self, key: str, now: float) -> None:
         hold = self._holds.pop(key, None)
@@ -122,6 +149,27 @@ class DozeTimer:
     def quiet_for(self, now: float) -> float:
         return max(0.0, now - self._last_activity)
 
+    def screen_should_be_off(self, now: float, *, asleep: bool = False) -> bool:
+        """Nothing has happened for ``screen_off_after`` and nothing is on (asleep: the SLEEPING state's own hold
+        doesn't count). Independent of ``enabled`` (dozing switched off still darkens the screen)."""
+        if self.screen_off_after <= 0:
+            return False
+        if [k for k in self.holding(now) if not (asleep and k == ASLEEP_HOLD)]:
+            return False
+        return now >= max(self._last_activity + self.screen_off_after, self._awake_until)
+
+    def update_screen(self, now: float, *, asleep: bool = False) -> tuple[str, str] | None:
+        """Re-decide the screen; returns ``("off", why)`` or ``("on", why)`` when it changed, else None."""
+        dark = self.screen_should_be_off(now, asleep=asleep)
+        if dark == self.screen_dark:
+            return None
+        self.screen_dark = dark
+        if dark:
+            return "off", f"nothing happening for {self.screen_off_after:.0f} s"
+        if self.screen_off_after <= 0:
+            return "on", "the screen no longer goes off"
+        return "on", self._reason
+
     def update(self, now: float) -> tuple[str, str] | None:
         """Re-decide; returns ``("doze", why)`` or ``("wake", why)`` when it changed, else None."""
         doze = self.should_doze(now)
@@ -143,4 +191,6 @@ class DozeTimer:
             "holding": self.holding(now),
             "quiet_seconds": round(self.quiet_for(now), 1),
             "awake_for": round(max(0.0, max(self._last_activity + self.doze_after, self._awake_until) - now), 1),
+            "screen_off_after": self.screen_off_after,
+            "screen_dark": self.screen_dark,
         }

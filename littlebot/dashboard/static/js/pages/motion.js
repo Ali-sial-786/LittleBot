@@ -6,10 +6,11 @@ import { banner, button, clear, confirmDialog, h, icon, pageHead, rangeField, s,
 const sentence = (t) => { t = String(t).trim(); return t ? (/[.!?]$/.test(t) ? t : `${t}.`).replace(/^./, (c) => c.toUpperCase()) : ''; };
 
 function robotSvg() {
-  const head = s('g', { class: 'moving' },
-    s('rect', { class: 'head', x: 90, y: 34, width: 120, height: 82, rx: 24 }),
+  const eyes = s('g', { class: 'moving' },
     s('rect', { class: 'eye', x: 122, y: 58, width: 16, height: 30, rx: 8 }),
     s('rect', { class: 'eye', x: 162, y: 58, width: 16, height: 30, rx: 8 }));
+  const head = s('g', { class: 'moving' },
+    s('rect', { class: 'head', x: 90, y: 34, width: 120, height: 82, rx: 24 }), eyes);
   const armL = s('g', { class: 'moving' }, s('rect', { class: 'arm', x: -10, y: 0, width: 20, height: 74, rx: 10 }));
   const armR = s('g', { class: 'moving' }, s('rect', { class: 'arm', x: -10, y: 0, width: 20, height: 74, rx: 10 }));
   const tHead = s('text', { x: 150, y: 20, 'text-anchor': 'middle' });
@@ -26,7 +27,7 @@ function robotSvg() {
   place(armL, 95, 142, 20);
   place(armR, 205, 142, -20);
   // Joint "position" is normalised by the motion module: -1..1, 0 = neutral,
-  // +1 = arm raised / head turned to the robot's left (the viewer's right).
+  // +1 = arm raised / head (pan) turned to the robot's left (the viewer's right) / head_tilt looking up.
   const position = (joints, servos, n) => {
     const j = joints?.[n];
     if (j && typeof j.position === 'number') return Math.max(-1, Math.min(1, j.position));
@@ -40,13 +41,16 @@ function robotSvg() {
   root.update = (joints, servos, estop) => {
     const ang = (n, d) => (joints?.[n]?.angle ?? servos?.[n]?.neutral ?? d);
     const hP = position(joints, servos, 'head');
+    const hasTilt = !!(joints?.head_tilt || servos?.head_tilt);
+    const tP = hasTilt ? position(joints, servos, 'head_tilt') : 0;
     head.style.transformOrigin = '150px 118px';
-    head.style.transform = `translateX(${(hP * 10).toFixed(1)}px) rotate(${(hP * 10).toFixed(1)}deg)`;
+    head.style.transform = `translate(${(hP * 10).toFixed(1)}px, ${(-tP * 6).toFixed(1)}px) rotate(${(hP * 10).toFixed(1)}deg)`;
+    eyes.style.transform = `translateY(${(-tP * 8).toFixed(1)}px)`; // looking up / down
     const hA = ang('head', 90);
     // Robot's left arm is drawn on the viewer's right (the robot faces you).
     place(armR, 205, 142, -armDeg(position(joints, servos, 'left_arm')));
     place(armL, 95, 142, armDeg(position(joints, servos, 'right_arm')));
-    tHead.textContent = `Head ${Math.round(hA)}°`;
+    tHead.textContent = hasTilt ? `Head ${Math.round(hA)}° · tilt ${Math.round(ang('head_tilt', 90))}°` : `Head ${Math.round(hA)}°`;
     tL.textContent = `Right arm ${Math.round(ang('right_arm', 160))}°`;
     tR.textContent = `Left arm ${Math.round(ang('left_arm', 20))}°`;
     root.classList.toggle('estop', !!estop);
@@ -65,6 +69,7 @@ export default {
     const sliders = {};
     const armBox = h('div', { class: 'stack-sm' });
     const statusLine = h('p', { class: 'muted center' });
+    const wheelsLine = h('p', { class: 'muted center' });
 
     const estopBtn = h('button', { type: 'button', class: 'estop-big' }, icon('stop'), 'EMERGENCY STOP');
     estopBtn.addEventListener('click', () => app.act(() => post('/motion/estop'), 'Emergency stop: motors off.').then((r) => { if (r && r.status) fill(r); }));
@@ -74,7 +79,7 @@ export default {
       h('div', { class: 'stack' },
         modeBox,
         h('div', { class: 'grid two' },
-          h('section', { class: 'card' }, h('div', { class: 'robot-wrap' }, robot), statusLine),
+          h('section', { class: 'card' }, h('div', { class: 'robot-wrap' }, robot), statusLine, wheelsLine),
           h('div', { class: 'stack' },
             h('section', { class: 'card' }, estopBtn, h('div', { class: 'mt-2' }, estopBox)),
             h('section', { class: 'card' }, h('div', { class: 'card-head' }, h('h2', {}, icon('wave'), 'Gestures')), gestures,
@@ -148,6 +153,12 @@ export default {
       }
       const bits = [ms.backend ? `Backend: ${ms.backend}` : null, ms.moving ? 'Moving' : 'Still', ms.gesture ? `Gesture: ${titleCase(ms.gesture)}` : null].filter(Boolean);
       setText(statusLine, bits.join(' · '));
+      // Wheels (motion.drive): shown only once they are enabled; the pose is simulated until a motor HAT is fitted.
+      const dr = ms.drive;
+      const pose = dr?.pose;
+      setText(wheelsLine, dr?.enabled && pose
+        ? `Wheels${dr.physical ? '' : ' (simulated)'}: x ${Number(pose.x).toFixed(2)} m · y ${Number(pose.y).toFixed(2)} m · ${Math.round(pose.heading)}°${dr.moving ? ' · moving' : ''}`
+        : '');
       for (const [n, r] of Object.entries(sliders)) { const a = ms.joints?.[n]?.angle; if (a !== undefined) r.set(Math.round(a)); }
     }
 

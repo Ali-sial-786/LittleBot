@@ -231,7 +231,8 @@ async def test_no_duck_by_default(vrig):
 
 
 async def test_nothing_is_carried_into_the_chat_during_a_video(vrig):
-    """The video's soundtrack reaches the microphone: it must never be sent as what the person said."""
+    """Without echo cancelling the video's soundtrack reaches the microphone: it must never be sent as what the
+    person said."""
     r = await vrig()
     await _listening(r)
     sounds = _spy_earcon(r)
@@ -239,3 +240,20 @@ async def test_nothing_is_carried_into_the_chat_during_a_video(vrig):
     await until(lambda: r.live.calls, what="live voice started")
     assert r.live.carries == [None]
     assert sounds and sounds[0][0] == "listen"  # and the earcon plays as usual
+
+
+async def test_with_echo_cancelling_what_they_said_with_the_name_is_carried_during_a_video(vrig, monkeypatch):
+    # "Hey little bot, stop the video." in one breath: "stop the video" was lost and the video carried on (the
+    # robot, 2026-10-31). The video plays through the echo-cancelled speaker, so its sound is out of the microphone.
+    from littlebot.audio.service import AudioService
+
+    monkeypatch.setattr(AudioService, "echo_cancelling", property(lambda self: True))
+    r = await vrig()
+    await _listening(r)
+    sounds = _spy_earcon(r)
+    r.rec.say("hey little bot stop the video", conf=0.9, wake_ended_ago=0.5)
+    await until(lambda: r.live.calls, what="live voice started")
+    (carry,) = r.live.carries
+    assert carry is not None and carry.kept_talking  # they went on talking: no earcon over their words
+    assert r.media.status()["state"] == "paused"  # the video is still paused for the chat first
+    assert not [s for s in sounds if s[0] == "listen"]

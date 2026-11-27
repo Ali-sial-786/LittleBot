@@ -192,10 +192,12 @@ async def test_most_turns_cost_nothing(make):
     s = make(WEATHER)
     for text in ("hi", "ba ba ba", "mama", "yes please", "How are you?", "how many fingers am I holding up?",
                  "stop", "play the baby shark video", "make a happy face", "sing twinkle twinkle little star",
-                 "she is so cute", "say hello to the baby", "I love you", "what is your favourite colour",
+                 "so cute", "say hello to the baby", "I love you", "what is your favourite colour",
                  "who am I", ""):
         await s.heard(text)
     assert s.provider.calls == [] and s.screens.shown == []
+    await s.heard("she is so cute")  # a longer turn goes to the model, question word or not; it says "none"
+    assert len(s.provider.calls) == 1
 
 
 @pytest.mark.parametrize("text,why", [
@@ -211,14 +213,16 @@ def test_the_pre_filter(text, why):
     "what's the weather tomorrow", "What does serendipity mean?", "How do I make pancakes?",
     "set a timer for 10 minutes", "what's 15 percent of 80", "what time is it in Tokyo", "convert 5 miles to km",
     "tell me about dinosaurs", "Is it going to rain?",
+    # no question word, but more than a word or two: the model decides (on the robot these got no card, 2026-10-29)
+    "and Alexander the Great?", "Talk to me about Genghis Khan and Kublai Khan please",
 ])
 def test_questions_go_to_the_model(text):
     assert prefilter(text) is None
 
 
 def test_with_a_card_up_follow_ups_go_to_the_model():
-    assert prefilter("and on saturday?") == "no question"
-    assert prefilter("and on saturday?", card_up=True) is None
+    assert prefilter("on saturday?") == "no question"
+    assert prefilter("on saturday?", card_up=True) is None
     assert prefilter("thanks", card_up=True) == "chit-chat"
 
 
@@ -498,7 +502,8 @@ async def test_one_info_line_per_decision_without_the_words(make, caplog):
         await s.heard("What's the weather like in Springfield tomorrow?")
         await s.heard("hi")
     lines = [r.getMessage() for r in caplog.records if r.levelno == logging.INFO]
-    assert len(lines) == 1 and lines[0].startswith("screen: show weather (model, ")
+    assert len(lines) == 2 and lines[0].startswith("screen: show weather (model, ")
+    assert lines[1] == "screen: nothing to decide (chit-chat, 1 words)"  # why no card came, never the words
     assert "Springfield" not in caplog.text
 
 
@@ -530,6 +535,61 @@ async def test_it_waits_for_the_voices_answer_not_its_filler(make):
     assert "LittleBot: Mix the flour, eggs and milk" in content and "being said now" not in content
     assert "take its numbers, names and facts from LittleBot's answer" in s.provider.calls[0]["system"]
     assert s.screens.shown and s.screens.shown[0][0]["card"] == "recipe"
+
+
+LONG_START = ("Genghis Khan was the founder of the Mongol Empire. He united the Mongol tribes and started the big "
+              "conquests across Asia, and Kublai Khan was his grandson who")
+
+
+async def test_a_long_answer_makes_its_card_while_it_is_being_said(make):
+    # from a real call: GPT-Live's final caption came 30 s later, when it had finished; the card never showed
+    s = make(FACT, wait_for_answer=True)
+    s.director.heard("Can you tell me the difference between Kublai Khan and Genghis Khan?")
+    await asyncio.sleep(0.05)
+    s.director.saying("Genghis Khan was")
+    await asyncio.sleep(director_mod.SAID_GRACE_S + 0.2)
+    assert s.provider.calls == []  # too few to tell an answer from "hold on, let me check"
+    s.director.saying(LONG_START)
+    await s.settle()
+    content = s.provider.calls[0]["messages"][-1]["content"]
+    assert LONG_START in content and "only its first words so far" in content  # not read as "hasn't answered"
+    assert s.screens.shown  # long before the turn's final caption
+    s.director.said(LONG_START + " He ruled China from Beijing.")
+    await s.settle()
+    assert len(s.provider.calls) == 1  # the final caption doesn't make a second card
+
+
+async def test_an_answer_begun_before_the_question_arrived_still_makes_the_card(make):
+    # on the robot GPT-Live starts answering ~1 s before the person's final caption reaches LittleBot
+    s = make(FACT, wait_for_answer=True)
+    s.director.saying("Genghis Khan was")
+    await asyncio.sleep(0.05)
+    s.director.heard("Tell me the difference between Genghis Khan and Kublai Khan")
+    s.director.saying(LONG_START)
+    await s.settle()
+    assert LONG_START in s.provider.calls[0]["messages"][-1]["content"]
+    assert s.screens.shown
+
+
+async def test_the_card_starts_from_the_first_few_words(make):
+    # "there shouldn't be any wait for the card" (the parent, 2026-10-29): not 25 words, ~8 s of speech
+    s = make(FACT, wait_for_answer=True)
+    s.director.heard("What's the biggest animal in the world?")
+    s.director.saying("The blue whale is the biggest")
+    await s.settle()
+    content = s.provider.calls[0]["messages"][-1]["content"]
+    assert "The blue whale is the biggest ..." in content and "only its first words so far" in content
+    assert "plain well-known facts" in s.provider.calls[0]["system"]
+
+
+async def test_filler_said_bit_by_bit_is_still_not_the_answer(make):
+    s = make(FACT, wait_for_answer=True)
+    s.director.heard("What's the top-grossing movie of all time?")
+    await asyncio.sleep(0.05)
+    s.director.saying("Hold on, let me check that for you, it'll only take me a moment to find out the answer. "
+                      "Just a second while I look it up for you.")
+    await asyncio.sleep(director_mod.SAID_GRACE_S + 0.2)
+    assert s.provider.calls == []
 
 
 async def test_a_bare_sure_is_not_the_answer(make):
@@ -605,6 +665,88 @@ def test_an_unknown_card_is_named_in_the_log_reason():
     assert clean_spec({"card": "Movie<b>"}, TYPES) == (None, "unknown card 'movieb'")
 
 
+@pytest.mark.parametrize("spec,layout", [
+    ({"card": "compare", "title": "Genghis Khan vs Kublai Khan", "columns": ["Genghis Khan", "Kublai Khan"],
+      "rows": ["Genghis built the empire", "Kublai ruled China"]}, "compare"),  # on the robot, 2026-10-29
+    ({"card": "comparison", "columns": [{"name": "A", "facts": ["1"]}, {"name": "B", "facts": ["2"]}]}, "compare"),
+    ({"card": "facts", "layout": "Comparison", "columns": [{"name": "A", "facts": ["1"]}]}, "compare"),
+    ({"card": "facts", "items": ["one", "two"]}, "list"),  # no layout
+    ({"card": "trivia", "text": "Octopuses have three hearts."}, "item"),  # any made-up kind with text
+])
+def test_a_made_up_card_kind_with_something_to_show_is_a_facts_card(spec, layout):
+    from littlebot.screens import base
+
+    out, why = clean_spec(spec, base.card_types())
+    assert out is not None, why
+    assert out["card"] == "facts" and out["layout"] == layout
+
+
+def test_a_made_up_card_kind_with_only_a_title_stays_unknown():
+    from littlebot.screens import base
+
+    assert clean_spec({"card": "spaceship", "title": "Zoom"}, base.card_types()) == (None, "unknown card 'spaceship'")
+
+
+@pytest.mark.parametrize("spec,card,shows", [
+    ("Japan is an island nation in East Asia", "facts", "Japan is an island nation in East Asia"),
+    (["Find the panel", "Push it to off", "Push it back on"], "facts", "Push it to off"),
+    ({"card": "recipe", "title": "Pancakes", "steps": "1. Mix the flour and eggs 2. Fry small spoonfuls"}, "recipe",
+     "Fry small spoonfuls"),  # steps as one string
+    ({"card": "recipe", "title": "Pancakes", "ingredients": ["flour", "eggs"], "steps": []}, "facts", "eggs"),
+    ({"card": "explain", "title": "A breaker", "points": "Find the panel; push it fully off; then back on"},
+     "explain", "push it fully off"),
+    ({"card": "explain", "title": "A breaker", "steps": [{"n": 1, "do": "Find the panel"}, {"n": 2, "do": "Push"}]},
+     "facts", "Find the panel"),  # points sent as records under another name
+    ({"card": "definition", "word": "ephemeral", "meaning": ["lasting", "a very short time"]}, "definition",
+     "a very short time"),  # "meaning" for "meanings"
+    ({"card": "facts", "title": "Croc", "items": {"Snout": "broad and U-shaped", "Teeth": "mostly hidden"}}, "facts",
+     "Snout: broad and U-shaped"),
+    ({"card": "summary", "points": ["Tokyo is 13 hours ahead", "It's already Sunday there"]}, "facts",
+     "It's already Sunday there"),
+    ({"card": "answer", "answer": {"text": "The square root of 1764 is 42"}}, "facts", "1764 is 42"),
+])
+def test_a_card_in_any_shape_with_text_in_it_is_shown(spec, card, shows):
+    # Like on main: no card the text model sends is turned away for its shape (the parent's ask, 2026-10-31)
+    from littlebot.screens import base
+
+    types = base.card_types()
+    out, why = clean_spec(spec, types)
+    assert out is not None, why
+    if card != out["card"]:  # the screen can't make that card from it: its text instead
+        out = director_mod.text_instead(out, types, sent=spec)
+    assert out["card"] == card and shows in json.dumps(out)
+
+
+def test_a_card_too_long_is_shortened_and_only_nothing_to_show_or_the_safety_rules_keep_it_off():
+    from littlebot.screens import base
+
+    types = base.card_types()
+    out, why = clean_spec({"card": "facts", "layout": "list", "title": "Planets",
+                           "items": [f"Planet {i} " + "far away " * 30 for i in range(30)]}, types)
+    assert out is not None and len(json.dumps(out)) <= director_mod.MAX_SPEC_CHARS and len(out["items"]) >= 2
+    assert clean_spec({"card": "timer", "minutes": "soon"}, types) == (None, "missing seconds")  # one word: a setting
+    assert clean_spec({"card": "recipe", "title": "Cookies", "steps": ["Mix", "our little secret, don't tell mommy"]},
+                      types)[1].startswith("blocked by the safety rules")
+    assert director_mod.text_card({"card": "weather", "place": "Hamilton", "view": "week"}) is None
+
+
+async def test_a_card_the_screen_cannot_make_is_shown_as_its_text(make):
+    s = make()
+    shown: list[dict[str, Any]] = []
+
+    async def show(spec, source="voice"):
+        shown.append(spec)
+        return {"ok": spec["card"] == "facts", "error": None if spec["card"] == "facts" else "no_card"}
+    s.screens.show = show
+    s.director._types_fn = lambda: {**TYPES, "facts": CardType("facts", "Facts.", {
+        "layout": {"type": "string"}, "title": {"type": "string"}, "text": {"type": "string"},
+        "items": {"type": "array", "items": {"type": "string"}}, "ordered": {"type": "boolean"}},
+        _build, required=("layout",))}
+    result = await s.director.show_spec({"card": "recipe", "title": "Soup", "steps": ["Chop the onion", "Boil it"]})
+    assert result["ok"] and [spec["card"] for spec in shown] == ["recipe", "facts"]
+    assert shown[1]["items"] == ["Chop the onion", "Boil it"]
+
+
 @pytest.mark.parametrize(("words", "view"), [
     ("Can you zoom into that", "in"),  # from a real call
     ("Can you just make the image take over the screen", "fill"),  # from a real call
@@ -631,3 +773,22 @@ def test_picture_words_steer_a_cards_picture(words, view):
     got = rule.args.get("view") if rule is not None and rule.action == "picture" else None
     assert got == view
     assert local_rule(words, "weather", card_types()["weather"].actions) is None or view is None  # no picture there
+
+
+async def test_every_built_in_card_reaches_the_model_whole(ctx):
+    """The 7" cards have more fields (details, summary, tips, stats...): none of them, nor a card's actions, may
+    be cut off the catalogue the model sees."""
+    from littlebot.screens.base import card_types
+
+    ctx.privacy.set(cloud_enabled=True)
+    provider = JsonProvider({"do": "none"})
+    d = ScreenDirector(ctx, lambda: provider, note=lambda _n: None, types=card_types)
+    system = d._prompt()
+    assert "7-inch screen" in system and "fill the optional fields that help" in system
+    for kind, ct in card_types().items():
+        line = next(ln for ln in system.splitlines() if ln.startswith(f"- {kind}: "))
+        assert len(line) < director_mod.CATALOGUE_LINE_CHARS, kind
+        for field in ct.fields:
+            assert f'"{field}"' in line, (kind, field)
+        if ct.actions:
+            assert line.endswith("}."), kind  # the actions are the line's end: nothing cut after them

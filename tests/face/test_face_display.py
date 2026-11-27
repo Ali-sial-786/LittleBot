@@ -131,9 +131,9 @@ def test_window_layout_with_and_without_panel():
     loop = D.DisplayLoop(robot, max_frames=3)
     loop.open()
     try:
-        w, h = loop.window.get_size()
-        assert w == 720 + D.PANEL_WIDTH and h == max(480, D.PANEL_MIN_HEIGHT)
-        assert loop.face_rect.size == (720, 480)
+        w, h = loop.window.get_size()  # the 1024x600 screen at 1.5x, plus the panel
+        assert w == 1536 + D.PANEL_WIDTH and h == max(900, D.PANEL_MIN_HEIGHT)
+        assert loop.face_rect.size == (1536, 900)
         assert loop.run() == "max_frames"
         assert loop.window.get_at((loop.face_rect.right + 20, 200))[:3] != (0, 0, 0)  # panel drawn
     finally:
@@ -143,7 +143,7 @@ def test_window_layout_with_and_without_panel():
     loop = D.DisplayLoop(robot, max_frames=2)
     loop.open()
     try:
-        assert loop.window.get_size() == (480, 320) and loop.panel_rect is None
+        assert loop.window.get_size() == (1024, 600) and loop.panel_rect is None
         loop.run()
     finally:
         loop.close()
@@ -437,6 +437,56 @@ def test_output_mode_failure_is_not_fatal(caplog):
     assert "failed to apply" in caplog.text
 
 
+def test_the_screen_is_turned_the_right_way_up_or_round():
+    run = _Run()
+    wlr = lambda _: "/usr/bin/wlr-randr"  # noqa: E731
+    assert D.apply_output_transform("HDMI-A-1", False, run=run, which=wlr, env=WAYLAND, settle_s=0) is True
+    assert run.calls[-1] == ["wlr-randr", "--output", "HDMI-A-1", "--transform", "normal"]  # a leftover turn goes
+    assert D.apply_output_transform("HDMI-A-2", True, run=run, which=wlr, env=WAYLAND, settle_s=0) is True
+    assert run.calls[-1] == ["wlr-randr", "--output", "HDMI-A-2", "--transform", "180"]
+    assert D.apply_output_transform("HDMI-A-1", True, run=run, which=wlr, env={}, settle_s=0) is False  # no Wayland
+    import subprocess
+
+    def refuse(argv, **kw):
+        return subprocess.CompletedProcess(argv, 1, "", "no such output")
+
+    assert D.apply_output_transform("HDMI-A-9", False, run=refuse, which=wlr, env=WAYLAND, settle_s=0) is False
+
+
+WLR_TWO = """HDMI-A-1 "Unknown (HDMI-A-1)"
+  Enabled: no
+HDMI-A-2 "MPI3508 (HDMI-A-2)"
+  Enabled: yes
+  Modes:
+    720x480 px, 60.000000 Hz (current)
+  Position: 0,0
+  Transform: 180
+"""
+
+
+def test_find_output_picks_the_port_the_screen_is_on(caplog):
+    which = lambda _: "/usr/bin/wlr-randr"  # noqa: E731
+    run = _Run(current=WLR_TWO)
+    assert D.find_output("auto", run=run, which=which, env=WAYLAND) == "HDMI-A-2"  # HDMI-A-1 is off
+    assert run.calls == [["wlr-randr"]]
+    assert D.find_output("HDMI-A-2", run=run, which=which, env=WAYLAND) == "HDMI-A-2"
+    with caplog.at_level("WARNING", logger="littlebot.face.display"):  # a named port without a screen
+        assert D.find_output("HDMI-A-3", run=run, which=which, env=WAYLAND) == "HDMI-A-2"
+    assert "HDMI-A-3 not found" in caplog.text
+    assert D.find_output("auto", run=_Run(current=WLR_1280), which=which, env=WAYLAND) == "HDMI-A-1"
+    assert D.find_output("HDMI-A-1", run=_Run(current=WLR_1280), which=which, env=WAYLAND) == "HDMI-A-1"  # named, on
+    assert D.find_output("HDMI-A-1", run=_Run(current=WLR_TWO), which=which, env=WAYLAND) == "HDMI-A-2"  # named, but off
+
+
+def test_find_output_without_wayland_or_wlr_randr():
+    run = _Run(current=WLR_TWO)
+    assert D.find_output("auto", run=run, which=lambda _: "/usr/bin/wlr-randr", env={}) == "HDMI-A-1"
+    assert D.find_output("HDMI-A-2", run=run, which=lambda _: None, env=WAYLAND) == "HDMI-A-2"
+    assert run.calls == []
+    broken = _Run(current="")
+    assert D.find_output("auto", run=broken, which=lambda _: "/usr/bin/wlr-randr", env=WAYLAND) == "HDMI-A-1"
+
+
 def test_current_size_reads_only_the_named_output():
     text = 'HDMI-A-2 "other"\n  Modes:\n    1920x1080 px, 60.0 Hz (current)\n' + WLR_1280
     assert D._current_size(text, "HDMI-A-1") == "1280x720"
@@ -509,3 +559,32 @@ def test_init_video_without_preference_uses_default():
     pg = _FakePg(env)
     D.init_video(pg, None, env)
     assert pg.display.inits == [None] and env == {}
+
+
+def test_double_tap_shows_today_at_a_glance(runtime):
+    robot = _robot(runtime, sim_panel=False)
+    robot.ctx.audio = FakeAudio(robot.ctx.bus)
+    shown: list[dict] = []
+
+    class Screens:
+        active = False
+
+        async def show(self, spec, source="voice"):
+            shown.append(dict(spec))
+            return {"ok": True}
+
+    robot.ctx.screens = Screens()
+    loop = D.DisplayLoop(robot, max_frames=2)
+    loop.open()
+    try:
+        r = loop.face_rect
+        for _ in range(2):
+            loop.handle_click((r.centerx, r.centery), 1, 0)
+            pygame.event.post(pygame.event.Event(pygame.MOUSEBUTTONUP, pos=r.center, button=1))
+            loop._handle_events()
+            loop._flush_lift(force=True)
+            time.sleep(0.12)  # longer than a touch-screen bounce
+        assert _wait_until(lambda: shown == [{"card": "glance"}])
+    finally:
+        loop.close()
+        _close(robot)

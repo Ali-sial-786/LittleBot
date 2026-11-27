@@ -120,7 +120,7 @@ export default {
           h('div', { class: 'stack-sm' },
             h('h2', {}, 'How cloud AI works'),
             h('p', { text: 'Easiest: sign in with your ChatGPT account below and pick “ChatGPT” as the provider. It uses your own ChatGPT plan, no API key. It relies on OpenAI endpoints that are not officially documented, so it may stop working if OpenAI changes them.' }),
-            h('p', {}, 'Or use a separate, paid API key from Anthropic or OpenAI: put it in the ', h('code', { text: '.env' }), ' file on the robot (', h('code', { text: 'ANTHROPIC_API_KEY' }), ' or ', h('code', { text: 'OPENAI_API_KEY' }), ') and restart LittleBot. Keys and sign-ins stay on the robot and are never shown here.'),
+            h('p', {}, 'Or use a separate, paid API key from Anthropic or OpenAI: add it on the ', h('a', { href: '#/keys', text: 'Keys page' }), ' (it is used straight away). Keys and sign-ins stay on the robot and are never shown here.'),
             h('p', { text: 'For babies and young toddlers (under 2 years) LittleBot only ever uses scripted, age-appropriate responses - even when cloud AI is on. Every AI reply is length-limited and safety-checked before it is spoken.' }))),
         notices,
         h('div', { class: 'grid two' },
@@ -361,9 +361,9 @@ export default {
         const link = h('a', { href: '#/privacy', text: 'Privacy' });
         notices.append(h('div', { class: 'banner warn' }, icon('alert'), h('div', {}, h('strong', { text: 'Cloud communication is off' }), h('span', {}, 'Cloud AI is on, but nothing will be sent until you also allow cloud communication in ', link, '.'))));
       }
-      if (st.enabled && st.provider === 'anthropic' && !d.keys?.has_anthropic_key) notices.append(banner('warn', 'key', 'No Anthropic key', 'Add ANTHROPIC_API_KEY to the .env file on the robot, then restart LittleBot.'));
+      if (st.enabled && st.provider === 'anthropic' && !d.keys?.has_anthropic_key) notices.append(banner('warn', 'key', 'No Anthropic key', 'Add an Anthropic key on the Keys page (More → Keys).'));
       if (st.enabled && st.provider === 'chatgpt' && d.brain?.provider_status?.chatgpt === 'not_configured') notices.append(banner('warn', 'key', 'Not signed in with ChatGPT', 'Sign in with ChatGPT below to use your plan.'));
-      if (st.enabled && st.provider === 'openai' && !d.keys?.has_openai_key) notices.append(banner('warn', 'key', 'No OpenAI key', 'Add OPENAI_API_KEY to the .env file on the robot, then restart LittleBot.'));
+      if (st.enabled && st.provider === 'openai' && !d.keys?.has_openai_key) notices.append(banner('warn', 'key', 'No OpenAI key', 'Add an OpenAI key on the Keys page (More → Keys).'));
       if (!d.policy?.cloud_ai_age_ok) notices.append(banner('info', 'shield', 'Scripted replies only for now', `Your child is under the minimum age set for cloud AI (${d.policy?.min_age_months_for_cloud ?? 0} months, ai.min_age_months_for_cloud), or no age is set. LittleBot answers with gentle scripted responses.`));
       kvRows(usage, d.brain?.usage);
       kvRows(brainState, { active_provider: d.brain?.active_provider, cloud_allowed: d.brain?.cloud_allowed, reason: d.brain?.reason, last_error: d.brain?.last_error });

@@ -2,8 +2,8 @@
 
 A small, gentle, expressive companion robot for a young child: big animated eyes, songs and
 scripted developmental play with a caregiver, parent-approved videos, optional AI conversation for
-older children, and a phone-friendly parent dashboard. Built for a Raspberry Pi 5 (4 GB) with a
-480×320 screen, USB camera, USB microphone and USB speaker, and future head/arm servos.
+older children, and a phone-friendly parent dashboard. Built for a Raspberry Pi 5 (4 GB; 2 GB also works) with a
+7" 1024×600 touch screen (HDMI), USB camera, USB microphone and USB speaker, and future head/arm servos.
 
 > **LittleBot is a supervised prototype.** It is not a babysitter, not a child-safety device and not
 > a substitute for a caregiver. Software tests do not establish physical toy safety
@@ -88,6 +88,8 @@ remove them.
 | `docs/DASHBOARD_GUIDE.md`, `docs/ACTIVITY_GUIDE.md` | For parents |
 | `docs/AI_SAFETY.md`, `docs/MOTION_SAFETY.md`, `docs/YOUTUBE_ON_PI.md` | Safety and feasibility notes |
 | `docs/CHATGPT.md` | Sign in with ChatGPT and live voice: setup, safety, privacy, troubleshooting |
+| `docs/CLAUDE.md` | Claude (Anthropic API key) as the text model for cards and hand-offs, with ChatGPT behind it: key, switch, cost, measuring |
+| `docs/CALLS.md` | Video calls through WhatsApp on the robot's screen: linking, what to say, when it shuts down, privacy (not tried on the robot yet) |
 | `docs/VOICES.md` | Recognising family voices (opt-in, on the robot): setup, privacy, troubleshooting |
 | `docs/DEV_CONVENTIONS.md`, `docs/modules/*.md` | For developers |
 | `hardware/README.md` | The two 3D-printable enclosures: parts, hardware lists, assembly, safety |

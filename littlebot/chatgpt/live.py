@@ -175,11 +175,12 @@ HUSH_QUIET_LEVEL = 0.01  # RMS (full scale 1.0) below which a 20 ms frame is qui
 # ("stop", "be quiet", "shh") makes the voice go quiet and wait for them (QUIET_END_S: then the call ends),
 # except as their first words in a call (a wake word heard by mistake): then it ends too. The wake word
 # listens again after a call.
-_STOP_LEAD = (r"(?:ok|okay|oh|um+|uh+|no|hey|please|just|alright|all right|littlebot|little bot|lil bot|bot|robot|"
-              r"(?:can|could|would|will) you(?: please)?|you can|i want you to|i need you to)")
+# ChatGPT's caption of "hey, stop talking" said over the voice was "He stopped talking" (on the robot, 2026-10-29)
+_STOP_LEAD = (r"(?:ok|okay|oh|um+|uh+|no|hey|he|please|just|alright|all right|littlebot|little bot|lil bot|bot|"
+              r"robot|(?:can|could|would|will) you(?: please)?|you can|i want you to|i need you to)")
 _STOP_TAIL = r"(?: (?:please|now|thanks|thank you|littlebot|little bot|lil bot|bot|robot))*$"
-_HUSH_WHAT = (r"(?:stop(?: (?:talking|it|now|that|for now))*|stop talking to me|be quiet|quiet|shh+|hush|shush|"
-              r"shut up|that'?s enough|enough)")
+_HUSH_WHAT = (r"(?:stop(?: (?:talking|it|now|that|for now))*|stop talking to me|stopped talking|be quiet|quiet|shh+|"
+              r"hush|shush|shut up|that'?s enough|enough)")
 _END_WHAT = (r"(?:stop(?: (?:talking|it|now|that|for now))* and (?:stop )?listening|"
              r"stop listening(?: (?:to me|now|for now))*(?: and (?:stop )?talking)?|"
              r"never ?mind|cancel(?: that)?|go away|hang up|end (?:the )?call|that'?s (?:all|it)|"
@@ -213,6 +214,7 @@ GAME_NOTES = {
            "and tells you who won: never make your own pick or play it out loud. ",
 }
 PARTIAL_MAX_CHARS = 300  # what the person is still saying, kept to start a look before they finish
+VOICE_SAID_CHARS = 600  # the voice's words lately, for the stop words (live_audio.LiveAudio._said_it_itself)
 CANT_SEE = "You couldn't look. Say you can't see right now, and suggest the grown-up shows you again later; " \
            "don't guess what is there."
 # Why LittleBot can't look (CameraLook.blocked_reason), with the words for the voice to use. The wording
@@ -262,6 +264,15 @@ THINKING_AFTER_S = 1.5  # a hand-off still being worked on this long: the soft "
 THINKING_EVERY_S = 3.0
 THINKING_TIMES = 4
 QUICK_TIMEOUT_S = 3.0  # a quick answer (the weather, the time, quick.py) that takes longer: the text model answers
+# The text model never sees what quick.py answered, so each hand-off after one starts with a note of the latest
+# QUICK_DONE_KEEP of them in the call ("how much time is left on it?" once got "I didn't set a timer").
+QUICK_DONE_KEEP = 5
+QUICK_DONE_NOTE = ("(LittleBot's note, not their words: earlier in this chat LittleBot answered these itself, "
+                   "without you, and they really happened. Use them for follow-up questions, and don't do them "
+                   "again unless asked:\n{lines})")
+QUICK_TIMERS_NOTE = "LittleBot's timers right now (this is what counts): {timers}."
+QUICK_NO_TIMERS = "none (they finished or were stopped)"
+TIMERS_NOTE = "(LittleBot's note, not their words: " + QUICK_TIMERS_NOTE[:-1] + ".)"
 HANDOFF_TIMEOUT_S = 25.0  # a hand-off the voice waits on always gets an answer (or a "didn't work" note) within this
 HANDOVER_MAX_S = 15.0  # a video / activity / sleep was promised: the call ends this long after, at the latest
 HANDOVER_REASON = "handed over to what was asked for"
@@ -315,7 +326,7 @@ CONTROL_WORDS = re.compile(r"\b(?:activit(?:y|ies)|games?|videos?|youtube|cartoo
 INFO_WORDS = re.compile(r"\b(?:weather|forecasts?|hourly|rain(?:ing|y)?|snow(?:ing|y)?|sunny|umbrella|windy|"
                         r"humid(?:ity)?|degrees|(?:hot|cold|warm|chilly) (?:outside|out there)|"
                         r"what time|what(?:'s| is) the time|time is it|what day|what date|(?:the|today'?s) date|"
-                        r"news|headlines?|scores?)\b", re.I)
+                        r"news|headlines?|scores?|calendars?|appointments?|meetings?|agenda|schedule)\b", re.I)
 CHECK_WINDOW = 320  # characters of a reply in progress checked at a time
 # The voice sometimes says the person's part ("Hi LittleBot, it's Ali, can you look up the weather?"): a line that
 # greets LittleBot by name gets this note (not "LittleBot here!").
@@ -402,6 +413,14 @@ forget one, delegate "forget: <the fact>". Never say you'll remember something w
 The client knows live information: the weather (now, today, tomorrow, anywhere), the time and the date, and \
 things that change, like news, sports scores or opening hours. For these, always delegate the question to the \
 client in plain words (for example "what's the weather today" or "what time is it"), never guess or say you can't know.
+
+LittleBot can also do these, so delegate the request in plain words and say the result: reminders and alarms \
+("remind me at 6 to call mom", "wake me at 7", "what are my reminders?"), lists ("add milk to the shopping list", \
+"what's on my to-do list?"), the morning or evening briefing and the news headlines, music ("play some jazz"), \
+the smart home when it is set up ("turn off the kitchen lights"), routines ("when I say good night, ..."), \
+voice games (trivia, hangman, 20 questions, riddles, would you rather: "let's play trivia"; while one runs, \
+delegate each of their answers as "game answer: <what they said>"), its personality ("be more concise") and \
+interpreter mode ("translate to Urdu"). Never say you can't do these.
 
 You have an animated face on a screen (big cartoon eyes). Faces you can make: {faces}. When someone asks you \
 to make a face, wink, spin your eyes or play peekaboo, delegate it to the client as "face: <name>" (for example \
@@ -646,11 +665,16 @@ class LiveVoiceService(Service):
                          voice_level=self.cfg.live_voice_level, barge_in=BargeInSettings.from_config(self.cfg))
 
     def provider(self) -> BaseProvider:
+        """The text model for hand-offs: ChatGPT, or Claude with ChatGPT behind it (``text.provider``,
+        littlebot/brain/text_model.py)."""
         if self._provider is None:
+            from littlebot.brain.text_model import text_provider  # noqa: PLC0415
             from littlebot.chatgpt.responses import ChatGPTProvider  # noqa: PLC0415
 
-            self._provider = ChatGPTProvider(self.auth, models=list(self.cfg.models), effort=self.cfg.reasoning_effort,
-                                             transport=self._transport)
+            models = list(dict.fromkeys([*self.cfg.handoff_models, *self.cfg.models]))
+            chatgpt = ChatGPTProvider(self.auth, models=models, effort=self.cfg.reasoning_effort,
+                                      transport=self._transport, purpose="handoff")
+            self._provider = text_provider(self.ctx, chatgpt, purpose="handoff")
         return self._provider
 
     def screen_provider(self) -> BaseProvider:
@@ -659,11 +683,13 @@ class LiveVoiceService(Service):
         if self._provider_given:
             return self.provider()
         if self._screen_provider is None:
+            from littlebot.brain.text_model import text_provider  # noqa: PLC0415
             from littlebot.chatgpt.responses import ChatGPTProvider  # noqa: PLC0415
 
             models = list(dict.fromkeys([*getattr(self.cfg, "look_models", []), *self.cfg.models]))
-            self._screen_provider = ChatGPTProvider(self.auth, models=models, effort=self.cfg.reasoning_effort,
-                                                    transport=self._transport)
+            chatgpt = ChatGPTProvider(self.auth, models=models, effort=self.cfg.reasoning_effort,
+                                      transport=self._transport, purpose="screen")
+            self._screen_provider = text_provider(self.ctx, chatgpt, purpose="screen")
         return self._screen_provider
 
     def blocked_reason(self, parent_present: bool = True) -> str | None:
@@ -696,6 +722,10 @@ class LiveVoiceService(Service):
             "active": call is not None,
             "voice": self.cfg.live_voice,
             "session_minutes": self.cfg.live_session_minutes,
+            # which text model does the hand-offs and cards (never the key itself: only whether one is set)
+            "text_model": {"provider": self.ctx.config.text.provider, "claude_model": self.ctx.config.claude.model,
+                           "has_anthropic_key": bool(self.ctx.config.anthropic_api_key
+                                                     and self.ctx.config.anthropic_api_key.get_secret_value())},
             "last_call": self.last_call,
         }
         if call is not None:
@@ -767,6 +797,9 @@ class LiveCall:
         self._ended = asyncio.Event()
         self._tasks: set[asyncio.Task[Any]] = set()
         self._captions: collections.deque[dict[str, str]] = collections.deque(maxlen=MAX_CAPTIONS)
+        # (when, quick.Asked, their question, what the voice was told): for the text model's follow-ups
+        self._quick_done: collections.deque[tuple[float, Any, str, str]] = collections.deque(maxlen=QUICK_DONE_KEEP)
+        self._had_timer = False  # a timer was running in this call: "none" is worth saying once it is gone
         self._assistant_turn = ""
         self._last_check = 0.0
         self._delegations = 0
@@ -1179,6 +1212,8 @@ class LiveCall:
             else:
                 self._assistant_turn = (self._assistant_turn + event.text)[-2000:]
                 text = self._assistant_turn
+                if self._director is not None:
+                    self._director.saying(text)  # a card while it talks, not after its turn ends
             self._check_reply(text, event.final)
             if not self._voice_face_this_turn and not self._ended.is_set():
                 action = _voice_face(text)
@@ -1252,11 +1287,26 @@ class LiveCall:
             voices = getattr(self.ctx, "voices", None)
             hooks: dict[str, Any] = {"identify": getattr(voices, "identify", None), "on_change": self._barge_in_changed}
             try:
-                if "talking_with" in inspect.signature(setup).parameters:
-                    hooks["talking_with"] = self._talking_with  # only they cut in; others talk to each other
+                params = inspect.signature(setup).parameters
             except (TypeError, ValueError):
-                pass
+                params = {}
+            if "talking_with" in params:
+                hooks["talking_with"] = self._talking_with  # only they cut in; others talk to each other
+            if "voice_said" in params:
+                hooks["voice_said"] = self._voice_said_lately  # its own "hang on" heard back isn't them
+            if "stop_words" in params and getattr(self.audio, "barge_in_on", False) and \
+                    getattr(self.cfg, "live_stop_words", False):
+                from littlebot.audio.wakeword import wake_model_dir  # noqa: PLC0415
+                from littlebot.chatgpt.live_audio import RATE  # noqa: PLC0415
+                from littlebot.chatgpt.stop_words import StopWords  # noqa: PLC0415
+
+                hooks["stop_words"] = StopWords.from_model(wake_model_dir(self.ctx.config), rate=RATE)
             setup(**hooks)
+
+    def _voice_said_lately(self) -> str:
+        """The voice's last finished turn and what it is saying now."""
+        last = next((c["text"] for c in reversed(self._captions) if c["who"] == "robot"), "")
+        return f"{last} {self._assistant_turn}"[-VOICE_SAID_CHARS:]
 
     def _talking_with(self) -> int | None:
         """The grown-up the voice is talking with (voice recognition's last sure turn), or None."""
@@ -1275,6 +1325,10 @@ class LiveCall:
             self.phase = "listening"  # the face listens at once, not at the next poll
             self._set_state(RobotState.LISTENING)
             self._publish(Topics.AUDIO_VISEME, {"level": 0.0})
+        if what == "stop_word" and not self._ended.is_set():
+            # "stop" heard on the robot (littlebot/chatgpt/stop_words.py): quiet now, as for a "stop" in their
+            # caption, which for so short a word often never comes (on the robot, 2026-10-29)
+            self._asked_to_stop(str(info.get("said") or "stop"), first=False, early=True)
 
     def _barge_in_words(self, event: Any) -> None:
         """Their words after cutting in: tell the audio (it drops the voice it held), and when all they said was
@@ -1724,6 +1778,12 @@ class LiveCall:
             get_decider(self.ctx).compare("routing", mine=mine, theirs=str(answer.value), answer=answer)
 
     def _remember(self, what: str, fact: str) -> str:
+        hub = getattr(self.ctx, "skills", None)
+        memory = hub.get("memory") if hub is not None and hasattr(hub, "get") else None
+        if memory is not None and memory.available():  # the assistant's memory (littlebot/skills/memory.py)
+            self._spawn(self._remember_skill(memory, what, fact))
+            return ("Done: LittleBot forgets that now." if what == "forget"
+                    else f"Saved: LittleBot will remember this from now on: {fact[:200]}.")
         from littlebot.brain import remembered  # noqa: PLC0415
 
         try:
@@ -1739,6 +1799,15 @@ class LiveCall:
             return "LittleBot couldn't write that down. Say so briefly."
         log.info("live voice: remembering a note (%d kept)", len(remembered.notes(self.ctx.settings)))
         return f"Saved: LittleBot will remember this in every chat from now on: {note}."
+
+    async def _remember_skill(self, memory: Any, what: str, fact: str) -> None:
+        try:
+            res = await memory.run("forget" if what == "forget" else "remember",
+                                   {"query": fact} if what == "forget" else {"fact": fact})
+        except Exception:  # noqa: BLE001
+            log.warning("live voice: the memory skill failed", exc_info=True)
+            return
+        log.info("live voice: memory %s -> %s", what, str(res).split(":", 1)[0])
 
     async def _deliver(self, delegation_id: str, task: "asyncio.Task[str]", kind: str,
                        early: "_Early | None" = None) -> None:
@@ -1875,7 +1944,40 @@ class LiveCall:
         log.info("live voice: hand-off received (kind=quick:%s); answered in %d ms without the text model",
                  asked.what, int((time.monotonic() - t0) * 1000))
         self._send_result(delegation_id, text)
+        self._quick_done.append((self.svc._now(), asked, question, text))
         return True
+
+    def _asked_now(self, question: str) -> str:
+        """``question`` for the text model, after a note of what quick.py answered earlier in the call (it never
+        saw those): QUICK_DONE_NOTE; and, while LittleBot has a timer (or had one in this call), what the timers
+        are now (TIMERS_NOTE): the models don't look in change_card's description for "how long is left?"."""
+        timers = self._timers_now()
+        if timers:
+            self._had_timer = True
+        if not self._quick_done:
+            if timers or (timers == "" and self._had_timer):
+                return TIMERS_NOTE.format(timers=timers or QUICK_NO_TIMERS) + "\n\n" + question
+            return question
+        from littlebot.chatgpt import quick  # noqa: PLC0415
+        now = self.svc._now()
+        lines = "\n".join(f"- {quick.done_note(asked, q, told, now - at, timers_known=timers is not None)}"
+                          for at, asked, q, told in self._quick_done)
+        if timers is not None and (timers or any(asked.what == "timer" for _at, asked, _q, _t in self._quick_done)):
+            lines += "\n- " + QUICK_TIMERS_NOTE.format(timers=timers or QUICK_NO_TIMERS)
+        return QUICK_DONE_NOTE.format(lines=lines) + "\n\n" + question
+
+    def _timers_now(self) -> str | None:
+        """Every timer LittleBot has now, from the screen service (on the screen or behind it); "" for none,
+        None when there is no screen service to ask."""
+        screens = getattr(self.ctx, "screens", None)
+        timers_now = getattr(screens, "timers_now", None)
+        if not callable(timers_now):
+            return None
+        try:
+            return str(timers_now() or "")
+        except Exception:  # noqa: BLE001
+            log.debug("timers_now failed", exc_info=True)
+            return None
 
     def _toolbox(self) -> Any:
         from littlebot.chatgpt.tools import RobotToolbox  # noqa: PLC0415
@@ -1946,7 +2048,8 @@ class LiveCall:
         t0 = time.monotonic()
         try:
             reply = await self.svc.provider().reply(
-                history + [{"role": "user", "content": question}], system=system, max_tokens=200, timeout=15.0,
+                history + [{"role": "user", "content": self._asked_now(question)}], system=system, max_tokens=200,
+                timeout=15.0,
                 tools=specs, run_tool=run_tool, max_tool_rounds=self.cfg.max_tool_rounds, **options)
             text, _ = extract_tags(reply.text)  # a stray [face: ...] tag must never be read out
             answer = _speakable(text, self.ctx.config.ai.relaxed_rules)
@@ -2475,7 +2578,7 @@ class LiveCall:
         while history and history[0]["role"] != "user":
             history.pop(0)
         try:
-            reply = await self.svc.provider().reply(history + [{"role": "user", "content": question}],
+            reply = await self.svc.provider().reply(history + [{"role": "user", "content": self._asked_now(question)}],
                                                     system=system, max_tokens=200, timeout=15.0)
         except (ProviderError, asyncio.TimeoutError):
             return wire.FAILED_RESULT
@@ -2927,6 +3030,10 @@ _ASKS = re.compile(
     r"zoom|scroll|pause|resume|skip|more|less)\b")
 _ANSWERS = re.compile(_LEAD + r"(?:no|nope|yes|yeah|yep|not|that's|thats|okay|ok|sure|thanks|thank you)\b")
 ANSWER_WORDS = 5  # "No, that's fine": an answer to LittleBot; "Yeah, same. I'm just putting in the salt": not
+# ChatGPT's caption of words said over the voice is often only a piece of them: "Under the Great" for "tell me
+# more about Alexander the Great" (on the robot, 2026-10-29). Taken for room talk, the voice carried on and
+# ignored them; a piece this short is for LittleBot, and the voice, which heard it, makes sense of it.
+FRAGMENT_WORDS = 4
 _VOCATIVE = re.compile(r"^\W*([A-Z][a-z]+)\s*,")  # "Hassan, come here": to someone by name
 _NOT_NAMES = {"hey", "hi", "oh", "ok", "okay", "so", "well", "wait", "sorry", "no", "yes", "yeah", "now", "and",
               "littlebot", "robot", "bot", "please", "right", "look", "see", "thanks"}
@@ -2934,18 +3041,20 @@ _NOT_NAMES = {"hey", "hi", "oh", "ok", "okay", "so", "well", "wait", "sorry", "n
 
 def _for_robot(text: str, robot: str) -> bool:
     """LittleBot's way of telling whether words said over its voice were for it (else: people in the room talking
-    to each other, "I'm just putting in the salt"). Its name, a question or request, a short answer like "no",
-    and anything very short count as for it; a name other than its own first ("Hassan, ...") doesn't."""
+    to each other, "I'm just putting in the salt"). Its name, a stop, a question or request, a short answer like
+    "no", and anything short (FRAGMENT_WORDS) count as for it; a name other than its own first ("Hassan, ...")
+    doesn't."""
     plain = _plain_words(text)
     words = plain.split()
     if not words:
         return False
-    if re.search(r"\b(?:little ?bot|lil ?bot|robot|bot)\b", plain) or _greets_robot(text, robot):
+    if re.search(r"\b(?:little ?bot|lil ?bot|robot|bot)\b", plain) or _greets_robot(text, robot) or \
+            STOP_CALL.match(plain):
         return True
     name = _VOCATIVE.match(text or "")
     if name is not None and name.group(1).lower() not in _NOT_NAMES:
         return False
-    return (len(words) <= 2 or _ASKS.match(plain) is not None
+    return (len(words) <= FRAGMENT_WORDS or _ASKS.match(plain) is not None
             or (len(words) <= ANSWER_WORDS and _ANSWERS.match(plain) is not None))
 
 

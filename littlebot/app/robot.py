@@ -15,6 +15,7 @@ import time
 from typing import Any, Callable
 
 from littlebot import __version__
+from littlebot.core import memory
 from littlebot.core.config import LittleBotConfig
 from littlebot.core.context import RobotContext, build_core_context
 from littlebot.core.events import Topics
@@ -40,7 +41,14 @@ SUBSYSTEMS: tuple[tuple[str, str], ...] = (
     ("screens", "littlebot.screens"),  # info cards over the face while the voice talks (a game wins)
     ("voices", "littlebot.voices"),  # the family's voices (opt-in): before live voice, which uses them
     ("browser", "littlebot.browser"),  # Google on the screen when a grown-up asks (one Chromium with the videos)
+    ("mirror", "littlebot.mirror"),  # a phone's screen on LittleBot's screen when asked (AirPlay / scrcpy)
+    ("nanit", "littlebot.nanit"),  # the Nanit baby camera on the screen when asked (an unofficial bridge + ffplay)
+    ("android", "littlebot.android"),  # Android (Waydroid) when asked, shut down once it isn't on the screen
+    ("calls", "littlebot.calls"),  # video calls through WhatsApp Web, Chromium only while it is on the screen
+    ("capture", "littlebot.capture"),  # photos and videos by voice, the gallery, sharing to a phone (uses vision)
+    ("skills", "littlebot.skills"),  # tools for both voices (memory, reminders, lists, games ...): before them
     ("live", "littlebot.chatgpt"),
+    ("assistant", "littlebot.assistant"),  # the fast voice pipeline (GPT-Live stays the fallback)
     ("wake", "littlebot.audio.wakeword"),  # after audio + live: it shares the mic and starts live voice
     ("power", "littlebot.power"),  # the battery monitor (quiet, "not fitted", on mains power); uses the rest when empty
 )
@@ -126,6 +134,10 @@ class LittleBot:
         self._started = True
         self.ctx.bus.publish(Topics.SYSTEM_STARTED, {"mode": self.ctx.config.mode.value, "version": __version__})
         log.info("LittleBot %s started in %s mode", __version__, self.ctx.config.mode.value)
+        ram = memory.total_mb()
+        log.info("memory: %s RAM, %s (system.memory: %s)", f"{ram / 1024:.1f} GB" if ram else "unknown",
+                 "keeping more loaded" if memory.roomy_for(self.ctx) else "saving memory",
+                 self.ctx.config.system.memory)
 
     async def _start_async(self) -> None:
         targets = [(n, s) for n, s in self.services] + ([("dashboard", self.dashboard)] if self.dashboard else [])

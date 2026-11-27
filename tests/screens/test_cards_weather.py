@@ -222,3 +222,41 @@ async def test_offline_or_cloud_off_no_card(ctx):
     weather_service(ctx, web)  # cloud communication is off by default
     assert await base.build({"card": "weather"}, ctx, base.RecordingHost()) is None
     assert web.requests == []
+
+
+def test_the_details_the_forecast_already_has():
+    assert [weather.uv_words(v) for v in (1, 3, 6.5, 8, 11)] == ["low", "moderate", "high", "very high", "extreme"]
+    assert weather._amount({"rain_mm": 6.4}) == "6.4 mm" and weather._amount({"rain_mm": 0.4}) == ""
+    assert weather._amount({"snow_cm": 2.5, "rain_mm": 3}) == "2.5 cm snow" and weather._amount({}) == ""
+    assert weather._day_of_month("Saturday 24 October") == "24 Oct" and weather._day_of_month("soon") == ""
+    c = card()
+    today, tomorrow = c._day(0), c._day(1)
+    assert c._high_low(today) == "High 13°  Low 5°"
+    assert c._rain_row(tomorrow) is not None and c._rain_row({"conditions": "sunny"}) is None
+    assert c._sun_row({}) is None and c._sun_row(today) is not None
+    assert c._detail("wind", "Wind", "") is None
+    row = c._detail("wind", "Wind", "12 km/h, gusts 28 and a very long tail that cannot fit", 300)
+    assert row is not None and row.get_width() <= 300  # a long value is shortened to its column
+
+
+async def test_a_plain_report_still_draws_every_view():
+    """A forecast without the extra details (an older service, a place with gaps) draws without them."""
+    plain = copy.deepcopy(SAMPLE_REPORT)
+    plain["now"] = {"temperature": 12, "conditions": "sunny"}
+    for d in plain["forecast"]:
+        for key in ("rain_mm", "snow_cm", "gusts_max", "uv_index_max", "sunrise", "sunset", "hours"):
+            d.pop(key, None)
+    for view in weather.VIEWS:
+        c = WeatherCard({"card": "weather", "view": view, "day": 1}, base.RecordingHost(), report=plain)
+        assert preview.surface(c, seconds=1.0).get_size() == (base.W, base.H)
+
+
+def test_tiles_and_hours_fill_the_wide_panel():
+    from littlebot.screens.cards import candy
+
+    c = card(view="week")
+    x0, tw, gap = c._tiles()
+    right = x0 + 7 * tw + 6 * gap
+    assert tw >= 120 and x0 >= candy.PANEL.left and right <= candy.PANEL.right
+    assert right - x0 > candy.PANEL.w * 0.9  # the seven days use the whole width
+    assert len(card(view="hours", day=1)._hours()) == 6

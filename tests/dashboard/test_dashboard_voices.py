@@ -143,3 +143,22 @@ async def test_forgetting_a_voice_deleting_a_person_and_forget_all(authed, voice
 async def test_the_default_voices_service_is_made_without_any_setup(authed, dctx):
     d = (await authed.get("/api/people")).json()
     assert d["voices"]["blocked"] == "off" and dctx.voices is not None
+
+
+async def test_voice_check_says_who_and_how_close_without_keeping_anything(authed, voices, dctx):
+    dctx.privacy.set(voice_recognition_enabled=True)
+    pid = await add(authed, "Ali", "dad")
+    dctx.audio.clip = (speaker_tone(0, 12.0, 48000, int16=True), 48000)
+    assert (await authed.post(f"/api/people/{pid}/voice", json={"seconds": 20})).json()["ok"]
+    before = len(dctx.db.query("SELECT * FROM voice_samples"))
+    dctx.audio.clip = (speaker_tone(0, 4.0, 48000, int16=True), 48000)
+    d = (await authed.post("/api/people/voice-check")).json()
+    assert d["ok"] and d["who"] == "Ali (dad)" and d["scores"][0]["name"] == "Ali (dad)"
+    assert d["scores"][0]["score"] >= d["threshold"]
+    no_numbers({k: v for k, v in d.items() if k != "scores"})
+    assert len(dctx.db.query("SELECT * FROM voice_samples")) == before  # nothing learned
+
+
+async def test_voice_check_needs_the_switch(authed, voices):
+    r = await authed.post("/api/people/voice-check")
+    assert r.status_code == 409

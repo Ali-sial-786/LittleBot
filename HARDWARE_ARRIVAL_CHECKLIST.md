@@ -20,7 +20,7 @@ calibration format `config/calibration.example.yaml`)
 
 - [ ] Raspberry Pi 5 4 GB: no bent pins or damage; note board revision printed on it: ________
 - [ ] Official active cooler: fan blade free, thermal pads present, push-pins intact
-- [ ] DORHEA MPI3508 3.5" screen: glass not cracked, header socket straight
+- [ ] GeeekPi 7" 1024x600 touch screen: glass not cracked; HDMI cable and its USB (touch / power) cable in the box
 - [ ] InnoMaker U20CAM-1080P camera, mini USB microphone, mini USB speaker
 - [ ] Patriot 64 GB microSD, micro-HDMI to HDMI cable
 - [ ] Official Raspberry Pi 27 W USB-C PSU available for bring-up (borrow/buy one if not)
@@ -56,12 +56,15 @@ calibration format `config/calibration.example.yaml`)
 
 ## Phase 4 - Display (HDMI picture first, touch later)
 
-- [ ] Power off; connect the MPI3508 (HDMI0 port next to USB-C power); check it clears the
-      cooler fan (DISPLAY_SETUP.md §1) - fits directly / needs header extender / jumper wires
+- [ ] Power off; connect the 7" screen: HDMI from HDMI0 (next to USB-C power), its USB port to a Pi
+      USB port (DISPLAY_SETUP.md §1)
 - [ ] Boot. Picture? yes / no / garbled
-- [ ] `cat /sys/class/drm/card*-HDMI-A-1/modes` - EDID modes: ________
+- [ ] `cat /sys/class/drm/card*-HDMI-A-1/modes` - EDID modes (1024x600 listed?): ________
 - [ ] `.venv/bin/python scripts/diagnose.py --section display` saved
-- [ ] Pick the mode (DISPLAY_SETUP.md §3): option A / B (720x480) / C / D - chosen: ________
+- [ ] LittleBot's face fills the screen with no bars (`wlr-randr` says 1024x600 current); needed
+      `video=HDMI-A-1:1024x600@60` in cmdline.txt? yes / no
+- [ ] Coming from the 3.5" screen: old `display:` lines removed from config/local.yaml, `ads7846` overlay
+      removed from config.txt (DISPLAY_SETUP.md §7)
 - [ ] Screen blanking off (raspi-config -> Display Options)
 - [ ] Rotation needed? ______ (wlr-randr / Screen Configuration)
 - [ ] Do **not** run the vendor LCD-show script
@@ -126,9 +129,11 @@ calibration format `config/calibration.example.yaml`)
 
 ## Phase 11 - Touch (optional)
 
-- [ ] Follow DISPLAY_SETUP.md §5 (SPI + ads7846 overlay; back up config.txt first)
-- [ ] `dmesg | grep -i ads7846`, `/proc/bus/input/devices` shows the touchscreen
+- [ ] Follow DISPLAY_SETUP.md §3 (USB touch: no driver or overlay needed)
+- [ ] `grep -B1 -A4 -i -E 'touch|ctp' /proc/bus/input/devices` shows the touchscreen: name ________
 - [ ] `evtest`: taps register; corners roughly right; calibration needed? ______
+- [ ] A tap giggles, a 1 s hold opens the games menu, edge slides change volume / brightness
+- [ ] The screen's current on a USB power meter: ______ A (POWER.md §2)
 
 ## Phase 12 - Enclosure and child-safety review (before the child uses it)
 
@@ -190,8 +195,8 @@ Remove anything private (Wi-Fi names are not in these outputs; API keys never ar
    scenario and the `benchmark_face.py` output
 9. Logs from any failure: `journalctl --user-unit littlebot -b | tail -100`,
    `tail -50 data/logs/littlebot.log`, `journalctl -k -b | tail -50`
-10. Touch (if tried): `dmesg | grep -i ads7846`, `grep -A5 -i touch /proc/bus/input/devices`
-11. Physical notes: does the screen clear the cooler, enclosure temperature, anything
-    that did not fit, and the answers you wrote in the blanks above
+10. Touch (if tried): `grep -B1 -A4 -i -E 'touch|ctp' /proc/bus/input/devices`, `diagnose.py --section touch`
+11. Physical notes: how the 7" screen is mounted, enclosure temperature, anything that did not fit,
+    and the answers you wrote in the blanks above
 12. Servos (phase 13 only): `.venv/bin/python scripts/diagnose.py --section config --section i2c --i2c-scan --json`
     and the `scripts/calibrate_servos.py` output (`config/calibration.yaml` contains no secrets)

@@ -87,8 +87,24 @@ async def update_person(body: PersonUpdateBody, person_id: int = Path(ge=1),
 async def delete_person(person_id: int = Path(ge=1), dash: DashState = Depends(get_dash)) -> dict[str, Any]:
     if not _faces(dash).store.delete_person(person_id):
         raise HTTPException(status_code=404, detail="That person isn't on the list.")
+    _forget_calendar(dash, person_id)
     log.info("who's who: a person and their face samples and voiceprints were deleted from the dashboard")
     return {"ok": True, **_view(dash)}
+
+
+def _forget_calendar(dash: DashState, person_id: int) -> None:
+    """Their own calendar sign-in, iCal addresses and phone go with them (littlebot/skills/agenda.py, push.py)."""
+    hub = getattr(dash.ctx, "skills", None)
+    get = hub.get if hub is not None and hasattr(hub, "get") else (lambda _n: None)
+    try:
+        cal = get("calendar")
+        if cal is not None:
+            cal.forget_person(person_id)
+        heads = get("heads_up")
+        if heads is not None:
+            heads.push.remove_topic(person_id)
+    except Exception:  # noqa: BLE001 - the person is gone anyway
+        log.warning("who's who: a person's calendar or phone couldn't be removed", exc_info=True)
 
 
 @router.post("/{person_id}/samples")
@@ -166,6 +182,56 @@ async def record_voice(body: VoiceRecordBody | None = None, person_id: int = Pat
         del samples  # the recording is dropped here: only the voiceprints are kept
     log.info("who's who: a voice was recorded from the dashboard (%s)", "kept" if result.get("ok") else "not kept")
     return {**result, **_view(dash), "ok": result["ok"]}
+
+
+@router.post("/voice-check")
+async def voice_check(dash: DashState = Depends(get_dash)) -> dict[str, Any]:
+    """Who LittleBot thinks is talking: 5 s from its microphone (in memory, dropped), with how close each person's
+    voice is, to see that recognition works and how sure it is. Nothing is kept or learned."""
+    from littlebot.voices.engine import EngineUnavailable  # noqa: PLC0415
+
+    voices = _voices(dash)
+    reason = voices.blocked_reason()
+    if reason is not None:
+        raise _voice_refuse(reason)
+    record = getattr(dash.need("audio"), "record_clip", None)
+    if record is None:
+        raise HTTPException(status_code=503, detail="This robot's audio can't record a voice.")
+    got = await record(5.0)
+    if not got.get("ok"):
+        return {"ok": False, "detail": got.get("detail") or "The recording didn't work."}
+    samples, rate = got.pop("samples"), int(got.get("rate") or 0)
+    try:
+        heard = await voices.analyse(samples, rate)
+        scores = await _voice_scores(voices, samples, rate)
+    except EngineUnavailable as e:
+        raise _voice_refuse(e.reason) from None
+    finally:
+        del samples
+    match = heard.match
+    return {"ok": True, "reason": heard.reason, "speech_seconds": round(heard.speech_s, 1),
+            "who": match.label if match is not None else None, "threshold": round(float(voices.threshold), 2),
+            "scores": scores}
+
+
+async def _voice_scores(voices: Any, samples: Any, rate: int) -> list[dict[str, Any]]:
+    """How close the voice is to each person's voiceprints (names and numbers only), closest first."""
+    import asyncio  # noqa: PLC0415
+
+    import numpy as np  # noqa: PLC0415
+
+    from littlebot.voices.engine import speech_only, to_model_rate  # noqa: PLC0415
+
+    def run() -> list[dict[str, Any]]:
+        x = speech_only(to_model_rate(samples, rate))
+        if not len(x):
+            return []
+        vp = voices.engine().embed(x[-int(6 * 16000):])
+        out = [{"name": k.label, "score": round(float(np.dot(vp, k.centre)), 2), "samples": k.samples}
+               for k in voices.store.known() if k.centre.size == vp.size]
+        return sorted(out, key=lambda r: -r["score"])
+
+    return await asyncio.to_thread(run)
 
 
 @router.delete("/{person_id}/voice")

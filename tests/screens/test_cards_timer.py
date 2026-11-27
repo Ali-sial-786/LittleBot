@@ -103,7 +103,10 @@ def test_several_timers_on_one_card():
     c, clock, host = make(seconds=600, label="pasta")
     assert c.command("new", {"seconds": 120, "label": "garlic bread"}) and c.title == "2 timers"
     assert c.command("new", {"seconds": 300, "label": "sauce"})
-    assert not c.command("new", {"seconds": 60, "label": "one too many"})  # at most 3
+    assert c.command("new", {"seconds": 900, "label": "rice"}) and c.title == "4 timers"
+    assert not c.command("new", {"seconds": 60, "label": "one too many"})  # at most 4
+    preview.surface(c, seconds=0.1)  # two by two
+    assert c.command("cancel", {"label": "rice"}) and c.title == "3 timers"
     run(c, clock, 121)
     assert c.describe() == "Pasta timer: 7:59 left; Garlic bread timer: done!; Sauce timer: 2:59 left"
     assert host.spoken == ["The garlic bread timer is done!"]
@@ -131,8 +134,51 @@ async def test_a_new_timer_joins_the_card_on_screen(ctx):
     assert other is not first
 
 
+def test_each_timer_says_when_it_will_be_done():
+    clock = Clock()
+    wall = [1_800_000_000.0]  # 2027-01-15 08:00 UTC
+    host = base.RecordingHost(clock=clock)
+    utc = timer._dt.UTC
+    c = TimerCard({"seconds": 600, "label": "pasta"}, host, wall=lambda: wall[0], tz=utc)
+    assert c.end_label(c.timers[0]) == "8:10 am"
+    c.twelve = False
+    assert c.end_label(c.timers[0]) == "08:10"
+    clock.t += 120
+    wall[0] += 120
+    assert c.command("add", {"seconds": 300}) and c.end_label(c.timers[0]) == "08:15"  # five more minutes
+    assert c.command("pause", {})
+    clock.t += 600
+    wall[0] += 600
+    assert c.command("resume", {}) and c.end_label(c.timers[0]) == "08:25"  # ten minutes later
+    assert c.command("new", {"seconds": 3600, "label": "bread"}) and c.end_label(c.timers[1]) == "09:12"
+    for state in ("running", "paused", "ringing"):  # every state draws, with one timer and with two
+        c.timers[0].state = state
+        preview.surface(c, seconds=0.1)
+        if state == "running":
+            c.command("cancel", {"label": "bread"})
+            preview.surface(c, seconds=0.1)
+            c.command("new", {"seconds": 60, "label": "tea"})
+    one = TimerCard({"seconds": 60}, host, wall=lambda: wall[0], tz=utc)
+    one.timers[0].state = "ringing"
+    preview.surface(one, seconds=0.1)
+
+
+def test_layouts_stay_on_the_screen():
+    for n, (r, _, centres) in timer.LAYOUT.items():
+        assert len(centres) == n
+        for cx, cy in centres:
+            assert r <= cx <= base.W - r and timer.TOP <= cy - r and cy + r <= timer.BOTTOM
+        xs = sorted(centres)
+        for (ax, ay), (bx, by) in zip(xs, xs[1:]):  # no two rings overlap
+            assert (ax - bx) ** 2 + (ay - by) ** 2 >= (2 * r) ** 2
+    assert timer.SIDE_X - timer.SIDE_W // 2 > timer.LAYOUT[1][2][0][0] + timer.LAYOUT[1][0]
+
+
 def test_helpers():
     assert clock_text(0) == "0:00" and clock_text(0.2) == "0:01" and clock_text(65) == "1:05"
     assert clock_text(3725) == "1:02:05"
     assert clean_label("Egg Timer") == "egg" and clean_label("  BBQ ") == "BBQ" and clean_label(None) == ""
     assert timer.spoken_length(5400) == "1 hour 30 minutes" and timer.spoken_length(1) == "1 second"
+    assert timer.length_label(600) == "10-minute timer" and timer.length_label(7200) == "2-hour timer"
+    assert timer.length_label(45) == "45-second timer" and timer.length_label(5400) == "90-minute timer"
+    assert timer.length_label(3725) == "1 hour 2 minutes 5 seconds timer"

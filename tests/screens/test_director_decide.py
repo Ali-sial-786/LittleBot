@@ -45,6 +45,21 @@ async def test_on_no_card_needs_no_text_model_request(make, ctx):
     assert get_decider(ctx).status()["features"]["cards"]["used"] == 1
 
 
+async def test_on_an_answer_still_being_said_is_given_as_its_first_words(make, ctx):
+    # on the robot the cut-off words read as "hasn't answered yet": none, and no card (2026-10-29)
+    s = make(FACT, wait_for_answer=True)
+    model = use_decision_model(ctx, picks("show_facts"), modes={"cards": "on", "answered": "off"})
+    s.director.heard("Tell me the difference between Genghis Khan and Kublai Khan")
+    s.director.saying("Genghis Khan was the founder of the Mongol Empire. He united the Mongol tribes and started "
+                      "the big conquests across Asia, and Kublai Khan was his grandson who")
+    await asyncio.sleep(director_mod.SAID_GRACE_S + 0.1)
+    await s.settle()
+    state, _questions = model.asked[0]
+    assert "LittleBot_answer_being_said" not in state
+    assert state["LittleBot_answer_first_words"].endswith("(still being said: LittleBot is answering, the rest follows)")
+    assert "a facts card fits" in s.provider.calls[0]["messages"][-1]["content"]
+
+
 async def test_on_a_card_kind_is_a_hint_for_the_text_model(make, ctx):
     s = make(FACT, wait_for_answer=True)
     use_decision_model(ctx, picks("show_recipe"), modes={"cards": "on", "answered": "off"})
@@ -54,12 +69,35 @@ async def test_on_a_card_kind_is_a_hint_for_the_text_model(make, ctx):
     assert get_decider(ctx).status()["features"]["cards"]["agreed"] == 1
 
 
-async def test_on_close_takes_the_card_away(make, ctx):
-    s = make(FACT, wait_for_answer=True)
+async def test_a_new_question_with_a_card_up_gets_a_new_card_not_a_page_turn(make, ctx):
+    # on the robot (2026-10-29): "and Alexander the Great?" after a Khans card only turned that card's page
+    nxt = {"do": "command", "action": "next", "args": {}}
+    new = {"do": "show", "spec": {"card": "recipe", "title": "Crepes", "steps": ["Mix", "Fry thin"]}}
+    s = make(nxt, new)
+    s.screens.card = FakeCard("recipe", "recipe: Pancakes")
+    use_decision_model(ctx, picks("show_recipe"), modes={"cards": "on", "answered": "off"})
+    await asked(s, "And how do I make crepes?", "Crepes are thin: mix a runny batter and fry it thin.")
+    assert "show a new recipe card for it rather than steering" in s.provider.calls[0]["messages"][-1]["content"]
+    assert "Not a command: they asked about something new" in s.provider.calls[1]["messages"][-1]["content"]
+    assert s.screens.commands == [] and s.screens.shown[0][0]["title"] == "Crepes"
+
+
+async def test_on_close_is_a_hint_and_the_text_model_closes_it(make, ctx):
+    s = make({"do": "close"}, wait_for_answer=True)
     s.screens.card = FakeCard("weather", "Sunny tomorrow")
     use_decision_model(ctx, picks("close"), modes={"cards": "on", "answered": "off"})
+    await asked(s, "How was your day at the park today?", "Lovely, the ducks were out by the pond.")
+    assert "the card on screen no longer fits the talk" in s.provider.calls[0]["messages"][-1]["content"]
+    assert s.screens.closed == ["asked in the voice chat"]
+
+
+async def test_on_close_for_a_new_question_gets_the_new_card(make, ctx):
+    # on the robot (2026-10-29): the decider's "close" took the Khans card away for "and Alexander the Great?"
+    s = make(FACT, wait_for_answer=True)
+    s.screens.card = FakeCard("facts", "facts: Genghis Khan vs Kublai Khan")
+    use_decision_model(ctx, picks("close", confidence=0.95), modes={"cards": "on", "answered": "off"})
     await asked(s, "How do I make pancakes for breakfast?", "Mix flour, eggs and milk, then fry.")
-    assert s.provider.calls == [] and s.screens.closed == ["asked in the voice chat"]
+    assert len(s.provider.calls) == 1 and s.screens.closed == [] and s.screens.shown[0][0]["card"] == "recipe"
 
 
 async def test_on_but_unsure_is_the_text_models_decision(make, ctx):
@@ -68,6 +106,18 @@ async def test_on_but_unsure_is_the_text_models_decision(make, ctx):
     await asked(s, "How do I make pancakes for breakfast?", "Mix flour, eggs and milk, then fry.")
     assert len(s.provider.calls) == 1 and s.screens.shown[0][0]["card"] == "recipe"
     assert get_decider(ctx).status()["features"]["cards"]["differed"] == 1
+
+
+async def test_on_a_none_it_isnt_sure_of_still_asks_the_text_model(make, ctx):
+    # on the robot (2026-10-29): "none" at 0.46 kept back the card for Alexander the Great after the Khans card
+    s = make(FACT, wait_for_answer=True)
+    s.screens.card = FakeCard("facts", "facts: Genghis Khan vs Kublai Khan")
+    use_decision_model(ctx, picks("none", confidence=0.6), modes={"cards": "on", "answered": "off"})
+    await asked(s, "How do I make pancakes for breakfast?", "Mix flour, eggs and milk, then fry.")
+    assert len(s.provider.calls) == 1 and s.screens.shown[0][0]["card"] == "recipe"
+    use_decision_model(ctx, picks("none", confidence=director_mod.NONE_SURE_AT), modes={"cards": "on", "answered": "off"})
+    await asked(s, "How do I make crepes for breakfast?", "Mix a runny batter and fry it thin.")
+    assert len(s.provider.calls) == 1  # sure: no text model request
 
 
 async def test_shadow_changes_nothing_and_logs_both(make, ctx, caplog):

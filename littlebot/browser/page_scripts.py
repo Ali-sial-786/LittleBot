@@ -153,7 +153,7 @@ RESULTS_SCRIPT = """(() => {
 
 # Google's captcha ("I'm not a robot") on its "unusual traffic" page: where the box is, or the picture challenge once
 # it opens, in CSS pixels, and the viewport's size; ``center`` scrolls it to the middle of the screen. The service
-# zooms the page so it fills the small screen (littlebot/browser/service.py ``_captcha_watch``).
+# zooms the page so it fills the robot's screen (littlebot/browser/service.py ``_captcha_watch``).
 CAPTCHA_SCRIPT = """((center) => {
   let kind = null, el = null;
   for (const f of document.querySelectorAll('iframe')) {

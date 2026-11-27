@@ -15,7 +15,7 @@ from littlebot.motion.joints import (
 )
 from littlebot.motion.drivers import MockPCA9685, pulse_to_counts, prescale_for
 
-from motion_testkit import FULL_CALIBRATION, write_calibration
+from motion_testkit import DEFAULT_JOINTS, FULL_CALIBRATION, write_calibration
 
 
 def spec(**kw) -> JointSpec:
@@ -96,7 +96,7 @@ def test_normalised_positions_follow_positive_direction():
 # ----------------------------------------------------------------- validation
 def test_default_config_is_valid():
     specs = default_specs()
-    assert set(specs) == {"head", "left_arm", "right_arm"}
+    assert set(specs) == {"head", "head_tilt", "left_arm", "right_arm"}
     for s in specs.values():
         assert s.min_angle < s.neutral < s.max_angle
 
@@ -138,7 +138,7 @@ def test_duplicate_channels_and_global_settings_rejected():
 # ----------------------------------------------------------------- calibration files
 def test_calibration_loads_and_overrides(tmp_path):
     path = write_calibration(tmp_path / "cal.yaml")
-    cal = load_calibration(path, known_joints=["head", "left_arm", "right_arm"], require_all=True)
+    cal = load_calibration(path, known_joints=DEFAULT_JOINTS, require_all=True)
     specs = build_joint_specs(MotionConfig(), cal)
     assert specs["head"].neutral == 92 and specs["head"].min_angle == 55 and specs["head"].max_angle == 125
     assert specs["head"].max_speed_dps == 60  # not in calibration -> config value kept
@@ -146,8 +146,7 @@ def test_calibration_loads_and_overrides(tmp_path):
 
 
 def test_example_calibration_file_is_valid():
-    cal = load_calibration(CONFIG_DIR / "calibration.example.yaml", known_joints=["head", "left_arm", "right_arm"],
-                           require_all=True)
+    cal = load_calibration(CONFIG_DIR / "calibration.example.yaml", known_joints=DEFAULT_JOINTS, require_all=True)
     build_joint_specs(MotionConfig(), cal)
 
 

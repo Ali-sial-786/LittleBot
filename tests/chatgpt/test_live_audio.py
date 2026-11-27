@@ -469,3 +469,26 @@ async def test_a_busy_device_is_tried_again_while_opening(setup, caplog, monkeyp
     audio.open_retry_s = 0.1
     with pytest.raises(RuntimeError, match="Device unavailable"):
         audio.open(asyncio.get_running_loop())
+
+
+async def test_play_pcm_queues_the_assistants_voice(setup):
+    """The assistant's text-to-speech (littlebot/assistant) through the same queue, gate and lip-sync."""
+    audio, sd, clock = setup
+    audio.open(asyncio.get_running_loop())
+    try:
+        tone = (np.sin(np.arange(4800) / 24000 * 2 * np.pi * 220) * 0.4).astype(np.float32)  # 0.2 s at 24 kHz
+        audio.play_pcm(tone, 24000)
+        assert 0.18 <= audio.queued_s <= 0.22  # resampled to the speaker's 48 kHz
+        out = np.zeros((960, 2), dtype=np.float32)
+        audio._play_cb(out, 960, None, None)
+        assert audio.speaking and np.abs(out).max() > 0.05
+        assert audio.queued_s < 0.2
+        audio.mute()
+        assert audio.queued_s == 0
+        audio.play_pcm(tone, 24000)  # muted: dropped
+        assert audio.queued_s == 0
+        audio.unmute()
+        audio.play_pcm(tone, 48000)
+        assert 0.09 <= audio.queued_s <= 0.11
+    finally:
+        audio.close()

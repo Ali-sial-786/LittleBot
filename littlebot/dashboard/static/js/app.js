@@ -4,8 +4,10 @@ import { ApiError, get, onUnauthorized, post, setCsrf } from './api.js';
 import { button, clear, h, icon, miniFace, setText, stateLabel, toast } from './ui.js';
 
 import home from './pages/home.js';
+import assistant from './pages/assistant.js';
 import activities from './pages/activities.js';
 import media from './pages/media.js';
+import photos from './pages/photos.js';
 import face from './pages/face.js';
 import camera from './pages/camera.js';
 import games from './pages/games.js';
@@ -16,13 +18,16 @@ import motion from './pages/motion.js';
 import devices from './pages/devices.js';
 import simulator from './pages/simulator.js';
 import settings from './pages/settings.js';
+import keys from './pages/keys.js';
 import more from './pages/more.js';
 
 export const NAV = [
   { id: 'home', label: 'Home', icon: 'home', tab: true, page: home },
+  { id: 'assistant', label: 'Assistant', icon: 'sparkles', tab: true, page: assistant },
   { id: 'activities', label: 'Activities', icon: 'shapes', tab: true, page: activities },
   { id: 'media', label: 'Videos', icon: 'film', tab: true, page: media },
-  { id: 'face', label: 'Face', icon: 'face', tab: true, page: face },
+  { id: 'photos', label: 'Photos', icon: 'camera', page: photos, blurb: 'Pictures and videos LittleBot took' },
+  { id: 'face', label: 'Face', icon: 'face', page: face, blurb: 'Expressions and animations' },
   { id: 'camera', label: 'Camera', icon: 'camera', page: camera, blurb: 'Live view from LittleBot' },
   { id: 'games', label: 'Games', icon: 'star', page: games, blurb: 'Fun games on the robot\'s screen' },
   { id: 'profile', label: 'Child profile', icon: 'user', page: profile, blurb: 'Age, name and favourites' },
@@ -31,6 +36,7 @@ export const NAV = [
   { id: 'motion', label: 'Motion', icon: 'robot', page: motion, blurb: 'Gestures and emergency stop' },
   { id: 'devices', label: 'Audio & devices', icon: 'speaker', page: devices, blurb: 'Speaker, microphone, camera' },
   { id: 'simulator', label: 'Simulator', icon: 'gamepad', page: simulator, blurb: 'Pretend speech and faces' },
+  { id: 'keys', label: 'Keys', icon: 'key', page: keys, blurb: 'API keys for Claude, the voices, the smart home' },
   { id: 'settings', label: 'Settings', icon: 'sliders', page: settings, blurb: 'Password, access, system' },
 ];
 const PAGES = Object.fromEntries(NAV.map((n) => [n.id, n]));

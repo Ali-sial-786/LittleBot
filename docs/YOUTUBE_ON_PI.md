@@ -6,7 +6,7 @@
 > (section 9 lists exactly what was and wasn't verified).
 
 LittleBot plays **parent-approved** YouTube videos through the **official YouTube IFrame Player
-API** in a Chromium window that covers the 480x320 screen while the video plays. The robot never
+API** in a Chromium window that covers the 7" 1024x600 screen while the video plays. The robot never
 downloads, extracts or caches video, never searches, and never plays anything that a parent did
 not add to the allowlist. Design and safety rules: [modules/media.md](modules/media.md).
 
@@ -40,9 +40,12 @@ hook signals any kiosk still running if Python exits without a clean stop.
   `setPlaybackQuality()` / `suggestedQuality` and the old `vq=` URL parameter have been ignored
   since YouTube deprecated manual quality control (2019), so they are not used. What we *can*
   do:
-  * keep the player small: it fills the kiosk window, i.e. the screen mode. At 480x320 expect
-    roughly 240p-360p; if the HDMI output runs at 720x480 (DISPLAY_SETUP.md option B) expect
-    up to 480p (*estimate*);
+  * the player fills the kiosk window, i.e. the screen: on the 7" 1024x600 screen (a 1024x576 video
+    area) expect YouTube to pick **480p, often 720p** (*estimate*; it was 240p-480p on the old 3.5"
+    screen's 720x480 mode). 720p VP9 decoded in software is the heaviest thing the robot does:
+    measure it (section 6) before long sessions. If it is too much, the player page could draw the
+    player smaller and scale it up (YouTube picks the stream from the player's own size); that is
+    not done yet, as it needs checking against the embedding rules in section 8;
   * pass `--force-device-scale-factor=1` (done) so a desktop scaling setting can't double the
     pixel count YouTube sees.
 * *Estimate*: software VP9 at 360p takes ~10-25 % of one A76 core at 2.4 GHz; Chromium's
@@ -76,7 +79,7 @@ To try if memory or CPU is short (each must be measured; add via `media.kiosk_ex
 | `--renderer-process-limit=2` | fewer renderer processes | none for a single page |
 | `--disable-site-isolation-trials` | page + YouTube iframe share one renderer (-100 MB *estimate*) | weaker isolation between our page and YouTube's code |
 | pause camera detection during `PLAYING_MEDIA` | frees CPU (vision module; not implemented here) | robot doesn't track faces while the screen shows video anyway |
-| HDMI at 480x320 instead of 720x480 | smaller player -> lower stream | see DISPLAY_SETUP.md for mode support |
+| a smaller player scaled up on the page (not done) | lower stream | needs checking against YouTube's embedding rules (section 8) |
 
 ## 4. Screen, face window and touch
 
@@ -84,7 +87,7 @@ To try if memory or CPU is short (each must be measured; add via `media.kiosk_ex
   and the face must be visible again when Chromium exits. *Unverified* under the Pi's Wayland
   compositor (labwc on current Raspberry Pi OS; Wayfire on older Bookworm images). With
   `SDL_VIDEODRIVER=kmsdrm` (no desktop) Chromium cannot show at all - video needs the desktop.
-* `--window-size=480,320` is ignored in kiosk mode: the window takes the whole output.
+* `--window-size=1024,600` is ignored in kiosk mode: the window takes the whole output.
 * **Touch**: if the screen's touch panel is active, a child can tap the YouTube player. We do
   **not** put anything over the player to block taps (YouTube forbids overlays in front of
   the player and blocking player functionality - section 8). Instead:
@@ -127,7 +130,7 @@ Run LittleBot normally (`--mode pi`, face + camera + audio), then in a second te
    `ps -o pid,rss,pcpu,args -C chromium,chromium-browser`, `vcgencmd measure_temp`,
    `vcgencmd get_throttled`, `free -m` (the "available" column must stay > ~150 MB).
 4. **Codec and resolution**: on the desktop (not kiosk) open the player link from
-   `media.status()["player"]["url"]` in Chromium with a 480x320 window, right-click the
+   `media.status()["player"]["url"]` in Chromium with a 1024x600 window, right-click the
    video -> *Stats for nerds*: note codec (vp09 / av01 / avc1), resolution, dropped frames.
 5. **Smoothness** on the robot screen: does the video stutter? Does the face come back
    within ~2 s after "All done!"?
@@ -186,7 +189,7 @@ Based on the YouTube API Services Developer Policies and the Required Minimum Fu
   functionality. Our calm screens ("All done!", loading, idle) are only shown when **no**
   player exists.
 * **Player size**: RMF requires at least 200x200 px and recommends at least 480x270 for 16:9.
-  The player fills the 480x320 window (a 480x270 video area) - exactly the recommended size.
+  The player fills the 1024x600 window (a 1024x576 video area), well above it.
 * **Autoplay**: RMF requires automatic playback to start only when the player is visible, and
   at most one autoplaying player per screen. The page autoplays only the item the parent just
   chose, in a fully visible full-screen player.
@@ -228,7 +231,7 @@ starts, as it does when LittleBot is idle. Afterwards the video carries on where
    while a video plays (`wake.during_videos`). The video's sound reaches the microphone too, so
    stricter rules apply then: only `wake.video_phrases` count (default: just "hey little bot";
    "hey bot" alone is what videos say by mistake most) and each word needs
-   `wake.video_min_confidence` (0.7, instead of 0.5). Phrases heard that don't count are logged:
+   `wake.video_min_confidence` (0.7, instead of 0.35). Phrases heard that don't count are logged:
    `wake word: 'hey bot' ignored while a video plays (...)`; the dashboard's wake word line says
    "Listening for “hey little bot” (a video is playing)."
 2. **"Hey LittleBot" heard.** The video is paused first (`MediaController.hold`): the page is told
@@ -270,7 +273,7 @@ The parent's own **Pause** on the dashboard is unchanged (the paused player stay
 wake:                                # config/local.yaml
   during_videos: true                # false: not listening while a video plays (frees the ~130 MB model then)
   video_phrases: ["hey little bot"]  # only these count during a video; [] = all of wake.phrases
-  video_min_confidence: 0.7          # per word during a video (wake.min_confidence is 0.5)
+  video_min_confidence: 0.7          # per word during a video (wake.min_confidence is 0.35)
   video_duck: false                  # turn the video down after a "hey ..." (see below)
   video_duck_volume: 0.3             # ... to this share of its volume
   video_duck_seconds: 2.0            # ... for this long
@@ -329,5 +332,6 @@ the child a metre or two away, so the SNR may well be 0 dB or less at a normal v
 Not measured: real children's and adults' voices, accents, real rooms, the Pi's USB microphone and
 speaker, how often real videos start it, and the Pi's CPU for listening during a video (about 4 %
 of one desktop core measured for the wake word; roughly 10 % of one Pi 5 core expected, on top of
-Chromium). The wake word's model now stays loaded during a video (about 130 MB); on a 2 GB Pi that
-is tight next to Chromium (section 3): `wake.during_videos: false` frees it, as before.
+Chromium). The wake word's model now stays loaded during a video (about 130 MB); on a 4 GB Pi there
+is room for it. On a 2 GB one it is tight next to Chromium (section 3): `wake.during_videos: false`
+frees it, as before.

@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
-"""Calibrate LittleBot's touch screen so a tap lands where you touch (MPI3508, ADS7846 touch).
+"""Calibrate LittleBot's touch screen so a tap lands where you touch.
+
+The 7" GeeekPi screen's capacitive touch (USB) normally lands right without this: run it only if taps
+land in the wrong place (for example after turning the screen round). It also handles the old 3.5"
+MPI3508's resistive ADS7846 touch.
 
     .venv/bin/python scripts/calibrate_touch.py            # crosses on the screen, then saves the result
     .venv/bin/python scripts/calibrate_touch.py --reset    # remove the calibration again
 
 LittleBot is stopped while the crosses are shown and started again afterwards. Touch the centre
-of each cross (a fingernail works best on this screen) and hold it for a moment. The script reads
+of each cross with a fingertip and hold it for a moment. The script reads
 the screen's raw touch readings, works out how they map to the screen (swapped, mirrored, shifted
 or stretched directions are all covered) and saves that as a libinput calibration matrix in
 /etc/udev/rules.d/99-littlebot-touch.rules (it asks for your password for sudo). Reboot afterwards:
@@ -27,9 +31,12 @@ from typing import BinaryIO, Iterator, Sequence
 import numpy as np
 
 RULE_PATH = Path("/etc/udev/rules.d/99-littlebot-touch.rules")
-TOUCH_NAMES = ("ads7846", "xpt2046", "touchscreen")
-# Crosses away from the edges (resistive screens are least accurate at the very edge); the last
-# one, in the middle, only checks the result.
+# Touch controllers by name: USB capacitive ones (the 7" GeeekPi's reports as a "CTP" or "touch" device, other
+# 7" panels as ILITEK, Goodix, eGalax...) and the old 3.5" screen's resistive ADS7846 / XPT2046.
+TOUCH_NAMES = ("touch", "ctp", "ilitek", "goodix", "egalax", "ft5x06", "ads7846", "xpt2046")
+NOT_TOUCH = ("touchpad",)  # a laptop's touchpad is not a touch screen
+# Crosses away from the edges (touch is least accurate at the very edge); the last one, in the middle,
+# only checks the result.
 TARGETS: tuple[tuple[float, float], ...] = ((0.1, 0.1), (0.9, 0.1), (0.9, 0.9), (0.1, 0.9), (0.5, 0.5))
 MAX_CHECK_ERROR = 0.06  # the middle cross may be off by this much of the screen
 MIN_SAMPLES = 4  # readings in one press (~10 ms apart); fewer is a bounce, not a press
@@ -47,7 +54,8 @@ def find_touch_device(devices_text: str) -> tuple[str, str] | None:
     for line in devices_text.splitlines() + [""]:
         if line.startswith("N: Name="):
             name = line.split("=", 1)[1].strip().strip('"')
-        elif line.startswith("H: Handlers=") and name and any(t in name.lower() for t in TOUCH_NAMES):
+        elif (line.startswith("H: Handlers=") and name and any(t in name.lower() for t in TOUCH_NAMES)
+              and not any(t in name.lower() for t in NOT_TOUCH)):
             event = next((h for h in line.split("=", 1)[1].split() if h.startswith("event")), None)
             if event:
                 return name, event

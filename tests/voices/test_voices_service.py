@@ -371,6 +371,27 @@ async def test_the_model_is_loaded_on_first_use_and_dropped_when_switched_off(vc
     await voices.stop()
 
 
+async def test_a_4gb_board_keeps_the_model_while_switched_on(vctx, monkeypatch):
+    import asyncio
+
+    made: list[FakeSpeakerEngine] = []
+    monkeypatch.setattr(S, "SpeakerEngine", lambda path, *, threads=2: made.append(FakeSpeakerEngine()) or made[-1])
+    monkeypatch.setattr(S, "sherpa_installed", lambda: True)
+    monkeypatch.setattr(S, "UNLOAD_IDLE_S", 0.05)
+    vctx.config.system.memory = "roomy"
+    voices = VoiceRecognition(vctx)
+    monkeypatch.setattr(voices, "model_path", lambda: type("P", (), {"is_file": lambda self: True})())
+    await voices.start()
+    ali = add_person(voices, "Ali", "dad")
+    assert (await voices.enrol(ali, say(0, 9.0), 48000))["ok"]
+    await voices.identify(say(0, 2.0), 48000)
+    await asyncio.sleep(0.2)
+    assert voices.status()["loaded"] and voices._unload_at is None and len(made) == 1
+    vctx.privacy.set(voice_recognition_enabled=False)
+    assert not voices.status()["loaded"]
+    await voices.stop()
+
+
 async def test_hey_littlebot_warms_the_model_up(vctx, monkeypatch):
     import asyncio
 

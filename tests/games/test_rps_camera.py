@@ -11,7 +11,8 @@ import pytest
 
 from games_helpers import run
 from littlebot.games import hand_sign
-from littlebot.games.rps import BEAT_S, CHOICES, LOOK_GIVE_UP_S, RockPaperScissors
+from littlebot.games.rps import (BEAT_S, CHOICES, LOOK_GIVE_UP_S, MATCH_S, MATCH_TO, REVEAL_S, RockPaperScissors,
+                                 beater, heard_go, heard_move, outcome)
 
 
 # ------------------------------------------------------------------ reading a hand
@@ -211,6 +212,189 @@ def test_every_camera_phase_draws(camera_host):
         run(game, 2.5)
     assert game.wins + game.losses + game.draws == 2
     assert game.status()["mode"] == "camera"
+
+
+def _play(game, move):
+    """One tapped round: pick ``move`` (starting a new round once the last result was seen), then reveal."""
+    if game.phase in ("reveal", "match"):
+        run(game, REVEAL_S + MATCH_S + 0.1)
+    assert game.choose(move)
+    run(game, BEAT_S * 3 + 0.05)
+    assert game.phase == "reveal"
+
+
+# ------------------------------------------------------------------ what it hears
+@pytest.mark.parametrize("said,move", [
+    ("Rock!", "rock"), ("I choose stone", "rock"), ("I'll go with paper.", "paper"), ("um, scissors", "scissors"),
+    ("I'm gonna do scissors", "scissors"),
+    ("play some rock music", None), ("tell me about scissors", None), ("rock paper scissors", None),
+    ("what's the weather", None), ("", None),
+])
+def test_a_move_is_only_words_that_say_just_that(said, move):
+    assert heard_move(said) == move
+
+
+@pytest.mark.parametrize("said,go", [
+    ("go", True), ("Let's go!", True), ("Okay, one more time.", True), ("again please", True), ("ready", True),
+    ("rematch", True), ("play some jazz", False), ("start a timer for five minutes", False), ("hmm", False),
+])
+def test_go_is_only_words_that_say_just_that(said, go):
+    assert heard_go(said) is go
+
+
+def test_words_for_the_voice_are_left_for_it_and_moves_mid_round_are_kept(host):
+    game = _game(host)
+    assert game.hear("play some jazz") is False and game.phase == "pick"
+    assert game.hear("paper") is True and game.phase == "count"
+    assert game.hear("rock") is True and game.you == "paper"  # one pick per round, and not for the voice either
+    assert game.hear("what's the weather like") is False
+
+
+def test_go_without_the_camera_says_how_to_play(host):
+    game = _game(host)
+    assert game.hear("go") is True and game.phase == "pick"
+    assert host.lines[-1] == "Say rock, paper or scissors!"
+
+
+# ------------------------------------------------------------------ fair, matches, tricky mode
+def test_littlebot_picks_as_the_countdown_starts_before_seeing_theirs(host):
+    game = _game(host)
+    game.choose("rock")
+    locked = game._locked
+    assert locked in CHOICES and game.bot is None and game.status()["bot"] is None
+    game.rng.seed(999)  # whatever comes after the lock doesn't change it
+    run(game, BEAT_S * 3 + 0.05)
+    assert game.bot == locked and game.result == outcome("rock", locked)
+
+
+def test_first_to_three_wins_the_match_then_a_new_one_starts(host):
+    game = _game(host)
+    game.pick = lambda: "scissors"  # LittleBot keeps picking scissors: rock wins every round
+    rounds = 0
+    while game.match_winner is None:
+        _play(game, "rock")
+        rounds += 1
+    assert rounds == MATCH_TO and game.match_winner == "you" and game.matches == {"you": 1, "bot": 0}
+    assert "You win the match, 3 to 0" in host.lines[-1] and "rematch" in host.lines[-1]
+    assert "Match point!" in host.lines[-2]
+    run(game, REVEAL_S + 0.05)
+    assert game.phase == "match" and game.label()[0] == "You win the match!"
+    run(game, MATCH_S + 0.05)
+    assert game.phase == "pick" and game.match_you == game.match_bot == 0 and game.wins == MATCH_TO
+
+
+def test_a_pick_during_the_match_celebration_starts_the_rematch(host):
+    game = _game(host)
+    game.pick = lambda: "rock"
+    for _ in range(MATCH_TO):
+        _play(game, "scissors")  # LittleBot wins every round
+    assert game.match_winner == "bot" and "I win the match, 3 to 0" in host.lines[-1]
+    run(game, REVEAL_S + 0.05)
+    assert game.phase == "match" and game.choose("paper") and game.phase == "count"
+    assert game.match_you == game.match_bot == 0 and game.matches == {"you": 0, "bot": 1}
+
+
+def test_tricky_mode_learns_their_habit_and_easy_mode_plays_fair(host):
+    tricky = _game(host, seed=11)
+    assert tricky.hear("tricky mode") is True and tricky.tricky
+    assert "Tricky mode" in host.lines[-1]
+    fair = _game(host, seed=11)
+    for game in (tricky, fair):
+        for _ in range(30):
+            _play(game, "rock")  # always rock
+    assert tricky.losses >= 20  # it saw the habit: mostly paper
+    assert fair.losses <= 16  # at random about a third
+    assert tricky.hear("easy mode") is True and not tricky.tricky
+
+
+def test_tricky_mode_reads_what_they_play_after_a_result():
+    game = RockPaperScissors(seed=2)
+    game.history = [("rock", "win"), ("paper", "lose"), ("rock", "win"), ("paper", "lose"), ("rock", "win")]
+    assert game.guess() == "paper"  # after winning with rock they switch to paper
+    assert beater("paper") == "scissors"
+
+
+# ------------------------------------------------------------------ what LittleBot says
+def test_each_round_is_said_in_littlebots_own_words(camera_host):
+    camera_host.hand_signs = ["scissors"]
+    game = _game(camera_host)
+    game.pick = lambda: "rock"
+    game.go()
+    run(game, BEAT_S * 3 + 0.2)
+    assert camera_host.lines[-1] == "I saw scissors. Rock smashes scissors: I win! 1 to 0 to me."
+    assert "you (LittleBot) win" in camera_host.told[-1]  # the note for a voice that words it itself
+    game2 = _game(camera_host)
+    game2.pick = lambda: "paper"
+    _play(game2, "paper")
+    assert camera_host.lines[-1] == "We both picked paper: it's a draw!"
+
+
+@pytest.mark.parametrize("why,words", [("no_hand", "couldn't see your hand"), ("unclear_sign", "couldn't tell")])
+def test_when_the_camera_cant_read_it_says_why(camera_host, why, words):
+    game = _game(camera_host)
+    camera_host.see_hand = lambda: _done_look(None, why)
+    game.go()
+    run(game, BEAT_S * 3 + 0.2)
+    assert game.phase == "ask" and words in camera_host.lines[-1]
+    assert game.hear("paper") is True and game.phase == "reveal" and game.you == "paper"
+
+
+def test_a_move_said_while_showing_it_counts_when_the_camera_cant_tell(camera_host):
+    game = _game(camera_host)
+    camera_host.see_hand = lambda: _done_look(None, "unclear_sign")
+    game.go()
+    assert game.hear("scissors!") is True and game.you is None
+    run(game, BEAT_S * 3 + 0.2)
+    assert game.phase == "reveal" and game.you == "scissors" and not game.seen
+
+
+def test_the_voice_is_told_how_to_play_and_the_score(camera_host):
+    game = _game(camera_host)
+    how = game.status()["how"]
+    assert "show rock, paper or scissors to the camera" in how and "never pick" in how and "first to 3" in how
+    assert game.status()["intro"] == "It's on! Say go, then show me your hand on shoot."
+    camera_host.can_see = False
+    off = _game(camera_host).status()
+    assert "say or tap rock, paper or scissors" in off["how"] and "don't mention it" in off["how"]
+    assert off["intro"] == "It's on! Say rock, paper or scissors."
+
+
+def test_match_and_tricky_phases_draw(host):
+    game = _game(host)
+    game.hear("tricky mode")
+    game.pick = lambda: "scissors"
+    surf = pygame.Surface(game.size)
+    for _ in range(MATCH_TO):
+        _play(game, "rock")
+        game.draw(surf)
+    run(game, REVEAL_S + 0.05)
+    assert game.phase == "match"
+    game.draw(surf)
+    assert "matches 1-0" in game.summary() and game.finale_text() == "You're the champ!"
+
+
+def _done_look(sign, why):
+    look = hand_sign.HandLook()
+    look.finish(sign, why)
+    return look
+
+
+async def test_the_game_news_carries_the_ready_words():
+    from littlebot.games.service import GAME_NEWS, GamesService
+    from littlebot.testing import make_test_context
+
+    ctx = make_test_context()
+    try:
+        svc = GamesService(ctx)
+        news: list = []
+        ctx.bus.subscribe(GAME_NEWS, lambda e: news.append({"text": e.get("text"), "say": e.get("say")}))
+        assert await svc.start("rps")
+        svc.host.tell("a note", say="You win!")
+        await asyncio.sleep(0.05)
+        assert news and news[-1]["text"] == "a note" and news[-1]["say"] == "You win!"
+        svc.stop()
+    finally:
+        ctx.db.close()
 
 
 async def test_the_real_host_runs_the_look_on_the_loop(monkeypatch):

@@ -250,7 +250,7 @@ def test_no_backlight_or_a_broken_one(tmp_path):
 
 # ------------------------------------------------------------------ the bar's look
 def test_bar_sprites_draw_and_are_cached(pygame_display):
-    surf = pygame.Surface((720, 480))
+    surf = pygame.Surface(EC.CANVAS)  # the 7" screen: the bar at its own size
     rect = surf.get_rect()
     r = EC.draw_bar(surf, rect, EC.Bar("volume", "right", 0.55, 0.69, 1.0))
     assert r.right <= rect.right and r.centerx > rect.centerx
@@ -344,13 +344,14 @@ def test_a_tap_in_the_middle_giggles_at_once(window):
     assert ctx.face.status()["expression"] == "happy"
 
 
-def test_a_long_press_on_the_edge_still_opens_the_games_menu(window):
+def test_a_5s_hold_on_the_edge_still_opens_the_settings(window):
     loop, ctx = window
     _post(loop, ("down", _at(loop, 0.04, 0.5)))
     loop.check_edges(time.monotonic() + EC.STILL_SECONDS + 0.01)  # a resting finger: its giggle plays...
     assert ctx.face.status()["expression"] == "happy"
-    assert loop.check_long_press(time.monotonic() + D.LONG_PRESS_SECONDS + 0.05)  # ...and the hold opens the menu
-    assert _wait(lambda: ctx.screens.active) and ctx.screens.current.kind == "games"
+    assert loop.check_long_press(time.monotonic() + 1.5) is False  # (no games menu after a second any more)
+    assert loop.check_long_press(time.monotonic() + D.SETTINGS_HOLD_SECONDS + 0.05)  # ...and 5 s opens the settings
+    assert _wait(lambda: ctx.screens.active) and ctx.screens.current.kind == "settings"
 
 
 def test_an_edge_swipe_sets_the_volume_without_a_giggle_or_the_menu(window, caplog):

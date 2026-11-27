@@ -77,6 +77,18 @@ camera sends (cheap, no decode; keeps the driver queue empty so frames are never
 that stops answering is detected after `camera.stall_seconds` (3 s). Only the newest frame
 is held, and only until it is handed over.
 
+## Lending the camera (a video call)
+
+`await lend_camera(owner, timeout=3.0) -> bool`, `return_camera(owner) -> bool`, `camera_lent`. Not part of
+`VisionAPI` (an optional extra; `littlebot/calls` checks for it).
+
+A USB camera serves one program at a time. While WhatsApp's Chromium is open for a call, vision closes the device
+and leaves it alone: the camera's status reads `lent` (`status()["lent_to"]` says to whom), photos and the live
+view answer `PhotoUnavailable("in_call")`, face tracking sees nobody, and a frame sink (always recording) stays in
+place and simply gets no frames, so it pauses and resumes by itself. `lend_camera` returns once the device is
+closed. `return_camera` reopens it on the next cycle. The camera privacy switch is never touched: off stays off,
+and giving the camera back never switches it on.
+
 ## Live view (the dashboard's Camera page)
 
 `await live_view_frame(viewer, after=0, label="", timeout=2.0) -> (jpeg, seq)`,
@@ -122,6 +134,7 @@ the new level applies within one cycle:
 |---|---|---|
 | `PLAYING_MEDIA` (and `vision.pause_during_media: true`, default) | `paused` | **Nothing is read, decoded or detected**, no gestures, no events. The camera stays **open** (no release / re-open churn; the reader thread only `grab()`s, which costs almost nothing) and an unplugged camera is still noticed. Presence is **frozen**, so a video does not produce a fake `person_left` + `person_present` pair. On the Pi 5 2 GB the video decode in Chromium needs the CPU. |
 | `SLEEPING` | `reduced` | detection at `vision.sleep_detect_fps` (1.5 Hz instead of 6), gestures off. A person arriving still publishes `person_present`, and `behaviours.py` wakes the robot (tested end to end). Someone who was already present when the robot fell asleep does not wake it again until they leave and return. |
+| the browser view open, on a 2 GB board (`system.memory`, [PERFORMANCE.md](../PERFORMANCE.md#memory-profile)) | `reduced` | as when sleeping; photos for camera looks still work. A 4 GB board stays `active` |
 | everything else | `active` | `camera.detect_fps` (6 Hz) and gestures if enabled |
 
 When `paused` ends, detection runs at once, stale detections from before the video are dropped,
@@ -172,7 +185,7 @@ contain `CascadeClassifier` or the Haar XML files. With them, Haar is unavailabl
 only detector, so it needs `scripts/download_models.py`. With apt `python3-opencv` (4.x on
 Bookworm/Trixie) Haar works out of the box.
 
-## CPU budget (Raspberry Pi 5, 2 GB)
+## CPU budget (Raspberry Pi 5)
 
 Design choices: 1080p30 MJPG capture since 2026-11-06 (USB 2.0 friendly; 640x480 is cheaper to decode), detection on a 320 px
 copy at 6 Hz (5 Hz in `pi.yaml`), decode only the frames we process, `vision.opencv_threads: 2` so
@@ -288,8 +301,9 @@ with a camera look ([AI_SAFETY.md §4](../AI_SAFETY.md#4-privacy) has the privac
 
 * **Models:** YuNet (`cv2.FaceDetectorYN`, its landmarks this time: they line the face up) and SFace
   (`cv2.FaceRecognizerSF`, `vision.sface_model`, `scripts/download_models.py faces`; Apache-2.0,
-  39 MB). Loaded on first use (~0.2 s on an x86 VM) and ~110 MB of RAM; unloaded when switched off
-  or after 10 minutes unused. Missing models or an old OpenCV are reported ("The face models aren't
+  39 MB). Loaded on first use (~0.2 s on an x86 VM) and ~110 MB of RAM; unloaded when switched off.
+  A 4 GB Pi keeps them otherwise; a 2 GB one also drops them after 2 minutes unused (`system.memory`,
+  [PERFORMANCE.md](../PERFORMANCE.md#memory-profile)). Missing models or an old OpenCV are reported ("The face models aren't
   downloaded yet ..."), never a crash.
 * **Matching:** each sample is 128 numbers (unit length). A person is the average of their samples
   (made unit length again); a face is theirs when the cosine similarity to it is at least

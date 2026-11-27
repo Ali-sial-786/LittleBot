@@ -71,12 +71,24 @@ docs/    guides
   using the camera, microphone or any network service. Offline mode forces cloud off.
 * `ctx.age_policy()` gives age-aware rules (video gate, cloud AI gate, reply length).
 * Never store audio, images or transcripts by default. Never send camera data anywhere.
+  The one exception, by the owner's choice: "always recording" (`littlebot/capture/buffer.py`) keeps the last
+  3 minutes of video and sound **in RAM only** (`/dev/shm`, never the SD card), deletes them as it goes, shows a
+  red dot on the face while it runs, and is wiped at once by the camera privacy switch. It reaches the gallery
+  only when someone asks ("save that"). Don't add another such buffer, and never write this one to disk.
 * The `cloud_enabled` switch covers services that receive data about the child (cloud AI,
   cloud speech-to-text / text-to-speech). YouTube playback is gated separately by `media.enabled`,
   the allowlist, the age gate and offline mode: it only streams parent-approved videos and sends
   nothing about the child.
 * API keys: only `ctx.config.anthropic_api_key` / `openai_api_key` (SecretStr). Never log them,
   never return them to the dashboard frontend.
+* WhatsApp calls (`littlebot/calls`, docs/CALLS.md) put the owner's own WhatsApp on the robot's screen. Never read,
+  log, store or hand to a model anything from WhatsApp's page: page scripts answer only whether and where a thing
+  is. Log a contact by the name on the parent's list, never by the name WhatsApp shows. Every WhatsApp selector
+  lives in `littlebot/calls/page_scripts.py` (`SELECTORS`) and nowhere else. LittleBot's cover over the page
+  (`calls.hide_chats`, on by default) is the default and things are let through it (the QR code, a call), never
+  the other way round; a failed step must not uncover it, and only the dashboard may switch it off.
+* The camera is one device: a program outside LittleBot that needs it (a video call's Chromium) borrows it with
+  `ctx.vision.lend_camera(owner)` / `return_camera(owner)`. Never flip the camera privacy switch for that.
 
 ## Devices
 
@@ -98,4 +110,7 @@ docs/    guides
 * Python >= 3.11, type hints, `from __future__ import annotations`, module docstrings.
 * Standard `logging` (`logging.getLogger("littlebot.<module>")`), no prints in library code.
 * Keep dependencies minimal; heavy/optional imports go inside functions.
-* Target: Raspberry Pi 5 with 4 GB RAM; keep it lean enough for 2 GB. Bounded queues, timeouts, low idle CPU.
+* Big outside programs (Android, WhatsApp's Chromium) run only while they are on the screen and are shut down
+  afterwards, with a log line saying how much memory came back (`littlebot/android`, `littlebot/calls`).
+* Target: Raspberry Pi 5 with 4 GB RAM, and still fine on 2 GB (`littlebot/core/memory.py` `roomy`: what is
+  kept loaded only where there is room). Bounded queues, timeouts, low idle CPU.

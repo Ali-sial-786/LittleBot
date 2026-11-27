@@ -61,6 +61,7 @@ import numpy as np
 
 from littlebot.audio import devices as dev
 from littlebot.audio import dsp
+from littlebot.audio import ec_route
 from littlebot.audio.devices import (
     InputBackend, MockOutput, NullInput, NullOutput, OutputBackend, PlaybackControl, SoundDeviceInput,
     SoundDeviceOutput,
@@ -101,6 +102,10 @@ def _voice_line_store(ctx: Any) -> VoiceLineStore:
         return get_store(ctx)
     except Exception:  # noqa: BLE001 - a context without extras (some tests): a private store
         return VoiceLineStore(default_folder(ctx.config.data_path))
+
+
+def _ms(seconds: float) -> int:
+    return int(seconds * 1000)
 
 
 def _resolve(fut: "concurrent.futures.Future[bool]", value: bool) -> None:
@@ -305,6 +310,7 @@ class AudioService(Service):
         mic = getattr(self._inp, "device_name", None)
         if dev.is_echo_cancel_device(spk, "output") and dev.is_echo_cancel_device(mic, "input"):
             log.info("audio: echo cancelling on (PipeWire: %s / %s)", mic, spk)
+            ec_route.ensure_soon()  # and it plays on the USB speaker (WirePlumber can link it elsewhere at boot)
         elif isinstance(self._out, SoundDeviceOutput) or isinstance(self._inp, SoundDeviceInput):
             log.info("audio: echo cancelling off (%s)", dev.echo_cancel_note())
 
@@ -493,28 +499,36 @@ class AudioService(Service):
         (they return False) and listen() returns None. A background listener (wake word) gives
         the microphone back first.
         """
+        t0 = time.monotonic()
         was_lent = self._suspended is not None
         self._suspended = owner
         self.stop_output()
         self._cancel_listen(f"suspended for {owner}")
         if not was_lent:
             await self._claim_mic_async("lent")
-        await asyncio.to_thread(self._release_devices, wait)
-        log.info("audio: speaker and microphone lent to %s", owner)
+        claimed = time.monotonic()
+        steps = await asyncio.to_thread(self._release_devices, wait)
+        log.info("audio: speaker and microphone lent to %s (%d ms: wake word %d, playback %d, speaker %d, mic %d)",
+                 owner, _ms(time.monotonic() - t0), _ms(claimed - t0), *steps)
 
-    def _release_devices(self, wait: float) -> None:
-        deadline = time.monotonic() + max(0.0, wait)
+    def _release_devices(self, wait: float) -> tuple[int, int, int]:
+        """Close the devices once the sound playing has stopped: (ms waited for it, closing the speaker, the mic)."""
+        t0 = time.monotonic()
+        deadline = t0 + max(0.0, wait)
         while time.monotonic() < deadline:
             with self._cv:
                 if self._current is None:
                     break
             time.sleep(0.02)
+        t1 = time.monotonic()
         out = self._out
         if out is not None:
             with contextlib.suppress(Exception):
                 out.release()
             self._released = True
+        t2 = time.monotonic()
         self._close_input()
+        return _ms(t1 - t0), _ms(t2 - t1), _ms(time.monotonic() - t2)
 
     def resume(self, owner: str) -> None:
         if self._suspended == owner:
@@ -895,6 +909,25 @@ class AudioService(Service):
         if self._stop_counter != marker:
             return False  # stop_output() was pressed while the voice was being prepared
         return await self._enqueue(_Item("speech", clean, samples, sr), wait=True)
+
+    async def play_speech(self, samples: np.ndarray, sample_rate: int, text: str = "", *, wait: bool = True) -> bool:
+        """Speak audio that is already made (the assistant's cloud voice, littlebot/assistant): as ``say``, with the
+        same events, mouth, volume and stop, but no text-to-speech here."""
+        x = dsp.as_mono_float(np.asarray(samples, dtype=np.float32))
+        if not len(x):
+            return True
+        self._ensure_ready()
+        if isinstance(self._out, NullOutput):
+            return False
+        return await self._enqueue(_Item("speech", clean_text(text) or "speech", x, int(sample_rate)), wait=wait)
+
+    def sound_samples(self, name: str) -> tuple[np.ndarray, int] | None:
+        """A sound effect's samples (``SOUND_NAMES``), for a stream that isn't this service's (the assistant's call
+        audio plays its game sounds itself). None: unknown."""
+        try:
+            return self._bank.cached(name) or self._bank.get(name)
+        except Exception:  # noqa: BLE001
+            return None
 
     def _recorded_line(self, text: str) -> tuple[np.ndarray, int, str] | None:
         """The recording of ``text`` in the ChatGPT voice (data/voice_lines), padded like spoken text."""

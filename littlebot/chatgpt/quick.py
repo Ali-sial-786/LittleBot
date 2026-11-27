@@ -45,9 +45,12 @@ monday tuesday wednesday thursday friday saturday sunday a bit while next""".spl
 # ---------------------------------------------------------------- the time
 _TIME = re.compile(r"\b(?:what time|the time|current time|time is it|time it is|what day|which day|day is it|"
                    r"day it is|what date|the date|today'?s date|date is it|what(?:'s| is) today)\b", re.I)
-# Not just "now, here": another place, a time span, an alarm ("what time is it in Tokyo?", "how long until 5?")
-_NOT_TIME = re.compile(r"\bwhat time (?!is it|it is)|\b(?:in|at|for|until|till|til|since|ago|left|when|how long|how many|zones?|timers?|alarms?|"
-                       r"remind\w*|bed\s?time|lunch\s?time|nap\s?time|tea\s?time|dinner\s?time|story\s?time)\b", re.I)
+# Not just "now, here": another place, a time span, an alarm ("what time is it in Tokyo?", "how long until 5?"),
+# the day of something ("what day is the dentist?", "what date is Christmas?": the calendar or the text model)
+_NOT_TIME = re.compile(r"\bwhat time (?!is it|it is)|\b(?:what|which) (?:day|date) (?:is|was|are|will) (?!it\b|today\b)|"
+                       r"\b(?:in|at|for|until|till|til|since|ago|left|when|how long|how many|zones?|timers?|alarms?|"
+                       r"remind\w*|bed\s?time|lunch\s?time|nap\s?time|tea\s?time|dinner\s?time|story\s?time|"
+                       r"calendars?|appointments?|meetings?|schedule)\b", re.I)
 
 # ---------------------------------------------------------------- the volume
 _SOUND = r"(?:it|that|this|the volume|the sound|your volume|your voice|you|yourself|the video|the music)"
@@ -92,7 +95,7 @@ MAX_TIMER_S = 24 * 3600
 
 @dataclasses.dataclass(frozen=True)
 class Asked:
-    """What a hand-off asks for: ``what`` is weather | time | volume | timer | picture; ``args`` the tool's
+    """What a hand-off asks for: ``what`` is weather | time | volume | theme | timer | picture; ``args`` the tool's
     arguments."""
 
     what: str
@@ -104,10 +107,34 @@ def match(question: str) -> Asked | None:
     text = " ".join(str(question or "").split())
     if not text or len(text.split()) > MAX_WORDS:
         return None
-    for find in (_volume, _timer, _picture, _time, _weather):
+    for find in (_volume, _theme, _timer, _picture, _time, _weather):
         asked = find(text)
         if asked is not None:
             return asked
+    return None
+
+
+# Dark mode (setting display.theme): "switch to dark mode", "turn off night mode", "light mode please". Not a question
+# about it ("what's dark mode?", "do you have a night mode?"): the text model answers those.
+_THEME_VERB = r"\b(?:switch|turn|go|put|change|set|use|enable|activate|start|back)\b[^.?!]{0,30}"
+_THEME_ALONE = r"^\W*(?:(?:please|now|little ?bot|ok(?:ay)?)\W+)*{0}(?:\W+(?:please|on|now))*\W*$"
+_THEME_LIGHT = re.compile(r"\b(?:turn|switch|put) (?:off|out) (?:the |your )?(?:dark|night) (?:mode|theme)\b|"
+                          rf"{_THEME_VERB}\b(?:light|day|normal) (?:mode|theme)\b|"
+                          + _THEME_ALONE.format(r"(?:light|day|normal) (?:mode|theme)")
+                          + r"|\b(?:exit|leave|stop) (?:the )?(?:dark|night) mode\b", re.I)
+_THEME_DARK = re.compile(rf"{_THEME_VERB}\b(?:dark|night) (?:mode|theme)\b|"
+                         + _THEME_ALONE.format(r"(?:dark|night) (?:mode|theme)")
+                         + r"|\b(?:make|turn) (?:the |your )?screen dark\b", re.I)
+_THEME_QUESTION = re.compile(r"^\s*(?:what|how|why|when|is|are|does|do|can you tell|tell me about)\b", re.I)
+
+
+def _theme(text: str) -> Asked | None:
+    if _THEME_QUESTION.search(text):
+        return None
+    if _THEME_LIGHT.search(text):
+        return Asked("theme", {"theme": "light"})
+    if _THEME_DARK.search(text):
+        return Asked("theme", {"theme": "dark"})
     return None
 
 
@@ -233,6 +260,9 @@ async def answer(asked: Asked, box: Any, question: str, *,
     asked_for = sanitize_user_text(question, max_chars=200)
     if asked.what == "volume":
         return await _answer_volume(asked.args, box)
+    if asked.what == "theme":
+        result = await box.run("set_screen_theme", {"theme": asked.args["theme"]})
+        return f"Done: {result[3:].strip()}. Tell them in a few words." if result.startswith("ok:") else None
     if asked.what == "time":
         return await _answer_time(box)
     if asked.what == "timer":
@@ -242,6 +272,29 @@ async def answer(asked: Asked, box: Any, question: str, *,
     if asked.what == "picture":
         return await _answer_picture(asked.args, box)
     return None
+
+
+def done_note(asked: Asked, question: str, told: str, ago_s: float, *, timers_known: bool = False) -> str:
+    """One line for the text model about a quick answer earlier in the call, which it never saw (``told``: what
+    the voice was told then, ``ago_s``: how long ago), so a follow-up ("how much time is left on it?") gets a
+    right answer instead of one that says no timer was set. ``timers_known``: the note also says what the
+    timers are now (the screen service's own count), so no guess at the time left is added here."""
+    asked_for = sanitize_user_text(question, max_chars=120)
+    ago = int(max(0.0, ago_s))
+    when = f"{_say_duration(ago)} ago" if ago >= 1 else "just now"
+    if asked.what == "timer" and told.startswith("Done:"):
+        seconds = int(asked.args["seconds"])
+        label = f" for the {asked.args['label']}" if asked.args.get("label") else ""
+        started = f'"{asked_for}": LittleBot started a timer for {_say_duration(seconds)}{label} on its screen {when}'
+        if timers_known:
+            return started + "."
+        left = seconds - ago
+        state = f"about {_say_duration(left)} left" if left > 0 else "it has finished and chimed"
+        return f"{started} ({state}, unless someone stopped it)."
+    if asked.what == "weather":
+        return f'"{asked_for}": LittleBot told them the weather from its weather service {when}.'
+    said = told.split(" Tell them", 1)[0].split(" Say so", 1)[0].strip()
+    return f'"{asked_for}": LittleBot answered {when}: {said}'
 
 
 async def _answer_picture(args: dict[str, Any], box: Any) -> str | None:
@@ -342,4 +395,4 @@ async def run_with_timeout(asked: Asked, box: Any, question: str, timeout: float
     return None
 
 
-__all__ = ["Asked", "answer", "duration_seconds", "match", "run_with_timeout"]
+__all__ = ["Asked", "answer", "done_note", "duration_seconds", "match", "run_with_timeout"]

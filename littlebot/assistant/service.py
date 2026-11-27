@@ -1,0 +1,688 @@
+"""AssistantService (``ctx.assistant``): the fast voice pipeline's front door.
+
+* ``start_session(parent_present=, carry=)`` / ``stop_session(reason)`` / ``status()``: the same as GPT-Live's
+  (``ctx.live``), so the wake word starts whichever is in use (:func:`littlebot.assistant.voice_front`) and the
+  dashboard shows either. One session at a time (:class:`~littlebot.assistant.session.VoiceSession`).
+* ``use_cascade()``: ``assistant.pipeline`` auto = this pipeline when a streaming speech-to-text key (Deepgram) and
+  a fast voice key (Cartesia or ElevenLabs) are set, else GPT-Live as before; cascade / live force one.
+* ``handle_text(text, speak=)``: the same brain for typed chat (the dashboard's Assistant page), optionally said
+  aloud.
+* ``speak(text)``: say something with the assistant's voice outside a session (an announcement).
+* Announcements (bus ``assistant.announce``, littlebot/skills/base.py: a reminder rang, a game's tap was judged):
+  said in the session if one is on, else passed to GPT-Live's call as news, else spoken through the speaker.
+* ``history``: the last exchanges, in RAM only (``assistant.history_minutes`` / ``history_turns``), so "and
+  tomorrow?" works across follow-ups and the next wake word.
+* The dashboard's choices (core/settings.py ``CONFIG_OVERRIDES``: what listens, compares, thinks and speaks, the
+  Cartesia voice): the services are made again from them at once, or when the conversation going on ends.
+  ``try_voice(id, text)`` says a line in another Cartesia voice, to choose one.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import collections
+import contextlib
+import logging
+import time
+from typing import Any, Callable
+
+import numpy as np
+
+from littlebot.core.events import Event, Subscription, Topics
+from littlebot.core.service import Service, ServiceStatus
+
+log = logging.getLogger("littlebot.assistant")
+
+ERRORS = {
+    "already_running": "A conversation is already on.",
+    "parent_not_present": "A grown-up needs to be there to start a conversation.",
+    "offline": "LittleBot is in offline mode.",
+    "cloud_off": "Cloud communication is switched off on the Privacy page.",
+    "mic_off": "The microphone is switched off on the Privacy page.",
+    "no_audio": "LittleBot's audio isn't running.",
+    "busy": "LittleBot is busy with something more important.",
+    "no_stt": "No speech-to-text is set up.",
+}
+# Loaded in the background soon after start-up: importing them in the first session blocked the event loop for
+# about 1.2 s on the robot (anthropic alone ~1 s), so the question said right after "Hey LittleBot" was lost.
+PRELOAD_AFTER_S = 3.0
+PRELOAD_MODULES = ("anthropic", "littlebot.brain.text_model", "littlebot.brain.providers.claude",
+                   "littlebot.chatgpt.responses", "littlebot.assistant.session", "littlebot.chatgpt.live_audio",
+                   "littlebot.chatgpt.tools", "littlebot.assistant.tts", "littlebot.assistant.stt")
+DONE_TURNS = 4  # the history's note of what the tools did covers this many recent turns
+LIVE_SPEAKER_FRESH_S = 60.0  # GPT-Live: a voice recognised this recently is still who is talking
+# An answer they talked over: told in front of their next words, never in the answer's own. An answer kept as
+# "... (interrupted)" taught the brain to write "(interrupted)" itself and stop ("Let me look again. (interrupted)",
+# no look), and the safety check put its stock "Let's do something fun. Can you show me a big smile?" in its place
+# (the robot's brain, 2026-11-06).
+CUT_CONTEXT = "they talked over your answer above, so they heard only that much of it"
+CUT_NOTE = f"[Context, not said by them: {CUT_CONTEXT}]\n"
+
+
+def _cut(text: str, n: int) -> str:
+    """``text`` at most ``n`` characters, cut between words ("..." when cut)."""
+    text = " ".join(text.split()).replace(";", ",")
+    return text if len(text) <= n else text[:n].rsplit(" ", 1)[0].rstrip(",.:") + "..."
+
+
+def _import_all(names: tuple[str, ...]) -> list[str]:
+    """Import ``names`` (in a worker thread); the ones that failed."""
+    import importlib  # noqa: PLC0415
+
+    failed = []
+    for name in names:
+        try:
+            importlib.import_module(name)
+        except Exception:  # noqa: BLE001 - missing optional parts are reported where they are used
+            failed.append(name)
+    return failed
+
+
+class History:
+    """The last exchanges (user / assistant pairs) in memory only, forgotten after ``minutes``."""
+
+    def __init__(self, *, turns: int, minutes: float, now: Callable[[], float] = time.monotonic) -> None:
+        self.turns = int(turns)
+        self.minutes = float(minutes)
+        self._now = now
+        self._items: collections.deque[tuple[float, str, str, tuple[str, ...], bool]] = collections.deque(
+            maxlen=max(1, self.turns))
+
+    def add(self, user: str, assistant: str, done: list[str] | None = None, *, cut: bool = False) -> None:
+        """``done``: what its tools did in that turn ("volume_down: Volume 50%"), see :meth:`done_note`. ``cut``:
+        they talked over the answer, so ``assistant`` is only what they heard of it (CUT_NOTE)."""
+        if self.turns <= 0 or not (user.strip() or assistant.strip()):
+            return
+        self._items.append((self._now(), user.strip()[:2000], assistant.strip()[:2000], tuple(done or ()), bool(cut)))
+
+    def _fresh(self) -> list[tuple[float, str, str, tuple[str, ...], bool]]:
+        cutoff = self._now() - self.minutes * 60
+        while self._items and self._items[0][0] < cutoff:
+            self._items.popleft()
+        return list(self._items)
+
+    def messages(self) -> list[dict[str, str]]:
+        out: list[dict[str, str]] = []
+        cut_before = False
+        for _, user, assistant, _done, cut in self._fresh():
+            out += [{"role": "user", "content": CUT_NOTE + user if cut_before else user},
+                    {"role": "assistant", "content": assistant}]
+            cut_before = cut
+        return out
+
+    def done_note(self) -> str:
+        """A context note of what the tools really did in the earlier turns, or "". The history keeps only the
+        words, so without it the brain doubts its own actions ("I never actually checked the volume")."""
+        # (no ";" in it: the context notes are joined with "; ", and the brain read the next note as part of a tool's
+        # result cut short; the robot, 2026-11-06)
+        turns = [f'after "{_cut(user, 60)}": ' + ", ".join(d.replace(";", ",") for d in done)
+                 for _, user, _a, done, _was_cut in self._fresh()[-DONE_TURNS:] if done]
+        return ("what your tools really did earlier in this chat (it happened, trust it): " + " | ".join(turns)
+                if turns else "")
+
+    def cut_note(self) -> str:
+        """For the turn right after one they talked over: CUT_NOTE as a context note (``messages`` puts it in front
+        of the next words kept, but the words of this turn aren't kept yet), or ""."""
+        fresh = self._fresh()
+        return CUT_CONTEXT if fresh and fresh[-1][4] else ""
+
+    def clear(self) -> None:
+        self._items.clear()
+
+    def __len__(self) -> int:
+        return len(self._items)
+
+
+class AssistantService(Service):
+    name = "assistant"
+
+    def __init__(self, ctx: Any, *, audio_factory: Callable[[], Any] | None = None,
+                 stt_factory: Callable[..., Any] | None = None, tts_factory: Callable[[], Any] | None = None,
+                 brain: Any = None, now: Callable[[], float] = time.monotonic) -> None:
+        super().__init__()
+        self.ctx = ctx
+        self.cfg = ctx.config.assistant
+        self.now = now
+        self._audio_factory = audio_factory
+        self._stt_factory = stt_factory
+        self._tts_factory = tts_factory
+        self._tts: Any = None
+        self._stt: Any = None
+        self._bg: set[asyncio.Task[Any]] = set()
+        self._preloading: asyncio.Task[Any] | None = None
+        if brain is None:
+            from littlebot.assistant.agent import Brain  # noqa: PLC0415
+
+            brain = Brain(ctx, now=now)
+        self.brain = brain
+        self.history = History(turns=self.cfg.history_turns, minutes=self.cfg.history_minutes, now=now)
+        from littlebot.assistant.jokes import JokesTold  # noqa: PLC0415
+
+        self.jokes = JokesTold.for_context(ctx)
+        self._session: Any = None
+        self._task: asyncio.Task[Any] | None = None
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._subs: list[Subscription] = []
+        self.last_call: dict[str, Any] | None = None
+        self._told_pipeline: str | None = None
+        self._remake = False  # the dashboard changed a choice: the services are made again when no session is on
+
+    # ------------------------------------------------------------ lifecycle
+    async def start(self) -> None:
+        self._loop = asyncio.get_running_loop()
+        bus = self.ctx.bus
+        from littlebot.skills.base import ANNOUNCE  # noqa: PLC0415
+
+        self._subs = [
+            bus.subscribe(Topics.STOP_ALL, lambda e: self._end_threadsafe("stopped (STOP ALL)")),
+            bus.subscribe(Topics.PRIVACY_CHANGED, self._on_privacy),
+            bus.subscribe(ANNOUNCE, self._on_announce),
+            bus.subscribe("game.news", self._on_game_news),
+            bus.subscribe("screen.news", self._on_screen_news),
+            bus.subscribe(Topics.SETTINGS_CHANGED, self._on_setting),
+        ]
+        why = self.pipeline_reason()
+        log.info("assistant: voice pipeline %s (%s)", "assistant" if self.use_cascade() else "GPT-Live", why)
+        self.set_status(ServiceStatus.RUNNING, why)
+        if self.use_cascade():
+            self._preloading = self._background(self.preload(PRELOAD_AFTER_S))
+
+    async def preload(self, after: float = 0.0) -> None:
+        """Get the first session ready before anyone talks: the libraries it imports load in a worker thread (the
+        event loop keeps running), then the brain, the voice and speech-to-text are made (quick once imported)."""
+        if after:
+            await asyncio.sleep(after)
+        t0 = self.now()
+        failed = await asyncio.to_thread(_import_all, PRELOAD_MODULES)
+        with contextlib.suppress(Exception):
+            self.brain.provider()
+        with contextlib.suppress(Exception):
+            self.tts()
+        with contextlib.suppress(Exception):
+            self.stt_provider()
+        log.info("assistant: ready for the first question (%d ms in the background%s)", int((self.now() - t0) * 1000),
+                 f"; not loaded: {', '.join(failed)}" if failed else "")
+
+    async def stop(self) -> None:
+        for s in self._subs:
+            s.cancel()
+        self._subs.clear()
+        if self._preloading is not None:
+            self._preloading.cancel()
+        await self.stop_session("service stop")
+        with contextlib.suppress(Exception):
+            await self.brain.aclose()
+        for chain in (self._tts, self._stt):
+            if chain is not None:
+                with contextlib.suppress(Exception):
+                    await chain.aclose()
+        self.set_status(ServiceStatus.STOPPED)
+
+    # ------------------------------------------------------------ which pipeline
+    def keys(self) -> dict[str, bool]:
+        c = self.ctx.config
+        return {name: bool(c.secret(f"{name}_api_key")) for name in ("deepgram", "cartesia", "elevenlabs")} | {
+            "openai": bool(c.openai_api_key and c.openai_api_key.get_secret_value()),
+            "anthropic": bool(c.anthropic_api_key and c.anthropic_api_key.get_secret_value())}
+
+    def speaker(self) -> Any:
+        """Who is talking in the conversation going on now (``assistant.who.Who``: voice and face recognition), or
+        None (no conversation, recognition off, or not sure). The calendar uses it: "what's on today?" is theirs."""
+        session = self._session
+        if session is None or getattr(session, "ended", False):
+            return None
+        try:
+            return session.speaker
+        except Exception:  # noqa: BLE001
+            return None
+
+    async def identify_speaker(self) -> Any:
+        """Who is talking, for something meant for one person (the camera's "send it to my phone"): by voice, else a
+        fresh look with the camera (``Session.identify``). Outside a conversation of this pipeline (GPT-Live), only
+        the look. A sure ``assistant.who.Who``, or None."""
+        session = self._session
+        if session is not None and not getattr(session, "ended", False) and hasattr(session, "identify"):
+            try:
+                return await session.identify()
+            except Exception:  # noqa: BLE001 - not knowing who is talking must never break a turn
+                log.debug("assistant: identifying the speaker failed", exc_info=True)
+                return None
+        from littlebot.assistant.who import Who, by_face, child_test, look_now  # noqa: PLC0415
+
+        heard = None  # GPT-Live's own voice recognition: its latest turn, when recent and clear
+        with contextlib.suppress(Exception):
+            last = self.ctx.bus.recent(1, Topics.VOICE_SPEAKER)
+            if last and time.monotonic() - last[-1].ts <= LIVE_SPEAKER_FRESH_S:
+                heard = last[-1].data
+        if heard and heard.get("person_id") is not None and not heard.get("is_child") and heard.get("name"):
+            return Who(int(heard["person_id"]), str(heard["name"]), str(heard.get("role") or ""), "voice", sure=True)
+        people = await look_now(self.ctx)
+        return by_face(people, None, child_test(self.ctx)) if people is not None else None
+
+    def use_cascade(self) -> bool:
+        mode = self.cfg.pipeline
+        if mode == "live":
+            return False
+        if mode == "cascade":
+            return True
+        k = self.keys()
+        return k["deepgram"] and (k["cartesia"] or k["elevenlabs"])
+
+    def ready(self) -> bool:
+        """Something can hear (a speech-to-text provider is available): else the wake word keeps using GPT-Live."""
+        try:
+            return self.stt_provider() is not None
+        except Exception:  # noqa: BLE001
+            log.debug("assistant: no speech-to-text", exc_info=True)
+            return False
+
+    def pipeline_reason(self) -> str:
+        mode = self.cfg.pipeline
+        if mode != "auto":
+            return f"assistant.pipeline is {mode}"
+        k = self.keys()
+        if self.use_cascade():
+            return "auto: Deepgram and " + ("Cartesia" if k["cartesia"] else "ElevenLabs") + " keys are set"
+        missing = [n for n, ok in (("DEEPGRAM_API_KEY", k["deepgram"]),
+                                   ("CARTESIA_API_KEY or ELEVENLABS_API_KEY", k["cartesia"] or k["elevenlabs"]))
+                   if not ok]
+        return "auto: GPT-Live until " + " and ".join(missing) + " are set"
+
+    # ------------------------------------------------------------ factories
+    @property
+    def audio_factory(self) -> Callable[[], Any]:
+        return self._audio_factory or self._default_audio
+
+    def _default_audio(self) -> Any:
+        """The call audio GPT-Live uses (full duplex, echo gate, barge-in, lip-sync), with the assistant's switch."""
+        from littlebot.chatgpt.live_audio import BargeInSettings, LiveAudio  # noqa: PLC0415
+
+        a = self.ctx.config.audio
+        live_cfg = self.ctx.config.chatgpt
+        max_vol = float(a.speaker.max_volume)
+
+        def volume() -> float:
+            v = self.ctx.settings.get("audio.volume", a.speaker.volume)
+            try:
+                return max(0.0, min(max_vol, float(v)))
+            except (TypeError, ValueError):
+                return min(max_vol, float(a.speaker.volume))
+
+        def gain() -> float:
+            try:
+                return float(self.ctx.settings.get("audio.input_gain", a.microphone.input_gain) or 1.0)
+            except (TypeError, ValueError):
+                return 1.0
+
+        barge = BargeInSettings.from_config(live_cfg)
+        if not self.cfg.barge_in:
+            barge = BargeInSettings(mode="off")
+        return LiveAudio(mic=a.microphone.device, speaker=a.speaker.device, volume=volume, mic_gain=gain,
+                         half_duplex=live_cfg.live_half_duplex, echo_tail_s=live_cfg.live_echo_tail_ms / 1000,
+                         voice_level=live_cfg.live_voice_level, barge_in=barge)
+
+    def tts(self) -> Any:
+        if self._tts is None:
+            if self._tts_factory is not None:
+                self._tts = self._tts_factory()
+            else:
+                from littlebot.assistant.tts import build_tts_chain  # noqa: PLC0415
+
+                self._tts = build_tts_chain(self.ctx)
+        return self._tts
+
+    def stt_provider(self) -> Any:
+        """Speech-to-text (``stt.STTChain``: the first of ``assistant.stt`` that works; one that fails is rested and
+        the next opens), or None when none can be used now."""
+        if self._stt_factory is not None:
+            return self._stt_factory()
+        if self._stt is None or self._stt.missing():  # kept between sessions: it remembers which ones failed lately
+            from littlebot.assistant.stt import build_stt  # noqa: PLC0415
+
+            self._stt = build_stt(self.ctx, keyterms=self.keyterms)
+        return self._stt
+
+    def keyterms(self) -> list[str]:
+        """The words speech-to-text should listen harder for now (assistant/keyterms.py), with the recent turns'."""
+        from littlebot.assistant.keyterms import hearing_terms  # noqa: PLC0415
+
+        return hearing_terms(self.ctx, self.history.messages())
+
+    # ------------------------------------------------------------ sessions
+    def blocked_reason(self, parent_present: bool = True) -> str | None:
+        ctx = self.ctx
+        if self._session is not None:
+            return "already_running"
+        if not parent_present:
+            return "parent_not_present"
+        if ctx.config.is_offline and not self._local_only():
+            return "offline"
+        if not ctx.privacy.cloud_enabled and not self._local_only():
+            return "cloud_off"
+        if not ctx.privacy.microphone_enabled:
+            return "mic_off"
+        return None
+
+    def _local_only(self) -> bool:
+        return False  # the brain needs the cloud (a local model doesn't fit the Pi yet)
+
+    def status(self) -> dict[str, Any]:
+        session = self._session
+        reason = self.blocked_reason() if session is None else None
+        out: dict[str, Any] = {
+            "available": True,
+            "pipeline": "assistant" if self.use_cascade() else "live",
+            "pipeline_setting": self.cfg.pipeline,
+            "pipeline_reason": self.pipeline_reason(),
+            "keys": self.keys(),  # whether each key is set (never the keys)
+            "can_start": session is None and reason is None,
+            "blocked": reason,
+            "blocked_detail": ERRORS.get(reason or ""),
+            "active": session is not None,
+            "history_turns": len(self.history),
+            "last_call": self.last_call,
+            "choices": self.choices(),
+            "choices_waiting": bool(self._remake and session is not None),  # until the conversation ends
+        }
+        for name, chain in (("tts", self._tts), ("stt", self._stt)):
+            if chain is not None:
+                with contextlib.suppress(Exception):
+                    out[name] = chain.describe()
+        if session is not None:
+            out.update(session.snapshot())
+        return out
+
+    async def start_session(self, *, parent_present: bool = True, carry: Any = None,
+                            source: str = "wake") -> dict[str, Any]:
+        """As GPT-Live's: ``carry`` is what was said with the wake word (dropped by the caller if this fails)."""
+        reason = self.blocked_reason(parent_present)
+        if reason:
+            return {"ok": False, "error": reason, "detail": ERRORS[reason]}
+        if self.ctx.audio is None:
+            return {"ok": False, "error": "no_audio", "detail": ERRORS["no_audio"]}
+        from littlebot.assistant.session import VoiceSession, lease_for  # noqa: PLC0415
+
+        self._loop = asyncio.get_running_loop()
+        session = VoiceSession(self, carry=carry, source=source)
+        lease = lease_for(self, lambda why: self._end_threadsafe(why))
+        if lease is None:
+            return {"ok": False, "error": "busy", "detail": ERRORS["busy"]}
+        session.lease = lease
+        self._session = session
+        self._task = self._loop.create_task(self._run(session), name="assistant-session")
+        return {"ok": True, **self.status()}
+
+    def play_earcon(self, name: str, *, volume: float | None = None) -> bool:
+        """The wake word's "listening" sound through the session's speaker stream: the session started before they
+        were heard going on or waiting (wakeword EARLY_START). It leaves the microphone open. False: no session."""
+        session = self._session
+        if session is None or session.ended:
+            return False
+        return session.play_sound(name, volume=volume, cue=True)
+
+    async def _run(self, session: Any) -> None:
+        try:
+            await session.run()
+        finally:
+            if self._session is session:
+                self._session = None
+            self.last_call = session.summary()
+            if self._remake and self._session is None:
+                self._remake_services()
+        done = await session.run_handover()
+        if done and self.last_call is not None:
+            self.last_call["handed_over"] = done
+
+    async def stop_session(self, reason: str = "stopped") -> dict[str, Any]:
+        session, task = self._session, self._task
+        if session is None or task is None:
+            return {"ok": True, **self.status()}
+        session.end(reason)
+        try:
+            await asyncio.wait_for(asyncio.shield(task), 8.0)
+        except asyncio.TimeoutError:
+            task.cancel()
+        except asyncio.CancelledError:
+            me = asyncio.current_task()
+            if me is not None and me.cancelling():
+                raise  # we were cancelled ourselves
+        except Exception:  # noqa: BLE001 - the session's own failure is in its summary
+            log.debug("assistant: the session ended with an error", exc_info=True)
+        return {"ok": True, **self.status()}
+
+    def _background(self, coro: Any) -> asyncio.Task[Any]:
+        """A task the service keeps a reference to until it is done (never garbage-collected mid-run)."""
+        task = asyncio.ensure_future(coro)
+        self._bg.add(task)
+        task.add_done_callback(self._bg_done)
+        return task
+
+    def _bg_done(self, task: asyncio.Task[Any]) -> None:
+        self._bg.discard(task)
+        if not task.cancelled() and task.exception() is not None:
+            log.warning("assistant: a background job failed (%s)", type(task.exception()).__name__)
+
+    def speak_later(self, text: str) -> None:
+        """Say ``text`` through the speaker soon (an announcement a session ended before saying)."""
+        loop = self._loop
+        if loop is None or loop.is_closed() or not text.strip():
+            return
+        with contextlib.suppress(RuntimeError):
+            loop.call_soon_threadsafe(lambda: self._background(self._speak_when_free(text)))
+
+    async def _speak_when_free(self, text: str) -> None:
+        for _ in range(100):  # the session hands the speaker back first
+            if self._session is None:
+                break
+            await asyncio.sleep(0.1)
+        session = self._session
+        if session is not None and not session.ended:
+            session.announce(text)
+        else:
+            await self.speak(text)
+
+    def _end_threadsafe(self, reason: str) -> None:
+        session, loop = self._session, self._loop
+        if session is None or loop is None or loop.is_closed():
+            return
+        with contextlib.suppress(RuntimeError):
+            loop.call_soon_threadsafe(session.end, reason)
+
+    def _on_privacy(self, event: Event) -> None:
+        p = self.ctx.privacy
+        if not (p.cloud_enabled and p.microphone_enabled):
+            self._end_threadsafe("stopped (privacy settings changed)")
+
+    # ------------------------------------------------------------ the dashboard's choices
+    def choices(self) -> dict[str, Any]:
+        """What listens, compares, thinks and speaks now (the config, with the dashboard's choices in it)."""
+        a = self.cfg
+        return {"pipeline": a.pipeline, "stt": list(a.stt), "stt_shadow": list(a.stt_shadow),
+                "log_words": bool(a.log_words), "tts": list(a.tts), "cartesia_voice": a.cartesia_voice,
+                "brain": self.ctx.config.claude.model, "deep_model": a.deep_model}
+
+    def _on_setting(self, event: Event) -> None:
+        from littlebot.core.settings import CONFIG_OVERRIDES  # noqa: PLC0415
+
+        if event.get("key") not in CONFIG_OVERRIDES:
+            return
+        self._remake = True  # at once, so a status asked right after the change shows it
+        loop = self._loop
+        if loop is not None and not loop.is_closed():
+            with contextlib.suppress(RuntimeError):
+                loop.call_soon_threadsafe(self._choices_changed)
+
+    def _choices_changed(self) -> None:
+        if self._remake and self._session is None:
+            self._remake_services()
+        elif self._remake:
+            log.info("assistant: the new choices are used when this conversation ends")
+
+    def _remake_services(self) -> None:
+        """Speech-to-text, the voice and the brain made again from the changed choices (the old ones closed),
+        and made ready in the background so the next "Hey LittleBot" is as quick as ever."""
+        self._remake = False
+        old = [c for c in (self._tts, self._stt) if c is not None] + self.brain.forget_models()
+        self._tts = self._stt = None
+        if old:
+            self._background(_close_all(old))
+        c = self.choices()
+        log.info("assistant: new choices: listens with %s%s, thinks with %s, speaks with %s (Cartesia voice %s)",
+                 ", ".join(c["stt"]), f" ({' and '.join(c['stt_shadow'])} to compare)" if c["stt_shadow"] else "",
+                 c["brain"] or "ChatGPT", ", ".join(c["tts"]), c["cartesia_voice"])
+        if self.use_cascade() and self._loop is not None:
+            self._preloading = self._background(self.preload())
+
+    async def try_voice(self, voice_id: str, text: str) -> dict[str, Any]:
+        """Say ``text`` in Cartesia voice ``voice_id`` through the speaker, to choose a voice: ``{ok, error}``
+        (busy: a conversation is on; no_audio; or Cartesia's kind: no_key, cloud_off, auth, quota ...)."""
+        if self._session is not None:
+            return {"ok": False, "error": "busy"}
+        play = getattr(self.ctx.audio, "play_speech", None)
+        if play is None:
+            return {"ok": False, "error": "no_audio"}
+        from littlebot.assistant.tts import cartesia_tts  # noqa: PLC0415
+
+        tts = cartesia_tts(self.ctx, voice=voice_id)
+        try:
+            chunks = [np.asarray(c, dtype=np.float32) async for c in tts.stream(text)]
+        except Exception as e:  # noqa: BLE001 - SpeechError: its kind only
+            return {"ok": False, "error": str(getattr(e, "kind", "") or "server_error")}
+        finally:
+            with contextlib.suppress(Exception):
+                await tts.aclose()
+        if not chunks:
+            return {"ok": False, "error": "bad_audio"}
+        await play(np.concatenate(chunks), int(tts.sample_rate), text)
+        return {"ok": True, "error": None}
+
+    # ------------------------------------------------------------ typed chat
+    async def handle_text(self, text: str, *, speak: bool = False, source: str = "dashboard") -> dict[str, Any]:
+        """The brain for typed words (the dashboard): ``{reply, tools, error, provider, model, ms}``. ``speak``: also
+        said aloud (when no voice session is on)."""
+        text = " ".join(str(text or "").split())[:2000]
+        if not text:
+            return {"reply": "", "tools": [], "error": "empty"}
+        if self.ctx.config.is_offline:
+            return {"reply": "", "tools": [], "error": "offline"}
+        if not self.ctx.privacy.cloud_enabled:
+            return {"reply": "", "tools": [], "error": "cloud_off"}
+        from littlebot.assistant import intents  # noqa: PLC0415
+        from littlebot.chatgpt.tools import RobotToolbox  # noqa: PLC0415
+
+        box = RobotToolbox(self.ctx, mode="chat", defer=False)
+        t0 = self.now()
+        hit = intents.match(text)
+        done: list[str] = []
+        if hit is not None and hit.name in ("volume", "time"):
+            reply = await intents.run(hit, box, self.ctx)
+            out = {"reply": reply, "tools": list(box.calls), "error": None, "provider": "intent", "model": "",
+                   "ms": int((self.now() - t0) * 1000)}
+        else:
+            said: list[str] = []
+            res = await self.brain.respond(text, history=self.history.messages(), toolbox=box,
+                                           on_sentence=lambda s: said.append(s.text),
+                                           extra=[self.history.done_note()])
+            reply = " ".join(said)
+            done = list(getattr(res, "done", None) or [])
+            if res.error and not reply:
+                from littlebot.assistant.session import SORRY, SORRY_DEFAULT  # noqa: PLC0415
+
+                reply = SORRY.get(res.error, SORRY_DEFAULT)
+            out = {"reply": reply, "tools": list(res.tools), "error": res.error, "provider": res.provider,
+                   "model": res.model, "ms": int((self.now() - t0) * 1000), "silent": res.silent}
+        if reply:
+            self.history.add(text, reply, done)
+        if speak and reply and self._session is None:
+            self._background(self.speak(reply))
+        return out
+
+    # ------------------------------------------------------------ speaking outside a session
+    async def speak(self, text: str) -> bool:
+        """Say ``text`` with the assistant's voice through the speaker (no session needed). Falls back to the
+        robot's own text-to-speech."""
+        audio = self.ctx.audio
+        if audio is None or not text.strip():
+            return False
+        play = getattr(audio, "play_speech", None)
+        if play is not None and self.ctx.privacy.cloud_enabled and not self.ctx.config.is_offline:
+            try:
+                chunks = [np.asarray(c, dtype=np.float32) async for c in self.tts().stream(text)]
+                if chunks:
+                    return bool(await play(np.concatenate(chunks), int(getattr(self.tts(), "sample_rate", 48000)),
+                                           text))
+            except Exception as e:  # noqa: BLE001 - the plain voice instead
+                log.info("assistant: speaking with the robot's own voice (%s)", getattr(e, "kind", type(e).__name__))
+        return bool(await audio.say(text))
+
+    def _on_announce(self, event: Event) -> None:
+        text = str(event.get("text") or "").strip()
+        card = event.get("card")
+        loop = self._loop
+        if not text or loop is None or loop.is_closed():
+            return
+        if event.get("kind") == "alarm":
+            self._wake_for_alarm()
+        with contextlib.suppress(RuntimeError):
+            loop.call_soon_threadsafe(lambda: self._background(self._announce(text, card)))
+
+    def _wake_for_alarm(self) -> None:
+        """An alarm ("wake me at 7") wakes LittleBot up if it was asleep, so its face and card show."""
+        from littlebot.core.state import RobotState  # noqa: PLC0415
+
+        with contextlib.suppress(Exception):
+            if self.ctx.state.state == RobotState.SLEEPING:
+                self.ctx.state.transition(RobotState.IDLE, "alarm")
+                log.info("assistant: an alarm woke LittleBot up")
+
+    def _on_game_news(self, event: Event) -> None:
+        """An on-screen game's news ("Paper wraps rock: I win!"): its ready words are said in the session, as they
+        are (its ``text`` is a note for GPT-Live, which says it in its own call)."""
+        session = self._session
+        text = str(event.get("say") or event.get("text") or "").strip()
+        if session is not None and text and self._loop is not None:
+            with contextlib.suppress(RuntimeError):
+                self._loop.call_soon_threadsafe(session.announce, text)
+
+    def _on_screen_news(self, event: Event) -> None:
+        """A card's news during a session: a timer that rang is said ("The egg timer (5 minutes) has just finished");
+        the rest (what a recipe card shows) the screen says by itself."""
+        session = self._session
+        text = str(event.get("text") or "").strip()
+        if session is None or not text or "finished" not in text or self._loop is None:
+            return
+        line = text.split(";")[0].strip().rstrip(".") + "."
+        with contextlib.suppress(RuntimeError):
+            self._loop.call_soon_threadsafe(session.announce, f"Ding! {line}")
+
+    async def _announce(self, text: str, card: Any = None) -> None:
+        if isinstance(card, dict) and getattr(self.ctx, "screens", None) is not None:
+            with contextlib.suppress(Exception):
+                await self.ctx.screens.show(card, source="assistant")
+        session = self._session
+        if session is not None and not session.ended:
+            session.announce(text)
+            return
+        live = getattr(self.ctx, "live", None)
+        if live is not None and _active(live) and hasattr(live, "_to_call"):
+            live._to_call("game_news", text)  # GPT-Live says it straight away  # noqa: SLF001
+            return
+        await self.speak(text)
+
+
+def _active(svc: Any) -> bool:
+    try:
+        return bool(svc.status().get("active"))
+    except Exception:  # noqa: BLE001
+        return False
+
+
+async def _close_all(things: list[Any]) -> None:
+    for thing in things:
+        close = getattr(thing, "aclose", None)
+        if close is not None:
+            with contextlib.suppress(Exception):
+                await close()
+
+
+__all__ = ["AssistantService", "ERRORS", "History"]

@@ -78,17 +78,32 @@ FAST_EFFORT = "none"  # reasoning effort for the decision, as for camera looks (
 LINES = 6  # conversation lines the model sees
 LINE_CHARS = 300
 MAX_TEXT = 200  # one text field on a card
-MAX_ITEMS = 12  # one list on a card
+MAX_ITEMS = 16  # one list on a card (a card's own maxItems is usually lower)
 MAX_KEYS = 12  # one object on a card
 MAX_ARGS = 4  # a command's arguments
 MAX_SPEC_CHARS = 3000
-CATALOGUE_LINE_CHARS = 1200
+# A cap on one card type's line in the catalogue, against a runaway description: every built-in card fits whole,
+# its fields and actions included (the 7" cards have more fields; tests/screens/test_director.py checks).
+CATALOGUE_LINE_CHARS = 5000
 NOTE_CHARS = 300
 RECENT_S = 10.0  # the same card shown this recently (by the director or a tool) isn't shown again
 ANSWER_WAIT_S = 25.0  # wait_for_answer: at most this long for LittleBot's answer (live.py HANDOFF_TIMEOUT_S)
 SAID_GRACE_S = 0.6  # a caption counts as the answer once this old with no hand-off opened after it
+# The voice's words as it says them (``saying``): this many are enough to go on, so the card comes while it
+# talks. GPT-Live's final caption only comes when its turn ends, 20 s later for a long answer (2026-10-29).
+# Only enough to tell an answer from "hold on, let me check": the words come as fast as they are spoken, and
+# 25 kept the card waiting ~8 s ("there shouldn't be any wait for the card", the parent, 2026-10-29). The card
+# then shows what it is plainly answering (PROMPT).
+PARTIAL_WORDS = 6
+# GPT-Live starts its answer before the person's final caption reaches LittleBot (on the robot ~1 s earlier,
+# 2026-10-29): the words it is saying count for a turn heard up to this long after they began.
+SAYING_LEAD_S = 5.0
 ANSWER_CHARS = 600
 VERDICT_WAIT_S = 1.5  # the decider's "has it answered?" (feature answered, on): a caption waits this long for it
+# The decider's "no card" skips the text model only when it is this sure. On the robot an unsure "none" (0.46,
+# 0.47, 0.51) kept back the card for a new question (Alexander the Great after the Khans, 2026-10-29); asking
+# Haiku costs a call, a missing card is what the parent sees, and Haiku can still answer "none" itself.
+NONE_SURE_AT = 0.8
 FILLER = re.compile(
     r"^\W*(?:(?:ok(?:ay)?|sure|alright|all right|hmm+|um+|oh|great|good question|let'?s see)\W+)*"
     r"(?:(?:hold|hang) on|one (?:moment|sec(?:ond)?)|just a (?:moment|sec(?:ond)?)|give me a (?:moment|sec(?:ond)?)|"
@@ -107,10 +122,11 @@ CHANGED_NOTE = "The screen now shows: {what}."
 CLOSED_NOTE = "The card is off the screen now; your face is back."
 
 PROMPT = """\
-You are the screen director of {robot}, a small home robot with a screen, talking with a family (a grown-up and \
-a very young child). While the robot's voice answers out loud, its screen may show an info card that adds to what \
-is said: the gist, short and big, never the whole answer. After each thing someone says, answer with exactly one \
-JSON object and nothing else:
+You are the screen director of {robot}, a small home robot with a 7-inch screen, talking with a family (a grown-up \
+and a very young child). While the robot's voice answers out loud, its screen may show an info card that adds to \
+what is said: the gist and the useful details (the key points, the numbers, the steps), big and easy to read from \
+across a room, never the whole answer word for word. After each thing someone says, answer with exactly one JSON \
+object and nothing else:
 {{"do": "show", "spec": {{"card": "<kind>", <that card's fields>}}}} when what was just asked has something worth \
 seeing: a forecast, a word's meaning, the key points of an explanation, a recipe, a timer, the time somewhere, a sum \
 or conversion, a quick fact, a list or a comparison.
@@ -123,8 +139,11 @@ something else up.
 {{"do": "none"}} for everything else: chit-chat, songs, games, talking to the baby, or nothing worth showing.
 Never answer the question yourself: the voice does that. Your whole answer is the one JSON object.
 The card must agree with what {robot} says: take its numbers, names and facts from {robot}'s answer below, never from what you know yourself, and leave out anything it didn't say. When {robot} hasn't actually given the answer, answer {{"do": "none"}}.
-Use only the fields listed for the card, with short text (a few words per line, numbers as digits). Never put \
-personal details on the screen.
+When only the first words of its answer are known (it is still saying the rest), it is answering: make the card for what was asked, from those words and plain well-known facts that fit the question, never against what it said. Leave out live information (weather, times, news, scores) it hasn't said.
+Use only the fields listed for the card, with short text (a few words per line, numbers as digits). The screen \
+has room for more than one fact: fill the optional fields that help someone glancing at it (a short detail under a \
+point, a comparison, every ingredient and step), but no padding: leave out a field you have nothing real for. \
+Never put personal details on the screen.
 
 The cards:
 {catalogue}"""
@@ -204,7 +223,9 @@ CHAT_QUESTIONS = re.compile(
     r"what is your favou?rite)\b")
 TO_THE_BABY = re.compile(r"^(?:(?:can|could|will) you )?(?:say (?:hi|hello|hey|bye|goodbye|good night|night night)\b|"
                          r"say \w+ to\b|say [a-z']+$|tell (?:her|him|the baby) )")
-# With no card up, only a question or a request for information is worth asking the model about.
+# With no card up, a turn of fewer than NO_QUESTION_WORDS words is worth asking the model about only when it is a
+# question or a request for information (prefilter).
+NO_QUESTION_WORDS = 3
 INFO_CUE = re.compile(
     r"\b(?:what|how|when|where|which|who|why|whose|tell me|show me|explain|define|definition|meaning|mean|means|"
     r"spell|recipe|recipes|cook|cooking|bake|baking|ingredients|timer|remind me|count ?down|minutes?|hours?|seconds?|"
@@ -321,7 +342,10 @@ def prefilter(text: str, *, card_up: bool = False) -> str | None:
         return "chit-chat"
     if TO_THE_BABY.match(plain):
         return "talking to the baby"
-    if not card_up and not INFO_CUE.search(plain):
+    # Only a word or two with nothing of a question in them ("she's tired"): longer turns go to the model, which
+    # answers "none" for what isn't worth a card. On the robot (2026-10-29) this word list kept a 10-word question
+    # about the Khans and "and Alexander the Great?" from ever being asked about: no card.
+    if not card_up and not INFO_CUE.search(plain) and len(words) < NO_QUESTION_WORDS:
         return "no question"
     return None
 
@@ -497,6 +521,37 @@ def _clean(value: Any, schema: dict[str, Any], depth: int = 0) -> Any:
         out = _as(value, str(k), schema, depth)
         if out is not _DROP:
             return out
+    if schema.get("type"):  # the right thing in another shape (steps as one string, text as a list): reshaped
+        for k in kinds:
+            reshaped = _reshaped(value, str(k), schema)
+            if reshaped is not _DROP:
+                out = _as(reshaped, str(k), schema, depth)
+                if out is not _DROP:
+                    return out
+    return _DROP
+
+
+_NUMBERED = re.compile(r"(?:^|\s+)\d+[.)]\s+")  # "1. Mix the flour 2. Fry them"
+_LINES = re.compile(r"\s*(?:\n+|;\s+)\s*")  # lines, or "a; b"
+
+
+def _reshaped(value: Any, kind: str, schema: dict[str, Any]) -> Any:
+    """``value`` in the shape ``kind`` asks for, when the model sent the same thing in another one (a list as
+    one string, a text as a list or a record, "true" as a word); ``_DROP`` when there is no such shape."""
+    if kind == "array" and isinstance(value, str):
+        text = value.strip()
+        pieces = _NUMBERED.split(text) if re.match(r"1[.)]\s", text) else _LINES.split(text)
+        return [p.strip() for p in pieces if p.strip()] or _DROP
+    if kind == "array" and isinstance(value, dict):
+        items = schema.get("items") if isinstance(schema.get("items"), dict) else {}
+        if items.get("type") == "object":
+            return [value]
+        return [t for t in (f"{k}: {v}" if isinstance(v, (str, int, float)) else _any_text(v)
+                            for k, v in value.items()) if t] or _DROP
+    if kind == "string" and isinstance(value, (list, tuple, dict)):
+        return _any_text(value) or _DROP
+    if kind == "boolean" and isinstance(value, str) and value.strip().lower() in ("true", "yes", "false", "no"):
+        return value.strip().lower() in ("true", "yes")
     return _DROP
 
 
@@ -551,15 +606,16 @@ def _as(value: Any, kind: str, schema: dict[str, Any], depth: int) -> Any:  # no
         if not isinstance(value, dict) or depth >= 3:
             return _DROP
         props = schema.get("properties")
+        extra = schema.get("additionalProperties")  # free-form keys of this shape (a table row: a key per column)
         cleaned: dict[str, Any] = {}
         for key, v in list(value.items())[:MAX_KEYS * 2]:
             name = str(key)[:40]
-            if isinstance(props, dict):
-                if name not in props:
-                    continue
+            if isinstance(props, dict) and name in props:
                 c = _clean(v, props[name] if isinstance(props[name], dict) else {}, depth + 1)
+            elif isinstance(props, dict) and not isinstance(extra, dict):
+                continue
             else:
-                c = _clean(v, {}, depth + 1)
+                c = _clean(v, extra if isinstance(extra, dict) else {}, depth + 1)
             if c is not _DROP:
                 cleaned[name] = c
             if len(cleaned) >= MAX_KEYS:
@@ -594,17 +650,169 @@ def unsafe(texts: list[str], relaxed: Any = ()) -> list[str]:
     return [r for r in result.reasons if r in BLOCK_RULES or r == "grownup_redirect"]
 
 
+# A card kind the model made up from a facts layout's name ({"card": "compare"} on the robot, 2026-10-29)
+FACTS_KINDS = {"comparison": "compare", "table": "compare", "versus": "compare", "vs": "compare",
+               "difference": "compare", "fact": "item", "info": "item", "text": "item", "answer": "item",
+               "summary": "list", "points": "list", "key_points": "list", "stat": "number"}
+
+
+def _as_facts(kind: str, spec: dict[str, Any], types: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    """A facts card for a spec of an unknown kind (named after a layout, or anything with text in it: however
+    the model sends it, it should still be shown, the parent's ask), and a layout for one that has none."""
+    fields = getattr(types.get("facts"), "fields", None) or {}
+    layouts = list((fields.get("layout") or {}).get("enum") or ())
+    layout = str(spec.get("layout") or "").strip().lower()
+    layout = FACTS_KINDS.get(layout.replace(" ", "_").replace("-", "_"), layout)
+    named = kind if kind in layouts else FACTS_KINDS.get(kind.replace(" ", "_").replace("-", "_"))
+    if kind != "facts" and named is None and not _texts({k: v for k, v in spec.items()
+                                                          if k not in ("card", "kind", "title")}):
+        return kind, spec  # nothing in it to show but a title: stays unknown
+    if layout not in layouts:
+        layout = named or ("compare" if spec.get("columns") else "list" if spec.get("items") else
+                           "number" if spec.get("value") else "score" if spec.get("teams") else "item")
+    spec = {**spec, "card": "facts", "layout": layout}
+    items = spec.get("items")
+    if layout == "compare" and isinstance(items, list) and items and not spec.get("columns") and not spec.get("rows"):
+        # a comparison sent as items, as the brain often does (the robot, 2026-10-31): labelled rows naming each
+        # of them ({"label": "Snout", "value": "Alligator: broad. Crocodile: narrow."}), or a line for each
+        # ("Tiger: largest cat, up to 300 kg"); shown as a profile of cut-off lines before
+        table = _labelled_rows(items) if any(isinstance(i, dict) for i in items) else None
+        columns = table[0] if table else _subject_columns(items, str(spec.get("title") or ""))
+        if columns:
+            spec["columns"], spec["rows"] = (table if table else (columns, []))
+            spec.pop("items")
+            items = None
+    if isinstance(items, list) and any(isinstance(i, dict) for i in items):
+        # items as records: the strings-only items dropped them all and no card came (2026-10-31)
+        spec["items"] = [t for t in (_record_text(i) for i in items) if t]
+    return "facts", spec
+
+
+_ROW_LABELS = ("label", "row", "aspect", "feature", "category", "name", "title", "key")
+_ROW_VALUES = ("value", "text", "detail", "details", "fact", "facts", "note", "notes", "description", "difference",
+               "summary")
+# "Alligator: broad and U-shaped. Crocodile: narrow and V-shaped." -> the name and what follows it, each
+_NAMED = re.compile(r"([A-Z][\w'’ -]{0,28}?)\s*:\s*(.+?)(?=[.;,]?\s+[A-Z][\w'’ -]{0,28}?\s*:\s|[.;]?\s*$)", re.S)
+
+
+def _record_text(record: Any) -> str:
+    """One labelled record as a line: "Snout: Alligator: broad ...", a plain string as it is."""
+    if isinstance(record, str):
+        return record
+    if not isinstance(record, dict):
+        return ""
+    label = next((str(record[k]) for k in _ROW_LABELS if isinstance(record.get(k), str)), "")
+    value = next((str(record[k]) for k in _ROW_VALUES if isinstance(record.get(k), (str, int, float))), "")
+    return f"{label}: {value}" if label and value else label or value
+
+
+def _any_text(value: Any) -> str:
+    """The text in ``value`` as one line: a record labelled ("Snout: broad") or else its texts joined, a list's
+    entries joined; "" when there is none."""
+    if isinstance(value, bool) or value is None:
+        return ""
+    if isinstance(value, (str, int, float)):
+        return str(value)
+    if isinstance(value, dict):
+        return _record_text(value) or " ".join(t for t in (_any_text(v) for v in value.values()) if t)
+    if isinstance(value, (list, tuple)):
+        return " ".join(t for t in (_any_text(v) for v in value) if t)
+    return ""
+
+
+def _subject_columns(items: list[Any], title: str) -> list[dict[str, Any]] | None:
+    """Items that each describe one of the two or three things the title compares ("Tiger: largest cat, up to
+    300 kg", {"label": "Frog", "note": "smooth skin, long legs"}) as compare columns, their facts in short points;
+    None when they don't."""
+    low = title.lower()
+    columns: list[dict[str, Any]] = []
+    for item in items:
+        name, colon, rest = _record_text(item).partition(":")
+        name = " ".join(name.split())
+        if not colon or not rest.strip() or not name or len(name) > 24 or name.lower().rstrip("s") not in low:
+            return None
+        columns.append({"name": name, "facts": _points(rest)})
+    if not 2 <= len(columns) <= 3 or len({c["name"].lower() for c in columns}) < len(columns):
+        return None
+    return columns
+
+
+def _points(text: str, most: int = 4) -> list[str]:
+    """One line of facts as short points: split at sentences, semicolons and commas, a short piece kept with the
+    next ("Smooth, moist skin")."""
+    out: list[str] = []
+    for piece in (p.strip(" .") for p in re.split(r";\s*|,\s+|\.\s+", text.strip())):
+        if not piece:
+            continue
+        if out and len(out[-1]) < 8:
+            out[-1] = f"{out[-1]}, {piece}"
+        else:
+            out.append(piece)
+    return out[:most]
+
+
+def _labelled_rows(items: list[Any]) -> tuple[list[dict[str, Any]], list[str]] | None:
+    """Labelled rows that each name the same two or three things ("Alligator: ... Crocodile: ...") as compare
+    columns [{"name", "facts"}] and row labels; None when they don't."""
+    names: list[str] = []
+    rows: list[tuple[str, dict[str, str]]] = []
+    for record in items:
+        if not isinstance(record, dict):
+            return None
+        label = next((str(record[k]) for k in _ROW_LABELS if isinstance(record.get(k), str)), "")
+        value = next((str(record[k]) for k in _ROW_VALUES if isinstance(record.get(k), str)), "")
+        pairs = {" ".join(n.split()).lower(): (" ".join(n.split()), v.strip(" .;")) for n, v in _NAMED.findall(value)}
+        if not label or not 2 <= len(pairs) <= 3:
+            return None
+        if not names:
+            names = [shown for shown, _ in pairs.values()]
+        if set(pairs) != {n.lower() for n in names}:
+            return None
+        rows.append((label, {k: v for k, (_, v) in pairs.items()}))
+    if len(rows) < 1:
+        return None
+    columns = [{"name": n, "facts": [facts[n.lower()] for _, facts in rows]} for n in names]
+    return columns, [label for label, _ in rows]
+
+
 def clean_spec(spec: Any, types: dict[str, Any], relaxed: Any = ()) -> tuple[dict[str, Any] | None, str]:
     """A card spec fit for ``ScreenService.show``: a known kind, only its fields (and a title), each of the
-    right type and size, the required ones there, every word within the safety rules. Else (None, why)."""
+    right type and size, the required ones there, every word within the safety rules. Else (None, why).
+
+    However the model sends it, a card with text in it is shown (the parent's ask, 2026-10-31): a string or a
+    list, a kind missing what it needs, or an unknown kind becomes a facts card of its text (text_card), and one
+    too long is shortened. Only the safety rules, or nothing at all to show, keep it off the screen."""
+    out, why = _cleaned(spec, types)
+    if out is None and "facts" in types:
+        fallback = text_card(spec)
+        if fallback is not None:
+            log.info("screen: a card that couldn't be used as sent (%s) is shown as a facts card of its text", why)
+            out, _ = _cleaned(fallback, types)
+    if out is None:
+        return None, why
+    broken = unsafe(_texts(out), relaxed)
+    if broken:
+        return None, f"blocked by the safety rules ({broken[0]})"
+    return out, ""
+
+
+def _cleaned(spec: Any, types: dict[str, Any]) -> tuple[dict[str, Any] | None, str]:
+    """clean_spec without the fallback and the safety check."""
     if not isinstance(spec, dict):
         return None, "not an object"
     kind = str(spec.get("card") or spec.get("kind") or "").strip().lower()[:40]
+    if kind == "facts" or (kind not in types and "facts" in types):
+        kind, spec = _as_facts(kind, spec, types)
     ct = types.get(kind)
     if ct is None:
         return None, f"unknown card {re.sub(r'[^a-z0-9_ -]', '', kind)[:40]!r}"
     fields = ct.fields if isinstance(ct.fields, dict) else {}
     allowed = {"title": {"type": "string", "maxLength": 80}, **fields}
+    for name in [n for n in spec if n not in allowed]:  # a field under a near name ("meaning" for "meanings")
+        near = next((f for f in (f"{name}s", name[:-1] if name.endswith("s") else "")
+                     if f in allowed and f not in spec), None)
+        if near:
+            spec = {**spec, near: spec[name]}
     out: dict[str, Any] = {"card": kind}
     for name, schema in allowed.items():
         if name == "card" or name not in spec:
@@ -615,12 +823,91 @@ def clean_spec(spec: Any, types: dict[str, Any], relaxed: Any = ()) -> tuple[dic
     missing = [f for f in ct.required if out.get(f) in (None, "", [], {})]
     if missing:
         return None, f"missing {', '.join(missing)[:80]}"
-    if len(json.dumps(out, ensure_ascii=False)) > MAX_SPEC_CHARS:
-        return None, "too long"
-    broken = unsafe(_texts(out), relaxed)
-    if broken:
-        return None, f"blocked by the safety rules ({broken[0]})"
+    if kind == "facts" and not set(out) - {"card", "layout", "title", "ordered"}:  # its text under other names
+        return None, "nothing to show"
+    while len(json.dumps(out, ensure_ascii=False)) > MAX_SPEC_CHARS:
+        if not _shorten(out):
+            return None, "too long"
     return out, ""
+
+
+def _shorten(value: Any) -> bool:
+    """One step shorter: the last entry off the biggest list, else the longest text cut by a third. False when
+    there is nothing left to shorten."""
+    lists: list[list[Any]] = []
+    texts: list[tuple[Any, Any]] = []  # (its container, its key or index)
+
+    def walk(v: Any) -> None:
+        pairs = v.items() if isinstance(v, dict) else enumerate(v) if isinstance(v, list) else ()
+        if isinstance(v, list) and len(v) > 1:
+            lists.append(v)
+        for k, child in pairs:
+            if isinstance(child, str) and len(child) > 40:
+                texts.append((v, k))
+            walk(child)
+    walk(value)
+    if lists:
+        max(lists, key=lambda v: len(json.dumps(v, ensure_ascii=False))).pop()
+        return True
+    if texts:
+        box, key = max(texts, key=lambda p: len(p[0][p[1]]))
+        text = box[key]
+        box[key] = text[:len(text) * 2 // 3].rstrip(" ,;:-") + "…"
+        return True
+    return False
+
+
+# Not text to show on a text card: what kind of card, how it looks, where its picture comes from
+_NOT_SHOWN = {"card", "kind", "layout", "title", "picture_query", "ordered", "view", "style", "color", "colour",
+              "icon", "emoji", "id"}
+
+
+def text_card(spec: Any) -> dict[str, Any] | None:
+    """A facts card of the text in ``spec`` (a list of it, or one item when there is one), for a card that couldn't
+    be used as sent; None when there is no text in it to show. Short words alone ("Hamilton", "week") are
+    settings, not text to show: a text needs two words, or to be in a list."""
+    title = ""
+    pieces: list[str] = []
+    if isinstance(spec, str):
+        pieces = [spec]
+    elif isinstance(spec, (list, tuple)):
+        pieces = [_any_text(v) for v in spec]
+    elif isinstance(spec, dict):
+        title = spec["title"] if isinstance(spec.get("title"), str) else ""
+        for key, value in spec.items():
+            if str(key).lower() in _NOT_SHOWN:
+                continue
+            if isinstance(value, str) and len(value.split()) >= 2:
+                pieces.append(value)
+            elif isinstance(value, str) and not title and value.strip():
+                title = value  # a word on its own ("ephemeral"): what the card is about
+            elif isinstance(value, (list, tuple)):
+                pieces += [_any_text(v) for v in value]
+            elif isinstance(value, dict):
+                pieces.append(_any_text(value))
+    texts = list(dict.fromkeys(" ".join(_CONTROL_CHARS.sub(" ", p).split()) for p in pieces))
+    texts = [t for t in texts if t][:MAX_ITEMS]
+    if not texts:
+        return None
+    card: dict[str, Any] = {"card": "facts", "title": title}
+    if len(texts) == 1:
+        card.update(layout="item", text=texts[0])
+    else:
+        card.update(layout="list", items=texts, ordered=False)
+    return card
+
+
+def text_instead(spec: dict[str, Any], types: dict[str, Any], relaxed: Any = (),
+                 sent: Any = None) -> dict[str, Any] | None:
+    """The facts card of a checked ``spec``'s text, for a card the screen couldn't make from it ("no_card"); None
+    when there is no text, or it is that card already. ``sent``: the spec as the model sent it (its text may be
+    under names the card doesn't take: {"card": "answer", "answer": {...}})."""
+    fallback = (text_card(sent) if sent is not None else None) or text_card(spec)
+    clean = clean_spec(fallback, types, relaxed)[0] if fallback is not None else None
+    if clean is None or clean == spec:
+        return None
+    log.info("screen: a %s card the screen couldn't make is shown as a facts card of its text", spec.get("card"))
+    return clean
 
 
 def clean_args(args: Any, relaxed: Any = ()) -> dict[str, Any] | None:
@@ -686,6 +973,7 @@ class ScreenDirector:
         self.wait_for_answer = wait_for_answer
         self.answer_wait_s = answer_wait_s
         self._said: collections.deque[tuple[float, str]] = collections.deque(maxlen=LINES)  # (when, caption)
+        self._saying: tuple[float, str] | None = None  # (when it began, words so far) of the voice's turn now
         self._handoffs = 0  # the voice's hand-offs open now
         self._handoff_said: tuple[float, str] | None = None  # (when, answer) of the latest hand-off answer
         self._changed = asyncio.Event()
@@ -714,16 +1002,19 @@ class ScreenDirector:
         if not browser_turn:
             self._browser_moved_on(text)
         if handled or browser_turn or not self.enabled():
+            if not browser_turn:
+                log.info("screen: nothing to decide (%s)", "another part of the call took it" if handled
+                         else "cards are off")
             return
         t0 = self._now()
         child = self._speaker(t0)
-        if child:
-            log.debug("screen: nothing to decide (the child spoke)")
+        if child:  # (info, as below: a card that didn't come must say why in the log, 2026-10-29)
+            log.info("screen: nothing to decide (voice recognition says the child spoke)")
             return
         kind = self._current_kind()
         rule = local_rule(text, kind, self._actions(kind), kinds=self._types())  # clear grown-up phrases
         if rule is not None and rule.do == "none":
-            log.debug("screen: nothing to do (%s)", rule.why)
+            log.info("screen: nothing to do (%s)", rule.why)
             return
         if rule is not None and rule.do == "show" and rule.spec is not None:
             self._spawn(self._apply_show(rule.spec, t0, "rule"))
@@ -740,7 +1031,7 @@ class ScreenDirector:
         if why is None and self._screen_taken():
             why = "a game or the browser is on the screen"
         if why is not None:
-            log.debug("screen: nothing to decide (%s)", why)
+            log.info("screen: nothing to decide (%s, %d words)", why, len(text.split()))
             return
         self._spawn(self._decide(self._turn, t0, needs_grownup=not grownup))
 
@@ -783,6 +1074,10 @@ class ScreenDirector:
         newest = max((when for when, text in self._said if when >= t0), default=None)
         if words and newest is not None and now - newest >= SAID_GRACE_S:
             return "voice", " ".join(words)[:ANSWER_CHARS]
+        saying = self._saying  # no final caption yet: the words it is saying now, once there are enough
+        if (saying is not None and saying[0] >= t0 - SAYING_LEAD_S and now - saying[0] >= SAID_GRACE_S
+                and len(saying[1].split()) >= PARTIAL_WORDS and not FILLER.match(saying[1])):
+            return "saying", saying[1][:ANSWER_CHARS]
         return None
 
     def _stalling(self, caption: tuple[float, str]) -> bool:
@@ -839,9 +1134,22 @@ class ScreenDirector:
         except Exception:  # noqa: BLE001
             log.debug("screen: warming the connection failed", exc_info=True)
 
+    def saying(self, text: str) -> None:
+        """The voice's words so far in the turn it is saying now (each new piece; the final caption follows)."""
+        text = " ".join(str(text or "").split())
+        if not text or self._closed:
+            return
+        begun = self._saying[0] if self._saying is not None and text.startswith(self._saying[1][:40]) else self._now()
+        enough = len(text.split()) >= PARTIAL_WORDS
+        was = self._saying is not None and len(self._saying[1].split()) >= PARTIAL_WORDS
+        self._saying = (begun, text[:ANSWER_CHARS])
+        if enough and not was:
+            self._ping()
+
     def said(self, text: str) -> None:
         """A final caption of what the voice said."""
         text = " ".join(str(text or "").split())
+        self._saying = None
         if text and not self._closed:
             self._lines.append(("robot", text[:LINE_CHARS]))
             caption = (self._now(), text[:LINE_CHARS])
@@ -924,7 +1232,7 @@ class ScreenDirector:
             return {"ok": False, "error": "invalid", "detail": why}
         if self._up_already(clean):
             return {"ok": True, "showing": self._describe(), "already": True}
-        result = await self._show(clean, source)
+        result = await self._show(clean, source, sent=spec)
         if result.get("ok"):
             self._last_tool_card = self._now()  # the director doesn't put up a second card for the same answer
         return result
@@ -933,7 +1241,7 @@ class ScreenDirector:
     async def _decide(self, turn: int, t0: float, *, needs_grownup: bool = False) -> None:
         """``needs_grownup``: a short turn that is a grown-up's only if voice recognition says so by the time the
         answer comes (it may identify them a moment after their words)."""
-        answer = None
+        answer, partial = None, False
         if self.wait_for_answer:
             found = await self._await_answer(turn, t0)
             if turn != self._turn or self._closed:
@@ -946,32 +1254,32 @@ class ScreenDirector:
                 self._log("none", t0, "model", "LittleBot put a card up for it already")
                 return
             how, answer = found
+            partial = how == "saying"  # its first words: the rest is still being said
             log.debug("screen: deciding from LittleBot's answer (%s)", how)
         from littlebot.decide import get_decider, uses  # noqa: PLC0415
 
         decider = get_decider(self.ctx)
         mode = decider.mode("cards")
-        shadow = asyncio.ensure_future(self._card_pick(answer)) if mode == "shadow" else None
+        shadow = asyncio.ensure_future(self._card_pick(answer, partial)) if mode == "shadow" else None
         pick, hint = None, None
         try:
             if mode == "on":
-                pick = await self._card_pick(answer)
+                pick = await self._card_pick(answer, partial)
                 if turn != self._turn or self._closed:
                     self._log("dropped", t0, "decider", "they said something else meanwhile")
                     return
                 if pick is not None and pick.confidence >= decider.min_confidence():
-                    child = self._speaker(t0)
-                    if pick.value == uses.CARD_NONE:
+                    if pick.value == uses.CARD_NONE and pick.confidence >= NONE_SURE_AT:
                         decider.used("cards", pick.value, pick)
                         self._log("none", t0, "decider", f"{decider.provider()}, confidence {pick.confidence:.2f}")
                         return
-                    if pick.value == uses.CARD_CLOSE and self._current_kind() is not None and not child:
-                        decider.used("cards", pick.value, pick)
-                        self._steer(Decision("close"), t0, "decider")
-                        return
+                    # Its "close" is only a hint: on the robot (2026-10-29) it closed the Khans card for "and
+                    # Alexander the Great?", which wanted a new card. "Close it" / "hide that" are the close words.
                     hint = pick.value[len("show_"):] if pick.value.startswith("show_") else \
-                        "steer" if pick.value == uses.CARD_STEER else None
-            label = await self._decide_model(turn, t0, answer, needs_grownup=needs_grownup, hint=hint)
+                        "steer" if pick.value == uses.CARD_STEER else \
+                        "close" if pick.value == uses.CARD_CLOSE and self._current_kind() is not None else None
+            label = await self._decide_model(turn, t0, answer, needs_grownup=needs_grownup, hint=hint,
+                                             partial=partial)
         except BaseException:
             if shadow is not None:
                 shadow.cancel()
@@ -981,13 +1289,13 @@ class ScreenDirector:
         elif pick is not None and label not in ("dropped", "failed"):
             decider.compare("cards", mine=label, theirs=pick.value, answer=pick)
 
-    async def _card_pick(self, answer: str | None) -> Any:
+    async def _card_pick(self, answer: str | None, partial: bool = False) -> Any:
         from littlebot.decide import uses  # noqa: PLC0415
 
         kind = self._current_kind()
         kinds = {k: getattr(ct, "description", "") for k, ct in sorted(self._types().items())}
         return await uses.card_pick(self.ctx, kinds=kinds, card_up=kind, actions=list(self._actions(kind)),
-                                    lines=list(self._lines), answer=answer,
+                                    lines=list(self._lines), answer=answer, partial=partial,
                                     robot=getattr(self.ctx.config, "robot_name", "LittleBot"))
 
     async def _compare_cards(self, shadow: Any, label: str) -> None:
@@ -1005,11 +1313,11 @@ class ScreenDirector:
             get_decider(self.ctx).compare("cards", mine=label, theirs=pick.value, answer=pick)
 
     async def _decide_model(self, turn: int, t0: float, answer: str | None, *, needs_grownup: bool,
-                            hint: str | None = None) -> str:
+                            hint: str | None = None, partial: bool = False) -> str:
         """The text model's decision, acted on. Returns what it decided ("none", "close", "steer", "show_<kind>"),
         or "dropped" / "failed"."""
         try:
-            reply = await asyncio.wait_for(self._ask(answer=answer, hint=hint), self.timeout)
+            reply = await asyncio.wait_for(self._ask(answer=answer, hint=hint, partial=partial), self.timeout)
         except asyncio.CancelledError:
             raise
         except TimeoutError:
@@ -1027,7 +1335,8 @@ class ScreenDirector:
             log.info("screen: the answer had no JSON (%d characters%s); asking once more", len(text),
                      ", starts with text" if text.strip()[:1] not in ("{", "`", "") else "")
             try:
-                retry = await asyncio.wait_for(self._ask(retry=True, answer=answer, hint=hint), RETRY_TIMEOUT_S)
+                retry = await asyncio.wait_for(self._ask(retry=True, answer=answer, hint=hint, partial=partial),
+                                               RETRY_TIMEOUT_S)
                 obj = parse_decision(getattr(retry, "text", "") or "")
             except asyncio.CancelledError:
                 raise
@@ -1037,6 +1346,24 @@ class ScreenDirector:
                 self._log("dropped", t0, "model", "they said something else meanwhile")
                 return "dropped"
         decision = self._validate(obj)
+        if hint and hint not in ("steer", "close") and decision.do == "command":
+            # On the robot (2026-10-29) "and Alexander the Great?" after a Khans card only paged that card ("next"),
+            # though the quick check said a new facts card: ask once more, plainly
+            log.info("screen: the model steered the card on screen, but the quick check says a new %s card; "
+                     "asking once more", hint)
+            try:
+                again = await asyncio.wait_for(self._ask(answer=answer, hint=hint, partial=partial, insist=True),
+                                               RETRY_TIMEOUT_S)
+                second = self._validate(parse_decision(getattr(again, "text", "") or ""))
+                if second.do == "show":
+                    decision = second
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001 - keep the first decision
+                log.debug("screen: asking once more failed", exc_info=True)
+            if turn != self._turn or self._closed:
+                self._log("dropped", t0, "model", "they said something else meanwhile")
+                return "dropped"
         label = _label(decision)
         child = self._speaker(t0)
         if decision.do != "none" and (child or (needs_grownup and child is not False)):
@@ -1062,12 +1389,22 @@ class ScreenDirector:
         self._log(f"show {clean['card']}", t0, path,
                   "" if result.get("ok") else f"not shown ({result.get('error') or 'no card'})")
 
-    async def _ask(self, *, retry: bool = False, answer: str | None = None, hint: str | None = None) -> Any:
+    async def _ask(self, *, retry: bool = False, answer: str | None = None, hint: str | None = None,
+                   partial: bool = False, insist: bool = False) -> Any:
         provider = self._provider_factory()
         opts = _reply_options(provider.reply, effort=self.effort)
-        content = self._context(answer)
+        content = self._context(answer, partial)
         if hint == "steer":
             content += "\n(A quick check says they are following up on the card on screen.)"
+        elif hint == "close":
+            content += ("\n(A quick check says the card on screen no longer fits the talk. If what they just asked is "
+                        "worth a card, answer \"show\" with a new card for it; otherwise answer \"close\".)")
+        elif hint and insist:
+            content += (f"\n(Not a command: they asked about something new, not the card on screen. Answer \"show\" "
+                        f"with a new {hint} card for what they just asked.)")
+        elif hint and self._current_kind() is not None:
+            content += (f"\n(A quick check says they asked about something new: show a new {hint} card for it "
+                        "rather than steering the card on screen, unless it really is a follow-up on it.)")
         elif hint:
             content += f"\n(A quick check says a {hint} card fits: use it, unless it really doesn't.)"
         content = f"{content}\n\n{RETRY_NOTE if retry else ANSWER_CUE}"
@@ -1089,8 +1426,9 @@ class ScreenDirector:
             self._system = PROMPT.format(robot=robot, catalogue="\n".join(lines) or "(none)")
         return self._system
 
-    def _context(self, answer: str | None = None) -> str:
-        """The card on screen and the conversation; ``answer``: what LittleBot is saying for their last words."""
+    def _context(self, answer: str | None = None, partial: bool = False) -> str:
+        """The card on screen and the conversation; ``answer``: what LittleBot is saying for their last words
+        (``partial``: only its first words so far)."""
         from littlebot.safety.content import sanitize_user_text  # noqa: PLC0415
 
         kind = self._current_kind()
@@ -1109,7 +1447,10 @@ class ScreenDirector:
             else:
                 out.append(f"{getattr(self.ctx.config, 'robot_name', 'LittleBot')}: {text}")
         robot = getattr(self.ctx.config, "robot_name", "LittleBot")
-        if answer and not any(who == "robot" and text in answer for who, text in lines[-2:]):
+        if answer and partial:
+            out.append(f"{robot}'s answer, being said now (only its first words so far, cut off where it has got "
+                       f"to: it is answering, and the rest follows): {answer} ...")
+        elif answer and not any(who == "robot" and text in answer for who, text in lines[-2:]):
             out.append(f"{robot}'s answer, being said now: {answer}")
         elif answer is None and self.wait_for_answer:
             out.append(f"({robot} hasn't answered yet.)")
@@ -1163,7 +1504,7 @@ class ScreenDirector:
         if after and after != before:
             self._tell(CHANGED_NOTE.format(what=after[:NOTE_CHARS]))
 
-    async def _show(self, spec: dict[str, Any], source: str) -> dict[str, Any]:
+    async def _show(self, spec: dict[str, Any], source: str, sent: Any = None) -> dict[str, Any]:
         try:
             result = await asyncio.wait_for(_maybe_await(self.screens.show(spec, source=source)), SHOW_TIMEOUT_S)
         except asyncio.CancelledError:
@@ -1174,6 +1515,10 @@ class ScreenDirector:
             log.warning("screen: showing a %s card failed", spec.get("card"), exc_info=True)
             return {"ok": False, "error": "failed"}
         result = result if isinstance(result, dict) else {"ok": bool(result)}
+        if result.get("error") == "no_card":
+            instead = text_instead(spec, self._types(), self._relaxed(), sent)
+            if instead is not None:
+                return await self._show(instead, source)
         if result.get("ok"):
             kind = str(spec.get("card"))
             self._last_shown = (kind, _place(spec), self._now())
@@ -1382,7 +1727,7 @@ class ScreenDirector:
             return self._types_fn()
         from littlebot.screens.base import card_types  # noqa: PLC0415
 
-        return card_types()
+        return card_types(offered_only=True)
 
     def _actions(self, kind: str | None) -> dict[str, Any]:
         ct = self._types().get(kind) if kind else None

@@ -198,23 +198,27 @@ def screenshots(out_dir: Path, seed: int) -> list[Path]:
         face.animator.cfg = face.animator.cfg.model_copy(update={"idle_gaze": False})
         return face
 
+    display_cfg = make_test_context(fakes=False).config.display
+    screen = (int(display_cfg.width), int(display_cfg.height))  # the robot's screen: 1024x600
+    tw, th = screen[0] // 2, screen[1] // 2  # contact-sheet tiles at half size
+
     def shot(face: Any, name: str) -> pygame.Surface:
-        surf = pygame.Surface((480, 320))
+        surf = pygame.Surface(screen)
         face.render(surf)
         p = out_dir / f"{name}.png"
         p.parent.mkdir(parents=True, exist_ok=True)
         pygame.image.save(surf, str(p))
         saved.append(p)
-        return surf
+        return pygame.transform.smoothscale(surf, (tw, th))
 
     def sheet(tiles: list[tuple[str, pygame.Surface]], name: str, cols: int = 4) -> None:
         rows = (len(tiles) + cols - 1) // cols
-        s = pygame.Surface((cols * 484 - 4, rows * 344))
+        s = pygame.Surface((cols * (tw + 4) - 4, rows * (th + 24)))
         s.fill((36, 38, 46))
         for i, (label, img) in enumerate(tiles):
-            x, y = (i % cols) * 484, (i // cols) * 344
+            x, y = (i % cols) * (tw + 4), (i // cols) * (th + 24)
             s.blit(img, (x, y))
-            s.blit(font.render(label, True, (235, 235, 240)), (x + 6, y + 324))
+            s.blit(font.render(label, True, (235, 235, 240)), (x + 6, y + th + 4))
         p = out_dir / f"_{name}.png"
         pygame.image.save(s, str(p))
         saved.append(p)
@@ -293,7 +297,7 @@ def _window_shots(out_dir: Path, seed: int) -> list[Path]:
 
     from littlebot.face.display import DisplayLoop
 
-    args = argparse.Namespace(scale=1.5, fullscreen=False, no_panel=False, debug=False, seed=seed)
+    args = argparse.Namespace(scale=1.0, fullscreen=False, no_panel=False, debug=False, seed=seed)
     ctx, robot = build(args)
     robot.runtime.start()
     saved = []
@@ -323,7 +327,7 @@ def _window_shots(out_dir: Path, seed: int) -> list[Path]:
 # --------------------------------------------------------------------------- main
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--scale", type=float, default=None, help="window scale (default from config, 2.0)")
+    p.add_argument("--scale", type=float, default=None, help="window scale (default from config, 1.0: the 1024x600 screen)")
     p.add_argument("--fullscreen", action="store_true")
     p.add_argument("--demo", action="store_true", help="loop the demo sequence")
     p.add_argument("--no-panel", action="store_true", help="hide the simulator side panel")

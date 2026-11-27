@@ -4,7 +4,8 @@ The animator (pure Python, no pygame) produces a :class:`FaceFrame`; the
 renderer turns it into pixels. Keeping this boundary explicit is what lets the
 whole animation system be unit-tested without a window.
 
-All coordinates are pixels in the native 480x320 design space.
+All coordinates are pixels in the face's design space: 320 px tall, and 480 px wide on a 3:2 screen or
+wider on a wider one (:func:`face_size`: 546x320 on the 7" 1024x600 screen), the face centred in it.
 
 The cartoon eye anatomy (where the pupil sits, where the catchlights go) and
 the mouth's outline are plain geometry too and live here as pure functions
@@ -44,6 +45,19 @@ CATCHLIGHT_BIG = (-0.20, -0.40, 0.125)  # (x * w, y * visible half-height, r * w
 CATCHLIGHT_SMALL = (0.19, 0.30, 0.058)
 
 Color = tuple[int, int, int]
+
+
+def face_size(screen_w: int, screen_h: int) -> tuple[int, int]:
+    """The face's design size for a ``screen_w`` x ``screen_h`` screen: 320 px tall and as wide as the screen's
+    shape (1024x600 -> 546x320), so the face fills the screen with no bars at the sides; never narrower than
+    480 (a squarer screen keeps 480x320 and gets bars above and below)."""
+    try:
+        aspect = float(screen_w) / float(screen_h)
+    except (TypeError, ValueError, ZeroDivisionError):
+        return NATIVE_W, NATIVE_H
+    if not aspect > 0:
+        return NATIVE_W, NATIVE_H
+    return max(NATIVE_W, min(3 * NATIVE_W, int(round(NATIVE_H * aspect)))), NATIVE_H
 
 
 @dataclass(frozen=True)

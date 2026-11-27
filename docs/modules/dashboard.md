@@ -235,6 +235,7 @@ JSON `{detail (parent wording), code, why?}`:
 |---|---|---|---|
 | GET | `/api/camera` | | `{available, camera_enabled, camera, detail, backend, simulated, resolution, mode, blocked, blocked_detail, live_view: {viewers, fps, encode_ms, frame_kb, max_fps, width}}` |
 | GET | `/api/camera/frame` | `?viewer=<8-64 [A-Za-z0-9_-]>&after=<seq>` | `vision.live_view_frame(viewer, after=, label="the dashboard (<client ip>)")` -> `image/jpeg` + `X-Frame-Seq` |
+| GET | `/api/camera/stream` | same | the live view as ONE response (what the Camera page uses): `application/octet-stream`, each frame = 8 bytes (length, seq; big-endian u32) + the JPEG, sent as soon as it's made. Ends when no frame can be had; the page then asks `/frame` once for the reason |
 | POST | `/api/camera/stop` | `{viewer}` | `vision.stop_live_view(viewer)` -> `{ok, stopped}` |
 | POST | `/api/camera/snapshot` | `{viewer}` | only while that viewer is watching (so the robot shows its camera sign): `vision.capture_photo(max_width=640, quality=85)` -> `image/jpeg` with `Content-Disposition: attachment` (the browser saves it; the robot keeps nothing) |
 

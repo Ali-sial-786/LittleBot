@@ -402,6 +402,77 @@ async def test_steering_the_weather_card_is_not_a_look(ctx, make_live, caplog):
         await close(svc, server)
 
 
+async def test_the_text_model_hears_what_littlebot_answered_itself(ctx, make_live):
+    """The text model never saw quick.py's answers: asked about the timer it set, it once said there was none."""
+    provider = ToolProvider(text="You asked me the time a moment ago.")
+    svc, server, _audio = await make_live(provider)
+    try:
+        delegate(server, "t1", "What time is it?")  # quick.py: no text model
+        await wait_for(lambda: answers(server, "t1"))
+        assert provider.calls == []
+        delegate(server, "t2", "What did I just ask you?")
+        await wait_for(lambda: answers(server, "t2"))
+        asked = provider.calls[0]["messages"][-1]["content"]
+        assert asked.startswith("(LittleBot's note, not their words: earlier in this chat LittleBot answered these")
+        assert '- "What time is it?": LittleBot answered just now: It is ' in asked
+        assert asked.endswith(")\n\nWhat did I just ask you?") and "Tell them" not in asked
+    finally:
+        await close(svc, server)
+
+
+async def test_the_text_model_hears_how_littlebots_own_timer_really_stands(ctx, make_live):
+    """A timer quick.py set, then put away (a tap on the eyes): the text model gets the screen's own count."""
+    from littlebot.screens.service import ScreenService
+
+    ctx.screens = screens = ScreenService(ctx)
+    provider = ToolProvider(text="About five minutes are left.")
+    svc, server, _audio = await make_live(provider)
+    try:
+        delegate(server, "t1", "Set a timer for 5 minutes.")
+        await wait_for(lambda: answers(server, "t1"))
+        assert provider.calls == [] and screens.current is not None
+        screens.close("tap")  # off the screen, still running
+        delegate(server, "t2", "How long is left on it?")
+        await wait_for(lambda: answers(server, "t2"))
+        asked = provider.calls[0]["messages"][-1]["content"]
+        assert '- "Set a timer for 5 minutes.": LittleBot started a timer for 5 minutes on its screen just now.\n' in asked
+        assert re.search(r"\n- LittleBot's timers right now \(this is what counts\): Timer: [45]:\d\d left \(off the "
+                         r"screen, still running\)\.\)\n\nHow long is left on it\?$", asked)
+    finally:
+        screens.detach()
+        await close(svc, server)
+
+
+async def test_every_hand_off_says_what_the_timers_are_while_there_is_one(ctx, make_live):
+    """A timer the text model set itself: "how long is left?" once got "I can't check" (it doesn't look in
+    change_card's description), so each hand-off starts with the screen's own count while a timer runs."""
+    from littlebot.screens.service import ScreenService
+
+    ctx.screens = screens = ScreenService(ctx)
+    provider = ToolProvider(text="About four minutes.")
+    svc, server, _audio = await make_live(provider)
+    try:
+        delegate(server, "t1", "Why is the sky blue?")
+        await wait_for(lambda: answers(server, "t1"))
+        assert provider.calls[0]["messages"][-1]["content"] == "Why is the sky blue?"  # no timer: no note
+        assert (await screens.show({"card": "timer", "seconds": 300, "label": "egg"}))["ok"]
+        delegate(server, "t2", "How long is left on it?")
+        await wait_for(lambda: answers(server, "t2"))
+        assert re.fullmatch(r"\(LittleBot's note, not their words: LittleBot's timers right now \(this is what counts\): "
+                            r"Egg timer: [45]:\d\d left \(on the screen\)\.\)\n\nHow long is left on it\?",
+                            provider.calls[1]["messages"][-1]["content"])
+        screens.command("cancel", {})
+        screens.tick()
+        delegate(server, "t3", "Is it done?")
+        await wait_for(lambda: answers(server, "t3"))
+        assert provider.calls[2]["messages"][-1]["content"].startswith(
+            "(LittleBot's note, not their words: LittleBot's timers right now (this is what counts): none (they "
+            "finished or were stopped).)")
+    finally:
+        screens.detach()
+        await close(svc, server)
+
+
 async def test_time_and_news_hand_offs_get_the_tools(ctx, make_live, caplog):
     import logging
 

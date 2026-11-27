@@ -17,8 +17,8 @@ be on too. Then:
 
 How: sherpa-onnx (``pip install -e '.[voices]'``) with 3D-Speaker's ERes2Net model
 (``scripts/download_models.py voices``, 26 MB) turns up to ``MAX_EMBED_S`` of speech into 192 numbers.
-The model is loaded on first use, in a worker thread, and dropped after ``UNLOAD_IDLE_S`` without use or
-when switched off. "Hey LittleBot" loads it straight away (the wake word's ``audio.wake_word`` event), so
+The model is loaded on first use, in a worker thread, and kept while switched on where there is room (a 4 GB
+Pi); on a 2 GB one it is dropped after ``UNLOAD_IDLE_S`` without use. Switched off, it is always dropped. "Hey LittleBot" loads it straight away (the wake word's ``audio.wake_word`` event), so
 it is ready when the call wants to know who woke it.
 
 Privacy: only voiceprints (numbers) are kept, in LittleBot's database (``voice_samples``), never a
@@ -81,8 +81,9 @@ ENROL_MAX_SAMPLES = 4  # ...at most this many per recording
 ENROL_CONSISTENT = 0.30  # every two pieces must sound alike (one voice; real speech: one person >= ~0.5, two <= ~0.2)
 ENROL_MAX_ODD = 1 / 3  # up to this share of the pieces may be left out for sounding unlike the rest (a cough, the baby)
 WAKE_TOPIC = "audio.wake_word"  # littlebot.audio.wakeword.WAKE_TOPIC: "Hey LittleBot" was heard
-# The model (~75 MB) is dropped after this long without use: a chat started again soon after keeps it; later,
-# the next chat loads it again (~0.4-1.1 s on a Pi 5, while who woke it is told a moment later).
+# The model (~75 MB) is dropped after this long without use on a 2 GB board (a 4 GB one keeps it): a chat
+# started again soon after keeps it; later, the next chat loads it again (~0.4-1.1 s on a Pi 5, while who woke
+# it is told a moment later).
 UNLOAD_IDLE_S = 120.0
 RECORD_SECONDS = 20.0  # the dashboard's recording
 SENTENCES = (
@@ -302,8 +303,11 @@ class VoiceRecognition(Service):
             self._loop = asyncio.get_running_loop()
 
     def _used(self) -> None:
-        """Keep the model a while after each use; drop it after UNLOAD_IDLE_S without one."""
+        """Keep the model a while after each use; drop it after UNLOAD_IDLE_S without one. With room to spare
+        (a 4 GB Pi: littlebot/core/memory.py roomy) it stays while switched on: who woke it is known at once."""
         self._last_used = time.monotonic()
+        if memory.roomy_for(self.ctx):
+            return
         loop = self._loop
         if loop is None or loop.is_closed():
             return

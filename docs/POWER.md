@@ -71,17 +71,21 @@ and prefer a supply that negotiates 5 A properly.
 | Pi 5 (4 GB) idle, desktop | USB-C in | 0.5-0.6 A | - | TO MEASURE |
 | Pi 5 busy (face + vision + Chromium) | USB-C in | 1.0-1.5 A | ~2 A | TO MEASURE |
 | Active cooler fan | Pi (shares the USB current limit) | 0.05 A | 0.1 A | TO MEASURE |
-| MPI3508 screen (backlight) | GPIO 5 V pins | 0.15-0.3 A | - | TO MEASURE |
+| GeeekPi 7" screen (backlight, touch; its speakers if used) | its USB port on the Pi (**shares the USB limit**) | 0.4-0.7 A | ~1 A with its speakers loud | TO MEASURE |
 | U20CAM-1080P camera (USB 2.0 UVC) | USB | 0.15-0.25 A | 0.3 A | TO MEASURE |
 | Mini USB microphone | USB | 0.02-0.1 A | - | TO MEASURE |
 | Mini USB speaker | USB | 0.1-0.3 A | 0.5 A at high volume | TO MEASURE |
-| **USB total** (camera + mic + speaker) | | **~0.3-0.65 A** | **~0.9 A** | TO MEASURE |
+| **USB total** (screen + camera + mic + speaker) | | **~0.7-1.35 A** | **~1.9 A** | TO MEASURE |
 | Servos (3x MG90S) | **separate supply** - never the Pi | 0.1-0.3 A moving each | ~0.7-0.8 A stall each | TO MEASURE |
 
-The USB total sits **right at the 600 mA limit** a 3 A supply allows - which is why a
-3 A-only power bank may work at low volume and then drop the speaker or camera when the
-speaker gets loud. Plug the camera into a **blue USB 3 port** (lower latency, and keep it
-away from the speaker's cable); a powered USB hub is the fallback if the budget does not fit.
+With the 7" screen on a USB port the USB total is **well over the 600 mA limit** a 3 A supply allows
+(the old 3.5" screen took its 0.2 A from the GPIO 5 V pins instead). So the robot needs a supply that
+negotiates **5 A** (the official 27 W PSU, or a UPS HAT / bank that really gives 5 A, section 1), or the
+screen powered from its own 5 V supply when it has a separate power socket. On a 3 A-only supply expect
+the screen to flicker or the camera / speaker to drop out. The screen's estimate is from similar 7"
+1024x600 panels (the backlight is most of it): measure it with a USB power meter at the brightness you use.
+Plug the camera into a **blue USB 3 port** (lower latency, and keep it away from the speaker's cable); a
+powered USB hub is the fallback if the budget does not fit.
 
 ## 3. Bring-up on the official PSU
 
@@ -183,6 +187,18 @@ safe to unplug. The Pi 5's power button also works: a short press starts a clean
 shutdown (on the desktop it may first show the shutdown menu - press again; the app then
 receives SIGTERM from systemd); holding it down forces power off - emergencies only.
 
+**Telling a power cut afterwards.** The Pi keeps no journal across a restart, so a cut leaves
+no trace of its own. LittleBot writes its last sign of life to `data/power_last.json` once a
+minute (the time, the battery's percent, the pack's and each cell's volts, the charger) and
+marks it clean when it stops. At the next start, if the last run never stopped and the Pi
+started after it, the log says `power: the power was cut at about ...` with that last reading
+(`littlebot/power/last_seen.py`). Each cold start also shows up as `the Pi reports
+under-voltage since boot` and the echo canceller being moved back to the speaker. On
+2026-11-02 the robot cut out six times in a day when it was picked up or bumped, full and on
+the UPS HAT (E), with nothing in the log before: the HAT powers the Pi through spring pogo
+pins underneath, so check that all four standoffs are screwed tight and the Pi can't shift on
+the pins, and that the cells sit firmly in their holders.
+
 ## 7. Battery and child safety
 
 - Use a branded power bank with over-current/over-temperature protection; never a
@@ -209,7 +225,8 @@ receives SIGTERM from systemd); holding it down forces power off - emergencies o
 The cordless build: a **2S1P 21700 pack** (7.2 V nominal, 8.4 V full, about 36 Wh) with its
 own BMS, a 2S USB-C charger board, and a **Pololu 5 V / 5 A step-down regulator** feeding
 the Pi's 5 V. The Pi cannot measure the battery, so a **Waveshare RP2040-Zero** on one of its
-USB ports does that and sends one JSON line per second. The robot's side is `littlebot/power/`
+USB ports does that and sends one JSON line per second (or a Waveshare UPS HAT (E) does it all:
+section 8.6). The robot's side is `littlebot/power/`
 (`ctx.power`). Without the monitor, LittleBot behaves exactly as on mains: no battery card
 values, no battery tool, no events, nothing said.
 
@@ -306,6 +323,17 @@ battery is said out loud and whether it shuts down when empty, in the Battery ca
 `power.shutdown_when_empty`); they apply at once. Everything else is in the `power:` section
 of the config (`littlebot/core/config.py`, `PowerConfig`).
 
+**The screen goes dark after 3 minutes of nothing happening** (`face.screen_off_after_seconds`,
+180; 0 = never; dashboard: Face page, "Dozing and sleep"), in IDLE and while asleep. LittleBot
+switches the screen's HDMI signal off (`wlopm --off HDMI-A-1`) and stops drawing the face; the
+wake word keeps listening. "Hey LittleBot", a chat, a card, a video, a game, someone walking in
+or moving in front of the camera, or a touch lights it again at once (the first touch on the
+dark screen only lights it: no giggle). The log says `face: screen off (...)` / `face: screen on
+(...)`. Measured on the robot (2026-11-03, UPS HAT readings, three rounds of 15 s): about
+**0.4 W less** (6.95 W on, 6.56 W off). The MPI3508's backlight itself stays lit: the only way to
+switch that off is the button on the back of the screen (long press 3 s, per LCDwiki), which
+LittleBot can't press. The screen is switched back on whenever LittleBot starts or stops.
+
 ### 8.5 The power-off
 
 There was no power-off in LittleBot before (the dashboard's Shutdown only stops the app, and
@@ -324,3 +352,32 @@ then runs `systemctl --no-ask-password poweroff`, logged at CRITICAL level. No s
   that is a system setting to add by hand.
 - After it has switched off, wait for the green LED to stop before unplugging anything
   (section 6). Switch it back on with the Pi's power button once the pack is charged.
+
+### 8.6 Waveshare UPS HAT (E) instead of the RP2040 monitor
+
+The **UPS HAT (E)** (four 21700 cells under a Pi 5, on pogo pins) has its own fuel gauge, so it
+needs no RP2040 and no wiring: LittleBot reads it over I2C (`littlebot/power/ups_hat.py`, the
+`smbus2` package from the installer's `pi` extra). With `power.monitor: auto` (the default)
+LittleBot looks for it at start-up (I2C bus 1, address `0x2D`, its ID register reads `0x0A`),
+and only when it isn't there does it look for the RP2040 on the serial ports.
+
+1. Switch I2C on once: `sudo raspi-config nonint do_i2c 0` (a system setting: do it by hand).
+2. Check it answers: `sudo i2cdetect -y 1` shows `2d`.
+3. Restart LittleBot. The log says `battery: UPS HAT (E) answering on i2c-1 0x2d`.
+
+If it doesn't find it by itself, set `power.monitor: ups_hat_e` in `config/local.yaml`
+(and `power.i2c_bus` / `power.i2c_address` if you changed them). Then LittleBot keeps trying
+the HAT and never looks at the serial ports.
+
+What it reads once a second: the pack voltage, each cell's voltage (empty slots are left out),
+the HAT's own percentage, and whether it is charging or full. The percentage on the face and the
+dashboard is the HAT's, smoothed like the RP2040's (only down on battery, only up while charging).
+The weakest cell still decides "empty" (below 3.30 V for 20 s). The HAT has no temperature
+sensor, so the hot / cold rules don't apply. LittleBot never writes to the HAT: its register
+`0x01` would cut the Pi's power.
+
+**The percentage in the corner.** With `power.corner: true` (the default), a small battery
+with its percentage stays in the face's top-left corner while a battery is fitted. It turns
+yellow below 50 % and red at 20 %, and shows a bolt while charging. It steps aside while an info
+card or a game is on the screen (cards put LittleBot's small eyes in that corner). The bigger sign
+(section 8.4) still pops up over anything. `power.corner: false` hides it.

@@ -1,0 +1,59 @@
+# Times Claude Haiku 5.5 and 4.5 on the requests behind the slow ChatGPT calls in the robot's 26 Oct log
+# (scripts/compare_text_models.py --from-log) with the repository secret CLAUDE_API, and commits the table to
+# docs/measurements/claude-replay.txt. Runs when this file changes on a push (and by hand from the Actions tab once
+# it is on the default branch). Each run makes about 10-16 short Claude calls and at most 2 web searches:
+# a few cents. The key stays in GitHub's secret store: it is never printed or written to the repository.
+name: Claude timing (log replay)
+
+on:
+  push:
+    paths:
+      - .github/workflows/claude-timing.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: claude-timing
+  cancel-in-progress: false
+
+jobs:
+  replay:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install LittleBot with the Claude extra
+        run: python -m pip install --quiet -e '.[claude]'
+      - name: Replay the logged requests on Haiku 5.5 and 4.5
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.CLAUDE_API }}
+          LITTLEBOT__PRIVACY__CLOUD_ENABLED: "true"
+          LITTLEBOT__DATA_DIR: ${{ runner.temp }}/littlebot-data
+          LITTLEBOT__CLAUDE__WEB_SEARCH_MAX_USES: "1"
+          SDL_VIDEODRIVER: dummy
+          SDL_AUDIODRIVER: dummy
+        run: |
+          if [ -z "$ANTHROPIC_API_KEY" ]; then echo "The CLAUDE_API secret isn't available to this run."; exit 1; fi
+          mkdir -p docs/measurements
+          {
+            echo "Claude log replay, $(date -u '+%Y-%m-%d %H:%M UTC'), GitHub Actions runner (not the robot)"
+            echo "commit $(git rev-parse --short HEAD)"
+            echo
+            python scripts/compare_text_models.py --from-log --mode simulation \
+              --claude-model claude-haiku-5-5 --claude-model claude-haiku-4-5 2>&1
+          } | tee docs/measurements/claude-replay.txt
+          grep -q "first word ms" docs/measurements/claude-replay.txt
+      - name: Commit the table
+        if: always()
+        run: |
+          [ -f docs/measurements/claude-replay.txt ] || exit 0
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/measurements/claude-replay.txt
+          git commit -m "Claude log replay timings (GitHub Actions)" || exit 0
+          git push origin "HEAD:${GITHUB_REF_NAME}"

@@ -1,5 +1,8 @@
 # LittleBot enclosure – version 1 ("TV head")
 
+> Designed for the old 3.5" MPI3508 screen; it does not take the 7" 1024×600 screen LittleBot uses now
+> (see [../README.md](../README.md)).
+
 A parametric, 3D-printable enclosure for LittleBot, designed around the actual parts list
 and the planned future servos (head rotation + two arms). Every part fits a 220 × 220 mm
 bed (most fit 180 × 180), prints **without supports**, and is generated from one OpenSCAD file.
