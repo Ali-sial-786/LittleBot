@@ -509,9 +509,12 @@ module spk_stadium(grow = 0) hull() for (s = [-1, 1]) translate([s * (spk_w/2 - 
 // -----------------------------------------------------------------------------
 gz0 = torso_z0 + gear_z0; pin_y = torso_y0 + pinion_yt;   // the gears' underside, the pinion's axis (robot coordinates)
 frame_top = torso_z0 + hs_tab_top - sv_tab_t;            // the servo frame's top: the pillars' ends
+// the body's top outline at the collar's top (body_outer there, with the shoulders' faces): the cap covers all of it
+module body_top2d() projection(cut = true) translate([0, 0, -(zc0 - 0.02)]) body_outer();
 module v5_cap() difference() {
     union() {
-        hull() { slice5(zc0); translate([0, 0, BT - 0.6]) linear_extrude(0.01) sec2d(zc0, cap_in); translate([0, 0, BT - 0.01]) linear_extrude(0.01) sec2d(zc0, cap_in + 0.6); }   // its edge: 60 degrees
+        // its underside is the body's whole top (the shoulders' bulges too), its edge 60 degrees up to cap_in in
+        hull() { translate([0, 0, zc0]) linear_extrude(0.01) body_top2d(); translate([0, 0, BT - 0.6]) linear_extrude(0.01) offset(delta = -cap_in) body_top2d(); translate([0, 0, BT - 0.01]) linear_extrude(0.01) offset(delta = -cap_in - 0.6) body_top2d(); }
         // its lip, which centres it: the collar's opening is wider than open2d at its top. collar5's hull runs from open2d(110)
         // 119.2 mm down up to open2d at zc0 + 12, so at zc0 the opening is open2d(110 * 12 / 131.2) = open2d(10.06), and wider below
         // (front and back the opening is the body's own wall: the lip stays 0.45 mm inside it)
