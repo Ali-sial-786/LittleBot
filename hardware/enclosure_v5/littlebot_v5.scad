@@ -441,6 +441,7 @@ module js_cuts() for (j = js, s = [-1, 1]) place_js(j, s) {
 // the top: a solid collar under the cap, part of the wall (45 degrees underneath: it prints without supports)
 col_t = 9.2;
 cap_in = 3.2;                            // the cap's top edge, in from the body's top edge
+cap_lip_g = 110 * 12 / (12 + 9.2 + 110) - 0.45;   // the cap's lip: the opening at the collar's top (see v5_cap), 0.45 mm clear
 module open2d(g = 0) { translate([(open5[0][0] + open5[0][1]) / 2, (open5[1][0] + open5[1][1]) / 2]) rr(open5[0][1] - open5[0][0] + 2 * g, open5[1][1] - open5[1][0] + 2 * g, open5[2] + g);
                        translate([0, torso_y0 + pinion_yt]) circle(r = bay_r + g); }
 module collar5() difference() {
@@ -511,7 +512,13 @@ frame_top = torso_z0 + hs_tab_top - sv_tab_t;            // the servo frame's to
 module v5_cap() difference() {
     union() {
         hull() { slice5(zc0); translate([0, 0, BT - 0.6]) linear_extrude(0.01) sec2d(zc0, cap_in); translate([0, 0, BT - 0.01]) linear_extrude(0.01) sec2d(zc0, cap_in + 0.6); }   // its edge: 60 degrees
-        translate([0, 0, zc0 - 4]) linear_extrude(4 + eps) difference() { open2d(-0.3); open2d(-2.8); translate([0, neck_y]) circle(r = hub_fl[0] + 1.5); }
+        // its lip, which centres it: the collar's opening is wider than open2d at its top. collar5's hull runs from open2d(110)
+        // 119.2 mm down up to open2d at zc0 + 12, so at zc0 the opening is open2d(110 * 12 / 131.2) = open2d(10.06), and wider below
+        // (front and back the opening is the body's own wall: the lip stays 0.45 mm inside it)
+        translate([0, 0, zc0 - 4]) linear_extrude(4 + eps) difference() {
+            intersection() { open2d(cap_lip_g); sec2d(zc0, b_wall + 0.45); }
+            open2d(cap_lip_g - 2.5); translate([0, neck_y]) circle(r = hub_fl[0] + 1.5);
+        }
         intersection() {
             translate([0, 0, gz0 - 1.6]) linear_extrude(zc0 - gz0 + 1.6 + eps) difference() {
                 hull() { translate([0, neck_y]) circle(r = hub_fl[0] + 1.5 + 1.6); translate([0, pin_y]) circle(r = pin_rp + gear_m + 2.0 + 1.6); }
