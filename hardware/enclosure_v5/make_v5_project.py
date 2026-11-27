@@ -54,6 +54,8 @@ NECK = [("black neck", "dark", ["neck"])]
 CAGE = [("speaker cage", "white", ["spk_cage"])]
 # the DRV8871 plate on its own: 2 DRV8871 boards in place of the MDD3A (on its 4 posts, with its 4 screws)
 DRVP = [("DRV8871 plate", "dark", ["drv_plate"])]
+# the cap on its own: its 4 screws moved onto the solid band each side of the body's opening (the first 8 missed it)
+CAPP = [("cap", "white", ["cap"])]
 
 if __name__ == "__main__":
     plates = [(pname, colour, m4.pack(names)) for pname, colour, names in PLATES]
@@ -63,6 +65,7 @@ if __name__ == "__main__":
     neck = [(pname, colour, m4.pack(names)) for pname, colour, names in NECK]
     cage = [(pname, colour, m4.pack(names)) for pname, colour, names in CAGE]
     drvp = [(pname, colour, m4.pack(names)) for pname, colour, names in DRVP]
+    capp = [(pname, colour, m4.pack(names)) for pname, colour, names in CAPP]
     for printer in ("A1", "P2S", None):          # None: "plain", no printer or filament settings of ours (Bambu Studio keeps its own)
         tag = printer or "plain"
         m4.project(plates, HERE / f"LittleBot_v5_{tag}.3mf", "LittleBot v5 Rover", printer)
@@ -72,4 +75,5 @@ if __name__ == "__main__":
         m4.project(neck, HERE / f"LittleBot_v5_neck_{tag}.3mf", "LittleBot v5 black neck", printer)
         m4.project(cage, HERE / f"LittleBot_v5_speaker_cage_{tag}.3mf", "LittleBot v5 speaker cage", printer)
         m4.project(drvp, HERE / f"LittleBot_v5_drv_plate_{tag}.3mf", "LittleBot v5 DRV8871 plate", printer)
+        m4.project(capp, HERE / f"LittleBot_v5_cap_{tag}.3mf", "LittleBot v5 cap", printer)
     m4.preview(plates, HERE / "plates_v5.png")

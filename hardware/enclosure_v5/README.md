@@ -56,6 +56,7 @@ The motors' tails rest in 2 saddles with zip-tie slots. The Pi's fan blows down 
 | `LittleBot_v5_neck_A1.3mf`, `LittleBot_v5_neck_P2S.3mf`, `LittleBot_v5_neck_plain.3mf` | the black neck on its own plate, to reprint it (see **Mirror-image parts** below) |
 | `LittleBot_v5_speaker_cage_A1.3mf`, `..._P2S.3mf`, `..._plain.3mf` | the speaker's cage on its own plate (white, back face down, no supports): cradle under it, keeper behind it and saddles over it in one piece; 4 tabs click into the ribs' slots ([picture](speaker_cage.png)) |
 | `LittleBot_v5_drv_plate_A1.3mf`, `..._P2S.3mf`, `..._plain.3mf` | the DRV8871 plate (dark, flat, no supports): 2 of the motor kits' DRV8871 boards in place of the MDD3A, on its 4 posts with its 4 screws; each board on 2 posts, 2 × M3 × 8. Wiring: [WIRING.md](WIRING.md#instead-of-the-mdd3a-2--drv8871) |
+| `LittleBot_v5_cap_A1.3mf`, `..._P2S.3mf`, `..._plain.3mf` | the cap on its own (white, top face down): reprint it if yours has 8 screw holes. Those sat over the body's opening or on its edge; the new 4 go into the solid band each side |
 | `LittleBot_v5_pods_A1.3mf`, `LittleBot_v5_pods_P2S.3mf`, `LittleBot_v5_pods_plain.3mf` | the 2 wheel pods on their own plate, to reprint them (the second version: no roof, room for 67 mm wheels) |
 | `LittleBot_v5_assembled.3mf` | the whole robot assembled and coloured, to look at (not to print) |
 | `WIRING.md`, `wiring/` | **the base's wiring**: power (fuse, switch, 4 Wagos), the RP2040's pins (the Pi's UART, encoders, motor driver, servos, battery sense), the motors' 6 wires |
@@ -129,7 +130,7 @@ Not needed any more: the PCA9685 and both 4×AA holders.
 | Deck (and motor driver) → tub | 2 × M3 × 16 down through the driver's 2 inner corners, their posts and the deck; 1 × M3 × 8 at the back left | the tub's posts: the driver's inner corners sit right over 2 of them. The front-left post is under the breadboard: it stays empty. |
 | Battery door | 2 × M3 × 10, through its lower corners | the 2 posts behind it |
 | Body → tub | 8 × M3 × 10, through the tub's rim | 8 nuts in the body's tongue |
-| Cap → body | 8 × M3 × 12, from the top, heads sunk | holes in the collar: they cut their own thread, 9 mm deep. No nuts. |
+| Cap → body | 4 × M3 × 12, from the top, heads sunk (2 each side) | the solid band each side of the body's opening: they cut their own thread, 10 mm deep. No nuts. A body printed before 2026-11-27 has no holes there: drill them through the cap's holes (2.5 mm bit, 10 mm deep). |
 | Ring gear → hub | 3 × M3 × 12, from below, as before | holes in the hub |
 | Servo frame collars | 2 × M3 × 10, as before | |
 | Black neck → hub | 3 × M3 × 12, heads sunk | holes in the hub's top |
@@ -162,7 +163,7 @@ In total for the new parts: 22 × M3 × 12, 12 × M3 × 10, 7 × M3 × 8, 2 × M
    - Hub up through the cap from below; ring gear onto the hub's flange (3 × M3 × 12 from below).
    - Slide 3 nuts into the slots in the hub's side. Black neck over the hub (its rib in the hub's groove): 3 × M3 × 12.
    - Servo frame with the head servo and the pinion (glue cured) onto the cap's 2 pillars; mesh the gears with the servo centred (A cap printed from the earlier files: the frame goes on turned round 180°, see **Mirror-image parts**.)
-10. **Cap onto the body:** hold the cap just over the body's top, the head servo's lead onto its tail, the HDMI, USB-C and camera cables up through the neck. Before lowering it: batteries in, switch on, `python3 scripts/base_test.py center`, and sit the head on the black neck facing front. If its 3 holes don't line up with the neck's, loosen the servo frame's 2 collar screws, drop it off the ring gear, turn the neck until they do, and push it back up. Switch off, then lower the cap in and fit 8 × M3 × 12 straight down into the collar's holes. Stop when each is snug: they thread into plastic, and overtightening strips it.
+10. **Cap onto the body:** hold the cap just over the body's top, the head servo's lead onto its tail, the HDMI, USB-C and camera cables up through the neck. Before lowering it: batteries in, switch on, `python3 scripts/base_test.py center`, and sit the head on the black neck facing front. If its 3 holes don't line up with the neck's, loosen the servo frame's 2 collar screws, drop it off the ring gear, turn the neck until they do, and push it back up. Switch off, then lower the cap on and fit 4 × M3 × 12 straight down through its 4 holes (2 each side) into the body. (Caps printed before 2026-11-27 have 8 holes that miss the body: reprint it from `LittleBot_v5_cap_<printer>.3mf`. On a body printed before then, drill the 4 holes through the new cap's holes first: 2.5 mm bit, 10 mm deep, straight down.) Stop when each is snug: they thread into plastic, and overtightening strips it.
 
    ![the cap's screws](cap_screws.png)
 

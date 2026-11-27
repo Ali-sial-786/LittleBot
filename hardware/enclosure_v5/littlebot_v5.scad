@@ -90,7 +90,9 @@ js = [[0, 22], [0, 124], [1, 70], [2, 62]];   // [0 side / 1 front / 2 back, y (
 /* [the top] */
 zc0 = BT - 6;                            // the cap's underside = the collar's top
 open5 = [[-42, 42], [37, 121.5], 20];    // the opening: x, y, corner radius
-cap_scr = [[-52, 62], [52, 62], [-52, 100], [52, 100], [-26, 32.5], [26, 32.5], [-38, 119.5], [38, 119.5]];
+// the cap's 4 screws: in the solid band each side of the opening (x 60.4-77 between y 60 and 100, at least 10 mm deep).
+// The first 8 (2026-11-13) sat over the opening or on its edge: the body's top front and back is just its 3 mm wall.
+cap_scr = [[-64, 70], [64, 70], [-64, 94], [64, 94]];
 bay_r = 21;                              // a bay in the opening's front edge, round the pinion
 hub_r = 26; hub_fl = [31, 3]; hub_play = 0.3;   // the hub: spigot radius; flange radius, thickness; up-and-down play
 neck_foot = 36;                          // the black neck's foot on the cap
