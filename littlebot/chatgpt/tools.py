@@ -198,7 +198,8 @@ TOOLS: tuple[_Tool, ...] = (
     _Tool("change_card", "Change the card that is on LittleBot's screen now, instead of making a new one, when they "
           "ask: its picture full screen or zoomed (action picture, args {\"view\": \"fill\" | \"in\" | \"out\" | "
           "\"back\"}: fill for \"show the picture full screen\" or \"make it bigger\", back for the whole card "
-          "again; on a recipe with no picture yet, picture adds the dish's: args {\"query\": \"the dish\"}), the "
+          "again; on a recipe with no picture yet, picture adds the dish's: args {\"query\": \"the dish\"}; on a "
+          "comparison, picture adds a picture of each thing compared, \"show me a picture of both\"), the "
           "next or previous step or point (next, prev), or close it (close); also a timer running off "
           "the screen (add, pause, resume, cancel). Only what they ask for: \"how long is left?\" changes nothing "
           "(LittleBot's note says what the timers are). Card on the screen:",

@@ -483,3 +483,61 @@ async def test_the_fields_tell_the_ai_the_new_limits() -> None:
     assert cleaned is not None and cleaned["stats"] == ["Height: 5.5 m", {"label": "Weight", "value": "1 t"}], why
     cleaned, why = clean_spec(sample("score"), base.card_types())
     assert cleaned is not None and cleaned["teams"][0]["detail"] == "Saka 23', Havertz 70'", why
+
+
+def test_a_compare_column_takes_its_facts_under_other_names_and_half_a_comparison_is_no_card():
+    import asyncio
+
+    from littlebot.screens.cards import facts
+
+    named = {"card": "facts", "layout": "compare", "title": "Genghis Khan vs Alexander the Great",
+             "columns": [{"name": "Genghis Khan", "facts": ["1162-1227", "Mongol Empire"]},
+                         {"name": "Alexander the Great", "points": ["356-323 BC", "Macedon"]}]}
+    card = facts.FactsCard(named, None)
+    assert [c["facts"] for c in card.columns] == [["1162-1227", "Mongol Empire"], ["356-323 BC", "Macedon"]]
+    half = {**named, "columns": [named["columns"][0], {"name": "Alexander the Great", "facts": []}]}
+    assert facts.half_compared(half) and not facts.half_compared(named)
+    assert asyncio.run(facts._build(half, None, None)) is None
+    three = {**named, "columns": [*named["columns"], {"name": "Caesar"}]}
+    assert [c["name"] for c in facts.FactsCard(three, None).columns] == ["Genghis Khan", "Alexander the Great"]
+
+
+def test_a_comparison_shows_a_picture_per_column():
+    from littlebot.screens import base
+    from littlebot.screens.cards import facts
+
+    class Pic:
+        def __init__(self, ok=True):
+            self.ready, self.surface, self.credit = True, (pygame.Surface((300, 400)) if ok else None), "Wikipedia"
+
+    class Host(base.RecordingHost):
+        def __init__(self, fail=()):
+            super().__init__()
+            self.asked, self.fail = [], fail
+
+        def picture(self, query="", url=""):
+            self.asked.append(query)
+            return Pic(query not in self.fail)
+
+    cols = [{"name": "Genghis Khan", "picture": "Genghis Khan", "facts": ["1162-1227", "Mongol Empire"]},
+            {"name": "Alexander the Great", "picture": "Alexander the Great", "facts": ["356-323 BC", "Macedon"]}]
+    spec = {"card": "facts", "layout": "compare", "title": "Genghis Khan vs Alexander the Great", "columns": cols}
+    host = Host()
+    card = facts.FactsCard(spec, host)
+    assert host.asked == ["Genghis Khan", "Alexander the Great"] and card._col_pics()
+    assert card._col_pic_band() > 0 and not card.slot.wanted
+    preview.surface(card)  # draws with both pictures
+    # one picture not found: the other still shows; none found: the table is as before, no band
+    assert facts.FactsCard(spec, Host(fail=("Genghis Khan",)))._col_pics()
+    assert facts.FactsCard(spec, Host(fail=("Genghis Khan", "Alexander the Great")))._col_pic_band() == 0
+    # made without pictures, then asked for ("show me a picture of both"): one per column, by its own name
+    host = Host()
+    plain = facts.FactsCard({**spec, "columns": [{k: v for k, v in c.items() if k != "picture"} for c in cols]}, host)
+    assert not host.asked and not plain._col_pics()
+    assert plain.command(base.ADD_PICTURE_ACTION, {"query": "Genghis Khan vs Alexander the Great"})
+    assert host.asked == ["Genghis Khan", "Alexander the Great"] and plain._col_pics()
+    # the director keeps a column's "picture"
+    from littlebot.screens import director
+
+    clean, _why = director.clean_spec(spec, base.card_types(), ())
+    assert [c.get("picture") for c in clean["columns"]] == ["Genghis Khan", "Alexander the Great"]

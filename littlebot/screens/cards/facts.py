@@ -10,7 +10,9 @@
   long; an optional ``note`` under it.
 * ``compare`` - two to four things side by side: ``columns`` (each a name and its facts), with optional
   ``rows`` labels ("Weight", "Lives in") so the facts line up as a table (up to 8 rows, paged); an
-  optional ``note`` under it ("Both are big cats").
+  optional ``note`` under it ("Both are big cats"). A column with a ``picture`` (a Wikipedia name) shows it under
+  its name, each fetched on its own; asked for afterwards ("show me a picture of both": ``add_picture``), every
+  column gets one by its name. A picture that isn't found leaves its column without one.
 * ``profile`` - a person, place or animal: picture plus up to five short facts, a subtitle ("Animal") and up
   to four ``stats`` tiles ("Height: 5.5 m").
 * ``score``   - a sports score: two teams, their scores and optionally who scored (each team's ``detail``),
@@ -57,6 +59,8 @@ CELL_PX = BODY_PX
 CELL_LINES = 3  # a compare cell's most lines (the last ends in "..." when it goes on)
 HEAD_PX = 38  # a compare column's name
 HEAD_H = 60
+COL_PIC_H = 132  # compare: each column's picture, under its name ("a picture of both")
+COL_PIC_GAP = 8
 ROW_GAP = 16
 COL_GAP = 12
 LABEL_W = 200  # compare: the row labels' column
@@ -103,7 +107,9 @@ def _column(raw: Any) -> dict[str, Any] | None:
     # (its facts under another name: one column of "Genghis Khan vs Alexander the Great" came without "facts" and
     # showed as an empty column beside a full one; the robot, 2026-11-27)
     facts = next((raw[k] for k in FACT_KEYS if raw.get(k)), None)
-    return {"name": name, "facts": kit.str_list(facts, max_items=MAX_ROWS, limit=50)}
+    picture = kit.clean(raw.get("picture") or raw.get("picture_query"), 80)
+    return {"name": name, "facts": kit.str_list(facts, max_items=MAX_ROWS, limit=50),
+            **({"picture": picture} if picture else {})}
 
 
 def _table(columns: list[dict[str, Any]], raw_rows: Any, title: str) -> tuple[list[dict[str, Any]], list[str]]:
@@ -313,6 +319,9 @@ class FactsCard(Card):
         self.mood = {"number": "surprised", "score": "happy"}.get(self.layout, "curious")
         wants_pic = self.layout in ("number", "list", "profile", "item")
         self.slot = kit.PictureSlot(self.host, kit.clean(spec.get("picture_query"), 80) if wants_pic else "")
+        # compare: a picture per column that names one (its "picture": a Wikipedia name), under the column's name
+        self.col_slots = [kit.PictureSlot(self.host, c.get("picture") or "") for c in self.columns] \
+            if self.layout == "compare" else []
         self.page = 0
         self.page_t = 0.0
         self._pages: dict[bool, list[Any]] = {}
@@ -367,12 +376,19 @@ class FactsCard(Card):
     # ------------------------------------------------------------ pages
     def pages(self) -> list[Any]:
         """What each page shows (layout-specific); one page for the layouts that never page."""
-        pic = self.slot.wanted
+        pic = self._col_pics() if self.layout == "compare" else self.slot.wanted
         got = self._pages.get(pic)
         if got is None:
             got = self._paginate(pic)
             self._pages[pic] = got
         return got
+
+    def _col_pics(self) -> bool:
+        """compare: a column's picture is showing or on its way (the table keeps a band for them)."""
+        return any(s.wanted for s in self.col_slots)
+
+    def _col_pic_band(self) -> int:
+        return COL_PIC_H + COL_PIC_GAP if self._col_pics() else 0
 
     def _paginate(self, pic: bool) -> list[Any]:
         inner = self.inner
@@ -383,7 +399,7 @@ class FactsCard(Card):
             n = max(n, len(self.rows))
             counts = [self._row_lines(r) for r in range(n)]
             heights = [kit.line_h(self._cell_px()) * k + ROW_GAP for k in counts]
-            room = inner.h - self._head_h() - 6 - self._note_h(inner.w)
+            room = inner.h - self._head_h() - 6 - self._note_h(inner.w) - (COL_PIC_H + COL_PIC_GAP if pic else 0)
             pages = kit.pages_by_height(heights, counts, gap=0, room=room, max_lines=MAX_LINES - 1)
             if len(pages) > 1:  # the header row counts as a line; the dots need room
                 pages = kit.pages_by_height(heights, counts, gap=0, room=room - DOTS_H, max_lines=MAX_LINES - 1)
@@ -483,6 +499,8 @@ class FactsCard(Card):
     def update(self, dt: float) -> None:
         super().update(dt)
         self.slot.update(self.t)
+        for slot in self.col_slots:
+            slot.update(self.t)
         self.page = min(self.page, len(self.pages()) - 1)
 
     def _turn(self, page: int) -> bool:
@@ -499,6 +517,23 @@ class FactsCard(Card):
         if action == "page":
             n = kit.as_int(args.get("n"), 0)
             return 1 <= n <= len(self.pages()) and self._turn(n - 1)
+        if action == base.ADD_PICTURE_ACTION:
+            return self.add_picture(str(args.get("query") or ""))
+        return False
+
+    def add_picture(self, query: str = "") -> bool:
+        """A picture asked for after the card was made without one. A comparison gets one per column, each by
+        its own name ("a picture of both" of Genghis Khan and Alexander the Great was one search for both names,
+        which no picture answers; the robot, 2026-11-27). False: no picture can be fetched, or no room for one."""
+        if self.layout == "compare":
+            for i, col in enumerate(self.columns):
+                if not self.col_slots[i].wanted:
+                    self.col_slots[i] = kit.PictureSlot(self.host, col.get("picture") or col["name"])
+            return self._col_pics()
+        if self.layout in ("number", "list", "profile", "item"):
+            if not self.slot.wanted:
+                self.slot = kit.PictureSlot(self.host, kit.clean(query, 80) or self.title)
+            return self.slot.wanted
         return False
 
     def tap(self, x: float, y: float) -> bool:
@@ -673,8 +708,9 @@ class FactsCard(Card):
         size = self._cell_px()
         heights = [self._row_h(r) for r in rows]
         head_h = self._head_h()
+        band = self._col_pic_band()
         body_h = sum(heights) + ROW_GAP * len(heights) + 6
-        total = head_h + body_h
+        total = head_h + band + body_h
         note_h = self._note_h(inner.w)
         avail = inner.h - (DOTS_H if len(self.pages()) > 1 else 0) - note_h
         top = inner.y + max(0, (avail - total) // 2)
@@ -689,7 +725,10 @@ class FactsCard(Card):
                 names = (names[0], kit.ellipsize(" ".join(names[1:]), HEAD_PX, col_w - 20))
             name = kit.text_block(list(names), HEAD_PX, art.WHITE, align="center", pitch=kit.line_h(HEAD_PX) - 4)
             surf.blit(name, name.get_rect(center=(x + col_w // 2, top + head_h // 2 + 1)))
-        y = top + head_h + ROW_GAP
+            if band and self.col_slots[c].wanted:
+                self.col_slots[c].draw(surf, pygame.Rect(x + 10, top + head_h + COL_PIC_GAP, col_w - 20, COL_PIC_H),
+                                       self.t, credit=False)
+        y = top + head_h + band + ROW_GAP
         fade = self._enter()
         for n, (r, h) in enumerate(zip(rows, heights)):
             if r < len(self.rows):
@@ -954,9 +993,12 @@ register(CardType(
         # (lists and plain names are kept too: the card also reads a comparison written as a table)
         "columns": {"type": "array", "maxItems": MAX_COLUMNS, "description": "compare: 2-4 columns, each "
                     "an object {\"name\": \"Lion\", \"facts\": [\"190 kg\", \"Africa\"]} (the facts are needed: "
-                    "names alone show nothing); the n-th facts line up as a row, up to 8 rows",
+                    "names alone show nothing); the n-th facts line up as a row, up to 8 rows. People, animals, "
+                    "places or things compared: add \"picture\" to each column, its Wikipedia name (\"picture\": "
+                    "\"Alexander the Great\"), and each shows its own picture",
                     "items": {"type": ["object", "array", "string"], "items": {"type": "string"},
                               "properties": {"name": {"type": "string"}, "title": {"type": "string"},
+                                             "picture": {"type": "string", "maxLength": 80},
                                              **{k: {"type": "array", "items": {"type": "string"}}
                                                 for k in FACT_KEYS}}}},
         "rows": {"type": "array", "items": {"type": ["string", "object", "array"], "items": {"type": "string"},

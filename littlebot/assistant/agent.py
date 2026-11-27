@@ -164,7 +164,8 @@ CARDS = """Which card: a person, place, animal, thing or moment in history ("who
 Japan"): facts, layout profile, with picture_query (its Wikipedia name), a subtitle and 2-3 short facts; what a word \
 means: definition; how to do something: explain, its steps as points (recipe only for cooking food: it lists \
 ingredients); a difference or a choice \
-("crocodile or alligator?"): facts, layout compare; a number answer (how far, how big, how many, a conversion): \
+("crocodile or alligator?"): facts, layout compare (people, animals, places or things: each column with its \
+picture, its Wikipedia name); a number answer (how far, how big, how many, a conversion): \
 facts, layout number; a sum: maths; also the weather, a list, a timer, the time somewhere (clock). No card for \
 chit-chat, jokes, a plain yes or no, their words said back to them, or when they're done."""
 

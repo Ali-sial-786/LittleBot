@@ -50,7 +50,7 @@ OPENVERSE_URL = "https://api.openverse.org/v1/images/"
 MAX_BYTES = 2_000_000  # per image download
 MAX_SIZE = (560, 440)  # decoded pictures are scaled down to fit this (a card's picture column on the 7" screen)
 CACHE_ITEMS = 16  # decoded pictures kept in memory (at most ~1 MB each)
-MAX_IN_FLIGHT = 3  # fetches at once; more are refused (the card shows no picture)
+MAX_IN_FLIGHT = 4  # fetches at once; more are refused (the card shows no picture). A comparison: one a column
 TIMEOUT = httpx.Timeout(4.0, connect=2.5)
 SLOW_TIMEOUT = httpx.Timeout(7.0, connect=2.5)  # Openverse's search often takes 3-6 s
 DEADLINE_S = 12.0  # the whole search for one picture (the voice talks for longer than that)
