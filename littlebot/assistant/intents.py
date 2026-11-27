@@ -230,7 +230,8 @@ ACK_OK = ("Okay.", "Sure.", "Done.")
 @dataclasses.dataclass
 class Intent:
     name: str  # stop | thanks | bye | volume | pause | resume | skip | stop_media | time | photo | record |
-    #            stop_record | show_photos | send_photo | save_clip | always_recording | call | whatsapp | hang_up
+    #            stop_record | show_photos | send_photo | save_clip | always_recording | call | whatsapp | hang_up |
+    #            close_card
     say: str = ""  # what to say (may be "")
     end: bool = False  # the session ends after saying it
     args: dict[str, Any] = dataclasses.field(default_factory=dict)
@@ -246,13 +247,36 @@ LIGHT_MODE = _whole(rf"{_SWITCH}?(?:the )?(?:light|day|normal){_THEME_WORD}(?: o
                     rf"(?:no|stop|exit|leave) (?:the )?(?:dark|night){_THEME_WORD}")
 
 
+# With a card on the screen: "show me your face", "close it", "hide that" take it off. The brain took "show me your
+# face" for a face to make (set_face) and the card stayed up (the robot, 2026-11-27). The screen director's own
+# CLOSE_WORDS (littlebot/screens/director.py) are GPT-Live's; this is the same list for the assistant.
+_CARD_NOUN = r"(?:card|screen|picture|page|recipe|timer|weather|forecast|clock|list|sum|word|fact|facts)"
+CLOSE_CARD = _whole(
+    rf"{_ASK}(?:"
+    rf"(?:close|hide|clear|remove|dismiss)(?: (?:it|that|this|the {_CARD_NOUN}))(?: (?:off|away|down))?|"
+    r"(?:take|put|get) (?:it|that|this) (?:away|off(?: the screen)?|down)|get rid of (?:it|that|this)|"
+    r"(?:show(?: me| us)? |bring back |(?:go )?back to )your (?:face|eyes)(?: again| back)?|"
+    r"(?:(?:let me|can i|could i|i want to|i wanna|i'?d like to) )?see your (?:face|eyes)(?: again)?|"
+    rf"(?:i'?m|we'?re) (?:done|finished) with (?:it|that|this|the {_CARD_NOUN}))")
+
+
+def card_on(ctx: Any) -> bool:
+    """A card is on LittleBot's screen now (``match``'s ``card_on``)."""
+    screens = getattr(ctx, "screens", None)
+    try:
+        return screens is not None and bool(screens.active) and screens.current is not None
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def match(text: str, *, media_on: bool = False, recording_on: bool = False, calls_on: bool = False,
-          call_names: Callable[[str], bool] | None = None) -> Intent | None:
+          call_names: Callable[[str], bool] | None = None, card_on: bool = False) -> Intent | None:
     """The instant intent ``text`` is, or None (the brain answers). ``media_on``: a video or music is playing or
     paused for this chat, so "pause", "play", "skip" are about it. ``recording_on``: LittleBot is recording a video,
     so "stop" / "cut" / "that's it" stop the recording. ``call_names(name)``: is that someone on the list of people
     to call (None: there are no WhatsApp calls on this robot, so none of their phrases match). ``calls_on``:
-    WhatsApp is on the screen, so "hang up", "end the call", "answer" are about it."""
+    WhatsApp is on the screen, so "hang up", "end the call", "answer" are about it. ``card_on``: a card is on the
+    screen, so "close it", "show me your face" take it off."""
     t = " ".join(str(text or "").replace("’", "'").split())
     if not t or len(t) > 60:
         return None
@@ -272,6 +296,8 @@ def match(text: str, *, media_on: bool = False, recording_on: bool = False, call
         return Intent("stop_record", end=True)
     if STOP_MEDIA.match(t) and media_on:
         return Intent("stop_media", random.choice(ACK_OK))
+    if card_on and not media_on and not calls_on and CLOSE_CARD.match(t):
+        return Intent("close_card", random.choice(ACK_OK))
     if PHOTO.match(t):
         return Intent("photo")  # the chat ends when the photo starts (a take-over), not here
     if RECORD.match(t):
@@ -321,6 +347,9 @@ def match(text: str, *, media_on: bool = False, recording_on: bool = False, call
 async def run(intent: Intent, box: Any, ctx: Any) -> str:
     """Do it with LittleBot's toolbox; returns what to say (``intent.say`` unless the action says otherwise)."""
     name = intent.name
+    if name == "close_card":
+        result = await box.run("change_card", {"action": "close"})
+        return intent.say if not str(result).startswith("error") else ""
     if name == "theme":
         result = await box.run("set_screen_theme", {"theme": intent.args.get("theme")})
         return intent.say if not str(result).startswith("error") else "I can't change the screen right now."

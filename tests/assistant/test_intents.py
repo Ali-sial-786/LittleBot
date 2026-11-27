@@ -393,3 +393,28 @@ async def test_a_call_phrase_goes_to_the_calls_skill() -> None:
     ctx.skills = SkillHub(ctx, [])
     assert intents.calls_flags(ctx) == {}
     ctx.db.close()
+
+
+def test_close_the_card_only_while_one_is_up():
+    for text in ("show me your face", "Show your face.", "can you show me your face again", "close it",
+                 "hide that please", "go back to your face", "let me see your face", "close the card"):
+        assert intents.match(text) is None or intents.match(text).name != "close_card", text
+        hit = intents.match(text, card_on=True)
+        assert hit is not None and hit.name == "close_card" and not hit.end, text
+    assert intents.match("stop", card_on=True).name == "stop"  # "stop" still ends the chat
+    assert intents.match("show me a happy face", card_on=True) is None  # a face to make: the brain's
+    assert intents.match("close it", card_on=True, media_on=True) is None  # a video is on: that's what "it" is
+
+
+async def test_closing_the_card_uses_the_toolbox():
+    class Box:
+        def __init__(self):
+            self.ran = []
+
+        async def run(self, name, args):
+            self.ran.append((name, args))
+            return "ok: the card is off the screen; the face is back"
+
+    box = Box()
+    said = await intents.run(intents.match("show me your face", card_on=True), box, None)
+    assert box.ran == [("change_card", {"action": "close"})] and said

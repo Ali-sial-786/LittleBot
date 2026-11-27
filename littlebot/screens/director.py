@@ -902,6 +902,11 @@ def text_instead(spec: dict[str, Any], types: dict[str, Any], relaxed: Any = (),
     """The facts card of a checked ``spec``'s text, for a card the screen couldn't make from it ("no_card"); None
     when there is no text, or it is that card already. ``sent``: the spec as the model sent it (its text may be
     under names the card doesn't take: {"card": "answer", "answer": {...}})."""
+    if spec.get("card") == "facts":
+        from littlebot.screens.cards.facts import half_compared  # noqa: PLC0415
+
+        if half_compared(spec):  # one side of a comparison came empty: no card rather than its two names
+            return None
     fallback = (text_card(sent) if sent is not None else None) or text_card(spec)
     clean = clean_spec(fallback, types, relaxed)[0] if fallback is not None else None
     if clean is None or clean == spec:

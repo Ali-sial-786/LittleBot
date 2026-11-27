@@ -86,6 +86,9 @@ LABEL_KEYS = ("label", "row", "aspect", "category", "feature", "trait", "what")
 VS = re.compile(r"\s+(?:vs\.?|versus|or|and|compared (?:to|with))\s+", re.I)
 
 
+FACT_KEYS = ("facts", "values", "points", "items", "details", "traits", "rows")  # a column's facts, as models name them
+
+
 def _column(raw: Any) -> dict[str, Any] | None:
     if isinstance(raw, str):
         raw = {"name": raw}
@@ -97,7 +100,10 @@ def _column(raw: Any) -> dict[str, Any] | None:
     name = kit.clean(raw.get("name") or raw.get("title"), 24)
     if not name:
         return None
-    return {"name": name, "facts": kit.str_list(raw.get("facts") or raw.get("values"), max_items=MAX_ROWS, limit=50)}
+    # (its facts under another name: one column of "Genghis Khan vs Alexander the Great" came without "facts" and
+    # showed as an empty column beside a full one; the robot, 2026-11-27)
+    facts = next((raw[k] for k in FACT_KEYS if raw.get(k)), None)
+    return {"name": name, "facts": kit.str_list(facts, max_items=MAX_ROWS, limit=50)}
 
 
 def _table(columns: list[dict[str, Any]], raw_rows: Any, title: str) -> tuple[list[dict[str, Any]], list[str]]:
@@ -280,6 +286,9 @@ class FactsCard(Card):
         self.ordered = spec.get("ordered") is not False
         self.columns = [c for c in (_column(c) for c in (spec.get("columns") or [])[:MAX_COLUMNS]) if c]
         self.rows = kit.str_list(spec.get("rows"), max_items=MAX_ROWS, limit=24)
+        if self.layout == "compare" and any(c["facts"] for c in self.columns) \
+                and sum(1 for c in self.columns if c["facts"]) >= 2:
+            self.columns = [c for c in self.columns if c["facts"]]  # 3 things compared, one left empty: the other 2
         if self.layout == "compare" and not any(c["facts"] for c in self.columns):
             columns, labels = _table(self.columns, spec.get("rows"), self.title)
             if columns:
@@ -803,12 +812,22 @@ def item_fit(text: str, width: int, height: int) -> tuple[int, tuple[str, ...]]:
     return size, lines
 
 
+def half_compared(spec: dict[str, Any]) -> bool:
+    """A comparison where some columns have facts and others none: half a card. It isn't shown (nor its names as
+    a list, director.text_instead): the assistant then makes a whole one from the answer it said (card_after)."""
+    if str(spec.get("layout") or "").strip().lower() != "compare":
+        return False
+    cols = [c for c in (_column(c) for c in (spec.get("columns") or [])[:MAX_COLUMNS]) if c]
+    return len(cols) >= 2 and any(c["facts"] for c in cols) and sum(1 for c in cols if c["facts"]) < 2
+
+
 def _fits(card: FactsCard, pic: bool) -> bool:
     """The card has what its layout shows (``pic``: a picture was asked for)."""
     return {
         "number": bool(card.value),
         "list": bool(card.items),
-        "compare": len(card.columns) >= 2 and any(c["facts"] for c in card.columns),
+        # every column has something: a full column beside an empty one reads as "nothing known" about the other
+        "compare": len(card.columns) >= 2 and all(c["facts"] for c in card.columns),
         "profile": bool(card.title and (card.facts or pic)),
         "score": len(card.teams) == 2,
         "item": bool(card.text),
@@ -826,6 +845,8 @@ async def _build(spec: dict[str, Any], ctx: Any, host: Any) -> Card | None:
     card = FactsCard(spec, None)  # (no host yet: nothing is fetched while it is checked)
     if _fits(card, pic):
         return FactsCard(spec, host)
+    if half_compared(spec):
+        return None
     given = dict(spec)
     # a comparison whose rows are sentences this card couldn't split into its columns: shown as a list of them
     lines = [kit.clean(r, 60) for r in (spec.get("rows") or []) if isinstance(r, str) and len(r.split()) >= 3]
@@ -936,8 +957,8 @@ register(CardType(
                     "names alone show nothing); the n-th facts line up as a row, up to 8 rows",
                     "items": {"type": ["object", "array", "string"], "items": {"type": "string"},
                               "properties": {"name": {"type": "string"}, "title": {"type": "string"},
-                                             "facts": {"type": "array", "items": {"type": "string"}},
-                                             "values": {"type": "array", "items": {"type": "string"}}}}},
+                                             **{k: {"type": "array", "items": {"type": "string"}}
+                                                for k in FACT_KEYS}}}},
         "rows": {"type": "array", "items": {"type": ["string", "object", "array"], "items": {"type": "string"},
                                             "additionalProperties": {"type": ["string", "array"],
                                                                      "items": {"type": "string"}}},

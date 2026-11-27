@@ -688,7 +688,7 @@ class VoiceSession:
         """Only the brain's answers start early (an instant intent or a game's move is quicker than that anyway)."""
         video_on, spotify = self._media_on()
         if intents.match(text, media_on=video_on or spotify is not None, recording_on=self._recording(),
-                         **intents.calls_flags(self.ctx)):
+                         card_on=intents.card_on(self.ctx), **intents.calls_flags(self.ctx)):
             return False
         if intents.camera_asking(self.ctx):  # the answer to "whose phone?" sends a photo: never early
             return False
@@ -917,7 +917,7 @@ class VoiceSession:
             return "intent:send_photo", whose, False
         video_on, spotify = self._media_on()
         hit = intents.match(text, media_on=video_on or spotify is not None, recording_on=self._recording(),
-                            **intents.calls_flags(self.ctx))
+                            card_on=intents.card_on(self.ctx), **intents.calls_flags(self.ctx))
         if hit is not None:
             if spotify is not None and not video_on and hit.name in SPOTIFY_ACTIONS:
                 try:  # "pause", "next", "carry on" while Spotify plays on LittleBot: no model, no video tools
